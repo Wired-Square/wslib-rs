@@ -16,6 +16,9 @@
 //! - [`stdio`] (feature `stdio`) — the stdio transport
 //! - [`dom`] (feature `dom`) — tools that drive a webview's DOM through a
 //!   consumer-supplied bridge
+//! - [`bridge`] (feature `bridge`) — the request/reply correlator such a
+//!   bridge is built on
+//! - [`tauri_bridge`] (feature `tauri-bridge`) — that bridge over Tauri events
 //!
 //! `rmcp` is re-exported; its macros emit `rmcp::` paths, which a consumer's
 //! `use wslib_mcp::rmcp;` satisfies, and `schemars` comes as `rmcp::schemars`.
@@ -29,8 +32,12 @@ pub mod result;
 pub mod router;
 pub mod server;
 
+#[cfg(feature = "bridge")]
+pub mod bridge;
 #[cfg(feature = "dom")]
 pub mod dom;
+#[cfg(feature = "tauri-bridge")]
+pub mod tauri_bridge;
 
 #[cfg(feature = "http")]
 pub mod http;

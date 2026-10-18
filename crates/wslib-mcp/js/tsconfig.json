@@ -12,5 +12,5 @@
     "noFallthroughCasesInSwitch": true,
     "noImplicitReturns": true
   },
-  "files": ["dom-ops.ts"]
+  "files": ["dom-ops.ts", "tauri-bridge.ts", "tauri-api.d.ts"]
 }

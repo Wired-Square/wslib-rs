@@ -34,6 +34,12 @@ nothing else.
   selector. `read_router()` holds `query`, `wait_for` and `console`, stamped read-only;
   `drive_router()` holds `click`, `type` and `press`. Each call reaches the
   page through your `DomBridge` impl, and `js/dom-ops.ts` answers it there.
+- **`bridge`** (feature `bridge`) — `Pending`, the correlator under such a
+  bridge: `open` an id, `settle` it (or `settle_json` from the page's
+  `{ id, ok }` / `{ id, error }`), and `wait` for it with a timeout. Knows
+  nothing of the transport.
+- **`tauri_bridge`** (feature `tauri-bridge`) — `TauriBridge`, a `DomBridge`
+  over Tauri events, and `js/tauri-bridge.ts`, its page half.
 
 ## Using it
 
@@ -113,7 +119,59 @@ tsc -p js`). `type` writes through the native `value` setter, so React's
 controlled inputs see the change. Keep your copy honest with a test:
 
 ```rust
-assert_eq!(include_str!("../frontend/src/domOps.ts"), wslib_mcp::dom::OPS_TS);
+assert_eq!(include_str!("../frontend/src/harness/dom-ops.ts"), wslib_mcp::dom::OPS_TS);
+```
+
+## Over Tauri events (`tauri-bridge`)
+
+`TauriBridge` sends `harness:request` `{ id, op, args }` to one window
+(`main` unless built with `for_window`) and awaits the `harness:reply` that
+carries the same id. Build it once in `setup`, where it starts listening, and
+clone it into your tools:
+
+```rust
+let page = TauriBridge::new(app.handle());
+
+impl DomBridge for MyTools {
+    async fn call(&self, op: &str, args: Value, timeout: Duration) -> Result<Value, String> {
+        self.page.call(op, args, timeout).await
+    }
+}
+```
+
+`page.request(op, args, timeout)` reaches app ops of your own the same way.
+A transport other than Tauri events builds the same thing on `bridge::Pending`.
+
+The page must be allowed to listen for and emit events. A harness that exists
+only in development builds can add the capability at runtime rather than ship
+it:
+
+```rust
+app.add_capability(r#"{
+    "identifier": "mcp-harness",
+    "windows": ["main"],
+    "permissions": ["core:event:allow-listen", "core:event:allow-unlisten", "core:event:allow-emit"]
+}"#)?;
+```
+
+On the page, copy [`js/tauri-bridge.ts`](js/tauri-bridge.ts) unchanged into
+the same directory as your copy of `dom-ops.ts`, which it imports as
+`./dom-ops`, and start it after that import:
+
+```ts
+const stop = startHarnessBridge({
+  navigate: ({ path }) => (navigate(String(path)), {}),
+});
+import.meta.hot?.dispose(() => stop.then((unlisten) => unlisten()));
+```
+
+The ops you pass are tried before the DOM ops, and a thrown error becomes the
+reply's `error`. `answer(request, appOps)` is the same handling without the
+events, for a test. Under hot reload, stop the old listener as above or every
+request is answered twice. Keep the copy honest beside the `dom-ops.ts` one:
+
+```rust
+assert_eq!(include_str!("../frontend/src/harness/tauri-bridge.ts"), wslib_mcp::tauri_bridge::BRIDGE_TS);
 ```
 
 ## Things to get right
@@ -138,4 +196,5 @@ assert_eq!(include_str!("../frontend/src/domOps.ts"), wslib_mcp::dom::OPS_TS);
 Unit tests sit beside the code. `tests/http.rs` and `tests/stdio.rs` stand up a
 three-tool fixture server and drive it with rmcp's own client — over a real
 loopback port and an in-memory pipe respectively; `tests/dom.rs` does the same
-for the DOM routers over a recording bridge. All need `--all-features` to run.
+for the DOM routers over a recording bridge. `tauri_bridge`'s tests run the
+round trip on Tauri's mock runtime. All need `--all-features` to run.

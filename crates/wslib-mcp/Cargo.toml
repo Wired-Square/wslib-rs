@@ -19,20 +19,24 @@ tracing = "0.1"
 
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"], optional = true }
 ipnet = { version = "2", optional = true }
-tokio = { version = "1", features = ["net", "rt", "time", "macros"], optional = true }
+tauri = { version = "2", default-features = false, optional = true }
+tokio = { version = "1", default-features = false, optional = true }
 tokio-util = { version = "0.7", optional = true }
 
 [features]
 default = []
-http = ["dep:axum", "dep:ipnet", "dep:tokio", "dep:tokio-util", "rmcp/transport-streamable-http-server"]
-stdio = ["dep:tokio", "rmcp/transport-io"]
+http = ["dep:axum", "dep:ipnet", "dep:tokio", "tokio/net", "tokio/rt", "tokio/time", "tokio/macros", "dep:tokio-util", "rmcp/transport-streamable-http-server"]
+stdio = ["dep:tokio", "tokio/net", "tokio/rt", "tokio/time", "tokio/macros", "rmcp/transport-io"]
 dom = ["serde/derive"]
+bridge = ["dep:tokio", "tokio/sync", "tokio/time"]
+tauri-bridge = ["bridge", "dom", "dep:tauri"]
 
 [dev-dependencies]
 rmcp = { version = "3.4", features = ["client", "transport-streamable-http-client-reqwest"] }
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
+tauri = { version = "2", default-features = false, features = ["test"] }
 tokio = { version = "1", features = ["full"] }
 
 [[test]]

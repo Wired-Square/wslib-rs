@@ -68,6 +68,15 @@ Run it before every push, once per clone:
 git config core.hooksPath scripts/hooks
 ```
 
+### Moving a crate in from another repo
+
+The old repo's last release re-exports the crate from here, so a project
+still on it keeps building but is told to move. It has to warn: a
+`#[deprecated] pub use` is silent, so add `#[deprecated]` type aliases or
+wrapper fns for the items every consumer names, with a note naming the crate
+and the registry. A project that sees the warning moves to the crate here; it
+doesn't stop at the old repo's tag.
+
 ## Releasing a crate
 
 Bump the crate's `version` and give its `CHANGELOG.md` a heading for it in

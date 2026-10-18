@@ -1,0 +1,3 @@
+[registries.wired-square]
+index = "sparse+https://forge.wiredsquare.com/api/packages/wired-square/cargo/"
+credential-provider = ["cargo:token"]

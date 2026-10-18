@@ -1,0 +1,4 @@
+ups.?manager
+upsmgr
+wiretap
+accessmanager

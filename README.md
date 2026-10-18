@@ -29,11 +29,11 @@ credential-provider = ["cargo:token-from-stdout", "sh", "-c", 'printf "Bearer %s
 wslib-build-id = { version = "0.1", registry = "wired-square" }
 ```
 
-### Off the network
+### From GitHub Actions
 
-A machine that can't reach Forgejo (CI, or anyone off the tailnet) reads
-the read-only mirror at `crates.wiredsquare.com` instead, with its own
-read token. In that machine's `~/.cargo/config.toml`:
+GitHub Actions can't reach Forgejo, so it reads the read-only mirror at
+`crates.wiredsquare.com` instead, with its own read token; so can any other
+machine off the network. In that machine's `~/.cargo/config.toml`:
 
 ```toml
 [source.wired-square-forge]
@@ -46,8 +46,8 @@ credential-provider = ["cargo:token-from-stdout", "sh", "-c", 'printf "Bearer %s
 ```
 
 `Cargo.lock` still records Forgejo, so the same lockfile builds either way.
-CI without 1Password uses `credential-provider = "cargo:token"` and supplies
-`CARGO_REGISTRIES_WIRED_SQUARE_MIRROR_TOKEN`.
+In Actions, use `credential-provider = "cargo:token"` and supply the token
+from a repository secret as `CARGO_REGISTRIES_WIRED_SQUARE_MIRROR_TOKEN`.
 
 ## Working here
 

@@ -39,6 +39,12 @@ then clippy, tests and each feature for the crates changed since their last
 release plus their reverse dependencies. `--tag` runs every crate, docs and
 the MSRV check. It needs `cargo-hack` and `jq`.
 
+Run it before every push, once per clone:
+
+```sh
+git config core.hooksPath scripts/hooks
+```
+
 ## Releasing a crate
 
 Bump the crate's `version` and give its `CHANGELOG.md` a heading for it in

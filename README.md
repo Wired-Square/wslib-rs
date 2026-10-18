@@ -9,7 +9,11 @@ appliance chassis and every app beside it.
 | `wslib-secret`    | A credential that never prints, loaded from env or file     |
 | `wslib-backoff`   | Capped exponential backoff, reset on success                |
 | `wslib-telemetry` | One tracing setup, and an in-memory ring of a service's log |
-| `wslib-mcp`       | Hosting layer for tools-only MCP servers over rmcp          |
+| `wslib-mcp` †     | Hosting layer for tools-only MCP servers over rmcp          |
+
+† Not pure Rust: it carries TypeScript in `js/` that apps vendor into their
+frontend. Every crate that ships other languages is marked here, and says so
+at the top of its own README.
 
 ## Using a crate
 

@@ -6,6 +6,9 @@ otherwise repeat — who it is, which protocol revisions it speaks, how a tool
 answers, how the listener is guarded — so an application writes its tools and
 nothing else.
 
+**Not pure Rust.** `js/` holds TypeScript, the page halves of the `dom` and
+`tauri-bridge` features, which an app copies into its frontend unchanged.
+
 ## What's here
 
 - **`server`** — `ServerIdentity` (name, version, title, instructions),

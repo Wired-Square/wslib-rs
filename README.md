@@ -7,6 +7,7 @@ appliance chassis and every app beside it.
 | ---------------- | ------------------------------------------------------- |
 | `wslib-build-id` | Stamps the commit an artefact was built from into it    |
 | `wslib-secret`   | A credential that never prints, loaded from env or file |
+| `wslib-backoff`  | Capped exponential backoff, reset on success            |
 
 ## Using a crate
 

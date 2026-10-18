@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Nothing is pushed that scripts/ci.sh has not passed. ci.sh checks the working
+# tree, so the tree must match what is being pushed.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+[[ -z $(git status --porcelain) ]] || { echo "pre-push: commit or stash first" >&2; exit 1; }
+exec scripts/ci.sh

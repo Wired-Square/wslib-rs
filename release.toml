@@ -1,0 +1,6 @@
+# The version and changelog move in a PR; releasing only publishes and tags.
+allow-branch = ["main"]
+tag-name = "{{crate_name}}-v{{version}}"
+registry = "wired-square"
+push = false
+pre-release-hook = ["sh", "-c", "\"$WORKSPACE_ROOT/scripts/ci.sh\" --tag"]

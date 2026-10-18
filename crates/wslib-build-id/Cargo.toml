@@ -1,0 +1,14 @@
+[package]
+name = "wslib-build-id"
+version = "0.1.0"
+description = "Stamps the commit an artefact was built from into the artefact."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+# None, as a rule: this is a build-dependency of everything that ships, so
+# anything pulled in here is paid on every cold build of every consumer.
+[dependencies]

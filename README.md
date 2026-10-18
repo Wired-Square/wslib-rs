@@ -63,8 +63,9 @@ default; the app installs one.
 
 `scripts/ci.sh` is the CI definition: text gates, fmt and a workspace check,
 then clippy, tests and each feature for the crates changed since their last
-release plus their reverse dependencies. `--tag` runs every crate, docs and
-the MSRV check. It needs `cargo-hack` and `jq`.
+release plus their reverse dependencies. `--tag` runs every crate, docs, the
+MSRV check and a build at each crate's dependency floors, which needs
+nightly. It needs `cargo-hack` and `jq`.
 
 Run it before every push, once per clone:
 

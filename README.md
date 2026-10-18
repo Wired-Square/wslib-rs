@@ -9,6 +9,11 @@ appliance chassis and every app beside it.
 | `wslib-secret`    | A credential that never prints, loaded from env or file     |
 | `wslib-backoff`   | Capped exponential backoff, reset on success                |
 | `wslib-telemetry` | One tracing setup, and an in-memory ring of a service's log |
+| `wslib-mcp` †     | Hosting layer for tools-only MCP servers over rmcp          |
+
+† Not pure Rust: it carries TypeScript in `js/` that apps vendor into their
+frontend. Every crate that ships other languages is marked here, and says so
+at the top of its own README.
 
 ## Using a crate
 
@@ -66,6 +71,15 @@ Run it before every push, once per clone:
 ```sh
 git config core.hooksPath scripts/hooks
 ```
+
+### Moving a crate in from another repo
+
+The old repo's last release re-exports the crate from here, so a project
+still on it keeps building but is told to move. It has to warn: a
+`#[deprecated] pub use` is silent, so add `#[deprecated]` type aliases or
+wrapper fns for the items every consumer names, with a note naming the crate
+and the registry. A project that sees the warning moves to the crate here; it
+doesn't stop at the old repo's tag.
 
 ## Releasing a crate
 

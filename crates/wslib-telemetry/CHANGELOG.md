@@ -2,8 +2,8 @@
 
 ## 0.1.2
 
-- Dependency floors raised to what the crate compiles against:
-  tracing-subscriber 0.3.17, tracing 0.1.40.
+- Dependency floors raised: tracing-subscriber 0.3.20, for RUSTSEC-2025-0055
+  (the crate compiles from 0.3.17), and tracing 0.1.40.
 
 ## 0.1.1
 

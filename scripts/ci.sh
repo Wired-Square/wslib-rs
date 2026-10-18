@@ -59,11 +59,11 @@ export CHANGED="${changed[*]:-}"
 
 for crate in $(crates); do
   step "$crate: clippy"
-  cargo clippy -p "$crate" --all-targets --locked -- -D warnings
+  cargo clippy -p "$crate" --all-targets --all-features --locked -- -D warnings
   step "$crate: test"
-  cargo test -p "$crate" --locked
+  cargo test -p "$crate" --all-features --locked
   step "$crate: each feature"
-  cargo hack check -p "$crate" --each-feature --no-dev-deps --locked
+  cargo hack check -p "$crate" --each-feature --locked
 done
 
 if $all; then

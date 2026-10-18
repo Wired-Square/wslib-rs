@@ -1,6 +1,6 @@
 [package]
 name = "wslib-secret"
-version = "0.1.0"
+version = "0.1.1"
 description = "A credential that never prints itself, loaded from the environment or a file."
 edition.workspace = true
 rust-version.workspace = true

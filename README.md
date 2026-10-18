@@ -12,24 +12,42 @@ appliance chassis and every app beside it.
 ## Using a crate
 
 Crates are published to the private Cargo registry on Forgejo, never to
-crates.io, and read from its read-only mirror. In the consuming repo's
-`.cargo/config.toml`:
+crates.io. In the consuming repo's `.cargo/config.toml`:
 
 ```toml
 [registries.wired-square]
-index = "sparse+https://crates.wiredsquare.com/"
-credential-provider = ["cargo:token-from-stdout", "sh", "-c", 'printf "Bearer %s" "$(op read "$WSLIB_CRATES_TOKEN_REF")"']
+index = "sparse+https://forge.wiredsquare.com/api/packages/wired-square/cargo/"
+credential-provider = ["cargo:token-from-stdout", "sh", "-c", 'printf "Bearer %s" "$(op read "$WSLIB_REGISTRY_TOKEN_REF")"']
 ```
 
-Each machine gets its own read token, kept in 1Password; set
-`WSLIB_CRATES_TOKEN_REF` to its `op://` reference. CI without 1Password
-sets `CARGO_REGISTRIES_WIRED_SQUARE_CREDENTIAL_PROVIDER=cargo:token` and
-supplies the token as `CARGO_REGISTRIES_WIRED_SQUARE_TOKEN`. Then:
+`WSLIB_REGISTRY_TOKEN_REF` is the `op://` reference of your Forgejo token
+(`read:package` is enough), and the host must trust the CA that signs
+`forge.wiredsquare.com`. Then:
 
 ```toml
 [dependencies]
 wslib-build-id = { version = "0.1", registry = "wired-square" }
 ```
+
+### Off the network
+
+A machine that can't reach Forgejo (CI, or anyone off the tailnet) reads
+the read-only mirror at `crates.wiredsquare.com` instead, with its own
+read token. In that machine's `~/.cargo/config.toml`:
+
+```toml
+[source.wired-square-forge]
+registry = "sparse+https://forge.wiredsquare.com/api/packages/wired-square/cargo/"
+replace-with = "wired-square-mirror"
+
+[registries.wired-square-mirror]
+index = "sparse+https://crates.wiredsquare.com/"
+credential-provider = ["cargo:token-from-stdout", "sh", "-c", 'printf "Bearer %s" "$(op read "$WSLIB_CRATES_TOKEN_REF")"']
+```
+
+`Cargo.lock` still records Forgejo, so the same lockfile builds either way.
+CI without 1Password uses `credential-provider = "cargo:token"` and supplies
+`CARGO_REGISTRIES_WIRED_SQUARE_MIRROR_TOKEN`.
 
 ## Working here
 

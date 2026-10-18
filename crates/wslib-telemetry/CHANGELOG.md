@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- The ring strips `user:password@` from URLs in a message or field value,
+  keeping the host. `strip_userinfo` is public.
+
 ## 0.1.0
 
 - Promoted from `Logs` in `appliance-core`, and `LogLevel`, `LogRecord`,

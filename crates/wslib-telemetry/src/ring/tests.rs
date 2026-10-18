@@ -297,3 +297,71 @@ fn a_full_tap_loses_the_record_and_counts_it() {
     assert_eq!(drained(&mut tap).len(), 1);
     assert_eq!(logs.snapshot().records.len(), 3, "the ring lost none");
 }
+
+#[test]
+fn a_credential_in_a_url_is_stripped_from_the_message_and_every_field() {
+    let logs = this_crate();
+    let url = "postgres://app:hunter2@db.invalid/x";
+    captured(&logs, || {
+        tracing::warn!(url = %url, debugged = ?url, plain = url, "connect to {url} failed");
+    });
+
+    let record = one(&logs);
+    assert_eq!(
+        record.message,
+        "connect to postgres://redacted@db.invalid/x failed"
+    );
+    assert_eq!(field(&record, "url"), "postgres://redacted@db.invalid/x");
+    assert_eq!(field(&record, "plain"), "postgres://redacted@db.invalid/x");
+    assert_eq!(
+        field(&record, "debugged"),
+        "\"postgres://redacted@db.invalid/x\""
+    );
+}
+
+#[test]
+fn a_url_without_userinfo_and_an_address_past_the_path_are_unchanged() {
+    let logs = this_crate();
+    let text = "posted https://example.invalid/contact?to=user@example.invalid";
+    captured(&logs, || {
+        tracing::info!(target_url = "https://example.invalid/x", "{text}")
+    });
+
+    let record = one(&logs);
+    assert_eq!(record.message, text);
+    assert_eq!(field(&record, "target_url"), "https://example.invalid/x");
+}
+
+#[test]
+fn every_url_in_one_line_is_stripped() {
+    let logs = this_crate();
+    captured(&logs, || {
+        tracing::info!("tried https://a:1@one.invalid/x then https://b:2@two.invalid/y");
+    });
+    assert_eq!(
+        one(&logs).message,
+        "tried https://redacted@one.invalid/x then https://redacted@two.invalid/y"
+    );
+}
+
+#[test]
+fn a_url_straddling_the_budget_leaves_no_credential_before_the_marker() {
+    let logs = this_crate();
+    let pad = "p".repeat(LOG_TEXT_MAX - "postgres://app:hun".len());
+    captured(&logs, || {
+        tracing::warn!("{pad}postgres://app:hunter2@db.invalid/x");
+    });
+
+    let message = one(&logs).message.clone();
+    assert!(message.ends_with(TRUNCATED), "{message}");
+    assert!(!message.contains("app:"), "{message}");
+}
+
+#[test]
+fn a_field_named_like_a_secret_is_redacted_whole_even_holding_a_url() {
+    let logs = this_crate();
+    captured(&logs, || {
+        tracing::info!(password = "postgres://app:hunter2@db.invalid/x", "rotated");
+    });
+    assert_eq!(field(&one(&logs), "password"), "[redacted]");
+}

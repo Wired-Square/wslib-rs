@@ -1,6 +1,6 @@
 [package]
 name = "wslib-telemetry"
-version = "0.1.1"
+version = "0.1.2"
 description = "One tracing setup for daemons and command lines, and an in-memory ring of a service's own log."
 edition.workspace = true
 rust-version.workspace = true
@@ -24,8 +24,9 @@ ts = ["types", "dep:ts-rs"]
 test-support = ["ring"]
 
 [dependencies]
-tracing = { version = "0.1.39", optional = true }
-tracing-subscriber = { version = "0.3", default-features = false, features = ["std"], optional = true }
+tracing = { version = "0.1.41", optional = true }
+# 0.3.20: RUSTSEC-2025-0055, ANSI escapes logged unescaped.
+tracing-subscriber = { version = "0.3.20", default-features = false, features = ["std"], optional = true }
 tokio = { version = "1.47", default-features = false, features = ["sync"], optional = true }
 chrono = { version = "0.4.39", default-features = false, features = ["serde"], optional = true }
 serde = { version = "1.0.225", features = ["derive", "rc"], optional = true }

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- Dependency floors raised: tracing-subscriber 0.3.20, for RUSTSEC-2025-0055
+  (the crate compiles from 0.3.17), and tracing 0.1.41, which it requires.
+
 ## 0.1.1
 
 - The ring strips `user:password@` from URLs in a message or field value,

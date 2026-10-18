@@ -14,6 +14,7 @@ die() { printf 'ci: %s\n' "$*" >&2; exit 1; }
 step() { printf '\n== %s\n' "$*"; }
 
 command -v cargo-hack >/dev/null || die "cargo-hack missing: cargo install cargo-hack"
+! $all || cargo +nightly --version >/dev/null 2>&1 || die "nightly missing: rustup toolchain install nightly"
 
 step "No consumer is named"
 names=scripts/forbidden-names.txt
@@ -72,6 +73,20 @@ if $all; then
   step "Check on the stated rust-version"
   msrv=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
   cargo "+$msrv" check --workspace --locked
+
+  # Per crate: one lock can't hold every crate's floors at once.
+  step "Dependency floors"
+  floors=$(mktemp -d)
+  trap 'rm -rf "$floors"' EXIT
+  git ls-files -z -co --exclude-standard | tar -c --null -T - | tar -x -C "$floors"
+  for dir in crates/*/; do
+    name=$(basename "$dir")
+    sed -i.bak "s|^members = .*|members = [\"crates/$name\"]|" "$floors/Cargo.toml"
+    rm -f "$floors/Cargo.lock"
+    (cd "$floors" && cargo +nightly update -Z direct-minimal-versions -q \
+      && cargo +nightly check --workspace --all-features --all-targets -q) \
+      || die "$name does not build at its dependency floors"
+  done
 fi
 
 printf '\nci: ok\n'

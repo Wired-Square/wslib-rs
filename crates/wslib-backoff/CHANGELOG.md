@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- Dependency floor raised to what the crate's tests build against: tokio 1.2.
+
 ## 0.1.0
 
 - `Backoff`: delays growing by a multiplier from an initial value to a cap,

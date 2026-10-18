@@ -25,7 +25,7 @@ mod setup;
 #[cfg(feature = "types")]
 pub use log::{LogLevel, LogRecord, LogSnapshot};
 #[cfg(feature = "ring")]
-pub use redact::truncate;
+pub use redact::{strip_userinfo, truncate};
 #[cfg(feature = "ring")]
 pub use ring::{Logs, LogsBuilder, Tap};
 #[cfg(feature = "setup")]

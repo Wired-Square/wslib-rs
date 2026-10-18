@@ -35,7 +35,7 @@ use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::{Layer, filter};
 
 use crate::log::{LOG_RING, LOG_TEXT_MAX, LogLevel, LogRecord, LogSnapshot, TRUNCATED};
-use crate::redact::{is_secret, truncate};
+use crate::redact::{is_secret, strip_userinfo, truncate};
 
 /// How many records a slow feed client may fall behind before the oldest it
 /// has not read is skipped.
@@ -361,7 +361,7 @@ impl<'a> Capture<'a> {
         let value = if is_secret(name) || self.logs.redact.iter().any(|f| f == name) {
             "[redacted]".to_string()
         } else {
-            truncate(escape_control(value()), budget, TRUNCATED)
+            truncate(escape_control(without_userinfo(value())), budget, TRUNCATED)
         };
         if is_message {
             self.message = value;
@@ -369,6 +369,16 @@ impl<'a> Capture<'a> {
             self.spent += value.len();
             self.fields.push((name.to_string(), value));
         }
+    }
+}
+
+/// Before truncation, so a cut cannot leave half a credential behind the
+/// marker; before escaping, so an escaped newline still ends the authority.
+fn without_userinfo(value: String) -> String {
+    if value.contains("://") {
+        strip_userinfo(&value)
+    } else {
+        value
     }
 }
 

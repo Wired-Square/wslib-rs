@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- Dependency floors raised to what the crate compiles against:
+  tracing-subscriber 0.3.17, tracing 0.1.40.
+
 ## 0.1.1
 
 - The ring strips `user:password@` from URLs in a message or field value,

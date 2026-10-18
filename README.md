@@ -6,6 +6,7 @@ appliance chassis and every app beside it.
 | Crate            | What it does                                            |
 | ---------------- | ------------------------------------------------------- |
 | `wslib-build-id` | Stamps the commit an artefact was built from into it    |
+| `wslib-secret`   | A credential that never prints, loaded from env or file |
 
 ## Using a crate
 

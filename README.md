@@ -12,23 +12,24 @@ appliance chassis and every app beside it.
 ## Using a crate
 
 Crates are published to the private Cargo registry on Forgejo, never to
-crates.io. In the consuming repo's `.cargo/config.toml`:
+crates.io, and read from its read-only mirror. In the consuming repo's
+`.cargo/config.toml`:
 
 ```toml
 [registries.wired-square]
-index = "sparse+https://forge.wiredsquare.com/api/packages/wired-square/cargo/"
-credential-provider = ["cargo:token"]
+index = "sparse+https://crates.wiredsquare.com/"
+credential-provider = ["cargo:token-from-stdout", "sh", "-c", 'printf "Bearer %s" "$(op read "$WSLIB_CRATES_TOKEN_REF")"']
 ```
 
-Supply a Forgejo access token (scope `read:package`) as
-`CARGO_REGISTRIES_WIRED_SQUARE_TOKEN="Bearer <token>"`, then:
+Each machine gets its own read token, kept in 1Password; set
+`WSLIB_CRATES_TOKEN_REF` to its `op://` reference. CI without 1Password
+sets `CARGO_REGISTRIES_WIRED_SQUARE_CREDENTIAL_PROVIDER=cargo:token` and
+supplies the token as `CARGO_REGISTRIES_WIRED_SQUARE_TOKEN`. Then:
 
 ```toml
 [dependencies]
 wslib-build-id = { version = "0.1", registry = "wired-square" }
 ```
-
-The host must trust the CA that signs `forge.wiredsquare.com`.
 
 ## Working here
 
@@ -50,15 +51,18 @@ git config core.hooksPath scripts/hooks
 ## Releasing a crate
 
 Bump the crate's `version` and give its `CHANGELOG.md` a heading for it in
-the PR. Once that is merged, on `main`, with `WSLIB_REGISTRY_TOKEN_REF` set
-to the `op://` reference of a `write:package` token, which Cargo then reads
-from 1Password only when it publishes:
+the PR. Once that is merged, on `main`, with `.env` filled in from
+`.env.example` (`WSLIB_REGISTRY_TOKEN_REF` is the `op://` reference of a
+`write:package` token, which Cargo reads from 1Password only when it
+publishes):
 
 ```sh
 cargo release -p wslib-build-id --execute
 git push origin wslib-build-id-v<version>
+scripts/mirror.sh
 ```
 
 `cargo release` runs `scripts/ci.sh --tag`, publishes to the registry and
-tags `<crate>-v<version>`. The tag records what was published; consumers
+tags `<crate>-v<version>`; `scripts/mirror.sh` copies the registry to the
+mirror consumers read from. The tag records what was published; consumers
 pin the registry version, not the tag.

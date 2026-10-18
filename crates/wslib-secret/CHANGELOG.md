@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+- Deserialising a non-string fails with a message that never quotes the value.
+  A format that prints the failing source line, as `toml` does, still shows it.
+- `from_file` strips every trailing CR and LF, as `initdb --pwfile` does; it
+  stripped one line ending.
+
 ## 0.1.0
 
 - Promoted from `Secret` in `appliance-types` in wslib-appliance-rs.

@@ -47,16 +47,15 @@ impl Secret {
         self.0.as_bytes().ct_eq(other.0.as_bytes()).into()
     }
 
-    /// Reads a secret from `path`, less one trailing newline.
+    /// Reads a secret from `path`, less every trailing CR and LF, as `initdb --pwfile`
+    /// reads one.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, LoadError> {
         let path = path.as_ref();
         let raw = fs::read_to_string(path).map_err(|source| LoadError::Read {
             path: path.to_path_buf(),
             source,
         })?;
-        let value = raw
-            .strip_suffix('\n')
-            .map_or(raw.as_str(), |s| s.strip_suffix('\r').unwrap_or(s));
+        let value = raw.trim_end_matches(['\r', '\n']);
         if value.is_empty() {
             return Err(LoadError::Empty(path.to_path_buf()));
         }
@@ -64,7 +63,7 @@ impl Secret {
     }
 
     /// The secret in environment variable `name`, or in the file named by
-    /// `name_FILE`; `None` when neither is set.
+    /// `name_FILE` as [`Secret::from_file`] reads it; `None` when neither is set.
     pub fn from_env(name: &str) -> Result<Option<Self>, LoadError> {
         Self::from_vars(name, |var| std::env::var_os(var))
     }
@@ -127,7 +126,10 @@ impl serde::Serialize for Secret {
 #[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for Secret {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        String::deserialize(deserializer).map(Self)
+        // The format's own error can quote the input.
+        String::deserialize(deserializer)
+            .map(Self)
+            .map_err(|_| serde::de::Error::custom("a secret must be a string"))
     }
 }
 
@@ -169,7 +171,7 @@ pub enum LoadError {
     NotUnicode(String),
     /// The file could not be read.
     Read { path: PathBuf, source: io::Error },
-    /// The file holds nothing but a newline, if that.
+    /// The file holds nothing but line endings, if that.
     Empty(PathBuf),
 }
 
@@ -266,12 +268,16 @@ mod tests {
     }
 
     #[test]
-    fn a_file_loses_one_trailing_newline_and_no_more() {
+    fn a_file_loses_every_trailing_cr_and_lf_and_nothing_else() {
         for (contents, want) in [
             ("abc", "abc"),
             ("abc\n", "abc"),
             ("abc\r\n", "abc"),
-            ("abc\n\n", "abc\n"),
+            ("abc\n\n", "abc"),
+            ("abc\r", "abc"),
+            ("abc\r\n\r\n", "abc"),
+            ("abc \n", "abc "),
+            ("\tabc\t\n", "\tabc\t"),
             (" abc \n", " abc "),
         ] {
             let file = Scratch::new("newline", contents);
@@ -285,12 +291,14 @@ mod tests {
 
     #[test]
     fn an_empty_or_missing_file_is_an_error() {
-        let file = Scratch::new("empty", "\n");
-        assert!(matches!(
-            Secret::from_file(&file.0),
-            Err(LoadError::Empty(_))
-        ));
-        let missing = file.0.with_extension("missing");
+        for contents in ["", "\n", "\r\n\n\r"] {
+            let file = Scratch::new("empty", contents);
+            assert!(
+                matches!(Secret::from_file(&file.0), Err(LoadError::Empty(_))),
+                "{contents:?}"
+            );
+        }
+        let missing = std::env::temp_dir().join("wslib-secret-missing");
         assert!(matches!(
             Secret::from_file(missing),
             Err(LoadError::Read { .. })
@@ -347,6 +355,30 @@ mod tests {
         let s: Secret = serde_json::from_str("\"hunter2\"").unwrap();
         assert_eq!(s.expose(), "hunter2");
         assert_eq!(serde_json::to_string(&s).unwrap(), "\"hunter2\"");
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn a_non_string_is_refused_without_quoting_it() {
+        for input in [
+            "987654321",
+            "-987654321",
+            "987654321.5",
+            "987654321987654321987654321",
+            "true",
+            "[987654321]",
+            "{\"987654321\": 1}",
+        ] {
+            let err = serde_json::from_str::<Secret>(input)
+                .unwrap_err()
+                .to_string();
+            assert!(!err.contains("987654321"), "{input}: {err}");
+            assert!(!err.contains("true"), "{input}: {err}");
+            assert!(
+                err.starts_with("a secret must be a string"),
+                "{input}: {err}"
+            );
+        }
     }
 
     #[cfg(feature = "ts")]

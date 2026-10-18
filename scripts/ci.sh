@@ -68,7 +68,7 @@ done
 
 if $all; then
   step "Docs"
-  RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
+  RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
   step "Check on the stated rust-version"
   msrv=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
   cargo "+$msrv" check --workspace --locked

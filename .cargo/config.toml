@@ -1,3 +1,4 @@
 [registries.wired-square]
 index = "sparse+https://forge.wiredsquare.com/api/packages/wired-square/cargo/"
-credential-provider = ["cargo:token"]
+# Cargo resolves a relative provider path against the working directory.
+credential-provider = ["cargo:token-from-stdout", "sh", "-c", 'exec "$(git rev-parse --show-toplevel)/scripts/registry-token.sh"']

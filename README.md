@@ -50,8 +50,9 @@ git config core.hooksPath scripts/hooks
 ## Releasing a crate
 
 Bump the crate's `version` and give its `CHANGELOG.md` a heading for it in
-the PR. Once that is merged, on `main` with a `write:package` token in
-`CARGO_REGISTRIES_WIRED_SQUARE_TOKEN`:
+the PR. Once that is merged, on `main`, with `WSLIB_REGISTRY_TOKEN_REF` set
+to the `op://` reference of a `write:package` token, which Cargo then reads
+from 1Password only when it publishes:
 
 ```sh
 cargo release -p wslib-build-id --execute

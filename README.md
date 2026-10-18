@@ -3,11 +3,12 @@
 Shared Rust crates for Wired Square projects: the building blocks under the
 appliance chassis and every app beside it.
 
-| Crate            | What it does                                            |
-| ---------------- | ------------------------------------------------------- |
-| `wslib-build-id` | Stamps the commit an artefact was built from into it    |
-| `wslib-secret`   | A credential that never prints, loaded from env or file |
-| `wslib-backoff`  | Capped exponential backoff, reset on success            |
+| Crate             | What it does                                                |
+| ----------------- | ----------------------------------------------------------- |
+| `wslib-build-id`  | Stamps the commit an artefact was built from into it        |
+| `wslib-secret`    | A credential that never prints, loaded from env or file     |
+| `wslib-backoff`   | Capped exponential backoff, reset on success                |
+| `wslib-telemetry` | One tracing setup, and an in-memory ring of a service's log |
 
 ## Using a crate
 

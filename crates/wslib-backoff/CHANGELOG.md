@@ -1,0 +1,9 @@
+# Changelog
+
+## 0.1.0
+
+- `Backoff`: delays growing by a multiplier from an initial value to a cap,
+  1 s to 30 s doubling by default, with optional jitter and a reset on
+  success.
+- `retry` and `reconnect` behind the `tokio` feature: loops that run an
+  attempt, wait by the backoff after a failure and reset it on success.

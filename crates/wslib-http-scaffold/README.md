@@ -2,7 +2,7 @@
 
 The HTTP scaffold under an axum app: its single-page bundle, a health and a
 version route, and the standard layers. Every refusal is a
-[`wslib-api-error`](../wslib-api-error) body.
+[`wslib-http-error`](../wslib-http-error) body.
 
 ```rust
 use wslib_http_scaffold::{Spa, health, standard_layers, version};
@@ -11,7 +11,7 @@ let app = Router::new()
     .nest("/api", api)
     .merge(health())
     .merge(version(env!("CARGO_PKG_VERSION"), env!("WSLIB_BUILD_ID")))
-    .method_not_allowed_fallback(wslib_http_scaffold::wslib_api_error::extract::method_not_allowed)
+    .method_not_allowed_fallback(wslib_http_scaffold::wslib_http_error::extract::method_not_allowed)
     .fallback_service(Spa::from_dir("/usr/share/my-app/ui"));
 let app = standard_layers(app);
 ```

@@ -1,4 +1,4 @@
-# wslib-api-error
+# wslib-http-error
 
 One error body on the wire for every HTTP API, so a frontend handles every
 failure the same way:
@@ -12,8 +12,8 @@ app's own vocabulary; no status gets one by default. Any other fields sit
 beside them.
 
 ```rust
-use wslib_api_error::ApiError;
-use wslib_api_error::extract::{Json, Path, method_not_allowed};
+use wslib_http_error::ApiError;
+use wslib_http_error::extract::{Json, Path, method_not_allowed};
 
 async fn rename(Path(id): Path<u64>, Json(body): Json<Rename>) -> Result<Json<User>, ApiError> {
     let user = store::user(id).await.map_err(|e| ApiError::internal("read the user", e))?;

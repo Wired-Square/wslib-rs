@@ -3,7 +3,7 @@ use axum::body::Bytes;
 use axum::http::{HeaderValue, header};
 use axum::response::IntoResponse;
 use axum::routing::get;
-use wslib_api_error::ApiError;
+use wslib_http_error::ApiError;
 
 pub const HEALTH: &str = "/healthz";
 pub const VERSION: &str = "/version";

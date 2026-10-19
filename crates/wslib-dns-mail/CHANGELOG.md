@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.2.0
+
+- **Breaking:** `CheckOptions` and `DomainReport` are `#[non_exhaustive]`, so
+  they can no longer be built with a struct literal outside the crate. Start
+  from `CheckOptions::default()` and set fields. Later additions to either
+  are then not breaking.
+- `bimi::validate_logo` checks an SVG logo against SVG Tiny PS and reports
+  every violation with a byte offset (`SvgRule`): UTF-8 and well-formed XML,
+  no DOCTYPE or entities (never expanded), an `<svg>` root in the SVG
+  namespace with `version="1.2"`, `baseProfile="tiny-ps"`, no `x`/`y` and a
+  square `viewBox`, a non-empty `<title>` directly under the root, no
+  prohibited elements, no event handlers, and no external references in
+  links, `url()` or `@import`, in `<style>` text as well as attributes.
+- `discover::bimi_logo` (feature `http`) fetches an `l=` URL with the same
+  protections as the MTA-STS fetch, vetting the URL's own host or IP literal.
+  It refuses non-`https` URLs and credentials (`FetchFailure::InvalidUrl`),
+  caps the body at 64 KiB while streaming, and inflates `.svgz` or
+  gzip-encoded logos up to 256 KiB (`TooLarge { decompressed }`,
+  `Undecodable`).
+- Findings `bimi_logo_unreachable`, `bimi_logo_invalid`,
+  `bimi_logo_too_large` (over the BIMI Group's 32 KiB) and
+  `bimi_logo_content_type`. `check_domain` fetches the logo when given
+  `CheckOptions::bimi_http`, and reports it as `DomainReport::bimi_logo`.
+- The MTA-STS and logo fetches share one vetted request path. It always
+  sends a user agent, since some hosts refuse a request without one:
+  `DEFAULT_USER_AGENT` unless `HttpClients::user_agent` replaces it. It also
+  sends an `Accept` header for what it wants.
+
 ## 0.1.0
 
 - Lenient parsers returning `Parsed<T>` with byte-span `SyntaxFault`s, and an

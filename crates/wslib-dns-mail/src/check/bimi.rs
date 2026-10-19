@@ -1,7 +1,8 @@
 use super::{Detail, Finding, FindingCode, Severity, lookup_failure};
 use crate::FaultCode;
 use crate::bimi::BimiRecord;
-use crate::discover::{DmarcDiscovery, Inherited, Outcome};
+use crate::bimi::LOGO_SIZE_GUIDANCE;
+use crate::discover::{DmarcDiscovery, FetchFailure, Inherited, LogoFetch, Outcome};
 use crate::dmarc::Policy;
 
 /// The findings for a BIMI lookup. `dmarc` holds the DMARC discoveries that
@@ -93,4 +94,61 @@ fn not_enforcing(discovery: &DmarcDiscovery) -> Option<Detail> {
             subdomain_policy,
         },
     )
+}
+
+/// The findings for a fetched BIMI logo, about the record at `subject`.
+pub fn bimi_logo_findings(subject: &str, logo: &LogoFetch) -> Vec<Finding> {
+    let (content_type, validation) = match logo {
+        LogoFetch::Unreachable {
+            failure: FetchFailure::NotSent,
+            ..
+        } => return vec![super::incomplete("bimi", subject)],
+        LogoFetch::Unreachable { url, failure } => {
+            return vec![Finding::new(
+                FindingCode::BimiLogoUnreachable,
+                subject,
+                Detail::Unreachable {
+                    url: url.clone(),
+                    failure: failure.clone(),
+                },
+            )];
+        }
+        LogoFetch::Fetched {
+            content_type,
+            validation,
+            ..
+        } => (content_type, validation),
+    };
+    let mut findings = Vec::new();
+    if crate::discover::media_type(content_type.as_deref()).as_deref() != Some("image/svg+xml") {
+        findings.push(Finding::new(
+            FindingCode::BimiLogoContentType,
+            subject,
+            Detail::ContentType {
+                content_type: content_type.clone(),
+            },
+        ));
+    }
+    if validation.size > LOGO_SIZE_GUIDANCE {
+        findings.push(Finding::new(
+            FindingCode::BimiLogoTooLarge,
+            subject,
+            Detail::Length {
+                bytes: validation.size,
+                limit: LOGO_SIZE_GUIDANCE,
+            },
+        ));
+    }
+    for violation in &validation.violations {
+        findings.push(Finding::new(
+            FindingCode::BimiLogoInvalid,
+            subject,
+            Detail::LogoViolation {
+                rule: violation.rule,
+                offset: violation.offset,
+                detail: violation.detail.clone(),
+            },
+        ));
+    }
+    findings
 }

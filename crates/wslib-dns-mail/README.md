@@ -90,7 +90,10 @@ hickory and tests use `FakeResolver`. Every result says how it was found:
   the addresses it checked, so DNS rebinding can't redirect it into a private
   network or to `169.254.169.254`. `HttpClients` makes the
   `reqwest::ClientBuilder` it starts from, which is where your TLS provider
-  and timeouts go. Don't configure a proxy: a proxy resolves the host itself.
+  and timeouts go. Every fetch sends a user agent, because some hosts refuse
+  a request without one. It's `DEFAULT_USER_AGENT` unless
+  `HttpClients::user_agent` sets another. Don't configure a proxy: a proxy
+  resolves the host itself.
 - `dnsbl` tells `Listed`, `NotListed`, `QueryBlocked` and `Failed` apart. A
   zone that answers outside `127.0.0.2`–`127` is refusing the query, as
   Spamhaus does for cloud resolvers. That isn't a clean result.
@@ -166,6 +169,20 @@ The checks it cut short are named in a single `incomplete` finding instead.
 The deadline only stops new queries. One already in flight can run up to the
 resolver's timeout × attempts past it: 4 s with `HickoryOptions::default()`.
 
+## BIMI logos
+
+`bimi::validate_logo(svg)` checks an uncompressed SVG against the SVG Tiny PS
+profile mailbox providers enforce and reports every violation, each with its
+rule (`SvgRule`), a byte offset and a detail. It needs no `http` and no
+runtime, so it also works on logos a caller already holds. Entities are
+never expanded.
+
+`discover::bimi_logo` (feature `http`) fetches a record's `l=` URL with the
+MTA-STS fetch's protections. The URL's host can be anything, so it's
+resolved and vetted, or vetted directly if it's an IP literal, before any
+connection. A `.svgz` or gzip-encoded logo is inflated, with a cap on both
+the compressed and the inflated size.
+
 ## Building and editing records
 
 - `Display` on every record renders it canonically: `v=spf1` and single-spaced
@@ -181,7 +198,7 @@ resolver's timeout × attempts past it: 4 s with `HickoryOptions::default()`.
 | Feature | Adds                                                         |
 | ------- | ------------------------------------------------------------ |
 | `serde` | `Serialize`/`Deserialize` on every public type               |
-| `http`  | `discover::mta_sts_policy` and `CheckOptions::mta_sts_http`   |
+| `http`  | The MTA-STS and BIMI logo fetches, `CheckOptions::{mta_sts_http, bimi_http}` |
 
 None are on by default. The parsers need no async runtime. `http` uses
 reqwest with rustls and no crypto provider; the application installs one, as
@@ -189,6 +206,6 @@ for every wslib crate.
 
 ## Known gaps
 
-- BIMI logos aren't fetched, so their SVG Tiny PS profile isn't checked.
-- Mark certificates (VMC) aren't validated.
+- Mark certificates (VMC, CMC) and `a=` aren't validated.
+- Logo rendering (centring within the circle crop, colours) isn't checked.
 - DNSSEC status isn't reported (see `wslib-dns`).

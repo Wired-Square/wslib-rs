@@ -32,10 +32,8 @@ async fn example_com_publishes_spf_dmarc_and_a_null_mx() {
 #[ignore = "needs the network"]
 async fn check_domain_reports_on_example_com_within_its_budget() {
     let dns = HickoryResolver::from_system(HickoryOptions::default()).unwrap();
-    let options = CheckOptions {
-        query_log: true,
-        ..CheckOptions::default()
-    };
+    let mut options = CheckOptions::default();
+    options.query_log = true;
     let report = check::check_domain(&dns, "example.com", &options).await;
     assert!(report.queries_sent <= 200);
     assert!(
@@ -67,4 +65,19 @@ async fn a_published_mta_sts_policy_is_fetched_over_https() {
         panic!("google.com serves an MTA-STS policy");
     };
     assert!(policy.is_usable());
+}
+
+#[cfg(feature = "http")]
+#[tokio::test]
+#[ignore = "needs the network"]
+async fn a_published_bimi_logo_is_fetched_and_checked() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let dns = HickoryResolver::from_system(HickoryOptions::default()).unwrap();
+    let mut options = CheckOptions::default();
+    options.bimi_http = Some(discover::HttpClients::new(reqwest::Client::builder));
+    let report = check::check_domain(&dns, "bimigroup.org", &options).await;
+    let Some(discover::LogoFetch::Fetched { validation, .. }) = report.bimi_logo else {
+        panic!("bimigroup.org serves a logo: {:?}", report.bimi_logo);
+    };
+    assert!(validation.size > 0);
 }

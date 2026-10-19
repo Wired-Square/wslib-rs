@@ -19,6 +19,8 @@
 
 mod address;
 mod fault;
+#[cfg(any(test, feature = "http"))]
+mod inflate;
 mod text;
 mod uri;
 

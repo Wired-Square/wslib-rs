@@ -1,0 +1,60 @@
+# wslib-dns-mail
+
+Email-authentication records published in DNS: SPF, DMARC, DKIM keys, BIMI,
+MTA-STS and TLS-RPT. Built on [`wslib-dns`](../wslib-dns).
+
+This crate looks at what a domain *publishes*. It doesn't verify DKIM
+signatures on messages or evaluate DMARC for a message.
+
+## Parsers
+
+Each parser is lenient. It reads past faults, so every tag and term can still
+be shown, and returns a `Parsed<T>`:
+
+```rust
+use wslib_dns_mail::{FaultCode, dmarc};
+
+let input = "v=DMARC1; p=reject; pct=200; rua=mailto:dmarc@example.com";
+let parsed = dmarc::parse(input);
+assert_eq!(parsed.record.effective_percent(), 100);
+assert_eq!(parsed.faults[0].code, FaultCode::InvalidTagValue);
+assert_eq!(&input[parsed.faults[0].span.clone()], "200");
+assert!(parsed.is_usable());
+```
+
+A `SyntaxFault` carries a stable `FaultCode`, a byte span into the input (so a
+UI can highlight the bad token), and the tag or mechanism it's about. Each
+record type answers "would a receiver use this?" with `is_usable()`, derived
+from the faults; it's the one definition of valid. Inputs are unwrapped first:
+a UTF-8 BOM, outer whitespace and stray wrapping quotes are removed, and spans
+still point into the original text.
+
+| Module     | Record                                     | Notes |
+| ---------- | ------------------------------------------ | ----- |
+| `spf`      | RFC 7208                                   | Typed `Mechanism`s and qualifiers, `redirect=`/`exp=`, dual CIDR, the §7 macro grammar. Unknown modifiers are kept, not faulted. |
+| `dmarc`    | RFC 7489 and DMARCbis (`np`, `psd`, `t`)   | Literal values plus `effective_*` with the RFC defaults applied. The §6.6.3 fallback to `p=none` when `rua` is valid is `policy_treated_as_none()`. |
+| `dkim`     | RFC 6376 §3.6.1, RFC 8301, RFC 8463        | Case-sensitive tags. Decodes `p=` and reports `rsa_bits`. An empty `p=` means revoked. |
+| `bimi`     | draft-brand-indicators-for-message-identification | `l=` and `a=` must be `https:` or empty; an empty `l=` means declined. |
+| `mta_sts`  | RFC 8461                                   | The TXT record, and the policy file with `mx` pattern matching. |
+| `tls_rpt`  | RFC 8460                                   | `rua=` with `mailto:` and `https:` URIs. |
+
+`is_spf`, `is_dmarc`, `is_bimi`, `is_mta_sts` and `is_tls_rpt` tell whether a
+TXT string is that kind of record at all.
+
+## Building and editing records
+
+- `Display` on every record renders it canonically: `v=spf1` and single-spaced
+  terms, or tag-list tags joined by `; `.
+- `dmarc::DmarcBuilder` composes a record with its tags in a fixed order.
+- `dmarc::with_aggregate(record, uri)` adds a `rua=` destination, and
+  `spf::with_includes(record, domains)` adds `include:`s before the `all`.
+  Both keep the other tags and terms, in order and as written, and don't add
+  anything already there.
+
+## Features
+
+| Feature | Adds                                           |
+| ------- | ---------------------------------------------- |
+| `serde` | `Serialize`/`Deserialize` on every public type |
+
+None are on by default. The parsers need no async runtime.

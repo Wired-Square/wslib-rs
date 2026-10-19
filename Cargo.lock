@@ -4509,6 +4509,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-dns-mail"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wslib-dns",
+]
+
+[[package]]
 name = "wslib-mcp"
 version = "0.1.1"
 dependencies = [

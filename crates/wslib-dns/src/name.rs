@@ -134,6 +134,12 @@ pub fn to_ascii(name: &str) -> Result<String, IdnaError> {
     idna::domain_to_ascii(&name).map_err(|_| IdnaError(name))
 }
 
+/// The form a query is made and keyed in: A-labels where IDNA accepts the
+/// name, else just normalised, so the backend reports what's wrong with it.
+pub(crate) fn query_name(name: &str) -> String {
+    to_ascii(name).unwrap_or_else(|_| normalise(name))
+}
+
 /// The U-label form of a name, for display. Labels that fail to decode are
 /// left as they were.
 pub fn to_unicode(name: &str) -> String {

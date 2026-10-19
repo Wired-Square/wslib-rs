@@ -22,14 +22,20 @@ match dns.txt("_dmarc.example.com").await {
   `aaaa`, `mx`, `ns`, `cname`, `ptr`), plus `ip` (A and AAAA together) and
   `cname_chain` (follows aliases, detects loops, capped at
   `DEFAULT_MAX_CNAME_HOPS`). Futures are `Send`, and there's no global state.
+  `&R` and `Arc<R>` are resolvers too.
   Returned names are normalised: lowercase, no trailing dot. The root (a null
   MX's exchange) stays `.`.
 - **`Txt`** keeps the raw character-strings. `joined()` concatenates them with
   no separator and no escaping, as SPF and DMARC require (RFC 7208 §3.3).
 - **`HickoryResolver`** (feature `hickory`): hickory 0.26 with its TTL cache.
   `from_system` reads `/etc/resolv.conf` (the VPC resolver on Lambda) and falls
-  back to Cloudflare. `from_nameservers` takes explicit addresses. Queries are
-  sent fully qualified, so search domains never apply.
+  back to Cloudflare. `from_nameservers` takes explicit socket addresses.
+  Queries are sent fully qualified, so search domains never apply. EDNS0 is
+  always on, whatever resolv.conf says, so large TXT sets fit in one UDP
+  answer.
+- **Internationalised names** are converted to A-labels before every query, in
+  every resolver here, so `txt("bücher.example")` asks for
+  `xn--bcher-kva.example`.
 - **`FakeResolver`** (feature `testing`): an in-memory zone for tests, in this
   crate and in yours. Unknown names answer NXDOMAIN, and known names without
   the type answer NODATA. Any name and type can be set to fail, and queries are

@@ -54,7 +54,7 @@ impl<R: Resolver> LoggingResolver<R> {
         let started = Instant::now();
         let result = query.await;
         let record = QueryRecord {
-            name: crate::normalise(name),
+            name: crate::name::query_name(name),
             record_type,
             outcome: match &result {
                 Ok(answer) => Ok(answer

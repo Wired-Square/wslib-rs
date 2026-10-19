@@ -7,8 +7,10 @@
   a timeout apart. Provided `ip` (A and AAAA together) and `cname_chain`
   (loop-detecting, hop-capped).
 - `HickoryResolver` (feature `hickory`, hickory 0.26) from the system
-  configuration with a Cloudflare fallback, or from explicit nameservers; 2 s
-  timeout and 2 attempts by default.
+  configuration with a Cloudflare fallback, or from explicit nameserver socket
+  addresses; 2 s timeout and 2 attempts by default, EDNS0 always on.
+- Internationalised names are queried as A-labels by every resolver here.
+- `&R` and `Arc<R>` implement `Resolver`.
 - `FakeResolver` (feature `testing`): an in-memory zone that counts queries per
   name and type.
 - `LoggingResolver`: records every query and its outcome.

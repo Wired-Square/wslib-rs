@@ -29,13 +29,36 @@ async fn example_com_answers_and_reports_absence_precisely() {
 #[tokio::test]
 #[ignore = "needs the network"]
 async fn explicit_nameservers_resolve() {
-    let dns =
-        HickoryResolver::from_nameservers(["1.1.1.1".parse().unwrap()], HickoryOptions::default())
-            .unwrap();
+    let dns = HickoryResolver::from_nameservers(
+        ["1.1.1.1:53".parse().unwrap()],
+        HickoryOptions::default(),
+    )
+    .unwrap();
     let mx = dns.mx("example.com").await.unwrap();
     assert!(
         mx.records
             .iter()
             .all(|mx| mx.exchange == "." || !mx.exchange.ends_with('.'))
     );
+}
+
+#[tokio::test]
+#[ignore = "needs the network"]
+async fn a_validation_failure_is_servfail() {
+    let dns = HickoryResolver::from_nameservers(
+        ["1.1.1.1:53".parse().unwrap()],
+        HickoryOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        dns.txt("dnssec-failed.org").await,
+        Err(LookupError::ServFail)
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs the network"]
+async fn internationalised_names_are_sent_as_a_labels() {
+    let error = resolver().txt("bücher.example.invalid").await.unwrap_err();
+    assert_eq!(error, LookupError::NxDomain);
 }

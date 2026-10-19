@@ -66,29 +66,35 @@ pub trait Resolver: Send + Sync {
     }
 }
 
-impl<R: Resolver> Resolver for &R {
-    fn txt(&self, name: &str) -> impl Future<Output = Lookup<Txt>> + Send {
-        (**self).txt(name)
-    }
-    fn a(&self, name: &str) -> impl Future<Output = Lookup<Ipv4Addr>> + Send {
-        (**self).a(name)
-    }
-    fn aaaa(&self, name: &str) -> impl Future<Output = Lookup<Ipv6Addr>> + Send {
-        (**self).aaaa(name)
-    }
-    fn mx(&self, name: &str) -> impl Future<Output = Lookup<Mx>> + Send {
-        (**self).mx(name)
-    }
-    fn ns(&self, name: &str) -> impl Future<Output = Lookup<String>> + Send {
-        (**self).ns(name)
-    }
-    fn cname(&self, name: &str) -> impl Future<Output = Lookup<String>> + Send {
-        (**self).cname(name)
-    }
-    fn ptr(&self, ip: IpAddr) -> impl Future<Output = Lookup<String>> + Send {
-        (**self).ptr(ip)
-    }
+macro_rules! delegate_resolver {
+    ($($wrapper:ty),+) => {$(
+        impl<R: Resolver> Resolver for $wrapper {
+            fn txt(&self, name: &str) -> impl Future<Output = Lookup<Txt>> + Send {
+                (**self).txt(name)
+            }
+            fn a(&self, name: &str) -> impl Future<Output = Lookup<Ipv4Addr>> + Send {
+                (**self).a(name)
+            }
+            fn aaaa(&self, name: &str) -> impl Future<Output = Lookup<Ipv6Addr>> + Send {
+                (**self).aaaa(name)
+            }
+            fn mx(&self, name: &str) -> impl Future<Output = Lookup<Mx>> + Send {
+                (**self).mx(name)
+            }
+            fn ns(&self, name: &str) -> impl Future<Output = Lookup<String>> + Send {
+                (**self).ns(name)
+            }
+            fn cname(&self, name: &str) -> impl Future<Output = Lookup<String>> + Send {
+                (**self).cname(name)
+            }
+            fn ptr(&self, ip: IpAddr) -> impl Future<Output = Lookup<String>> + Send {
+                (**self).ptr(ip)
+            }
+        }
+    )+};
 }
+
+delegate_resolver!(&R, std::sync::Arc<R>);
 
 /// The names a CNAME chain passed through, starting with the one queried.
 #[derive(Clone, Debug, PartialEq, Eq)]

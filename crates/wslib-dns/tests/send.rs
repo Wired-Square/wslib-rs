@@ -19,3 +19,8 @@ async fn by_value<R: Resolver>(dns: R) {
 
 #[test]
 fn compiles() {}
+
+#[allow(dead_code)]
+fn shared_resolvers_are_resolvers<R: Resolver>(dns: std::sync::Arc<R>) {
+    assert_send(by_value(dns));
+}

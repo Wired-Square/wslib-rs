@@ -1,7 +1,9 @@
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
-use hickory_resolver::config::{CLOUDFLARE, NameServerConfig, ResolverConfig, ResolverOpts};
+use hickory_resolver::config::{
+    CLOUDFLARE, ConnectionConfig, NameServerConfig, ResolverConfig, ResolverOpts,
+};
 use hickory_resolver::lookup::Lookup as HickoryLookup;
 use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use hickory_resolver::net::{DnsError, NetError, NoRecords};
@@ -15,6 +17,14 @@ use crate::{Answer, Lookup, LookupError, Mx, Resolver, Txt, normalise};
 #[derive(Clone)]
 pub struct HickoryResolver {
     inner: TokioResolver,
+}
+
+impl std::fmt::Debug for HickoryResolver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HickoryResolver")
+            .field("options", self.inner.options())
+            .finish_non_exhaustive()
+    }
 }
 
 /// How long to wait for each server and how many times to ask.
@@ -48,17 +58,13 @@ impl HickoryResolver {
         Self::build(config, opts, options)
     }
 
-    /// Exactly these nameservers, over UDP with TCP fallback on port 53.
+    /// Exactly these nameservers, over UDP with TCP fallback.
     pub fn from_nameservers(
-        nameservers: impl IntoIterator<Item = IpAddr>,
+        nameservers: impl IntoIterator<Item = SocketAddr>,
         options: HickoryOptions,
     ) -> Result<Self, LookupError> {
-        let config = ResolverConfig::from_name_servers(
-            nameservers
-                .into_iter()
-                .map(NameServerConfig::udp_and_tcp)
-                .collect(),
-        );
+        let config =
+            ResolverConfig::from_name_servers(nameservers.into_iter().map(nameserver).collect());
         Self::build(config, ResolverOpts::default(), options)
     }
 
@@ -69,6 +75,9 @@ impl HickoryResolver {
     ) -> Result<Self, LookupError> {
         opts.timeout = options.timeout;
         opts.attempts = options.attempts;
+        // resolv.conf leaves EDNS0 off unless it says `options edns0`, which caps
+        // UDP answers at 512 bytes and sends large TXT sets round again over TCP.
+        opts.edns0 = true;
         let inner = TokioResolver::builder_with_config(config, TokioRuntimeProvider::default())
             .with_options(opts)
             .build()
@@ -83,7 +92,7 @@ impl HickoryResolver {
         extract: impl Fn(&RData) -> Option<T>,
     ) -> Lookup<T> {
         // Fully qualified, so resolv.conf search domains are never appended.
-        let name = Name::from_ascii(format!("{}.", normalise(name)))
+        let name = Name::from_ascii(format!("{}.", crate::name::query_name(name)))
             .map_err(|error| LookupError::Other(format!("invalid name: {error}")))?;
         let lookup = self
             .inner
@@ -92,6 +101,17 @@ impl HickoryResolver {
             .map_err(classify)?;
         answer(&lookup, extract)
     }
+}
+
+fn nameserver(address: SocketAddr) -> NameServerConfig {
+    let connections = [ConnectionConfig::udp(), ConnectionConfig::tcp()]
+        .into_iter()
+        .map(|mut connection| {
+            connection.port = address.port();
+            connection
+        })
+        .collect();
+    NameServerConfig::new(address.ip(), true, connections)
 }
 
 fn answer<T>(lookup: &HickoryLookup, extract: impl Fn(&RData) -> Option<T>) -> Lookup<T> {

@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Mutex;
 
+use crate::name::query_name;
 use crate::{Answer, Lookup, LookupError, Mx, RecordType, Resolver, Txt, normalise, reverse_name};
 
 /// An in-memory zone for tests, which counts the queries made of it.
@@ -49,7 +50,7 @@ impl FakeResolver {
     }
 
     fn entry(&mut self, name: &str) -> &mut Entry {
-        self.names.entry(normalise(name)).or_default()
+        self.names.entry(query_name(name)).or_default()
     }
 
     /// Adds one TXT record per string, each a single character-string.
@@ -96,7 +97,7 @@ impl FakeResolver {
     /// Makes `name` an alias of `target`. Other queries at `name` answer from
     /// the target, as a recursive resolver's do, counted once under `name`.
     pub fn with_cname(mut self, name: &str, target: &str) -> Self {
-        self.entry(name).cname = Some(normalise(target));
+        self.entry(name).cname = Some(query_name(target));
         self
     }
 
@@ -125,7 +126,7 @@ impl FakeResolver {
             .lock()
             .expect("query counts are never poisoned");
         queries
-            .get(&(normalise(name), record_type))
+            .get(&(query_name(name), record_type))
             .copied()
             .unwrap_or(0)
     }
@@ -156,7 +157,7 @@ impl FakeResolver {
         record_type: RecordType,
         records: impl Fn(&Entry) -> Vec<T>,
     ) -> Lookup<T> {
-        let name = normalise(name);
+        let name = query_name(name);
         *self
             .queries
             .lock()
@@ -267,6 +268,20 @@ mod tests {
         assert_eq!(dns.queries("example.com", RecordType::Txt), 2);
         assert_eq!(dns.queries("example.com", RecordType::A), 1);
         assert_eq!(dns.total_queries(), 3);
+    }
+
+    #[test]
+    fn internationalised_names_are_queried_as_a_labels() {
+        let dns = FakeResolver::new().with_txt("bücher.example", ["v=spf1 -all"]);
+        assert!(block_on(dns.txt("BÜCHER.example.")).is_ok());
+        assert!(block_on(dns.txt("xn--bcher-kva.example")).is_ok());
+        assert_eq!(dns.queries("xn--bcher-kva.example", RecordType::Txt), 2);
+    }
+
+    #[test]
+    fn service_names_survive_idna() {
+        let dns = FakeResolver::new().with_txt("_dmarc.example.com", ["v=DMARC1; p=none"]);
+        assert!(block_on(dns.txt("_DMARC.example.com")).is_ok());
     }
 
     #[test]

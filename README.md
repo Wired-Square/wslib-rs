@@ -15,6 +15,7 @@ appliance chassis and every app beside it.
 | `wslib-cli`           | Tables or JSON, exit codes, config lookup and `op://`       |
 | `wslib-http-error`    | One HTTP error body, the axum error and extractors for it   |
 | `wslib-http-scaffold` | SPA fallback, health and version routes, standard layers    |
+| `wslib-http-server`   | HTTP, TLS and a redirect listener, bounded and drained      |
 
 † Not pure Rust: it carries TypeScript in `js/` that apps vendor into their
 frontend. Every crate that ships other languages is marked here, and says so

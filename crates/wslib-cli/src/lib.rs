@@ -4,6 +4,8 @@
 
 pub mod config;
 pub mod exit;
+#[cfg(feature = "op")]
+pub mod op;
 pub mod output;
 
 pub use comfy_table;

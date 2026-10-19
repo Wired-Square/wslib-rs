@@ -37,3 +37,5 @@ fn run(cli: &Cli, output: Output) -> anyhow::Result<()> {
   `~/.config`, macOS included. `var("URL")` reads `<PREFIX>_URL`, and a flag
   beats it, which beats the file. `read` hands back the text in any format;
   `load` (feature `toml`) parses TOML.
+- **`op`** (feature `op`): `resolve` passes a plain value through and reads an
+  `op://` reference with `op read`. Tests fake the reader with a closure.

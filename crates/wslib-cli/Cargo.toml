@@ -14,6 +14,7 @@ publish = ["wired-square"]
 default = []
 clap = ["dep:clap"]
 toml = ["dep:toml"]
+op = []
 
 [dependencies]
 comfy-table = { version = "8.0", default-features = false }

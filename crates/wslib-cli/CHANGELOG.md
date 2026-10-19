@@ -12,3 +12,5 @@
 - `config::Discovery`: the config file is the named one, `<PREFIX>_CONFIG`, or
   `<app>/config.toml` under `$XDG_CONFIG_HOME` or `~/.config`, on macOS too;
   `var` reads a `<PREFIX>_<KEY>` override. `load` (feature `toml`) parses it.
+- `op` (feature `op`): `resolve` reads a value that is an `op://` reference
+  with `op read`, through a `ReadReference` that tests can fake.

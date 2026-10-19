@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+- `setup-core` is `Telemetry` without tracing-subscriber's `env-filter`, and so
+  without its regex engine: `RUST_LOG` and the default filter are target and
+  level directives only. `setup` is `setup-core` with `env-filter`, as before.
+
 ## 0.1.2
 
 - Dependency floors raised: tracing-subscriber 0.3.20, for RUSTSEC-2025-0055

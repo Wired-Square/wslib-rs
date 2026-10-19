@@ -1,6 +1,6 @@
 [package]
 name = "wslib-telemetry"
-version = "0.1.2"
+version = "0.1.3"
 description = "One tracing setup for daemons and command lines, and an in-memory ring of a service's own log."
 edition.workspace = true
 rust-version.workspace = true
@@ -11,7 +11,9 @@ publish = ["wired-square"]
 
 [features]
 default = ["setup", "ansi"]
-setup = ["dep:tracing", "dep:tracing-subscriber", "tracing-subscriber/fmt", "tracing-subscriber/env-filter"]
+# `Telemetry` filtering by target and level alone, without env-filter's regex.
+setup-core = ["dep:tracing", "dep:tracing-subscriber", "tracing-subscriber/fmt"]
+setup = ["setup-core", "tracing-subscriber/env-filter"]
 ansi = ["setup", "tracing-subscriber/ansi"]
 json = ["setup", "tracing-subscriber/json"]
 journald = ["setup"]

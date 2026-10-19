@@ -1,11 +1,15 @@
 use std::ffi::OsStr;
 use std::io::{self, IsTerminal};
 
+#[cfg(feature = "setup")]
+use tracing_subscriber::EnvFilter;
+#[cfg(any(test, not(feature = "setup")))]
+use tracing_subscriber::filter::Targets;
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::{SubscriberInitExt, TryInitError};
-use tracing_subscriber::{EnvFilter, Layer, fmt};
+use tracing_subscriber::{Layer, fmt};
 
 #[cfg(feature = "ring")]
 use crate::Logs;
@@ -123,7 +127,7 @@ impl Telemetry {
     /// subscriber is already installed.
     pub fn try_init(self) -> Result<(), TryInitError> {
         let rust_log = std::env::var_os("RUST_LOG");
-        let (filter, rejected) = choose_filter(&self.default_filter, rust_log.as_deref());
+        let (filter, rejected) = choose_filter::<Filter>(&self.default_filter, rust_log.as_deref());
 
         let subscriber = tracing_subscriber::registry()
             .with(filter)
@@ -184,26 +188,76 @@ fn colour_by_default(terminal: bool, no_color: Option<&OsStr>) -> bool {
     terminal && no_color.is_none_or(OsStr::is_empty)
 }
 
+#[cfg(feature = "setup")]
+type Filter = EnvFilter;
+#[cfg(not(feature = "setup"))]
+type Filter = Targets;
+
+trait Directives: Sized {
+    fn parse(directives: &str) -> Result<Self, String>;
+    /// Skips the directives that do not parse.
+    fn parse_lossy(directives: &str) -> Self;
+    fn with_own_warnings(self) -> Self;
+}
+
+#[cfg(feature = "setup")]
+impl Directives for EnvFilter {
+    fn parse(directives: &str) -> Result<Self, String> {
+        Self::try_new(directives).map_err(|e| e.to_string())
+    }
+
+    fn parse_lossy(directives: &str) -> Self {
+        Self::builder().parse_lossy(directives)
+    }
+
+    fn with_own_warnings(self) -> Self {
+        self.add_directive(
+            concat!(env!("CARGO_CRATE_NAME"), "=warn")
+                .parse()
+                .expect("a valid directive"),
+        )
+    }
+}
+
+#[cfg(any(test, not(feature = "setup")))]
+impl Directives for Targets {
+    fn parse(directives: &str) -> Result<Self, String> {
+        directives.parse::<Self>().map_err(|e| e.to_string())
+    }
+
+    fn parse_lossy(directives: &str) -> Self {
+        directives
+            .split(',')
+            .filter(|d| d.parse::<Self>().is_ok())
+            .collect::<Vec<_>>()
+            .join(",")
+            .parse()
+            .unwrap_or_default()
+    }
+
+    fn with_own_warnings(self) -> Self {
+        self.with_target(env!("CARGO_CRATE_NAME"), tracing::Level::WARN)
+    }
+}
+
 /// `RUST_LOG` when it is set and parses; otherwise the default, and what was
 /// rejected with why, for a warning once there is a subscriber to take one.
-fn choose_filter(default: &str, rust_log: Option<&OsStr>) -> (EnvFilter, Option<(String, String)>) {
-    let fallback = || EnvFilter::builder().parse_lossy(default);
+fn choose_filter<F: Directives>(
+    default: &str,
+    rust_log: Option<&OsStr>,
+) -> (F, Option<(String, String)>) {
     let Some(value) = rust_log.filter(|v| !v.is_empty()) else {
-        return (fallback(), None);
+        return (F::parse_lossy(default), None);
     };
     let parsed = value
         .to_str()
         .ok_or_else(|| "not valid Unicode".to_string())
-        .and_then(|v| EnvFilter::try_new(v).map_err(|e| e.to_string()));
+        .and_then(F::parse);
     match parsed {
         Ok(filter) => (filter, None),
         Err(error) => (
             // A default with no global level would otherwise drop the warning.
-            fallback().add_directive(
-                concat!(env!("CARGO_CRATE_NAME"), "=warn")
-                    .parse()
-                    .expect("a valid directive"),
-            ),
+            F::parse_lossy(default).with_own_warnings(),
             Some((value.to_string_lossy().into_owned(), error)),
         ),
     }
@@ -213,31 +267,53 @@ fn choose_filter(default: &str, rust_log: Option<&OsStr>) -> (EnvFilter, Option<
 mod tests {
     use super::*;
 
-    fn chosen(rust_log: Option<&str>) -> (String, Option<String>) {
-        let (filter, rejected) = choose_filter("foo=info,warn", rust_log.map(OsStr::new));
+    type Chosen = (String, Option<String>);
+
+    fn chosen<F: Directives + std::fmt::Display>(rust_log: Option<&str>) -> Chosen {
+        let (filter, rejected) = choose_filter::<F>("foo=info,warn", rust_log.map(OsStr::new));
         (filter.to_string(), rejected.map(|(value, _)| value))
+    }
+
+    fn each_filter() -> Vec<fn(Option<&str>) -> Chosen> {
+        vec![
+            #[cfg(feature = "setup")]
+            chosen::<EnvFilter>,
+            chosen::<Targets>,
+        ]
     }
 
     #[test]
     fn rust_log_wins_when_it_parses() {
-        assert_eq!(chosen(Some("bar=debug")), ("bar=debug".into(), None));
+        for chosen in each_filter() {
+            assert_eq!(chosen(Some("bar=debug")), ("bar=debug".into(), None));
+        }
     }
 
     #[test]
     fn an_unset_or_empty_rust_log_is_the_default_without_a_warning() {
-        for rust_log in [None, Some("")] {
-            let (filter, rejected) = chosen(rust_log);
-            assert_eq!(rejected, None);
-            assert!(filter.contains("foo=info"), "{filter}");
+        for chosen in each_filter() {
+            for rust_log in [None, Some("")] {
+                let (filter, rejected) = chosen(rust_log);
+                assert_eq!(rejected, None);
+                assert!(filter.contains("foo=info"), "{filter}");
+            }
         }
     }
 
     #[test]
     fn a_rust_log_that_does_not_parse_falls_back_and_says_what_it_was() {
-        let (filter, rejected) = chosen(Some("bar=loudest"));
-        assert!(filter.contains("foo=info"), "{filter}");
-        assert!(filter.contains("wslib_telemetry=warn"), "{filter}");
-        assert_eq!(rejected.as_deref(), Some("bar=loudest"));
+        for chosen in each_filter() {
+            let (filter, rejected) = chosen(Some("bar=loudest"));
+            assert!(filter.contains("foo=info"), "{filter}");
+            assert!(filter.contains("wslib_telemetry=warn"), "{filter}");
+            assert_eq!(rejected.as_deref(), Some("bar=loudest"));
+        }
+    }
+
+    #[test]
+    fn a_default_that_partly_parses_keeps_what_does() {
+        let filter = Targets::parse_lossy("foo=info,bar=loudest,warn");
+        assert_eq!(filter.to_string(), "foo=info,warn");
     }
 
     #[test]

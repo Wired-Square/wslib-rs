@@ -2,7 +2,10 @@ use super::{Detail, Finding, FindingCode, Severity, lookup_failure};
 use crate::FaultCode;
 use crate::bimi::BimiRecord;
 use crate::bimi::LOGO_SIZE_GUIDANCE;
-use crate::discover::{DmarcDiscovery, FetchFailure, Inherited, LogoFetch, Outcome};
+use crate::bimi::{VmcProblem, VmcVerification};
+use crate::discover::{
+    CertificateFetch, DmarcDiscovery, FetchFailure, Inherited, LogoFetch, Outcome,
+};
 use crate::dmarc::Policy;
 
 /// The findings for a BIMI lookup. `dmarc` holds the DMARC discoveries that
@@ -52,8 +55,16 @@ pub fn bimi_findings(records: &Inherited<BimiRecord>, dmarc: &[&DmarcDiscovery])
             _ => Finding::new(FindingCode::BimiSyntax, &set.name, detail),
         });
     }
-    if published.parsed.record.is_declined() {
+    let record = &published.parsed.record;
+    if record.is_declined() {
         return findings;
+    }
+    if record.authority.as_deref().is_none_or(str::is_empty) {
+        findings.push(Finding::new(
+            FindingCode::BimiVmcAbsent,
+            &set.name,
+            Detail::None,
+        ));
     }
     for discovery in dmarc {
         if let Some(detail) = not_enforcing(discovery) {
@@ -148,6 +159,60 @@ pub fn bimi_logo_findings(subject: &str, logo: &LogoFetch) -> Vec<Finding> {
                 offset: violation.offset,
                 detail: violation.detail.clone(),
             },
+        ));
+    }
+    findings
+}
+
+/// The findings for a BIMI record's mark certificate, as fetched and, when
+/// it was, verified.
+pub fn bimi_vmc_findings(
+    subject: &str,
+    fetch: &CertificateFetch,
+    verification: Option<&VmcVerification>,
+) -> Vec<Finding> {
+    match fetch {
+        CertificateFetch::Unreachable {
+            failure: FetchFailure::NotSent,
+            ..
+        } => return vec![super::incomplete("bimi", subject)],
+        CertificateFetch::Unreachable { url, failure } => {
+            return vec![Finding::new(
+                FindingCode::BimiVmcUnreachable,
+                subject,
+                Detail::Unreachable {
+                    url: url.clone(),
+                    failure: failure.clone(),
+                },
+            )];
+        }
+        CertificateFetch::Fetched { .. } => {}
+    }
+    let Some(verification) = verification else {
+        return Vec::new();
+    };
+    let mut findings: Vec<Finding> = verification
+        .problems
+        .iter()
+        .map(|problem| {
+            let code = match problem {
+                VmcProblem::MissingSct => FindingCode::BimiVmcMissingSct,
+                _ => FindingCode::BimiVmcInvalid,
+            };
+            Finding::new(
+                code,
+                subject,
+                Detail::Vmc {
+                    problem: problem.clone(),
+                },
+            )
+        })
+        .collect();
+    if verification.logo_matches == Some(false) {
+        findings.push(Finding::new(
+            FindingCode::BimiVmcLogoMismatch,
+            subject,
+            Detail::None,
         ));
     }
     findings

@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.3.0
+
+- **Breaking:** `check::Detail`, `discover::PolicyFetch`, `LogoFetch` and the
+  new `CertificateFetch` are `#[non_exhaustive]`; a `match` on them needs a
+  wildcard arm. Later variants are then not breaking.
+- `bimi::verify_vmc` checks a BIMI record's mark certificate chain
+  (VMC or CMC) and reports every problem (`VmcProblem`):
+  - the chain to caller-supplied `VmcTrustAnchors`, with the caller's
+    signature algorithms, since no crypto provider is built in;
+  - the BIMI purpose as the only extended key usage;
+  - the validity dates, against a caller-supplied time;
+  - a subject name covering the domain or `<selector>._bimi.` name;
+  - `subject:markType`, giving `MarkCertificateKind`;
+  - the embedded logo, decoded, inflated, checked against SVG Tiny PS and
+    compared by SHA-256 with the `l=` logo;
+  - at least one Certificate Transparency timestamp.
+- `discover::bimi_certificate` (feature `http`) fetches the `a=` chain with
+  the logo fetch's protections. `check_domain` verifies it when given
+  `CheckOptions::bimi_vmc`, reporting `DomainReport::{bimi_certificate,
+  bimi_vmc}`.
+- Findings `bimi_vmc_absent` (a logo with no `a=`), `bimi_vmc_unreachable`,
+  `bimi_vmc_invalid`, `bimi_vmc_logo_mismatch` and `bimi_vmc_missing_sct`.
+- `Display` with neutral wording on `FetchFailure`, `SvgRule`,
+  `SvgViolation` and `VmcProblem`.
+
 ## 0.2.0
 
 - **Breaking:** `CheckOptions` and `DomainReport` are `#[non_exhaustive]`, so

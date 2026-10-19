@@ -183,6 +183,28 @@ resolved and vetted, or vetted directly if it's an IP literal, before any
 connection. A `.svgz` or gzip-encoded logo is inflated, with a cap on both
 the compressed and the inflated size.
 
+## Mark certificates
+
+`bimi::verify_vmc(pem, domain, selector, logo, &VmcOptions)` verifies the PEM
+chain a BIMI record's `a=` names, following draft-fetch-validation-vmc-wchuang
+and the BIMI Group's Mark Certificate Requirements. It checks the chain, the
+BIMI-only extended key usage, the dates, the subject names, the mark type
+(VMC or CMC), the embedded logo (checked, and compared with `l=`) and the
+Certificate Transparency timestamps, and reports every problem. No roots are
+built in: `VmcTrustAnchors::from_pem` takes the caller's, and the signature
+algorithms come from the caller's rustls provider, so this crate pulls in
+none. SCT signatures aren't verified, only their presence.
+
+Production trust anchors are the roots of the CAs the BIMI Group lists as
+qualified to issue mark certificates (its Mark Certificate Issuer
+Information page), and mailbox providers may trust a different set. Choosing
+and refreshing them is the caller's job. Anchoring on the last certificate of
+a fetched chain proves the checks work, but it proves no trust: anyone can
+publish a chain that ends in a root they made.
+
+`discover::bimi_certificate` (feature `http`) fetches the chain with the logo
+fetch's protections.
+
 ## Building and editing records
 
 - `Display` on every record renders it canonically: `v=spf1` and single-spaced
@@ -206,6 +228,7 @@ for every wslib crate.
 
 ## Known gaps
 
-- Mark certificates (VMC, CMC) and `a=` aren't validated.
+- Mark certificates: revocation (CRLs) isn't checked, and SCT signatures
+  aren't verified against a CT log list.
 - Logo rendering (centring within the circle crop, colours) isn't checked.
 - DNSSEC status isn't reported (see `wslib-dns`).

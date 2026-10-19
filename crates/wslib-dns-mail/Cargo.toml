@@ -1,6 +1,6 @@
 [package]
 name = "wslib-dns-mail"
-version = "0.2.0"
+version = "0.3.0"
 description = "Email-authentication records in DNS: lenient parsers with byte-span faults for SPF, DMARC, DKIM keys, BIMI, MTA-STS and TLS-RPT, and record editors."
 readme = "README.md"
 edition.workspace = true
@@ -19,11 +19,16 @@ http = ["dep:reqwest", "dep:url"]
 wslib-dns = { version = "0.1.1", path = "../wslib-dns", registry = "wired-square" }
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 quick-xml = "0.38"
+rustls-pki-types = { version = "1.12", features = ["std"] }
+rustls-webpki = { version = "0.103.9", default-features = false, features = ["std"] }
+sha2 = "0.10.8"
+x509-parser = { version = "0.18", default-features = false }
 serde = { version = "1.0.225", features = ["derive"], optional = true }
 reqwest = { version = "0.13.2", default-features = false, features = ["rustls-no-provider"], optional = true }
 url = { version = "2.5.4", optional = true }
 
 [dev-dependencies]
+rcgen = "0.14"
 rustls = { version = "0.23.27", default-features = false, features = ["ring", "std"] }
 serde_json = "1.0.85"
 tokio = { version = "1.47", features = ["io-util", "macros", "net", "rt", "time"] }

@@ -14,7 +14,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::{Duration, Instant};
 
-pub use bimi::{bimi_findings, bimi_logo_findings};
+pub use bimi::{bimi_findings, bimi_logo_findings, bimi_vmc_findings};
 pub use dkim::{DkimCheck, RSA_MINIMUM_BITS, RSA_RECOMMENDED_BITS, check_dkim, dkim_findings};
 pub use dmarc::{DmarcCheck, check_dmarc, dmarc_findings};
 pub use finding::{Detail, Finding, FindingCode, Kind, Severity};
@@ -24,10 +24,11 @@ pub use spf::{SPF_LENGTH_LIMIT, SpfCheck, check_spf, spf_findings};
 use wslib_dns::{BudgetResolver, LoggingResolver, LookupError, QueryRecord, Resolver};
 
 use crate::ReportUri;
-use crate::bimi::BimiRecord;
+use crate::bimi::{BimiRecord, VmcVerification};
 use crate::discover::{
-    self, DkimDiscovery, DmarcDiscovery, DmarcDiscoveryMode, DnsblResult, Inherited, LogoFetch,
-    MxDiscovery, Outcome, PolicyFetch, RecordSet, ReportAuthorisation, join_all,
+    self, CertificateFetch, DkimDiscovery, DmarcDiscovery, DmarcDiscoveryMode, DnsblResult,
+    Inherited, LogoFetch, MxDiscovery, Outcome, PolicyFetch, RecordSet, ReportAuthorisation,
+    join_all,
 };
 use crate::mta_sts::MtaStsRecord;
 use crate::spf::tree::{SpfTree, WalkLimits};
@@ -85,6 +86,10 @@ pub struct CheckOptions {
     /// governing BIMI record names one.
     #[cfg(feature = "http")]
     pub bimi_http: Option<discover::HttpClients>,
+    /// Fetches and verifies the BIMI record's mark certificate (`a=`) with
+    /// these, over `bimi_http`.
+    #[cfg(feature = "http")]
+    pub bimi_vmc: Option<crate::bimi::VmcOptions>,
 }
 
 /// No selectors or blocklists, RFC 7489 discovery, a 10 s deadline and 200
@@ -105,6 +110,8 @@ impl Default for CheckOptions {
             mta_sts_http: None,
             #[cfg(feature = "http")]
             bimi_http: None,
+            #[cfg(feature = "http")]
+            bimi_vmc: None,
         }
     }
 }
@@ -128,6 +135,10 @@ pub struct DomainReport {
     pub mta_sts_policy: Option<PolicyFetch>,
     /// Set when the logo was fetched.
     pub bimi_logo: Option<LogoFetch>,
+    /// Set when the mark certificate was fetched.
+    pub bimi_certificate: Option<CertificateFetch>,
+    /// Set when the fetched mark certificate was verified.
+    pub bimi_vmc: Option<VmcVerification>,
     /// Ordered by family, as the checks run.
     pub findings: Vec<Finding>,
     pub queries_sent: u32,
@@ -140,7 +151,7 @@ enum Part {
     Dmarc(DmarcCheck),
     Dkim(DkimCheck),
     Mx(MxCheck),
-    Bimi(Inherited<BimiRecord>, Option<LogoFetch>),
+    Bimi(Inherited<BimiRecord>, BimiFetches),
     MtaSts(
         RecordSet<MtaStsRecord>,
         RecordSet<TlsRptRecord>,
@@ -178,8 +189,8 @@ pub async fn check_domain(
         Box::pin(async { Part::Mx(check_mx(dns, &domain, &options.dnsbl_zones).await) }),
         Box::pin(async {
             let records = discover::bimi(dns, &domain, &options.bimi_selector).await;
-            let logo = logo(dns, &records, options, deadline).await;
-            Part::Bimi(records, logo)
+            let fetches = bimi_fetches(dns, &records, options, deadline).await;
+            Part::Bimi(records, fetches)
         }),
         Box::pin(async {
             let record = discover::mta_sts(dns, &domain).await;
@@ -195,11 +206,11 @@ pub async fn check_domain(
             Part::Dmarc(check) => dmarc = Some(check),
             Part::Dkim(check) => dkim = Some(check),
             Part::Mx(check) => mx = Some(check),
-            Part::Bimi(records, logo) => bimi = Some((records, logo)),
+            Part::Bimi(records, fetches) => bimi = Some((records, fetches)),
             Part::MtaSts(record, tls_rpt, policy) => mta_sts = Some((record, tls_rpt, policy)),
         }
     }
-    let (spf, dmarc, dkim, mx, (bimi, bimi_logo), (mta_sts, tls_rpt, mta_sts_policy)) = (
+    let (spf, dmarc, dkim, mx, (bimi, bimi_fetches), (mta_sts, tls_rpt, mta_sts_policy)) = (
         spf.expect("every part runs"),
         dmarc.expect("every part runs"),
         dkim.expect("every part runs"),
@@ -220,8 +231,16 @@ pub async fn check_domain(
     findings.extend(dkim.findings);
     findings.extend(mx.findings);
     findings.extend(bimi_findings(&bimi, &governing));
-    if let (Outcome::Found { at }, Some(logo)) = (bimi.outcome, &bimi_logo) {
+    if let (Outcome::Found { at }, Some(logo)) = (bimi.outcome, &bimi_fetches.logo) {
         findings.extend(bimi_logo_findings(&bimi.attempts[at].set.name, logo));
+    }
+    if let (Outcome::Found { at }, Some(certificate)) = (bimi.outcome, &bimi_fetches.certificate) {
+        let subject = &bimi.attempts[at].set.name;
+        findings.extend(bimi_vmc_findings(
+            subject,
+            certificate,
+            bimi_fetches.vmc.as_ref(),
+        ));
     }
     findings.extend(mta_sts_findings(
         &mta_sts,
@@ -245,35 +264,72 @@ pub async fn check_domain(
         mta_sts,
         tls_rpt,
         mta_sts_policy,
-        bimi_logo,
+        bimi_logo: bimi_fetches.logo,
+        bimi_certificate: bimi_fetches.certificate,
+        bimi_vmc: bimi_fetches.vmc,
         findings,
         queries_sent,
         queries,
     }
 }
 
-/// The logo, when the governing BIMI record names one and clients were
-/// given, fetched within what's left of the deadline.
-#[cfg_attr(not(feature = "http"), allow(unused_variables))]
-async fn logo(
+/// What a BIMI record points at, fetched when clients were given: the logo,
+/// and the mark certificate verified against it.
+#[derive(Default)]
+struct BimiFetches {
+    logo: Option<LogoFetch>,
+    certificate: Option<CertificateFetch>,
+    vmc: Option<VmcVerification>,
+}
+
+#[cfg(not(feature = "http"))]
+async fn bimi_fetches(
+    _: &impl Resolver,
+    _: &Inherited<BimiRecord>,
+    _: &CheckOptions,
+    _: Option<Instant>,
+) -> BimiFetches {
+    BimiFetches::default()
+}
+
+#[cfg(feature = "http")]
+async fn bimi_fetches(
     resolver: &impl Resolver,
     records: &Inherited<BimiRecord>,
     options: &CheckOptions,
     deadline: Option<Instant>,
-) -> Option<LogoFetch> {
-    let url = records
-        .found()?
-        .parsed
-        .record
-        .location
-        .clone()
-        .filter(|url| !url.is_empty())?;
-    #[cfg(feature = "http")]
-    if let Some(clients) = &options.bimi_http {
-        let remaining = deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
-        return Some(discover::bimi_logo(resolver, clients, &url, remaining).await);
+) -> BimiFetches {
+    let mut fetches = BimiFetches::default();
+    let (Outcome::Found { at }, Some(found), Some(clients)) =
+        (records.outcome, records.found(), &options.bimi_http)
+    else {
+        return fetches;
+    };
+    let remaining = || deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
+    let record = &found.parsed.record;
+    if let Some(url) = record.location.as_deref().filter(|url| !url.is_empty()) {
+        fetches.logo = Some(discover::bimi_logo(resolver, clients, url, remaining()).await);
     }
-    None
+    let authority = record.authority.as_deref().filter(|url| !url.is_empty());
+    if let (Some(url), Some(vmc)) = (authority, &options.bimi_vmc) {
+        let certificate = discover::bimi_certificate(resolver, clients, url, remaining()).await;
+        if let CertificateFetch::Fetched { pem, .. } = &certificate {
+            let logo = match &fetches.logo {
+                Some(LogoFetch::Fetched { body, .. }) => Some(body.as_slice()),
+                _ => None,
+            };
+            let domain = &records.attempts[at].domain;
+            fetches.vmc = Some(crate::bimi::verify_vmc(
+                pem,
+                domain,
+                &options.bimi_selector,
+                logo,
+                vmc,
+            ));
+        }
+        fetches.certificate = Some(certificate);
+    }
+    fetches
 }
 
 /// The policy file, when the domain publishes an MTA-STS record and a

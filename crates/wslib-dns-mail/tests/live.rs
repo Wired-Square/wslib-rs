@@ -81,3 +81,41 @@ async fn a_published_bimi_logo_is_fetched_and_checked() {
     };
     assert!(validation.size > 0);
 }
+
+#[cfg(feature = "http")]
+#[tokio::test]
+#[ignore = "needs the network"]
+async fn a_published_mark_certificate_verifies_through_check_domain() {
+    use wslib_dns_mail::bimi::{VmcOptions, VmcTrustAnchors};
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let dns = HickoryResolver::from_system(HickoryOptions::default()).unwrap();
+    let clients = discover::HttpClients::new(reqwest::Client::builder);
+    let records = discover::bimi(&dns, "cnn.com", "default").await;
+    let authority = records
+        .found()
+        .and_then(|found| found.parsed.record.authority.clone())
+        .unwrap();
+    let discover::CertificateFetch::Fetched { pem, .. } =
+        discover::bimi_certificate(&dns, &clients, &authority, None).await
+    else {
+        panic!("cnn.com serves its mark certificate");
+    };
+    // No roots are built in; anchor on the chain's own root to check the rest.
+    let text = String::from_utf8(pem).unwrap();
+    let root = text
+        .split_inclusive("-----END CERTIFICATE-----")
+        .filter(|b| b.contains("BEGIN"))
+        .last()
+        .unwrap();
+    let mut options = CheckOptions::default();
+    options.bimi_http = Some(clients);
+    options.bimi_vmc = Some(VmcOptions::new(
+        VmcTrustAnchors::from_pem(root.as_bytes()).unwrap(),
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .all,
+    ));
+    let report = check::check_domain(&dns, "cnn.com", &options).await;
+    let vmc = report.bimi_vmc.expect("the certificate is verified");
+    assert!(vmc.is_valid(), "{:?}", vmc.problems);
+}

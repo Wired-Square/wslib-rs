@@ -51,6 +51,13 @@ fn discovery_futures_are_send<R: Resolver>(dns: &R, uri: &wslib_dns_mail::Report
         &CheckOptions::default(),
     ));
     #[cfg(feature = "http")]
+    assert_send(discover::bimi_certificate(
+        dns,
+        &discover::HttpClients::new(reqwest::Client::builder),
+        "https://example.com/vmc.pem",
+        None,
+    ));
+    #[cfg(feature = "http")]
     assert_send(discover::mta_sts_policy(
         dns,
         &discover::HttpClients::new(reqwest::Client::builder),

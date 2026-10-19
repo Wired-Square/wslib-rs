@@ -5,7 +5,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use wslib_dns::LookupError;
 
 use crate::SyntaxFault;
-use crate::bimi::SvgRule;
+use crate::bimi::{SvgRule, VmcProblem};
 use crate::discover::FetchFailure;
 use crate::dmarc::Policy;
 use crate::spf::tree::TermPath;
@@ -159,6 +159,11 @@ finding_codes! {
     BimiLogoInvalid => "bimi_logo_invalid", Spec, Error, "draft-svg-tiny-ps-abrotman";
     BimiLogoTooLarge => "bimi_logo_too_large", Practice, Warning, "BIMI Group implementation guide";
     BimiLogoContentType => "bimi_logo_content_type", Practice, Warning, "draft-brand-indicators-for-message-identification";
+    BimiVmcAbsent => "bimi_vmc_absent", Observation, Info, "draft-brand-indicators-for-message-identification";
+    BimiVmcUnreachable => "bimi_vmc_unreachable", Spec, Error, "draft-fetch-validation-vmc-wchuang §3";
+    BimiVmcInvalid => "bimi_vmc_invalid", Spec, Error, "draft-fetch-validation-vmc-wchuang §5";
+    BimiVmcLogoMismatch => "bimi_vmc_logo_mismatch", Spec, Error, "draft-fetch-validation-vmc-wchuang §5.3";
+    BimiVmcMissingSct => "bimi_vmc_missing_sct", Spec, Error, "draft-fetch-validation-vmc-wchuang §4.6";
     MtaStsSyntax => "mta_sts_syntax", Spec, Error, "RFC 8461 §3";
     MtaStsMultipleRecords => "mta_sts_multiple_records", Spec, Error, "RFC 8461 §3.1";
     MtaStsPolicyUnreachable => "mta_sts_policy_unreachable", Spec, Error, "RFC 8461 §3.3";
@@ -181,6 +186,7 @@ impl fmt::Display for FindingCode {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case", tag = "kind"))]
+#[non_exhaustive]
 pub enum Detail {
     None,
     /// A syntax fault, with the text its span indexes.
@@ -286,6 +292,10 @@ pub enum Detail {
     },
     ContentType {
         content_type: Option<String>,
+    },
+    /// Why a mark certificate fails.
+    Vmc {
+        problem: VmcProblem,
     },
     Uncovered {
         exchange: String,

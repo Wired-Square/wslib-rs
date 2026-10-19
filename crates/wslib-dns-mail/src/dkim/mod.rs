@@ -1,6 +1,6 @@
 //! DKIM key records (RFC 6376 §3.6.1, RFC 8301, RFC 8463).
 
-mod key;
+pub(crate) mod key;
 
 use crate::text::{first_of_each, tag_list, unwrap, version_value_fault};
 use crate::{FaultCode, Parsed, SyntaxFault, Tag};

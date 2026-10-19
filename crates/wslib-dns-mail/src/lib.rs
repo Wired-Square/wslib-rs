@@ -22,6 +22,7 @@ mod text;
 mod uri;
 
 pub mod bimi;
+pub mod discover;
 pub mod dkim;
 pub mod dmarc;
 pub mod mta_sts;

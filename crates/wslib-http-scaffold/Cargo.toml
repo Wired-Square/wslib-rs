@@ -1,5 +1,5 @@
 [package]
-name = "wslib-http"
+name = "wslib-http-scaffold"
 version = "0.1.0"
 description = "The HTTP scaffold under an axum app: its SPA, health and version routes, and the standard layers."
 readme = "README.md"

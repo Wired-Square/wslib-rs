@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 - **Breaking:** `check::Detail`, `discover::PolicyFetch`, `LogoFetch` and the
   new `CertificateFetch` are `#[non_exhaustive]`; a `match` on them needs a

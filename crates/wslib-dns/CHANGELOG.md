@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0
 
 - `Resolver`: one query per record type (TXT, A, AAAA, MX, NS, CNAME, PTR),
   each answering a `Lookup` that keeps NXDOMAIN, NODATA, SERVFAIL, REFUSED and

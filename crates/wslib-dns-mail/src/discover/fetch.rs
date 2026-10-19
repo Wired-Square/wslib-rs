@@ -49,6 +49,40 @@ pub enum FetchFailure {
     NotSent,
 }
 
+/// Neutral wording; consumers may write their own.
+impl std::fmt::Display for FetchFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Request { message } => write!(f, "request failed: {message}"),
+            Self::Status { status } => write!(f, "HTTP {status}"),
+            Self::Redirect {
+                location: Some(location),
+            } => write!(f, "redirected to {location}"),
+            Self::Redirect { location: None } => f.write_str("redirected"),
+            Self::ContentType {
+                content_type: Some(content_type),
+            } => write!(f, "unexpected content type {content_type}"),
+            Self::ContentType { content_type: None } => f.write_str("no content type"),
+            Self::TooLarge {
+                limit,
+                decompressed: false,
+            } => write!(f, "larger than {limit} bytes"),
+            Self::TooLarge {
+                limit,
+                decompressed: true,
+            } => write!(f, "larger than {limit} bytes once decompressed"),
+            Self::Undecodable => f.write_str("not valid gzip"),
+            Self::InvalidUrl => f.write_str("not an https URL without credentials"),
+            Self::NotUtf8 => f.write_str("not UTF-8"),
+            Self::NonGlobalAddress { address } => {
+                write!(f, "host resolves to a non-public address, {address}")
+            }
+            Self::Lookup { error } => write!(f, "host lookup failed: {error}"),
+            Self::NotSent => f.write_str("not requested: deadline or query budget exhausted"),
+        }
+    }
+}
+
 /// Makes the `reqwest::ClientBuilder` each fetch starts from, so the caller
 /// chooses the TLS provider and timeouts. Each fetch adds its own address
 /// pinning and user agent and turns redirects off. Give it no proxy: a proxy

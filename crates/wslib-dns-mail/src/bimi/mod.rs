@@ -2,8 +2,12 @@
 //! and their logos.
 
 mod logo;
+mod vmc;
 
 pub use logo::{LOGO_SIZE_GUIDANCE, LogoValidation, SvgRule, SvgViolation, validate_logo};
+pub use vmc::{
+    MarkCertificateKind, VmcOptions, VmcProblem, VmcTrustAnchors, VmcVerification, verify_vmc,
+};
 
 use crate::text::{RawTag, check_version, first_of_each, starts_with_version, tag_list, unwrap};
 use crate::{FaultCode, Parsed, SyntaxFault, Tag};

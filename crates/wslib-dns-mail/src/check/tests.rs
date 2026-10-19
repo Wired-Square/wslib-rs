@@ -487,15 +487,24 @@ fn bimi_codes(bimi: &str, dmarc: &str) -> Vec<FindingCode> {
 fn bimi_needs_https_and_an_enforcing_dmarc_policy() {
     let enforcing = "v=DMARC1; p=reject";
     assert_eq!(
-        bimi_codes("v=BIMI1; l=https://example.com/logo.svg", enforcing),
+        bimi_codes(
+            "v=BIMI1; l=https://example.com/logo.svg; a=https://example.com/vmc.pem",
+            enforcing
+        ),
         []
     );
     assert_eq!(
-        bimi_codes("v=BIMI1; l=http://example.com/logo.svg", enforcing),
+        bimi_codes(
+            "v=BIMI1; l=http://example.com/logo.svg; a=https://example.com/vmc.pem",
+            enforcing
+        ),
         [FindingCode::BimiInsecureUri]
     );
     assert_eq!(
-        bimi_codes("v=BIMI1; l=https://example.com/logo.svg; l=", enforcing),
+        bimi_codes(
+            "v=BIMI1; l=https://example.com/logo.svg; l=; a=https://example.com/vmc.pem",
+            enforcing
+        ),
         [FindingCode::BimiSyntax]
     );
     for dmarc in [
@@ -504,7 +513,10 @@ fn bimi_needs_https_and_an_enforcing_dmarc_policy() {
         "v=DMARC1; p=reject; sp=none",
     ] {
         assert_eq!(
-            bimi_codes("v=BIMI1; l=https://example.com/logo.svg", dmarc),
+            bimi_codes(
+                "v=BIMI1; l=https://example.com/logo.svg; a=https://example.com/vmc.pem",
+                dmarc
+            ),
             [FindingCode::BimiDmarcNotEnforcing],
             "{dmarc}"
         );
@@ -759,5 +771,69 @@ fn logo_findings() {
     assert_eq!(
         codes(&bimi_logo_findings(subject, &not_sent)),
         [FindingCode::Incomplete]
+    );
+}
+
+#[test]
+fn vmc_findings() {
+    use crate::bimi::{VmcProblem, VmcVerification};
+    use crate::discover::CertificateFetch;
+    let subject = "default._bimi.example.com";
+    let url = || "https://example.com/vmc.pem".to_owned();
+    let fetched = CertificateFetch::Fetched {
+        url: url(),
+        pem: Vec::new(),
+    };
+    let unreachable = CertificateFetch::Unreachable {
+        url: url(),
+        failure: FetchFailure::Status { status: 404 },
+    };
+    let not_sent = CertificateFetch::Unreachable {
+        url: url(),
+        failure: FetchFailure::NotSent,
+    };
+    assert_eq!(
+        codes(&bimi_vmc_findings(subject, &unreachable, None)),
+        [FindingCode::BimiVmcUnreachable]
+    );
+    assert_eq!(
+        codes(&bimi_vmc_findings(subject, &not_sent, None)),
+        [FindingCode::Incomplete]
+    );
+    let mut verification = VmcVerification::default();
+    assert_eq!(
+        codes(&bimi_vmc_findings(subject, &fetched, Some(&verification))),
+        []
+    );
+    verification.problems = vec![
+        VmcProblem::Expired,
+        VmcProblem::SanMismatch,
+        VmcProblem::MissingSct,
+    ];
+    verification.logo_matches = Some(false);
+    assert_eq!(
+        codes(&bimi_vmc_findings(subject, &fetched, Some(&verification))),
+        [
+            FindingCode::BimiVmcInvalid,
+            FindingCode::BimiVmcInvalid,
+            FindingCode::BimiVmcMissingSct,
+            FindingCode::BimiVmcLogoMismatch
+        ]
+    );
+}
+
+#[test]
+fn a_logo_without_a_certificate_is_noted() {
+    let enforcing = "v=DMARC1; p=reject";
+    assert_eq!(
+        bimi_codes("v=BIMI1; l=https://example.com/logo.svg; a=", enforcing),
+        [FindingCode::BimiVmcAbsent]
+    );
+    assert_eq!(
+        bimi_codes(
+            "v=BIMI1; l=https://example.com/logo.svg; a=https://example.com/vmc.pem",
+            enforcing
+        ),
+        []
     );
 }

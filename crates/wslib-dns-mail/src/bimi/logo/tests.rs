@@ -176,3 +176,18 @@ fn offsets_point_into_the_logo() {
     let offset = validation.violations[0].offset.unwrap();
     assert!(svg[offset..].starts_with("<script"), "{}", &svg[offset..]);
 }
+
+#[test]
+fn violations_display_neutrally() {
+    let violation = &validate_logo(root("", "<script/>").as_bytes()).violations[0];
+    assert!(
+        violation
+            .to_string()
+            .starts_with("prohibited element: script (at byte "),
+        "{violation}"
+    );
+    assert_eq!(
+        SvgRule::BaseProfile.to_string(),
+        "root <svg> must declare baseProfile=\"tiny-ps\""
+    );
+}

@@ -18,6 +18,7 @@ const LOGO_ACCEPT: &str = "image/svg+xml, */*;q=0.1";
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case", tag = "kind"))]
+#[non_exhaustive]
 pub enum LogoFetch {
     /// `body` is the SVG, decompressed when it was sent gzipped (`gzip`).
     Fetched {
@@ -96,6 +97,54 @@ pub(crate) async fn fetch(
         gzip,
         validation: crate::bimi::validate_logo(&body),
         body,
+    }
+}
+
+/// Mark certificate chains longer than this are cut off.
+pub const CERTIFICATE_FETCH_LIMIT: usize = 64 * 1024;
+
+#[cfg(feature = "http")]
+const CERTIFICATE_ACCEPT: &str =
+    "application/pem-certificate-chain, application/x-pem-file, */*;q=0.1";
+
+/// The outcome of fetching a BIMI record's `a=` mark certificate chain.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case", tag = "kind"))]
+#[non_exhaustive]
+pub enum CertificateFetch {
+    Fetched { url: String, pem: Vec<u8> },
+    Unreachable { url: String, failure: FetchFailure },
+}
+
+/// Fetches the PEM chain at `url`, a BIMI record's `a=`, with the same
+/// protections as [`bimi_logo`]. [`crate::bimi::verify_vmc`] checks it.
+#[cfg(feature = "http")]
+pub async fn bimi_certificate(
+    resolver: &impl wslib_dns::Resolver,
+    clients: &HttpClients,
+    url: &str,
+    timeout: Option<std::time::Duration>,
+) -> CertificateFetch {
+    match get(
+        resolver,
+        clients,
+        url,
+        timeout,
+        Reach::GlobalOnly,
+        CERTIFICATE_FETCH_LIMIT,
+        CERTIFICATE_ACCEPT,
+    )
+    .await
+    {
+        Ok(got) => CertificateFetch::Fetched {
+            url: url.to_owned(),
+            pem: got.body,
+        },
+        Err(failure) => CertificateFetch::Unreachable {
+            url: url.to_owned(),
+            failure,
+        },
     }
 }
 

@@ -9,6 +9,7 @@ use super::fetch::{HttpClients, Reach, get, media_type};
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case", tag = "kind"))]
+#[non_exhaustive]
 pub enum PolicyFetch {
     /// `body` is the file as served, which the policy's spans index.
     Fetched {

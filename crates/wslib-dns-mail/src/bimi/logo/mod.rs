@@ -82,6 +82,39 @@ pub enum SvgRule {
     ExternalReference,
 }
 
+/// Neutral wording for the rule; consumers may write their own.
+impl std::fmt::Display for SvgRule {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::NotUtf8 => "not UTF-8",
+            Self::Malformed => "not well-formed XML",
+            Self::Doctype => "DOCTYPE or entities are not allowed",
+            Self::Root => "the root must be <svg> in the SVG namespace",
+            Self::Version => "root <svg> must declare version=\"1.2\"",
+            Self::BaseProfile => "root <svg> must declare baseProfile=\"tiny-ps\"",
+            Self::Title => "a non-empty <title> must be a direct child of the root",
+            Self::RootPosition => "root <svg> must not set x or y",
+            Self::AspectRatio => "the viewBox (and width and height) must be square",
+            Self::ProhibitedElement => "prohibited element",
+            Self::EventHandler => "event handler attribute",
+            Self::ExternalReference => "external reference",
+        })
+    }
+}
+
+impl std::fmt::Display for SvgViolation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.rule)?;
+        if let Some(detail) = &self.detail {
+            write!(f, ": {detail}")?;
+        }
+        if let Some(offset) = self.offset {
+            write!(f, " (at byte {offset})")?;
+        }
+        Ok(())
+    }
+}
+
 /// Checks an uncompressed SVG logo and reports every violation found.
 pub fn validate_logo(svg: &[u8]) -> LogoValidation {
     let mut check = Check::default();

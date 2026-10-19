@@ -15,9 +15,11 @@ use std::future::{Future, poll_fn};
 use std::pin::Pin;
 use std::task::Poll;
 
+pub use bimi_logo::{
+    CERTIFICATE_FETCH_LIMIT, CertificateFetch, LOGO_FETCH_LIMIT, LOGO_INFLATE_LIMIT, LogoFetch,
+};
 #[cfg(feature = "http")]
-pub use bimi_logo::bimi_logo;
-pub use bimi_logo::{LOGO_FETCH_LIMIT, LOGO_INFLATE_LIMIT, LogoFetch};
+pub use bimi_logo::{bimi_certificate, bimi_logo};
 pub use dkim::{COMMON_SELECTORS, DkimDiscovery, dkim, probe_dkim};
 pub use dmarc::{
     AppliedPolicy, DmarcDiscovery, DmarcDiscoveryMode, PolicyTag, ReportAuthorisation, dmarc,

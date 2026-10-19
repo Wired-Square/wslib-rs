@@ -26,7 +26,7 @@ pub use fake::FakeResolver;
 #[cfg(feature = "hickory")]
 pub use hickory::{HickoryOptions, HickoryResolver};
 pub use logging::{LoggingResolver, QueryRecord};
-pub use lookup::{Answer, Lookup, LookupError, Mx, RecordType, Txt};
+pub use lookup::{Answer, DnssecStatus, Ds, Lookup, LookupError, Mx, RecordType, Tlsa, Txt};
 pub use name::{
     HostnameError, IdnaError, normalise, public_suffix, registrable_domain, reverse_name,
     reversed_labels, to_ascii, to_unicode, validate_hostname, validate_service_name,

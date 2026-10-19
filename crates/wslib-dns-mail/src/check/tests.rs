@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::net::IpAddr;
 
-use wslib_dns::{FakeResolver, LookupError, RecordType};
+use wslib_dns::{DnssecStatus, Ds, FakeResolver, LookupError, RecordType, Tlsa};
 
 use super::*;
 use crate::discover::block_on;
@@ -452,6 +452,68 @@ fn mx_findings_per_exchange() {
     assert_eq!(mx(&mismatch, &[]), [FindingCode::MxFcrdnsMismatch]);
 }
 
+const TLSA_NAME: &str = "_25._tcp.mail.example.com";
+
+fn tlsa(usage: u8, data: Vec<u8>) -> Tlsa {
+    Tlsa {
+        usage,
+        selector: 1,
+        matching: 1,
+        data,
+    }
+}
+
+fn dane_mx() -> FakeResolver {
+    good_mx()
+        .with_dnssec("example.com", DnssecStatus::Secure)
+        .with_tlsa(TLSA_NAME, tlsa(3, vec![0xab; 32]))
+}
+
+#[test]
+fn dane_findings_per_mx_host() {
+    assert_eq!(
+        mx(&dane_mx().with_dnssec(TLSA_NAME, DnssecStatus::Secure), &[]),
+        []
+    );
+    assert_eq!(mx(&dane_mx(), &[]), [FindingCode::DaneTlsaInsecure]);
+    assert_eq!(
+        mx(
+            &dane_mx()
+                .with_dnssec(TLSA_NAME, DnssecStatus::Secure)
+                .with_dnssec("example.com", DnssecStatus::Insecure),
+            &[]
+        ),
+        [FindingCode::DaneMxInsecure]
+    );
+    assert_eq!(
+        mx(
+            &dane_mx()
+                .with_dnssec(TLSA_NAME, DnssecStatus::Secure)
+                .with_tlsa(TLSA_NAME, tlsa(1, vec![0xab; 20])),
+            &[]
+        ),
+        [
+            FindingCode::DaneTlsaSyntax,
+            FindingCode::DaneTlsaUsageDiscouraged
+        ]
+    );
+    assert_eq!(
+        mx(
+            &dane_mx().with_error(TLSA_NAME, RecordType::Tlsa, LookupError::Bogus),
+            &[]
+        ),
+        [FindingCode::DnssecBogus]
+    );
+}
+
+#[test]
+fn a_non_validating_resolver_skips_tlsa() {
+    let dns = good_mx().with_tlsa(TLSA_NAME, tlsa(3, vec![0xab; 32]));
+    let check = block_on(check_mx(&dns, "example.com", &[]));
+    assert_eq!(check.mx.hosts[0].tlsa, None);
+    assert_eq!(dns.queries(TLSA_NAME, RecordType::Tlsa), 0);
+}
+
 #[test]
 fn mx_addresses_against_blocklists() {
     let dns = good_mx()
@@ -627,6 +689,71 @@ fn check_domain_runs_every_family() {
     assert_eq!(report.mx.hosts.len(), 1);
     let log = report.queries.unwrap();
     assert_eq!(u32::try_from(log.len()).unwrap(), report.queries_sent);
+}
+
+fn signed_domain() -> FakeResolver {
+    clean_domain()
+        .with_ns(".", "a.root-servers.net")
+        .with_dnssec(".", DnssecStatus::Secure)
+        .with_dnssec("example.com", DnssecStatus::Secure)
+}
+
+fn dnssec_report(dns: &FakeResolver) -> DomainReport {
+    block_on(check_domain(dns, "example.com", &CheckOptions::default()))
+}
+
+#[test]
+fn a_validating_resolver_reports_the_domain_status() {
+    let report = dnssec_report(&signed_domain());
+    assert_eq!(report.dnssec, Some(DnssecStatus::Secure));
+    assert_eq!(codes(&report.findings), [FindingCode::DnssecStatus]);
+
+    let report = dnssec_report(&signed_domain().with_dnssec("example.com", DnssecStatus::Insecure));
+    assert_eq!(report.dnssec, Some(DnssecStatus::Insecure));
+
+    assert_eq!(dnssec_report(&clean_domain()).dnssec, None);
+}
+
+#[test]
+fn a_resolver_that_cannot_validate_the_root_is_flagged() {
+    let report = dnssec_report(&signed_domain().with_dnssec(".", DnssecStatus::Insecure));
+    assert_eq!(report.dnssec, Some(DnssecStatus::Indeterminate));
+    assert_eq!(
+        codes(&report.findings),
+        [
+            FindingCode::DnssecUnsupportedResolver,
+            FindingCode::DnssecStatus
+        ]
+    );
+}
+
+#[test]
+fn a_servfail_in_a_zone_with_ds_records_is_a_suspected_bogus() {
+    let ds = Ds {
+        key_tag: 12345,
+        algorithm: 13,
+        digest_type: 2,
+        digest: vec![0xcd; 32],
+    };
+    let failing =
+        || signed_domain().with_error("_dmarc.example.com", RecordType::Txt, LookupError::ServFail);
+    let report = dnssec_report(&failing().with_ds("example.com", ds.clone()));
+    let suspected: Vec<&Finding> = report
+        .findings
+        .iter()
+        .filter(|finding| finding.code == FindingCode::DnssecSuspectedBogus)
+        .collect();
+    assert_eq!(suspected.len(), 1);
+    assert_eq!(
+        suspected[0].detail,
+        Detail::SuspectedBogus {
+            zone: "example.com".into(),
+            ds: vec![ds],
+        }
+    );
+    assert!(
+        !codes(&dnssec_report(&failing()).findings).contains(&FindingCode::DnssecSuspectedBogus)
+    );
 }
 
 #[test]

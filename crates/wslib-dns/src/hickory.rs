@@ -11,12 +11,13 @@ use hickory_resolver::proto::op::ResponseCode;
 use hickory_resolver::proto::rr::{Name, RData, RecordType};
 use hickory_resolver::{TokioResolver, system_conf};
 
-use crate::{Answer, Lookup, LookupError, Mx, Resolver, Txt, normalise};
+use crate::{Answer, Lookup, LookupError, Mx, Resolver, Tlsa, Txt, normalise};
 
 /// A [`Resolver`] over hickory's stub resolver, with its TTL cache.
 #[derive(Clone)]
 pub struct HickoryResolver {
     inner: TokioResolver,
+    validating: bool,
 }
 
 impl std::fmt::Debug for HickoryResolver {
@@ -27,19 +28,28 @@ impl std::fmt::Debug for HickoryResolver {
     }
 }
 
-/// How long to wait for each server and how many times to ask.
+/// How long to wait for each server and how many times to ask, and whether
+/// to validate DNSSEC.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct HickoryOptions {
     pub timeout: Duration,
     pub attempts: usize,
+    /// Validate DNSSEC and report it on each answer, with the crypto of the
+    /// `dnssec-ring` or `dnssec-aws-lc-rs` feature. The upstream resolver
+    /// must pass RRSIG and NSEC records through.
+    #[cfg(feature = "__dnssec")]
+    pub validate: bool,
 }
 
-/// 2 s and 2 attempts.
+/// 2 s and 2 attempts, without validation.
 impl Default for HickoryOptions {
     fn default() -> Self {
         Self {
             timeout: Duration::from_secs(2),
             attempts: 2,
+            #[cfg(feature = "__dnssec")]
+            validate: false,
         }
     }
 }
@@ -82,11 +92,18 @@ impl HickoryResolver {
         // race the second truncated UDP answer reads as "TCP already tried",
         // failing any answer too big for UDP whenever there are two servers.
         opts.num_concurrent_reqs = 1;
+        #[cfg(feature = "__dnssec")]
+        let validating = {
+            opts.validate = options.validate;
+            options.validate
+        };
+        #[cfg(not(feature = "__dnssec"))]
+        let validating = false;
         let inner = TokioResolver::builder_with_config(config, TokioRuntimeProvider::default())
             .with_options(opts)
             .build()
             .map_err(|error| LookupError::Other(error.to_string()))?;
-        Ok(Self { inner })
+        Ok(Self { inner, validating })
     }
 
     async fn query<T>(
@@ -95,16 +112,22 @@ impl HickoryResolver {
         record_type: RecordType,
         extract: impl Fn(&RData) -> Option<T>,
     ) -> Lookup<T> {
-        // Fully qualified, so resolv.conf search domains are never appended.
-        let name = Name::from_ascii(format!("{}.", crate::name::query_name(name)))
-            .map_err(|error| LookupError::Other(format!("invalid name: {error}")))?;
         let lookup = self
             .inner
-            .lookup(name, record_type)
+            .lookup(fully_qualified(name)?, record_type)
             .await
             .map_err(classify)?;
-        answer(&lookup, extract)
+        answer(&lookup, extract, self.validating)
     }
+}
+
+/// Fully qualified, so resolv.conf search domains are never appended.
+fn fully_qualified(name: &str) -> Result<Name, LookupError> {
+    let mut name = crate::name::query_name(name);
+    if !name.ends_with('.') {
+        name.push('.');
+    }
+    Name::from_ascii(name).map_err(|error| LookupError::Other(format!("invalid name: {error}")))
 }
 
 fn nameserver(address: SocketAddr) -> NameServerConfig {
@@ -118,7 +141,36 @@ fn nameserver(address: SocketAddr) -> NameServerConfig {
     NameServerConfig::new(address.ip(), true, connections)
 }
 
-fn answer<T>(lookup: &HickoryLookup, extract: impl Fn(&RData) -> Option<T>) -> Lookup<T> {
+/// The worst proof among the answer's records of the queried type.
+#[cfg(feature = "__dnssec")]
+fn answer_status(
+    lookup: &HickoryLookup,
+    wanted: impl Fn(&RData) -> bool,
+) -> Option<crate::DnssecStatus> {
+    use hickory_resolver::proto::dnssec::Proof;
+    lookup
+        .answers()
+        .iter()
+        .filter(|record| wanted(&record.data))
+        .map(|record| match record.proof {
+            Proof::Secure => crate::DnssecStatus::Secure,
+            Proof::Insecure => crate::DnssecStatus::Insecure,
+            Proof::Bogus => crate::DnssecStatus::Bogus,
+            Proof::Indeterminate => crate::DnssecStatus::Indeterminate,
+        })
+        .min()
+}
+
+#[cfg(not(feature = "__dnssec"))]
+fn answer_status(_: &HickoryLookup, _: impl Fn(&RData) -> bool) -> Option<crate::DnssecStatus> {
+    None
+}
+
+fn answer<T>(
+    lookup: &HickoryLookup,
+    extract: impl Fn(&RData) -> Option<T>,
+    validating: bool,
+) -> Lookup<T> {
     let mut ttl = None::<u32>;
     let records: Vec<T> = lookup
         .answers()
@@ -129,6 +181,14 @@ fn answer<T>(lookup: &HickoryLookup, extract: impl Fn(&RData) -> Option<T>) -> L
             Some(value)
         })
         .collect();
+    let dnssec = if validating {
+        answer_status(lookup, |data| extract(data).is_some())
+    } else {
+        None
+    };
+    if dnssec == Some(crate::DnssecStatus::Bogus) {
+        return Err(LookupError::Bogus);
+    }
     if records.is_empty() {
         // An answer section holding only a CNAME whose target doesn't exist
         // comes back as a success, with NXDOMAIN in the header.
@@ -141,6 +201,7 @@ fn answer<T>(lookup: &HickoryLookup, extract: impl Fn(&RData) -> Option<T>) -> L
         records,
         ttl,
         canonical_name: canonical_name(lookup),
+        dnssec,
     })
 }
 
@@ -173,6 +234,15 @@ fn classify(error: NetError) -> LookupError {
             }
         }
         NetError::Dns(DnsError::ResponseCode(code)) => response_code_error(code),
+        NetError::Dns(DnsError::DnssecBogus) => LookupError::Bogus,
+        #[cfg(feature = "__dnssec")]
+        NetError::Dns(DnsError::Nsec {
+            proof, response, ..
+        }) => match proof {
+            hickory_resolver::proto::dnssec::Proof::Bogus => LookupError::Bogus,
+            _ if response.response_code == ResponseCode::NXDomain => LookupError::NxDomain,
+            _ => LookupError::NoData,
+        },
         NetError::Timeout => LookupError::Timeout,
         other => LookupError::Other(other.to_string()),
     }
@@ -192,6 +262,10 @@ fn name(name: &Name) -> String {
 }
 
 impl Resolver for HickoryResolver {
+    fn validates(&self) -> bool {
+        self.validating
+    }
+
     async fn txt(&self, name: &str) -> Lookup<Txt> {
         self.query(name, RecordType::TXT, |data| match data {
             RData::TXT(txt) => Some(Txt::new(txt.txt_data.iter().map(|s| s.to_vec()).collect())),
@@ -254,6 +328,34 @@ impl Resolver for HickoryResolver {
         )
         .await
     }
+
+    #[cfg(feature = "__dnssec")]
+    async fn ds(&self, name: &str) -> Lookup<crate::Ds> {
+        use hickory_resolver::proto::dnssec::rdata::DNSSECRData;
+        self.query(name, RecordType::DS, |data| match data {
+            RData::DNSSEC(DNSSECRData::DS(ds)) => Some(crate::Ds {
+                key_tag: ds.key_tag(),
+                algorithm: ds.algorithm().into(),
+                digest_type: ds.digest_type().into(),
+                digest: ds.digest().to_vec(),
+            }),
+            _ => None,
+        })
+        .await
+    }
+
+    async fn tlsa(&self, name: &str) -> Lookup<Tlsa> {
+        self.query(name, RecordType::TLSA, |data| match data {
+            RData::TLSA(tlsa) => Some(Tlsa {
+                usage: tlsa.cert_usage.into(),
+                selector: tlsa.selector.into(),
+                matching: tlsa.matching.into(),
+                data: tlsa.cert_data.clone(),
+            }),
+            _ => None,
+        })
+        .await
+    }
 }
 
 #[cfg(test)]
@@ -263,6 +365,15 @@ mod tests {
 
     fn no_records(code: ResponseCode) -> NetError {
         NoRecords::new(Query::default(), code).into()
+    }
+
+    #[test]
+    fn names_are_queried_fully_qualified() {
+        assert_eq!(fully_qualified(".").unwrap(), Name::root());
+        assert_eq!(
+            fully_qualified("Example.COM").unwrap(),
+            Name::from_ascii("example.com.").unwrap()
+        );
     }
 
     #[test]
@@ -294,6 +405,10 @@ mod tests {
             classify(code(ResponseCode::FormErr)),
             LookupError::Other(_)
         ));
+        assert_eq!(
+            classify(NetError::Dns(DnsError::DnssecBogus)),
+            LookupError::Bogus
+        );
         assert!(matches!(
             classify(NetError::NoConnections),
             LookupError::Other(_)

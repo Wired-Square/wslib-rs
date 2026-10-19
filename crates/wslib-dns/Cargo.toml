@@ -1,6 +1,6 @@
 [package]
 name = "wslib-dns"
-version = "0.1.1"
+version = "0.2.0"
 description = "DNS lookups that keep NXDOMAIN, NODATA, SERVFAIL, REFUSED and timeout apart, with hostname, IDNA and Public Suffix List helpers."
 readme = "README.md"
 edition.workspace = true
@@ -13,6 +13,10 @@ publish = ["wired-square"]
 [features]
 default = []
 hickory = ["dep:hickory-resolver"]
+# DNSSEC validation, with the named crypto; the caller picks one.
+dnssec-ring = ["hickory", "__dnssec", "hickory-resolver/dnssec-ring"]
+dnssec-aws-lc-rs = ["hickory", "__dnssec", "hickory-resolver/dnssec-aws-lc-rs"]
+__dnssec = []
 serde = ["dep:serde"]
 testing = []
 

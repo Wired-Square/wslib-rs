@@ -5,6 +5,7 @@
 mod bimi;
 mod dkim;
 mod dmarc;
+mod dnssec;
 mod finding;
 mod mta_sts;
 mod mx;
@@ -21,7 +22,9 @@ pub use finding::{Detail, Finding, FindingCode, Kind, Severity};
 pub use mta_sts::mta_sts_findings;
 pub use mx::{MxCheck, check_mx, mx_findings};
 pub use spf::{SPF_LENGTH_LIMIT, SpfCheck, check_spf, spf_findings};
-use wslib_dns::{BudgetResolver, LoggingResolver, LookupError, QueryRecord, Resolver};
+use wslib_dns::{
+    BudgetResolver, DnssecStatus, LoggingResolver, Lookup, LookupError, QueryRecord, Resolver,
+};
 
 use crate::ReportUri;
 use crate::bimi::{BimiRecord, VmcVerification};
@@ -36,11 +39,13 @@ use crate::tls_rpt::TlsRptRecord;
 
 /// A lookup that failed; one never sent marks `check` incomplete instead.
 pub(crate) fn lookup_failure(check: &str, name: &str, error: &LookupError) -> Finding {
-    if *error == LookupError::NotSent {
-        return incomplete(check, name);
-    }
+    let code = match error {
+        LookupError::NotSent => return incomplete(check, name),
+        LookupError::Bogus => FindingCode::DnssecBogus,
+        _ => FindingCode::LookupFailed,
+    };
     Finding::new(
-        FindingCode::LookupFailed,
+        code,
         name,
         Detail::Lookup {
             name: name.to_owned(),
@@ -128,6 +133,9 @@ pub struct DomainReport {
     pub dkim: Vec<DkimDiscovery>,
     pub mx: MxDiscovery,
     pub dnsbl: Vec<DnsblResult>,
+    /// The worst status among the domain's own answers, or Indeterminate
+    /// when the resolver can't validate; set only by a validating resolver.
+    pub dnssec: Option<DnssecStatus>,
     pub bimi: Inherited<BimiRecord>,
     pub mta_sts: RecordSet<MtaStsRecord>,
     pub tls_rpt: RecordSet<TlsRptRecord>,
@@ -157,6 +165,7 @@ enum Part {
         RecordSet<TlsRptRecord>,
         Option<PolicyFetch>,
     ),
+    DnssecProbe(Option<Lookup<String>>),
 }
 
 type BoxedPart<'a> = Pin<Box<dyn Future<Output = Part> + Send + 'a>>;
@@ -197,9 +206,11 @@ pub async fn check_domain(
             let policy = policy(dns, &record, &domain, options, deadline).await;
             Part::MtaSts(record, discover::tls_rpt(dns, &domain).await, policy)
         }),
+        Box::pin(async { Part::DnssecProbe(dnssec::probe(dns).await) }),
     ];
     let (mut spf, mut dmarc, mut dkim, mut mx, mut bimi, mut mta_sts) =
         (None, None, None, None, None, None);
+    let mut probe = None;
     for part in join_all(parts).await {
         match part {
             Part::Spf(check) => spf = Some(check),
@@ -208,6 +219,7 @@ pub async fn check_domain(
             Part::Mx(check) => mx = Some(check),
             Part::Bimi(records, fetches) => bimi = Some((records, fetches)),
             Part::MtaSts(record, tls_rpt, policy) => mta_sts = Some((record, tls_rpt, policy)),
+            Part::DnssecProbe(lookup) => probe = lookup,
         }
     }
     let (spf, dmarc, dkim, mx, (bimi, bimi_fetches), (mta_sts, tls_rpt, mta_sts_policy)) = (
@@ -248,6 +260,13 @@ pub async fn check_domain(
         &tls_rpt,
         Some(&mx.mx),
     ));
+    let apex = [mx.mx.dnssec, spf.tree.root.records.dnssec]
+        .into_iter()
+        .flatten()
+        .min();
+    let (dnssec, dnssec_findings) =
+        dnssec::dnssec_findings(dns, &domain, probe, apex, &findings).await;
+    findings.extend(dnssec_findings);
     merge_incomplete(&domain, &mut findings);
 
     let queries_sent = dns.inner().queries_sent();
@@ -260,6 +279,7 @@ pub async fn check_domain(
         dkim: dkim.selectors,
         mx: mx.mx,
         dnsbl: mx.dnsbl,
+        dnssec,
         bimi,
         mta_sts,
         tls_rpt,

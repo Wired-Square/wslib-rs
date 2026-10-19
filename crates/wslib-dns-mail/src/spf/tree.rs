@@ -190,6 +190,7 @@ pub async fn walk_record(
             parsed: super::parse(record),
         }],
         others: Vec::new(),
+        dnssec: None,
     };
     let mut state = Walk {
         limits,

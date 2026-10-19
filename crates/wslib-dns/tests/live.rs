@@ -62,3 +62,33 @@ async fn internationalised_names_are_sent_as_a_labels() {
     let error = resolver().txt("bücher.example.invalid").await.unwrap_err();
     assert_eq!(error, LookupError::NxDomain);
 }
+
+/// Through the system's resolvers, as a deployment would be: a resolver that
+/// strips RRSIGs fails here even when a public one passes.
+#[cfg(feature = "__dnssec")]
+#[tokio::test]
+#[ignore = "needs the network"]
+async fn validation_tells_signed_unsigned_and_broken_zones_apart() {
+    use wslib_dns::DnssecStatus;
+    let mut options = HickoryOptions::default();
+    options.validate = true;
+    let dns = HickoryResolver::from_system(options).unwrap();
+    assert_eq!(
+        dns.a("example.com").await.unwrap().dnssec,
+        Some(DnssecStatus::Secure)
+    );
+    assert_eq!(
+        dns.a("google.com").await.unwrap().dnssec,
+        Some(DnssecStatus::Insecure)
+    );
+    // hickory can't set CD, so an upstream that validates answers SERVFAIL
+    // for a bogus zone before hickory sees it; only a non-validating upstream
+    // lets it report Bogus.
+    let broken = dns.a("dnssec-failed.org").await;
+    assert!(
+        matches!(broken, Err(LookupError::Bogus | LookupError::ServFail)),
+        "{broken:?}"
+    );
+    let unvalidated = resolver().a("example.com").await.unwrap();
+    assert_eq!(unvalidated.dnssec, None);
+}

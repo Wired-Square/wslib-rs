@@ -6,3 +6,6 @@
   comfy-table for a person and pretty JSON for a program; `value` takes the
   caller's rendering for a single value. `OutputArgs` (feature `clap`) is the
   flag to flatten into a parser.
+- `Exit`: 0 success, 1 failure, 2 usage, 3–123 the tool's own, 124 timeout,
+  130 interrupted. `Exit::of` maps an error by its source chain, and
+  `exit::fail` reports it on stderr, as JSON in JSON mode.

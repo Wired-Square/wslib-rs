@@ -28,3 +28,7 @@ fn run(cli: &Cli, output: Output) -> anyhow::Result<()> {
 - **`Output`**: `--json` prints pretty JSON; without it, rows are a
   comfy-table and a single value is whatever the caller renders.
   `OutputArgs` (feature `clap`) is the global flag, to `#[command(flatten)]`.
+- **`Exit`**: 0 success, 1 failure, 2 usage, 3–123 the tool's own, 124 gave up
+  waiting, 130 interrupted. `Exit::of` finds the code in an error's source
+  chain; `exit::fail` prints the error, as `{"error", "exit"}` JSON in JSON
+  mode.

@@ -116,6 +116,15 @@ impl Mechanism {
         }
     }
 
+    /// What follows the name, without the `:`: `_spf.example.com`, `/24`
+    /// or `192.0.2.0/24`.
+    pub fn argument(&self) -> Option<String> {
+        let text = self.to_string();
+        let rest = &text[self.name().len()..];
+        let rest = rest.strip_prefix(':').unwrap_or(rest);
+        (!rest.is_empty()).then(|| rest.to_owned())
+    }
+
     /// Counts towards the ten DNS-querying terms of §4.6.4.
     pub fn queries_dns(&self) -> bool {
         matches!(

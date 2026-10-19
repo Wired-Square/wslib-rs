@@ -26,8 +26,11 @@ step "No reference to the project dossier"
 
 # Shared crates take no rustls provider; the app installs one.
 step "No rustls provider by default"
-! cargo tree --workspace -e normal -i aws-lc-rs >/dev/null 2>&1 || die "aws-lc-rs is in the default graph"
-! cargo tree --workspace -e normal -i ring >/dev/null 2>&1 || die "ring is in the default graph"
+# A package can be resolved without any edge to it, so look for a printed tree
+# rather than trusting the exit status.
+in_default_graph() { cargo tree --workspace -e normal -i "$1" 2>/dev/null | grep -q .; }
+! in_default_graph aws-lc-rs || die "aws-lc-rs is in the default graph"
+! in_default_graph ring || die "ring is in the default graph"
 
 step "Format"
 cargo fmt --all --check

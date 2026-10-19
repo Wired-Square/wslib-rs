@@ -50,6 +50,41 @@ still point into the original text.
 `is_spf`, `is_dmarc`, `is_bimi`, `is_mta_sts` and `is_tls_rpt` tell whether a
 TXT string is that kind of record at all.
 
+## Discovery
+
+`discover` finds records through any `wslib_dns::Resolver`, so production uses
+hickory and tests use `FakeResolver`. Every result says how it was found:
+
+- `RecordSet<T>` holds every matching TXT record at a name, parsed, so several
+  SPF records are all there to report. It also keeps the lookup error, and
+  separates `is_absent()` (known to have none) from `failure()` (couldn't
+  tell).
+- `spf`, `mta_sts` (`_mta-sts.`) and `tls_rpt` (`_smtp._tls.`) return a
+  `RecordSet`.
+- `dmarc` walks from the domain to its organisational domain (RFC 7489, the
+  default) or up the tree (DMARCbis, `DmarcDiscoveryMode::TreeWalk`).
+  Several records or a failed lookup stop the walk without a policy. The
+  result says whether the policy is the domain's own or inherited from an
+  ancestor, and whether `p`, `sp` or `np` applies. `np` is for a name with
+  no A, AAAA or MX (RFC 9091 §2.7). If that can't be told, `applies` is
+  `None` and `existence_error` says why.
+- `dmarc_report_authorisation` is the RFC 7489 §7.1 check: whether an
+  external `rua`/`ruf` destination publishes
+  `<policy-domain>._report._dmarc.<destination>`.
+- `dkim` follows the selector's CNAME chain and exposes the terminal name.
+  `probe_dkim` tries a list of selectors, such as `COMMON_SELECTORS`,
+  concurrently.
+- `mx` inspects every exchange: aliases, addresses, the PTR of each address,
+  and forward-confirmed reverse DNS. It recognises null MX (RFC 7505) and IP
+  literals.
+- `bimi` looks at `<selector>._bimi.` on the domain, then on its
+  organisational domain.
+- `dnsbl` tells `Listed`, `NotListed`, `QueryBlocked` and `Failed` apart. A
+  zone that answers outside `127.0.0.2`–`127` is refusing the query, as
+  Spamhaus does for cloud resolvers. That isn't a clean result.
+
+Discovery futures are `Send`, and concurrency within a call needs no runtime.
+
 ## Building and editing records
 
 - `Display` on every record renders it canonically: `v=spf1` and single-spaced

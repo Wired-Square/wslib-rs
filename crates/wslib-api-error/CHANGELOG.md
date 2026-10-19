@@ -10,3 +10,5 @@
   `IntoResponse` behind the default feature `axum`. `too_many_requests` sets
   `Retry-After` in whole seconds. `internal` and `unavailable` answer "could
   not {what}" and log the cause.
+- `extract`: `Json`, `Query` and `Path` refusing with an `ApiError` at axum's
+  status, and `method_not_allowed` for axum's 405 fallback.

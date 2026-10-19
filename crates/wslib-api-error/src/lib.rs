@@ -3,6 +3,8 @@
 
 mod body;
 mod error;
+#[cfg(feature = "axum")]
+pub mod extract;
 
 pub use body::ApiErrorBody;
 pub use error::ApiError;

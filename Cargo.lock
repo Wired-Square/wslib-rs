@@ -5130,6 +5130,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tower",
  "tracing",
  "ts-rs",
 ]

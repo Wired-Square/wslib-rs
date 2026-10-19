@@ -7,10 +7,10 @@ use crate::{FaultCode, Parsed, SyntaxFault, Tag};
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BimiRecord {
     pub tags: Vec<Tag>,
-    /// `l=`: the logo's `https:` URL; empty when the domain declines to show
-    /// one.
+    /// `l=`, when it is a valid `https:` URL, or empty to decline; the
+    /// written value is in `tags`.
     pub location: Option<String>,
-    /// `a=`: the mark certificate's `https:` URL.
+    /// `a=`, when it is a valid `https:` URL or empty.
     pub authority: Option<String>,
 }
 
@@ -44,8 +44,8 @@ pub fn parse(input: &str) -> Parsed<BimiRecord> {
     for tag in first_of_each(all, |a, b| a.eq_ignore_ascii_case(b), &mut faults) {
         match tag.name.to_ascii_lowercase().as_str() {
             "v" => {}
-            "l" => record.location = Some(https_or_empty(&tag, "l", &mut faults)),
-            "a" => record.authority = Some(https_or_empty(&tag, "a", &mut faults)),
+            "l" => record.location = https_or_empty(&tag, "l", &mut faults),
+            "a" => record.authority = https_or_empty(&tag, "a", &mut faults),
             name => faults.push(SyntaxFault::named(
                 FaultCode::UnknownTag,
                 tag.span.clone(),
@@ -53,39 +53,33 @@ pub fn parse(input: &str) -> Parsed<BimiRecord> {
             )),
         }
     }
-    if record.location.is_none() {
+    if !record.tags.iter().any(|tag| tag.name == "l") {
         faults.push(crate::text::missing(input, "l"));
     }
     faults.sort_by_key(|fault| fault.span.start);
     Parsed { record, faults }
 }
 
-fn https_or_empty(tag: &RawTag<'_>, name: &str, faults: &mut Vec<SyntaxFault>) -> String {
+/// The value when it is empty or a valid `https:` URL; otherwise a fault.
+fn https_or_empty(tag: &RawTag<'_>, name: &str, faults: &mut Vec<SyntaxFault>) -> Option<String> {
     let value = tag.value;
-    if !value.is_empty() {
-        match value.split_once("://") {
-            Some((scheme, rest)) if scheme.eq_ignore_ascii_case("https") => {
-                if rest.is_empty() || rest.starts_with('/') || value.contains(char::is_whitespace) {
-                    faults.push(SyntaxFault::named(
-                        FaultCode::InvalidUri,
-                        tag.value_span.clone(),
-                        name,
-                    ));
-                }
-            }
-            Some(_) => faults.push(SyntaxFault::named(
-                FaultCode::InsecureUri,
-                tag.value_span.clone(),
-                name,
-            )),
-            None => faults.push(SyntaxFault::named(
-                FaultCode::InvalidUri,
-                tag.value_span.clone(),
-                name,
-            )),
+    let fault = match value.split_once("://") {
+        _ if value.is_empty() => None,
+        Some((scheme, rest)) if scheme.eq_ignore_ascii_case("https") => {
+            let malformed =
+                rest.is_empty() || rest.starts_with('/') || value.contains(char::is_whitespace);
+            malformed.then_some(FaultCode::InvalidUri)
         }
+        Some(_) => Some(FaultCode::InsecureUri),
+        None => Some(FaultCode::InvalidUri),
+    };
+    match fault {
+        Some(code) => {
+            faults.push(SyntaxFault::named(code, tag.value_span.clone(), name));
+            None
+        }
+        None => Some(value.to_owned()),
     }
-    value.to_owned()
 }
 
 #[cfg(test)]
@@ -110,6 +104,18 @@ mod tests {
             Some("https://example.com/vmc.pem")
         );
         assert!(!parsed.record.is_declined());
+    }
+
+    #[test]
+    fn faulted_urls_are_left_out_of_the_typed_fields() {
+        let parsed = parse("v=BIMI1; l=http://example.com/logo.svg; a=example.com/vmc.pem");
+        assert_eq!(parsed.record.location, None);
+        assert_eq!(parsed.record.authority, None);
+        assert_eq!(parsed.record.tags[1].value, "http://example.com/logo.svg");
+        assert_eq!(
+            codes("v=BIMI1; l=http://example.com/logo.svg"),
+            [FaultCode::InsecureUri]
+        );
     }
 
     #[test]

@@ -239,3 +239,24 @@ fn a_tab_between_terms_is_out_of_spec_but_usable() {
     assert!(parsed.is_usable());
     assert_eq!(parsed.record.terms.len(), 2);
 }
+
+#[test]
+fn argument_is_what_follows_the_name() {
+    let arguments: Vec<Option<String>> =
+        parse("v=spf1 a mx/24 include:_spf.example.com ip4:192.0.2.0/24 a:example.org//64 -all")
+            .record
+            .directives()
+            .map(|(_, m)| m.argument())
+            .collect();
+    assert_eq!(
+        arguments,
+        [
+            None,
+            Some("/24".into()),
+            Some("_spf.example.com".into()),
+            Some("192.0.2.0/24".into()),
+            Some("example.org//64".into()),
+            None
+        ]
+    );
+}

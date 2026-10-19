@@ -65,7 +65,9 @@ hickory and tests use `FakeResolver`. Every result says how it was found:
   default) or up the tree (DMARCbis, `DmarcDiscoveryMode::TreeWalk`).
   Several records or a failed lookup stop the walk without a policy. The
   result says whether the policy is the domain's own or inherited from an
-  ancestor, and whether `p`, `sp` or `np` applies.
+  ancestor, and whether `p`, `sp` or `np` applies. `np` is for a name with
+  no A, AAAA or MX (RFC 9091 §2.7). If that can't be told, `applies` is
+  `None` and `existence_error` says why.
 - `dmarc_report_authorisation` is the RFC 7489 §7.1 check: whether an
   external `rua`/`ruf` destination publishes
   `<policy-domain>._report._dmarc.<destination>`.

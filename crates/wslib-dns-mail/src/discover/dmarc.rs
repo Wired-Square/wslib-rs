@@ -1,4 +1,4 @@
-use wslib_dns::{LookupError, Resolver, registrable_domain};
+use wslib_dns::{LookupError, RecordType, Resolver, registrable_domain};
 
 use super::{Inherited, ascii, walk};
 use crate::ReportUri;
@@ -23,8 +23,12 @@ pub enum DmarcDiscoveryMode {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DmarcDiscovery {
     pub records: Inherited<DmarcRecord>,
-    /// Set when a record was found.
+    /// Set when a record was found and, for an inherited one, whether the
+    /// name exists could be told.
     pub applies: Option<AppliedPolicy>,
+    /// Why whether the name exists, and so whether `sp` or `np` applies,
+    /// couldn't be told.
+    pub existence_error: Option<LookupError>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,29 +79,56 @@ pub async fn dmarc(
         parse,
     )
     .await;
+    let mut existence_error = None;
     let applies = match (records.found(), records.inherited_from()) {
         (Some(found), None) => Some(AppliedPolicy {
             tag: PolicyTag::P,
             policy: found.parsed.record.effective_policy(),
         }),
         (Some(found), Some(_)) => {
-            let exists = !matches!(resolver.a(&domain).await, Err(LookupError::NxDomain));
             let record = &found.parsed.record;
-            Some(if exists {
-                AppliedPolicy {
+            match name_exists(resolver, &domain).await {
+                Ok(true) => Some(AppliedPolicy {
                     tag: PolicyTag::Sp,
                     policy: record.effective_subdomain_policy(),
-                }
-            } else {
-                AppliedPolicy {
+                }),
+                Ok(false) => Some(AppliedPolicy {
                     tag: PolicyTag::Np,
                     policy: record.effective_non_existent_policy(),
+                }),
+                Err(error) => {
+                    existence_error = Some(error);
+                    None
                 }
-            })
+            }
         }
         (None, _) => None,
     };
-    DmarcDiscovery { records, applies }
+    DmarcDiscovery {
+        records,
+        applies,
+        existence_error,
+    }
+}
+
+/// RFC 9091 §2.7: a name doesn't exist for DMARC when A, AAAA and MX all
+/// answer NXDOMAIN or NODATA. NXDOMAIN covers every type, so it settles the
+/// question at once.
+async fn name_exists(resolver: &impl Resolver, domain: &str) -> Result<bool, LookupError> {
+    for record_type in [RecordType::A, RecordType::Aaaa, RecordType::Mx] {
+        let lookup = match record_type {
+            RecordType::A => resolver.a(domain).await.map(drop),
+            RecordType::Aaaa => resolver.aaaa(domain).await.map(drop),
+            _ => resolver.mx(domain).await.map(drop),
+        };
+        match lookup {
+            Ok(()) => return Ok(true),
+            Err(LookupError::NxDomain) => return Ok(false),
+            Err(LookupError::NoData) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(false)
 }
 
 /// The domain, then — skipping to the last seven labels of a longer name —

@@ -111,6 +111,61 @@ fn a_name_that_does_not_exist_gets_np() {
 }
 
 #[test]
+fn a_name_with_no_address_or_mx_under_an_existing_parent_gets_np() {
+    let dns = FakeResolver::new()
+        .with_txt("empty.example.com", ["unrelated"])
+        .with_txt("_dmarc.example.com", ["v=DMARC1; p=reject; np=quarantine"]);
+    let found = block_on(dmarc(
+        &dns,
+        "empty.example.com",
+        DmarcDiscoveryMode::Rfc7489,
+    ));
+    assert_eq!(
+        found.applies.map(|applied| applied.tag),
+        Some(PolicyTag::Np)
+    );
+    for record_type in [RecordType::A, RecordType::Aaaa, RecordType::Mx] {
+        assert_eq!(dns.queries("empty.example.com", record_type), 1);
+    }
+}
+
+#[test]
+fn a_name_with_only_an_mx_exists() {
+    let dns = FakeResolver::new()
+        .with_mx("mail.example.com", 10, "mx.example.net")
+        .with_txt(
+            "_dmarc.example.com",
+            ["v=DMARC1; p=reject; sp=none; np=quarantine"],
+        );
+    let found = block_on(dmarc(&dns, "mail.example.com", DmarcDiscoveryMode::Rfc7489));
+    assert_eq!(
+        found.applies.map(|applied| applied.tag),
+        Some(PolicyTag::Sp)
+    );
+}
+
+#[test]
+fn a_failed_existence_check_leaves_the_tag_unknown() {
+    let dns = FakeResolver::new()
+        .with_txt("mail.example.com", ["unrelated"])
+        .with_error("mail.example.com", RecordType::Aaaa, LookupError::Timeout)
+        .with_txt("_dmarc.example.com", ["v=DMARC1; p=reject"]);
+    let found = block_on(dmarc(&dns, "mail.example.com", DmarcDiscoveryMode::Rfc7489));
+    assert_eq!(found.applies, None);
+    assert_eq!(found.existence_error, Some(LookupError::Timeout));
+    assert!(found.records.found().is_some());
+    assert_eq!(dns.queries("mail.example.com", RecordType::Mx), 0);
+}
+
+#[test]
+fn nxdomain_settles_existence_with_one_query() {
+    let dns = FakeResolver::new().with_txt("_dmarc.example.com", ["v=DMARC1; p=reject"]);
+    block_on(dmarc(&dns, "gone.example.com", DmarcDiscoveryMode::Rfc7489));
+    assert_eq!(dns.queries("gone.example.com", RecordType::A), 1);
+    assert_eq!(dns.queries("gone.example.com", RecordType::Aaaa), 0);
+}
+
+#[test]
 fn several_records_or_a_failure_end_discovery_without_a_policy() {
     let dns = FakeResolver::new()
         .with_txt(

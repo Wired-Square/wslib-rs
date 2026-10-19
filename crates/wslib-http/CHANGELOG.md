@@ -9,3 +9,5 @@
   is a wslib-api-error body.
 - `Spa::embedded` (feature `embed`): the same bundle compiled in with
   rust-embed, under the same rules, with an `ETag`.
+- `health`, `health_with` and `version`: `GET /healthz` and `GET /version`.
+  `standard_layers`: tracing, gzip and a panic answered as a 500 body.

@@ -18,7 +18,7 @@ pub struct Bounds {
     /// How long a peer has to finish its handshake, say which protocol it
     /// speaks, and send each http/1.1 request head.
     pub head: Duration,
-    /// How long open connections get to finish once the stop token fires.
+    /// How long open connections get to finish once the stop future completes.
     pub grace: Duration,
 }
 
@@ -55,9 +55,11 @@ pub struct Listener {
 impl Listener {
     /// Bind `address` now, so a port taken fails here and port 0 resolves.
     pub async fn bind(address: SocketAddr, bounds: Bounds) -> io::Result<Self> {
-        let tcp = TcpListener::bind(address)
-            .await
-            .map_err(|e| io::Error::new(e.kind(), format!("binding {address}: {e}")))?;
+        Self::from_tcp(TcpListener::bind(address).await?, bounds)
+    }
+
+    /// Hold a listener the caller bound to `bounds`.
+    pub fn from_tcp(tcp: TcpListener, bounds: Bounds) -> io::Result<Self> {
         Ok(Self {
             local: tcp.local_addr()?,
             tcp,

@@ -6,12 +6,13 @@ use axum::Router;
 use support::{BRIEF, PATIENT, Pair, closed, dial, exchange, listener};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::watch;
-use wslib_http_server::{Bounds, CancellationToken, Https, Tls, serve_redirect};
+use tokio_util::sync::CancellationToken;
+use wslib_http_server::{Bounds, Https, Tls, serve_redirect};
 
 async fn redirecting(to: watch::Receiver<u16>) -> SocketAddr {
     let listener = listener(Bounds::REDIRECT).await;
     let address = listener.local_addr();
-    tokio::spawn(serve_redirect(listener, to, CancellationToken::new()));
+    tokio::spawn(serve_redirect(listener, to, std::future::pending()));
     address
 }
 
@@ -36,7 +37,7 @@ async fn https_reports_the_port_it_bound_and_the_redirect_follows_it() {
     tokio::spawn(
         https
             .redirect_from(redirect)
-            .serve(Router::new(), CancellationToken::new()),
+            .serve(Router::new(), std::future::pending()),
     );
 
     let answer = exchange(&mut dial(from).await, "/a/b?c=d")
@@ -98,7 +99,7 @@ async fn the_stop_drains_both_listeners() {
     let serving = tokio::spawn(
         https
             .redirect_from(redirect)
-            .serve(Router::new(), stop.clone()),
+            .serve(Router::new(), stop.clone().cancelled_owned()),
     );
     tokio::time::sleep(BRIEF / 4).await;
     stop.cancel();

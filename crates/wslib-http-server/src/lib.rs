@@ -1,6 +1,6 @@
 //! The listeners under an axum app: plain HTTP, TLS with h1 and h2, and a
-//! redirect to the TLS port, each held to its own [`Bounds`] and drained on a
-//! [`CancellationToken`].
+//! redirect to the TLS port, each held to its own [`Bounds`] and drained once a
+//! stop future completes.
 //!
 //! The crate enables no rustls crypto provider and never reads the process
 //! default: the app builds its `ServerConfig` on the provider it chose.
@@ -23,12 +23,12 @@ use axum_server::{Handle, Server};
 use hyper_util::rt::{TokioExecutor, TokioTimer};
 use hyper_util::server::conn::auto::{Builder, Http1Builder};
 use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 use tower::util::MapResponse;
 
 pub use bounded::{Bounds, Listener};
-pub use redirect::serve_redirect;
+pub use redirect::{redirect_router, serve_redirect};
 pub use tls::{Tls, server_config_from_pem, server_config_from_pem_files};
-pub use tokio_util::sync::CancellationToken;
 
 use bounded::Peer;
 use deciding::Deciding;
@@ -40,12 +40,12 @@ const H2_SEND_BUFFER: usize = 64 * 1024;
 const H2_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(20);
 const H2_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Serve `router` over plain HTTP on `listener` until `stop` fires and it
+/// Serve `router` over plain HTTP on `listener` until `stop` completes and it
 /// has drained.
 pub async fn serve_http(
     listener: Listener,
     router: Router,
-    stop: CancellationToken,
+    stop: impl Future<Output = ()>,
 ) -> io::Result<()> {
     let bounds = listener.bounds;
     tracing::info!(address = %listener.local_addr(), "listening");
@@ -54,13 +54,13 @@ pub async fn serve_http(
     until_stopped(server.serve(app(router)), handle, stop, bounds.grace).await
 }
 
-/// Serve `router` over TLS on `listener` until `stop` fires and it has
+/// Serve `router` over TLS on `listener` until `stop` completes and it has
 /// drained.
 pub async fn serve_https(
     listener: Listener,
     router: Router,
     tls: Tls,
-    stop: CancellationToken,
+    stop: impl Future<Output = ()>,
 ) -> io::Result<()> {
     let bounds = listener.bounds;
     tracing::info!(address = %listener.local_addr(), "listening");
@@ -104,30 +104,46 @@ impl Https {
         self.port.subscribe()
     }
 
-    /// Serve `router` until `stop` fires and both listeners have drained, or
-    /// one fails and the other has drained.
-    pub async fn serve(self, router: Router, stop: CancellationToken) -> io::Result<()> {
-        let stopping = stop.child_token();
+    /// Serve `router` until `stop` completes and both listeners have drained,
+    /// or one fails and the other has drained.
+    pub async fn serve(self, router: Router, stop: impl Future<Output = ()>) -> io::Result<()> {
+        let stopping = CancellationToken::new();
         let stops_both = |served: io::Result<()>| {
             if served.is_err() {
                 stopping.cancel();
             }
             served
         };
-        let redirecting = async {
-            match self.redirect {
-                Some(listener) => {
-                    serve_redirect(listener, self.port.subscribe(), stopping.clone()).await
-                }
-                None => Ok(()),
+        let https = serve_https(
+            self.listener,
+            router,
+            self.tls,
+            stopping.clone().cancelled_owned(),
+        );
+        let redirect = async {
+            let Some(listener) = self.redirect else {
+                return Ok(());
+            };
+            serve_redirect(
+                listener,
+                self.port.subscribe(),
+                stopping.clone().cancelled_owned(),
+            )
+            .await
+        };
+        let serving = async {
+            tokio::join!(async { stops_both(https.await) }, async {
+                stops_both(redirect.await)
+            })
+        };
+        tokio::pin!(serving, stop);
+        let (https, redirect) = tokio::select! {
+            served = &mut serving => served,
+            () = &mut stop => {
+                stopping.cancel();
+                serving.await
             }
         };
-        let (https, redirect) = tokio::join!(
-            async {
-                stops_both(serve_https(self.listener, router, self.tls, stopping.clone()).await)
-            },
-            async { stops_both(redirecting.await) },
-        );
         https.and(redirect)
     }
 }
@@ -182,13 +198,13 @@ fn head_within(
 async fn until_stopped(
     serving: impl Future<Output = io::Result<()>>,
     handle: Handle<Peer>,
-    stop: CancellationToken,
+    stop: impl Future<Output = ()>,
     grace: Duration,
 ) -> io::Result<()> {
     tokio::pin!(serving);
     tokio::select! {
         served = &mut serving => return served,
-        () = stop.cancelled() => {}
+        () = stop => {}
     }
     let stopping = tokio::time::Instant::now();
     handle.graceful_shutdown(Some(grace));

@@ -7,17 +7,16 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum_server::{Handle, Server};
 use tokio::sync::watch;
-use tokio_util::sync::CancellationToken;
 
 use crate::{Listener, head_within, until_stopped};
 
 /// Answer every request on `listener` with a 307 to the same host, path and
-/// query on the TLS port `https_port` holds at the time, until `stop` fires
+/// query on the TLS port `https_port` holds at the time, until `stop` completes
 /// and it has drained.
 pub async fn serve_redirect(
     listener: Listener,
     https_port: watch::Receiver<u16>,
-    stop: CancellationToken,
+    stop: impl Future<Output = ()>,
 ) -> io::Result<()> {
     let bounds = listener.bounds;
     tracing::info!(address = %listener.local_addr(), "redirecting to https");
@@ -33,7 +32,8 @@ pub async fn serve_redirect(
     until_stopped(serving, handle, stop, bounds.grace).await
 }
 
-fn redirect_router(https_port: watch::Receiver<u16>) -> Router {
+/// The redirect as a router, for serving or testing in-process.
+pub fn redirect_router(https_port: watch::Receiver<u16>) -> Router {
     Router::new().fallback(to_https).with_state(https_port)
 }
 

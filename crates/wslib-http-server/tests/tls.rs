@@ -5,11 +5,11 @@ use std::net::SocketAddr;
 use axum::Router;
 use axum::http::{Request, StatusCode, header};
 use axum::routing::get;
+use axum_server::tls_rustls::RustlsConfig;
 use rustls::pki_types::CertificateDer;
 use support::{Pair, dial_tls, exchange, listener};
 use wslib_http_server::{
-    Bounds, CancellationToken, Tls, serve_https, server_config_from_pem,
-    server_config_from_pem_files,
+    Bounds, Tls, serve_https, server_config_from_pem, server_config_from_pem_files,
 };
 
 fn app() -> Router {
@@ -21,7 +21,7 @@ fn app() -> Router {
 async fn serving(tls: Tls) -> SocketAddr {
     let listener = listener(Bounds::SERVING).await;
     let address = listener.local_addr();
-    tokio::spawn(serve_https(listener, app(), tls, CancellationToken::new()));
+    tokio::spawn(serve_https(listener, app(), tls, std::future::pending()));
     address
 }
 
@@ -135,5 +135,29 @@ fn the_pem_helper_refuses_what_is_not_a_pair() {
     assert_eq!(
         refused(&pair.cert_pem, &other.key_pem),
         std::io::ErrorKind::InvalidData
+    );
+}
+
+/// As an owner that builds with axum-server's `from_pem`, which sets h2 and
+/// http/1.1, and reloads with a config that sets no ALPN. `from_pem` reads the
+/// process default, which rustls installs from this test binary's one provider.
+#[tokio::test]
+async fn a_shared_config_reloaded_by_its_owner_reaches_the_listener() {
+    let (first, second) = (Pair::new(), Pair::new());
+    let owned = RustlsConfig::from_pem(first.cert_pem.clone().into(), first.key_pem.clone().into())
+        .await
+        .expect("a config");
+    let address = serving(Tls::from(owned.clone())).await;
+    let before = dial_tls(address, &first.cert, &[b"h2", b"http/1.1"]).await;
+    assert_eq!(negotiated(&before), Some(&b"h2"[..]));
+
+    owned.reload_from_config(second.server_config());
+    let after = dial_tls(address, &second.cert, &[b"h2", b"http/1.1"]).await;
+    assert_eq!(presented(&before), first.cert);
+    assert_eq!(presented(&after), second.cert);
+    assert_eq!(
+        negotiated(&after),
+        None,
+        "the owner's reload sets no ALPN, and the listener does not patch it"
     );
 }

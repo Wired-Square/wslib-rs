@@ -28,6 +28,13 @@ impl Tls {
     }
 }
 
+/// Serve a config whose owner reloads it; its ALPN is the owner's to set.
+impl From<RustlsConfig> for Tls {
+    fn from(config: RustlsConfig) -> Self {
+        Self(config)
+    }
+}
+
 fn with_alpn(mut config: Arc<ServerConfig>) -> Arc<ServerConfig> {
     if config.alpn_protocols.is_empty() {
         Arc::make_mut(&mut config).alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];

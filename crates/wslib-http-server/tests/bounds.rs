@@ -6,7 +6,7 @@ use axum::Router;
 use support::{BRIEF, PATIENT, Pair, answered, closed, dial, dial_tls, listener};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::watch;
-use wslib_http_server::{Bounds, CancellationToken, Tls, serve_http, serve_https, serve_redirect};
+use wslib_http_server::{Bounds, Tls, serve_http, serve_https, serve_redirect};
 
 const TIGHT: Bounds = Bounds {
     connections: 2,
@@ -17,11 +17,7 @@ const TIGHT: Bounds = Bounds {
 async fn http() -> SocketAddr {
     let listener = listener(TIGHT).await;
     let address = listener.local_addr();
-    tokio::spawn(serve_http(
-        listener,
-        Router::new(),
-        CancellationToken::new(),
-    ));
+    tokio::spawn(serve_http(listener, Router::new(), std::future::pending()));
     address
 }
 
@@ -31,7 +27,7 @@ async fn redirect() -> SocketAddr {
     tokio::spawn(serve_redirect(
         listener,
         watch::channel(443).1,
-        CancellationToken::new(),
+        std::future::pending(),
     ));
     address
 }
@@ -97,7 +93,7 @@ async fn a_tls_peer_silent_after_its_handshake_is_hung_up_on() {
         listener,
         Router::new(),
         Tls::new(pair.server_config()),
-        CancellationToken::new(),
+        std::future::pending(),
     ));
     hung_up_at_the_head_timeout(&mut dial_tls(address, &pair.cert, &[b"h2", b"http/1.1"]).await)
         .await;

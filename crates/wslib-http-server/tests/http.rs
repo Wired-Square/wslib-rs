@@ -8,7 +8,8 @@ use axum::extract::ConnectInfo;
 use axum::routing::get;
 use support::{BRIEF, PATIENT, closed, dial, exchange, listener};
 use tokio::io::AsyncWriteExt;
-use wslib_http_server::{Bounds, CancellationToken, serve_http};
+use tokio_util::sync::CancellationToken;
+use wslib_http_server::{Bounds, Listener, serve_http};
 
 fn app() -> Router {
     Router::new()
@@ -36,7 +37,7 @@ async fn serving(
     let listener = listener(bounds).await;
     let address = listener.local_addr();
     let stop = CancellationToken::new();
-    let served = tokio::spawn(serve_http(listener, app(), stop.clone()));
+    let served = tokio::spawn(serve_http(listener, app(), stop.clone().cancelled_owned()));
     (address, stop, served)
 }
 
@@ -104,4 +105,29 @@ async fn nothing_is_accepted_after_the_stop() {
         .expect("refused, not left hanging")
         .is_err()
     );
+}
+
+#[tokio::test]
+async fn a_listener_bound_by_the_caller_is_served() {
+    let tcp = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("bind");
+    let listener = Listener::from_tcp(tcp, Bounds::SERVING).expect("held");
+    let address = listener.local_addr();
+    tokio::spawn(serve_http(listener, app(), std::future::pending()));
+    let answer = exchange(&mut dial(address).await, "/peer")
+        .await
+        .expect("an answer");
+    assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+}
+
+#[tokio::test]
+async fn a_port_taken_is_the_bare_bind_error() {
+    let holding = listener(Bounds::SERVING).await;
+    let refused = Listener::bind(holding.local_addr(), Bounds::SERVING)
+        .await
+        .err()
+        .expect("taken");
+    assert_eq!(refused.kind(), std::io::ErrorKind::AddrInUse);
+    assert!(!refused.to_string().contains("binding"), "{refused}");
 }

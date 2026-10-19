@@ -195,6 +195,13 @@ built in: `VmcTrustAnchors::from_pem` takes the caller's, and the signature
 algorithms come from the caller's rustls provider, so this crate pulls in
 none. SCT signatures aren't verified, only their presence.
 
+Production trust anchors are the roots of the CAs the BIMI Group lists as
+qualified to issue mark certificates (its Mark Certificate Issuer
+Information page), and mailbox providers may trust a different set. Choosing
+and refreshing them is the caller's job. Anchoring on the last certificate of
+a fetched chain proves the checks work, but it proves no trust: anyone can
+publish a chain that ends in a root they made.
+
 `discover::bimi_certificate` (feature `http`) fetches the chain with the logo
 fetch's protections.
 

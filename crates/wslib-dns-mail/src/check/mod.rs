@@ -15,6 +15,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "render")]
+pub use bimi::bimi_logo_render_findings;
 pub use bimi::{bimi_findings, bimi_logo_findings, bimi_vmc_findings};
 pub use dkim::{DkimCheck, RSA_MINIMUM_BITS, RSA_RECOMMENDED_BITS, check_dkim, dkim_findings};
 pub use dmarc::{DmarcCheck, check_dmarc, dmarc_findings};
@@ -95,6 +97,9 @@ pub struct CheckOptions {
     /// these, over `bimi_http`.
     #[cfg(feature = "http")]
     pub bimi_vmc: Option<crate::bimi::VmcOptions>,
+    /// Measures a fetched logo's geometry against these.
+    #[cfg(feature = "render")]
+    pub bimi_render: Option<crate::bimi::RenderOptions>,
 }
 
 /// No selectors or blocklists, RFC 7489 discovery, a 10 s deadline and 200
@@ -117,6 +122,8 @@ impl Default for CheckOptions {
             bimi_http: None,
             #[cfg(feature = "http")]
             bimi_vmc: None,
+            #[cfg(feature = "render")]
+            bimi_render: Some(crate::bimi::RenderOptions::default()),
         }
     }
 }
@@ -149,6 +156,9 @@ pub struct DomainReport {
     pub bimi_certificate: Option<CertificateFetch>,
     /// Set when the fetched mark certificate was verified.
     pub bimi_vmc: Option<VmcVerification>,
+    /// Set when the fetched logo was measured.
+    #[cfg(feature = "render")]
+    pub bimi_logo_geometry: Option<crate::bimi::LogoGeometry>,
     /// Ordered by family, as the checks run.
     pub findings: Vec<Finding>,
     pub queries_sent: u32,
@@ -245,8 +255,18 @@ pub async fn check_domain(
     findings.extend(dkim.findings);
     findings.extend(mx.findings);
     findings.extend(bimi_findings(&bimi, &governing));
+    #[cfg(feature = "render")]
+    let bimi_logo_geometry = match (&options.bimi_render, &bimi_fetches.logo) {
+        (Some(_), Some(LogoFetch::Fetched { body, .. })) => crate::bimi::measure_logo(body).ok(),
+        _ => None,
+    };
     if let (Outcome::Found { at }, Some(logo)) = (bimi.outcome, &bimi_fetches.logo) {
-        findings.extend(bimi_logo_findings(&bimi.attempts[at].set.name, logo));
+        let subject = &bimi.attempts[at].set.name;
+        findings.extend(bimi_logo_findings(subject, logo));
+        #[cfg(feature = "render")]
+        if let (Some(render), Some(geometry)) = (&options.bimi_render, &bimi_logo_geometry) {
+            findings.extend(bimi_logo_render_findings(subject, geometry, render));
+        }
     }
     if let (Outcome::Found { at }, Some(certificate)) = (bimi.outcome, &bimi_fetches.certificate) {
         let subject = &bimi.attempts[at].set.name;
@@ -289,6 +309,8 @@ pub async fn check_domain(
         bimi_logo: bimi_fetches.logo,
         bimi_certificate: bimi_fetches.certificate,
         bimi_vmc: bimi_fetches.vmc,
+        #[cfg(feature = "render")]
+        bimi_logo_geometry,
         findings,
         queries_sent,
         queries,

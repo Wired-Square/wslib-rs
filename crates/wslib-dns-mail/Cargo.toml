@@ -1,6 +1,6 @@
 [package]
 name = "wslib-dns-mail"
-version = "0.4.0"
+version = "0.5.0"
 description = "Email-authentication records in DNS: lenient parsers with byte-span faults for SPF, DMARC, DKIM keys, BIMI, MTA-STS and TLS-RPT, and record editors."
 readme = "README.md"
 edition.workspace = true
@@ -14,6 +14,7 @@ publish = ["wired-square"]
 default = []
 serde = ["dep:serde", "wslib-dns/serde"]
 http = ["dep:reqwest", "dep:url"]
+render = ["dep:usvg"]
 
 [dependencies]
 wslib-dns = { version = "0.2", path = "../wslib-dns", registry = "wired-square" }
@@ -26,6 +27,7 @@ x509-parser = { version = "0.18", default-features = false }
 serde = { version = "1.0.225", features = ["derive"], optional = true }
 reqwest = { version = "0.13.2", default-features = false, features = ["rustls-no-provider"], optional = true }
 url = { version = "2.5.4", optional = true }
+usvg = { version = "0.48.1", default-features = false, optional = true }
 
 [dev-dependencies]
 rcgen = "0.14"

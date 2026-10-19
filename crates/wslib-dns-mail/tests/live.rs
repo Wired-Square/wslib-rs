@@ -80,6 +80,11 @@ async fn a_published_bimi_logo_is_fetched_and_checked() {
         panic!("bimigroup.org serves a logo: {:?}", report.bimi_logo);
     };
     assert!(validation.size > 0);
+    #[cfg(feature = "render")]
+    {
+        let geometry = report.bimi_logo_geometry.expect("the logo is measured");
+        assert!(geometry.off_centre.is_some() && geometry.crop_overflow.is_some());
+    }
 }
 
 #[cfg(feature = "http")]

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0
 
 - Lenient parsers returning `Parsed<T>` with byte-span `SyntaxFault`s, and an
   `is_usable()` per record type: `spf` (RFC 7208, including macros and dual

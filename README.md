@@ -13,6 +13,8 @@ appliance chassis and every app beside it.
 | `wslib-dns`       | DNS lookups that keep NXDOMAIN, NODATA and failures apart   |
 | `wslib-dns-mail`  | SPF, DMARC, DKIM, BIMI, MTA-STS and TLS-RPT records in DNS  |
 | `wslib-cli`       | Tables or JSON, exit codes, config lookup and `op://`       |
+| `wslib-api-error` | One HTTP error body, the axum error and extractors for it   |
+| `wslib-http`      | SPA fallback, health and version routes, standard layers    |
 
 † Not pure Rust: it carries TypeScript in `js/` that apps vendor into their
 frontend. Every crate that ships other languages is marked here, and says so

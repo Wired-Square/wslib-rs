@@ -2,6 +2,7 @@
 name = "wslib-api-error"
 version = "0.1.0"
 description = "One error body on the wire for every HTTP API, and the axum error that answers it."
+readme = "README.md"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

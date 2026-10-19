@@ -2,6 +2,7 @@
 //! between tables and JSON, one set of exit codes, where config is found, and
 //! `op://` references for secrets.
 
+pub mod config;
 pub mod exit;
 pub mod output;
 

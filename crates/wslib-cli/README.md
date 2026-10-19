@@ -32,3 +32,8 @@ fn run(cli: &Cli, output: Output) -> anyhow::Result<()> {
   waiting, 130 interrupted. `Exit::of` finds the code in an error's source
   chain; `exit::fail` prints the error, as `{"error", "exit"}` JSON in JSON
   mode.
+- **`config::Discovery`**: the config file is `--config`, else
+  `<PREFIX>_CONFIG`, else `<app>/config.toml` under `$XDG_CONFIG_HOME` or
+  `~/.config`, macOS included. `var("URL")` reads `<PREFIX>_URL`, and a flag
+  beats it, which beats the file. `read` hands back the text in any format;
+  `load` (feature `toml`) parses TOML.

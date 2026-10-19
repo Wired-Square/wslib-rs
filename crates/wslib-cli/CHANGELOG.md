@@ -9,3 +9,6 @@
 - `Exit`: 0 success, 1 failure, 2 usage, 3–123 the tool's own, 124 timeout,
   130 interrupted. `Exit::of` maps an error by its source chain, and
   `exit::fail` reports it on stderr, as JSON in JSON mode.
+- `config::Discovery`: the config file is the named one, `<PREFIX>_CONFIG`, or
+  `<app>/config.toml` under `$XDG_CONFIG_HOME` or `~/.config`, on macOS too;
+  `var` reads a `<PREFIX>_<KEY>` override. `load` (feature `toml`) parses it.

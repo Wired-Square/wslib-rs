@@ -38,6 +38,8 @@ pub(crate) enum Files {
         assets: ServeDir,
         files: ServeDir<ServeFile>,
     },
+    #[cfg(feature = "embed")]
+    Embedded(crate::embed::Lookup),
 }
 
 impl Spa {
@@ -90,6 +92,8 @@ impl Spa {
                 dir.clone().oneshot(request).await.into_response()
             }
             Files::Disk { files, .. } => files.clone().oneshot(request).await.into_response(),
+            #[cfg(feature = "embed")]
+            Files::Embedded(lookup) => crate::embed::serve(*lookup, &decoded, assets, &request),
         };
         let status = served.status();
         if status.is_client_error() || status.is_server_error() {

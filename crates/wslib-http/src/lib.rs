@@ -2,6 +2,8 @@
 //! version route, and the standard layers. Every refusal is a
 //! [`wslib_api_error`] body.
 
+#[cfg(feature = "embed")]
+mod embed;
 mod spa;
 
 pub use spa::Spa;

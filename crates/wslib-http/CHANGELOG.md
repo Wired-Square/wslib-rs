@@ -7,3 +7,5 @@
   resolved path. `assets/` is cached for ever and 404s when missing; the rest
   is `no-store`. Precompressed gzip is sent where it exists, and every refusal
   is a wslib-api-error body.
+- `Spa::embedded` (feature `embed`): the same bundle compiled in with
+  rust-embed, under the same rules, with an `ETag`.

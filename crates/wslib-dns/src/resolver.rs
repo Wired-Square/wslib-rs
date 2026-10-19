@@ -3,7 +3,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::pin::pin;
 use std::task::Poll;
 
-use crate::{Answer, Lookup, LookupError, Mx, Txt, normalise};
+use crate::{Answer, Ds, Lookup, LookupError, Mx, Tlsa, Txt, normalise};
 
 /// The hop limit [`Resolver::cname_chain`] callers use unless they have a reason
 /// not to.
@@ -22,6 +22,34 @@ pub trait Resolver: Send + Sync {
     /// One hop: the name's own CNAME target.
     fn cname(&self, name: &str) -> impl Future<Output = Lookup<String>> + Send;
     fn ptr(&self, ip: IpAddr) -> impl Future<Output = Lookup<String>> + Send;
+
+    /// TLSA (RFC 6698), such as `_25._tcp.<host>`. A resolver that doesn't
+    /// support it answers [`LookupError::Other`].
+    fn tlsa(&self, name: &str) -> impl Future<Output = Lookup<Tlsa>> + Send {
+        let _ = name;
+        async {
+            Err(LookupError::Other(
+                "this resolver doesn't look up TLSA".into(),
+            ))
+        }
+    }
+
+    /// The DS records the parent zone publishes for `name`. A resolver that
+    /// doesn't support it answers [`LookupError::Other`].
+    fn ds(&self, name: &str) -> impl Future<Output = Lookup<Ds>> + Send {
+        let _ = name;
+        async {
+            Err(LookupError::Other(
+                "this resolver doesn't look up DS".into(),
+            ))
+        }
+    }
+
+    /// Whether answers carry a DNSSEC status, so a missing one means the
+    /// query failed rather than the resolver not looking.
+    fn validates(&self) -> bool {
+        false
+    }
 
     /// A and AAAA, queried together. Addresses from either side are an answer
     /// even if the other side failed; with none, a failure outranks absence.
@@ -89,6 +117,15 @@ macro_rules! delegate_resolver {
             }
             fn ptr(&self, ip: IpAddr) -> impl Future<Output = Lookup<String>> + Send {
                 (**self).ptr(ip)
+            }
+            fn tlsa(&self, name: &str) -> impl Future<Output = Lookup<Tlsa>> + Send {
+                (**self).tlsa(name)
+            }
+            fn ds(&self, name: &str) -> impl Future<Output = Lookup<Ds>> + Send {
+                (**self).ds(name)
+            }
+            fn validates(&self) -> bool {
+                (**self).validates()
             }
         }
     )+};
@@ -160,6 +197,7 @@ fn merge_addresses(v4: Lookup<Ipv4Addr>, v6: Lookup<Ipv6Addr>) -> Lookup<IpAddr>
     match (v4, v6) {
         (Ok(a), Ok(b)) => Ok(Answer {
             ttl: [a.ttl, b.ttl].into_iter().flatten().min(),
+            dnssec: [a.dnssec, b.dnssec].into_iter().flatten().min(),
             canonical_name: a.canonical_name.or(b.canonical_name),
             records: [a.records, b.records].concat(),
         }),

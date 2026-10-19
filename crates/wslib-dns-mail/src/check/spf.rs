@@ -283,8 +283,10 @@ fn lookup_findings(
 /// A temperror somewhere in the tree; a query never sent marks the check
 /// incomplete instead.
 fn spf_lookup_failed(domain: &str, name: &str, error: &LookupError) -> Finding {
-    if *error == LookupError::NotSent {
-        return incomplete("spf", domain);
+    match error {
+        LookupError::NotSent => return incomplete("spf", domain),
+        LookupError::Bogus => return lookup_failure("spf", name, error),
+        _ => {}
     }
     Finding::new(
         FindingCode::SpfLookupFailed,

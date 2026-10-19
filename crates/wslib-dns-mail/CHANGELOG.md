@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.4.0
+
+- **Breaking:** needs wslib-dns 0.2. `discover::RecordSet`, `MxDiscovery`
+  and `MxHost` are `#[non_exhaustive]`.
+- DNSSEC, through a validating resolver (wslib-dns `dnssec-ring` or
+  `dnssec-aws-lc-rs`): `RecordSet::dnssec`, `MxDiscovery::dnssec` and
+  `DomainReport::dnssec`: Bogus if any lookup at or under the domain was,
+  else the worst of its MX and SPF answers, else Indeterminate.
+  Findings `dnssec_status`, `dnssec_bogus` (any lookup that came back
+  bogus), `dnssec_unsupported_resolver` (the root's NS answer isn't Secure,
+  so the domain's status is Indeterminate) and `dnssec_suspected_bogus` (a
+  SERVFAIL inside a zone whose parent publishes DS records).
+- DANE for SMTP (RFC 7672): with a validating resolver, `discover::mx` looks
+  up TLSA at `_25._tcp.<exchange>` for each MX host (`MxHost::tlsa`), and
+  `dane::parse_tlsa` gives the records meaning. Findings
+  `dane_tlsa_insecure`, `dane_mx_insecure`, `dane_tlsa_syntax` and
+  `dane_tlsa_usage_discouraged`. An Indeterminate TLSA or MX answer gives
+  no DANE status finding, since that's the resolver's limit. DANE alongside
+  MTA-STS isn't flagged (RFC 8461 §2).
+
 ## 0.3.0
 
 - **Breaking:** `check::Detail`, `discover::PolicyFetch`, `LogoFetch` and the

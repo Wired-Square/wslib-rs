@@ -25,6 +25,7 @@ mod uri;
 
 pub mod bimi;
 pub mod check;
+pub mod dane;
 pub mod discover;
 pub mod dkim;
 pub mod dmarc;

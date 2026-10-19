@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.0
+
+- **Breaking:** `Answer` and `HickoryOptions` are `#[non_exhaustive]`; build
+  them with `Answer::new` and `HickoryOptions::default()`. Later fields are
+  then not breaking.
+- DNSSEC validation in `HickoryResolver`, behind feature `dnssec-ring` or
+  `dnssec-aws-lc-rs` (the caller picks the crypto provider) and
+  `HickoryOptions::validate`. Answers carry `Answer::dnssec` (`DnssecStatus`:
+  Secure, Insecure, Bogus or Indeterminate, the worst of the records and any
+  CNAMEs that led to them), set only when validating; a bogus answer is
+  `LookupError::Bogus`, never NODATA.
+- `Resolver::tlsa` and `Resolver::ds` (`Tlsa`, `Ds`), provided methods that
+  answer `LookupError::Other` unless a resolver supports them, and
+  `Resolver::validates`.
+- `FakeResolver::{with_tlsa, with_ds, with_dnssec, validating}`.
+- `LoggingResolver` logs DS queries; the root name `.` can be queried
+  through `HickoryResolver`.
+
 ## 0.1.1
 
 - `is_global` and `is_global_network`: whether an address or network is

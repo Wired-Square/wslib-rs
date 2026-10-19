@@ -50,6 +50,11 @@ match dns.txt("_dmarc.example.com").await {
 - **`Answer::canonical_name`**: the name the records belong to, when the
   queried name is an alias for it, taken from the CNAME chain in the answer.
   You can tell an alias apart without a separate CNAME query.
+- **DNSSEC** (feature `dnssec-ring` or `dnssec-aws-lc-rs`, plus
+  `HickoryOptions::validate`): hickory validates from the root's trust
+  anchor and each `Answer` carries a `DnssecStatus`. A bogus answer is
+  `LookupError::Bogus`. Without validation, `Answer::dnssec` is `None` and
+  nothing changes. `tlsa` and `ds` look up TLSA and DS records.
 - **Names**: `normalise`, `validate_hostname` (RFC 1035/1123) and
   `validate_service_name` (which also allows `_`), `to_ascii`/`to_unicode`
   (IDNA, UTS #46), `public_suffix` and `registrable_domain` (the Public Suffix
@@ -61,6 +66,8 @@ match dns.txt("_dmarc.example.com").await {
 | Feature   | Adds                                                      |
 | --------- | --------------------------------------------------------- |
 | `hickory` | `HickoryResolver`, over hickory-resolver with tokio       |
+| `dnssec-ring` | `HickoryOptions::validate`, with ring                 |
+| `dnssec-aws-lc-rs` | The same, with aws-lc-rs                         |
 | `testing` | `FakeResolver`                                            |
 | `serde`   | `Serialize`/`Deserialize` on every public type            |
 
@@ -72,4 +79,11 @@ it changes. `cargo update -p psl` picks up a newer list.
 
 ## Known gaps
 
-- No DNSSEC: the AD bit and validation status aren't reported.
+- Hickory can't set the CD bit, so behind an upstream resolver that
+  validates (most public ones, and the VPC resolver if Route 53 validation
+  is on), a bogus zone comes back SERVFAIL, not `Bogus`. Only a
+  non-validating upstream lets hickory see the bad signatures. Whether the
+  Route 53 VPC resolver passes RRSIGs through is unconfirmed.
+- An upstream that strips RRSIGs makes signed zones look Insecure.
+- Secure denial of existence isn't reported: NXDOMAIN and NODATA carry no
+  status.

@@ -2,10 +2,11 @@ use std::borrow::Cow;
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr};
 
-use wslib_dns::LookupError;
+use wslib_dns::{Ds, LookupError};
 
 use crate::SyntaxFault;
 use crate::bimi::{SvgRule, VmcProblem};
+use crate::dane::{DaneFault, TlsaUsage};
 use crate::discover::FetchFailure;
 use crate::dmarc::Policy;
 use crate::spf::tree::TermPath;
@@ -172,6 +173,14 @@ finding_codes! {
     MtaStsTesting => "mta_sts_testing", Practice, Info, "RFC 8461 §5";
     TlsRptSyntax => "tls_rpt_syntax", Spec, Error, "RFC 8460 §3";
     TlsRptMissingWithMtaSts => "tls_rpt_missing_with_mta_sts", Practice, Warning, "RFC 8461 §8";
+    DnssecStatus => "dnssec_status", Observation, Info, "RFC 4035 §4.3";
+    DnssecBogus => "dnssec_bogus", Spec, Error, "RFC 4035 §5.5";
+    DnssecSuspectedBogus => "dnssec_suspected_bogus", Observation, Warning, "RFC 4035 §5.5";
+    DnssecUnsupportedResolver => "dnssec_unsupported_resolver", Observation, Warning, "RFC 4035 §4.9";
+    DaneTlsaInsecure => "dane_tlsa_insecure", Spec, Error, "RFC 7672 §2.2";
+    DaneMxInsecure => "dane_mx_insecure", Observation, Info, "RFC 7672 §2.2.1";
+    DaneTlsaSyntax => "dane_tlsa_syntax", Spec, Error, "RFC 6698 §2.1";
+    DaneTlsaUsageDiscouraged => "dane_tlsa_usage_discouraged", Practice, Warning, "RFC 7672 §3.1.3";
     LookupFailed => "lookup_failed", Observation, Warning, "RFC 1035 §4.1.1";
     Incomplete => "incomplete", Observation, Warning, "";
 }
@@ -299,6 +308,32 @@ pub enum Detail {
     },
     Uncovered {
         exchange: String,
+    },
+    Dnssec {
+        status: wslib_dns::DnssecStatus,
+    },
+    /// The DS records that say `zone` is signed, so its SERVFAILs are likely
+    /// validation failures.
+    SuspectedBogus {
+        zone: String,
+        ds: Vec<Ds>,
+    },
+    /// An MX host's TLSA records, and the status of the answer that matters.
+    Tlsa {
+        exchange: String,
+        name: String,
+        status: Option<wslib_dns::DnssecStatus>,
+    },
+    /// One way the `record`th TLSA record at `name` is malformed.
+    TlsaFault {
+        name: String,
+        record: usize,
+        fault: DaneFault,
+    },
+    TlsaUsage {
+        name: String,
+        record: usize,
+        usage: TlsaUsage,
     },
     /// The checks a deadline or query budget cut short.
     Incomplete {

@@ -2,7 +2,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
 
-use crate::{Lookup, LookupError, Mx, Resolver, Txt};
+use crate::{Ds, Lookup, LookupError, Mx, Resolver, Tlsa, Txt};
 
 /// A [`Resolver`] that stops sending queries at a deadline or after a number
 /// of them, answering [`LookupError::NotSent`] instead, so a caller can bound
@@ -100,6 +100,20 @@ impl<R: Resolver> Resolver for BudgetResolver<R> {
     async fn ptr(&self, ip: IpAddr) -> Lookup<String> {
         self.admit()?;
         self.inner.ptr(ip).await
+    }
+
+    async fn tlsa(&self, name: &str) -> Lookup<Tlsa> {
+        self.admit()?;
+        self.inner.tlsa(name).await
+    }
+
+    async fn ds(&self, name: &str) -> Lookup<Ds> {
+        self.admit()?;
+        self.inner.ds(name).await
+    }
+
+    fn validates(&self) -> bool {
+        self.inner.validates()
     }
 }
 

@@ -1,9 +1,9 @@
 use std::net::IpAddr;
 
-use wslib_dns::Resolver;
+use wslib_dns::{DnssecStatus, Resolver};
 
 use super::{Detail, Finding, FindingCode, Severity, lookup_failure};
-use crate::discover::{DnsblResult, DnsblStatus, MxDiscovery, dnsbl, join_all, mx};
+use crate::discover::{DnsblResult, DnsblStatus, MxDiscovery, TlsaSet, dnsbl, join_all, mx};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -103,6 +103,9 @@ pub fn mx_findings(mx: &MxDiscovery, dnsbl: &[DnsblResult]) -> Vec<Finding> {
             Some(error) => findings.push(lookup_failure("mx", &host.exchange, error)),
             None => {}
         }
+        if let Some(tlsa) = &host.tlsa {
+            findings.extend(dane_findings(mx, &host.exchange, tlsa));
+        }
         for reverse in &host.reverse {
             let address = || Detail::Address {
                 exchange: host.exchange.clone(),
@@ -159,6 +162,61 @@ pub fn mx_findings(mx: &MxDiscovery, dnsbl: &[DnsblResult]) -> Vec<Finding> {
                 findings.push(lookup_failure("dnsbl", &result.name, error))
             }
             DnsblStatus::NotListed => {}
+        }
+    }
+    findings
+}
+
+/// RFC 7672 §2.2: a client uses TLSA only from a secure answer, reached from a
+/// secure MX answer.
+fn dane_findings(mx: &MxDiscovery, exchange: &str, tlsa: &TlsaSet) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    match &tlsa.error {
+        Some(error) if error.is_absent() => return findings,
+        Some(error) => return vec![lookup_failure("mx", &tlsa.name, error)],
+        None => {}
+    }
+    let insecure = |code, status| {
+        Finding::new(
+            code,
+            &tlsa.name,
+            Detail::Tlsa {
+                exchange: exchange.to_owned(),
+                name: tlsa.name.clone(),
+                status,
+            },
+        )
+    };
+    // Indeterminate means the resolver got no signatures, which
+    // dnssec_unsupported_resolver reports; it's no fault of the domain's.
+    if tlsa.dnssec == Some(DnssecStatus::Insecure) {
+        findings.push(insecure(FindingCode::DaneTlsaInsecure, tlsa.dnssec));
+    } else if tlsa.dnssec == Some(DnssecStatus::Secure) && mx.dnssec == Some(DnssecStatus::Insecure)
+    {
+        findings.push(insecure(FindingCode::DaneMxInsecure, mx.dnssec));
+    }
+    for (index, record) in tlsa.records.iter().enumerate() {
+        findings.extend(record.faults.iter().map(|fault| {
+            Finding::new(
+                FindingCode::DaneTlsaSyntax,
+                &tlsa.name,
+                Detail::TlsaFault {
+                    name: tlsa.name.clone(),
+                    record: index,
+                    fault: fault.clone(),
+                },
+            )
+        }));
+        if record.usage.is_pkix() {
+            findings.push(Finding::new(
+                FindingCode::DaneTlsaUsageDiscouraged,
+                &tlsa.name,
+                Detail::TlsaUsage {
+                    name: tlsa.name.clone(),
+                    record: index,
+                    usage: record.usage,
+                },
+            ));
         }
     }
     findings

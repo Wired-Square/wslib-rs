@@ -6,12 +6,31 @@ pub type Lookup<T> = Result<Answer<T>, LookupError>;
 /// The records a query returned, never empty, and the smallest TTL among them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct Answer<T> {
     pub records: Vec<T>,
     pub ttl: Option<u32>,
     /// The name the records belong to, when the queried name is an alias for
     /// it: the end of the CNAME chain the answer came with.
     pub canonical_name: Option<String>,
+    /// How DNSSEC validation judged the records; set only by a validating
+    /// resolver.
+    pub dnssec: Option<DnssecStatus>,
+}
+
+/// A validating resolver's verdict on an RRset (RFC 4035 §4.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+pub enum DnssecStatus {
+    /// The signatures failed, or records the chain says exist are missing.
+    Bogus,
+    /// The resolver couldn't get the DNSSEC records to decide.
+    Indeterminate,
+    /// The zone isn't signed: there is provably no chain of trust.
+    Insecure,
+    /// Signed, with a chain of trust to the root.
+    Secure,
 }
 
 impl<T> Answer<T> {
@@ -21,6 +40,7 @@ impl<T> Answer<T> {
             records,
             ttl: None,
             canonical_name: None,
+            dnssec: None,
         }
     }
 
@@ -29,6 +49,7 @@ impl<T> Answer<T> {
             records: self.records.into_iter().map(f).collect(),
             ttl: self.ttl,
             canonical_name: self.canonical_name,
+            dnssec: self.dnssec,
         }
     }
 }
@@ -51,6 +72,9 @@ pub enum LookupError {
     Timeout,
     /// Never sent: the caller's deadline or query budget had run out.
     NotSent,
+    /// DNSSEC validation failed: the answer can't be trusted, whatever it
+    /// said.
+    Bogus,
     /// A failure the backend could not classify, in its own words.
     Other(String),
 }
@@ -71,6 +95,7 @@ impl fmt::Display for LookupError {
             Self::Refused => f.write_str("query refused (REFUSED)"),
             Self::Timeout => f.write_str("query timed out"),
             Self::NotSent => f.write_str("query not sent: deadline or query budget exhausted"),
+            Self::Bogus => f.write_str("DNSSEC validation failed (bogus)"),
             Self::Other(message) => f.write_str(message),
         }
     }
@@ -89,7 +114,9 @@ pub enum RecordType {
     Cname,
     Mx,
     Ns,
+    Ds,
     Ptr,
+    Tlsa,
     Txt,
 }
 
@@ -101,7 +128,9 @@ impl fmt::Display for RecordType {
             Self::Cname => "CNAME",
             Self::Mx => "MX",
             Self::Ns => "NS",
+            Self::Ds => "DS",
             Self::Ptr => "PTR",
+            Self::Tlsa => "TLSA",
             Self::Txt => "TXT",
         })
     }
@@ -130,6 +159,26 @@ impl From<&str> for Txt {
     fn from(text: &str) -> Self {
         Self::new(vec![text.as_bytes().to_vec()])
     }
+}
+
+/// One DS record (RFC 4034 §5): the parent's pointer to a signed child zone.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Ds {
+    pub key_tag: u16,
+    pub algorithm: u8,
+    pub digest_type: u8,
+    pub digest: Vec<u8>,
+}
+
+/// One TLSA record (RFC 6698), as its four fields; meaning is the caller's.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Tlsa {
+    pub usage: u8,
+    pub selector: u8,
+    pub matching: u8,
+    pub data: Vec<u8>,
 }
 
 /// One MX record. A null MX (RFC 7505) has the exchange `.`.
@@ -162,6 +211,7 @@ mod tests {
             LookupError::Refused,
             LookupError::Timeout,
             LookupError::NotSent,
+            LookupError::Bogus,
         ]
         .iter()
         .map(|error| serde_json::to_string(error).unwrap())
@@ -174,7 +224,8 @@ mod tests {
                 r#""servfail""#,
                 r#""refused""#,
                 r#""timeout""#,
-                r#""not_sent""#
+                r#""not_sent""#,
+                r#""bogus""#
             ]
         );
         assert_eq!(

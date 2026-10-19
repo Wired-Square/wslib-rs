@@ -33,7 +33,7 @@ pub use fetch::{DEFAULT_USER_AGENT, HttpClients};
 #[cfg(feature = "http")]
 pub use mta_sts_policy::mta_sts_policy;
 pub use mta_sts_policy::{POLICY_SIZE_LIMIT, PolicyFetch, policy_url};
-pub use mx::{MxDiscovery, MxHost, ReverseDns, mx};
+pub use mx::{MxDiscovery, MxHost, ReverseDns, TlsaSet, mx};
 use wslib_dns::{LookupError, Resolver};
 
 use crate::Parsed;
@@ -53,6 +53,7 @@ pub struct Published<T> {
 /// The records of one kind at one name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct RecordSet<T> {
     pub name: String,
     /// Why the query returned no records at all.
@@ -62,6 +63,8 @@ pub struct RecordSet<T> {
     pub records: Vec<Published<T>>,
     /// The other TXT strings at the name, which receivers skip.
     pub others: Vec<String>,
+    /// The answer's DNSSEC status, from a validating resolver.
+    pub dnssec: Option<wslib_dns::DnssecStatus>,
 }
 
 impl<T> RecordSet<T> {
@@ -115,6 +118,7 @@ pub(crate) async fn txt_set<T>(
                     })
                     .collect(),
                 others,
+                dnssec: answer.dnssec,
             }
         }
         Err(error) => RecordSet {
@@ -123,6 +127,7 @@ pub(crate) async fn txt_set<T>(
             ttl: None,
             records: Vec::new(),
             others: Vec::new(),
+            dnssec: None,
         },
     }
 }

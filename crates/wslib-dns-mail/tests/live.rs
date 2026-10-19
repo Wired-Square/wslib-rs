@@ -119,3 +119,47 @@ async fn a_published_mark_certificate_verifies_through_check_domain() {
     let vmc = report.bimi_vmc.expect("the certificate is verified");
     assert!(vmc.is_valid(), "{:?}", vmc.problems);
 }
+
+/// Through the system's resolvers. Behind a validating upstream the broken
+/// zone SERVFAILs, so the DS heuristic flags it rather than `dnssec_bogus`.
+#[tokio::test]
+#[ignore = "needs the network"]
+async fn validation_reports_dnssec_and_dane() {
+    use wslib_dns::DnssecStatus;
+    use wslib_dns_mail::check::FindingCode;
+
+    let mut options = HickoryOptions::default();
+    options.validate = true;
+    let dns = HickoryResolver::from_system(options).unwrap();
+    let report = check::check_domain(&dns, "example.com", &CheckOptions::default()).await;
+    assert_eq!(
+        report.dnssec,
+        Some(DnssecStatus::Secure),
+        "{:?}",
+        report.findings
+    );
+
+    let posteo = check::check_mx(&dns, "posteo.de", &[]).await;
+    assert_eq!(posteo.mx.dnssec, Some(DnssecStatus::Secure));
+    assert!(
+        posteo
+            .mx
+            .hosts
+            .iter()
+            .any(|host| host.tlsa.as_ref().is_some_and(|tlsa| {
+                tlsa.dnssec == Some(DnssecStatus::Secure) && !tlsa.records.is_empty()
+            })),
+        "{:?}",
+        posteo.mx.hosts
+    );
+
+    let broken = check::check_domain(&dns, "dnssec-failed.org", &CheckOptions::default()).await;
+    let codes: Vec<FindingCode> = broken.findings.iter().map(|finding| finding.code).collect();
+    // Exactly one: suspected behind a validating upstream, bogus behind one
+    // that passes the signatures through.
+    assert!(
+        codes.contains(&FindingCode::DnssecBogus)
+            != codes.contains(&FindingCode::DnssecSuspectedBogus),
+        "{codes:?}"
+    );
+}

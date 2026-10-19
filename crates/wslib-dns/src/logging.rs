@@ -2,7 +2,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Mutex;
 use std::time::Instant;
 
-use crate::{Lookup, LookupError, Mx, RecordType, Resolver, Txt, reverse_name};
+use crate::{Ds, Lookup, LookupError, Mx, RecordType, Resolver, Tlsa, Txt, reverse_name};
 
 /// A [`Resolver`] that records every query it passes on and how it ended, so a
 /// caller can show its working.
@@ -110,6 +110,19 @@ impl<R: Resolver> Resolver for LoggingResolver<R> {
         self.logged(&reverse_name(ip), RecordType::Ptr, self.inner.ptr(ip))
             .await
     }
+
+    async fn tlsa(&self, name: &str) -> Lookup<Tlsa> {
+        self.logged(name, RecordType::Tlsa, self.inner.tlsa(name))
+            .await
+    }
+
+    async fn ds(&self, name: &str) -> Lookup<Ds> {
+        self.logged(name, RecordType::Ds, self.inner.ds(name)).await
+    }
+
+    fn validates(&self) -> bool {
+        self.inner.validates()
+    }
 }
 
 trait Presentation {
@@ -119,6 +132,23 @@ trait Presentation {
 impl Presentation for Txt {
     fn presentation(&self) -> String {
         self.joined()
+    }
+}
+
+impl Presentation for Ds {
+    fn presentation(&self) -> String {
+        let digest: String = self.digest.iter().map(|b| format!("{b:02x}")).collect();
+        format!(
+            "{} {} {} {digest}",
+            self.key_tag, self.algorithm, self.digest_type
+        )
+    }
+}
+
+impl Presentation for Tlsa {
+    fn presentation(&self) -> String {
+        let data: String = self.data.iter().map(|b| format!("{b:02x}")).collect();
+        format!("{} {} {} {data}", self.usage, self.selector, self.matching)
     }
 }
 

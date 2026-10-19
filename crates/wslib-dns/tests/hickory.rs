@@ -6,13 +6,12 @@ use wslib_dns::{HickoryOptions, HickoryResolver, LookupError, Resolver};
 #[tokio::test]
 async fn a_server_that_never_answers_is_a_timeout() {
     let silent = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let dns = HickoryResolver::from_nameservers(
-        [silent.local_addr().unwrap()],
-        HickoryOptions {
-            timeout: Duration::from_millis(200),
-            attempts: 1,
-        },
-    )
+    let dns = HickoryResolver::from_nameservers([silent.local_addr().unwrap()], {
+        let mut options = HickoryOptions::default();
+        options.timeout = Duration::from_millis(200);
+        options.attempts = 1;
+        options
+    })
     .unwrap();
     assert_eq!(dns.a("example.com").await, Err(LookupError::Timeout));
     assert_eq!(dns.txt("example.com").await, Err(LookupError::Timeout));

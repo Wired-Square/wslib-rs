@@ -3,7 +3,10 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Mutex;
 
 use crate::name::query_name;
-use crate::{Answer, Lookup, LookupError, Mx, RecordType, Resolver, Txt, normalise, reverse_name};
+use crate::{
+    Answer, DnssecStatus, Ds, Lookup, LookupError, Mx, RecordType, Resolver, Tlsa, Txt, normalise,
+    reverse_name,
+};
 
 /// An in-memory zone for tests, which counts the queries made of it.
 ///
@@ -29,6 +32,7 @@ use crate::{Answer, Lookup, LookupError, Mx, RecordType, Resolver, Txt, normalis
 pub struct FakeResolver {
     names: HashMap<String, Entry>,
     queries: Mutex<BTreeMap<(String, RecordType), usize>>,
+    validating: bool,
 }
 
 #[derive(Debug, Default)]
@@ -40,6 +44,9 @@ struct Entry {
     ns: Vec<String>,
     cname: Option<String>,
     ptr: Vec<String>,
+    tlsa: Vec<Tlsa>,
+    ds: Vec<Ds>,
+    dnssec: Option<DnssecStatus>,
     errors: HashMap<RecordType, LookupError>,
     all_types: Option<LookupError>,
 }
@@ -99,6 +106,31 @@ impl FakeResolver {
     pub fn with_cname(mut self, name: &str, target: &str) -> Self {
         self.entry(name).cname = Some(query_name(target));
         self
+    }
+
+    pub fn with_ds(mut self, name: &str, record: Ds) -> Self {
+        self.entry(name).ds.push(record);
+        self
+    }
+
+    pub fn with_tlsa(mut self, name: &str, record: Tlsa) -> Self {
+        self.entry(name).tlsa.push(record);
+        self
+    }
+
+    /// Validates, as [`with_dnssec`](Self::with_dnssec) also does: answers
+    /// at names given no status are Insecure.
+    pub fn validating(mut self) -> Self {
+        self.validating = true;
+        self
+    }
+
+    /// Validates, marking every answer at `name` with a DNSSEC status. For a
+    /// bogus name, use [`LookupError::Bogus`] with
+    /// [`with_failure`](Self::with_failure).
+    pub fn with_dnssec(mut self, name: &str, status: DnssecStatus) -> Self {
+        self.entry(name).dnssec = Some(status);
+        self.validating()
     }
 
     pub fn with_ptr(mut self, ip: IpAddr, host: &str) -> Self {
@@ -182,6 +214,9 @@ impl FakeResolver {
         } else {
             Ok(Answer {
                 canonical_name,
+                dnssec: entry
+                    .dnssec
+                    .or(self.validating.then_some(DnssecStatus::Insecure)),
                 ..Answer::new(records)
             })
         }
@@ -217,6 +252,18 @@ impl Resolver for FakeResolver {
 
     async fn ptr(&self, ip: IpAddr) -> Lookup<String> {
         self.answer(&reverse_name(ip), RecordType::Ptr, |e| e.ptr.clone())
+    }
+
+    async fn tlsa(&self, name: &str) -> Lookup<Tlsa> {
+        self.answer(name, RecordType::Tlsa, |e| e.tlsa.clone())
+    }
+
+    async fn ds(&self, name: &str) -> Lookup<Ds> {
+        self.answer(name, RecordType::Ds, |e| e.ds.clone())
+    }
+
+    fn validates(&self) -> bool {
+        self.validating
     }
 }
 
@@ -405,5 +452,39 @@ mod tests {
                 })
             ));
         });
+    }
+
+    #[test]
+    fn answers_carry_the_status_set_for_their_name() {
+        let dns = FakeResolver::new()
+            .with_mx("example.com", 10, "mail.example.com")
+            .with_dnssec("example.com", DnssecStatus::Secure)
+            .with_tlsa(
+                "_25._tcp.mail.example.com",
+                Tlsa {
+                    usage: 3,
+                    selector: 1,
+                    matching: 1,
+                    data: vec![0xab; 32],
+                },
+            )
+            .with_failure("bogus.example.com", LookupError::Bogus);
+        block_on(async {
+            assert_eq!(
+                dns.mx("example.com").await.unwrap().dnssec,
+                Some(DnssecStatus::Secure)
+            );
+            assert_eq!(
+                dns.tlsa("_25._tcp.mail.example.com").await.unwrap().dnssec,
+                Some(DnssecStatus::Insecure)
+            );
+            assert_eq!(
+                dns.tlsa("_25._tcp.mail.example.com").await.unwrap().records[0].usage,
+                3
+            );
+            assert_eq!(dns.a("bogus.example.com").await, Err(LookupError::Bogus));
+        });
+        assert!(dns.validates());
+        assert!(!FakeResolver::new().validates());
     }
 }

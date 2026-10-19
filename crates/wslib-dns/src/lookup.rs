@@ -9,18 +9,26 @@ pub type Lookup<T> = Result<Answer<T>, LookupError>;
 pub struct Answer<T> {
     pub records: Vec<T>,
     pub ttl: Option<u32>,
+    /// The name the records belong to, when the queried name is an alias for
+    /// it: the end of the CNAME chain the answer came with.
+    pub canonical_name: Option<String>,
 }
 
 impl<T> Answer<T> {
-    /// An answer with no TTL, as a test or a synthesised result has.
+    /// An answer with no TTL or alias, as a test or a synthesised result has.
     pub fn new(records: Vec<T>) -> Self {
-        Self { records, ttl: None }
+        Self {
+            records,
+            ttl: None,
+            canonical_name: None,
+        }
     }
 
     pub fn map<U>(self, f: impl FnMut(T) -> U) -> Answer<U> {
         Answer {
             records: self.records.into_iter().map(f).collect(),
             ttl: self.ttl,
+            canonical_name: self.canonical_name,
         }
     }
 }
@@ -41,6 +49,8 @@ pub enum LookupError {
     ServFail,
     Refused,
     Timeout,
+    /// Never sent: the caller's deadline or query budget had run out.
+    NotSent,
     /// A failure the backend could not classify, in its own words.
     Other(String),
 }
@@ -60,6 +70,7 @@ impl fmt::Display for LookupError {
             Self::ServFail => f.write_str("server failure (SERVFAIL)"),
             Self::Refused => f.write_str("query refused (REFUSED)"),
             Self::Timeout => f.write_str("query timed out"),
+            Self::NotSent => f.write_str("query not sent: deadline or query budget exhausted"),
             Self::Other(message) => f.write_str(message),
         }
     }
@@ -150,6 +161,7 @@ mod tests {
             LookupError::ServFail,
             LookupError::Refused,
             LookupError::Timeout,
+            LookupError::NotSent,
         ]
         .iter()
         .map(|error| serde_json::to_string(error).unwrap())
@@ -161,7 +173,8 @@ mod tests {
                 r#""nodata""#,
                 r#""servfail""#,
                 r#""refused""#,
-                r#""timeout""#
+                r#""timeout""#,
+                r#""not_sent""#
             ]
         );
         assert_eq!(

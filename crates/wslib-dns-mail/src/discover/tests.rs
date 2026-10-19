@@ -309,6 +309,7 @@ fn mx_inspects_every_exchange() {
     assert_eq!(first.reverse[1].names, ["other.example.net"]);
     assert!(!first.reverse[1].forward_confirmed);
     assert_eq!(found.hosts[1].cname.as_deref(), Some("mx1.example.com"));
+    assert_eq!(dns.queries("mx2.example.com", RecordType::Cname), 0);
     assert!(!found.is_null());
 }
 

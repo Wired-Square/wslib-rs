@@ -1,6 +1,7 @@
 //! Against the real DNS: `cargo test -p wslib-dns-mail --test live -- --ignored`.
 
 use wslib_dns::{HickoryOptions, HickoryResolver};
+use wslib_dns_mail::check::{self, CheckOptions};
 use wslib_dns_mail::discover::{self, DmarcDiscoveryMode, PolicyTag};
 use wslib_dns_mail::spf;
 
@@ -25,4 +26,45 @@ async fn example_com_publishes_spf_dmarc_and_a_null_mx() {
     )
     .await;
     assert_eq!(checked.result, spf::SpfResult::Fail);
+}
+
+#[tokio::test]
+#[ignore = "needs the network"]
+async fn check_domain_reports_on_example_com_within_its_budget() {
+    let dns = HickoryResolver::from_system(HickoryOptions::default()).unwrap();
+    let options = CheckOptions {
+        query_log: true,
+        ..CheckOptions::default()
+    };
+    let report = check::check_domain(&dns, "example.com", &options).await;
+    assert!(report.queries_sent <= 200);
+    assert!(
+        report
+            .findings
+            .iter()
+            .all(|f| f.code != check::FindingCode::Incomplete)
+    );
+    assert!(
+        report
+            .findings
+            .iter()
+            .all(|f| f.code != check::FindingCode::SpfMissing)
+    );
+    assert!(report.queries.is_some_and(|log| !log.is_empty()));
+}
+
+#[cfg(feature = "http")]
+#[tokio::test]
+#[ignore = "needs the network"]
+async fn a_published_mta_sts_policy_is_fetched_over_https() {
+    use wslib_dns_mail::discover::PolicyFetch;
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let dns = HickoryResolver::from_system(HickoryOptions::default()).unwrap();
+    let clients = discover::HttpClients::new(reqwest::Client::builder);
+    let PolicyFetch::Fetched { policy, .. } =
+        discover::mta_sts_policy(&dns, &clients, "google.com", None).await
+    else {
+        panic!("google.com serves an MTA-STS policy");
+    };
+    assert!(policy.is_usable());
 }

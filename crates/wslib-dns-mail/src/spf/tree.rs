@@ -10,7 +10,7 @@ use wslib_dns::{LookupError, Resolver};
 
 use super::{MacroContext, MacroString, Mechanism, SpfRecord, Term};
 use crate::Parsed;
-use crate::discover::{RecordSet, ascii, txt_set};
+use crate::discover::{Published, RecordSet, ascii, txt_set};
 
 /// The §4.6.4 limits: ten DNS-querying terms, two void lookups, and ten names
 /// behind one `mx` or `ptr`.
@@ -165,7 +165,38 @@ pub async fn walk(resolver: &impl Resolver, domain: &str, limits: WalkLimits) ->
         accounting: Accounting::default(),
         stack: Vec::new(),
     };
-    let root = node(resolver, ascii(domain), &mut state).await;
+    let root = node(resolver, ascii(domain), None, &mut state).await;
+    SpfTree {
+        root,
+        accounting: state.accounting,
+    }
+}
+
+/// As [`walk`], but from a record that needn't be published, such as a draft:
+/// only what it reaches is looked up.
+pub async fn walk_record(
+    resolver: &impl Resolver,
+    domain: &str,
+    record: &str,
+    limits: WalkLimits,
+) -> SpfTree {
+    let domain = ascii(domain);
+    let records = RecordSet {
+        name: domain.clone(),
+        error: None,
+        ttl: None,
+        records: vec![Published {
+            text: record.trim().to_owned(),
+            parsed: super::parse(record),
+        }],
+        others: Vec::new(),
+    };
+    let mut state = Walk {
+        limits,
+        accounting: Accounting::default(),
+        stack: Vec::new(),
+    };
+    let root = node(resolver, domain, Some(records), &mut state).await;
     SpfTree {
         root,
         accounting: state.accounting,
@@ -213,13 +244,18 @@ impl Walk {
 
 type Boxed<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+/// The node for `domain`, querying its records unless they're given.
 fn node<'a, R: Resolver>(
     resolver: &'a R,
     domain: String,
+    records: Option<RecordSet<SpfRecord>>,
     state: &'a mut Walk,
 ) -> Boxed<'a, SpfNode> {
     Box::pin(async move {
-        let records = txt_set(resolver, domain.clone(), super::is_spf, super::parse).await;
+        let records = match records {
+            Some(records) => records,
+            None => txt_set(resolver, domain.clone(), super::is_spf, super::parse).await,
+        };
         state.stack.push(domain.clone());
         let mut lookups = Vec::new();
         if let Some(record) = records
@@ -367,8 +403,15 @@ async fn follow<R: Resolver>(
         }
         Some(_) if state.over_ceiling() => TermOutcome::NotEvaluated(NotEvaluated::Ceiling),
         Some(name) => {
-            let child = node(resolver, name.clone(), state).await;
-            if child.records.is_absent() {
+            let child = node(resolver, name.clone(), None, state).await;
+            // §4.6.4: void means NXDOMAIN or an empty answer, not an answer
+            // that merely holds no SPF record.
+            if child
+                .records
+                .error
+                .as_ref()
+                .is_some_and(LookupError::is_absent)
+            {
                 state.void(index, text);
             }
             TermOutcome::Record(Box::new(child))

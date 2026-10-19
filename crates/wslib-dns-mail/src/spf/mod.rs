@@ -157,16 +157,6 @@ impl DualCidr {
     }
 }
 
-/// The host bits of a `bits`-wide address under `prefix`.
-pub(crate) fn host_mask(bits: u8, prefix: u8) -> u128 {
-    let host = u32::from(bits - prefix.min(bits));
-    if host == 128 {
-        u128::MAX
-    } else {
-        (1u128 << host) - 1
-    }
-}
-
 impl fmt::Display for DualCidr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(ip4) = self.ip4 {

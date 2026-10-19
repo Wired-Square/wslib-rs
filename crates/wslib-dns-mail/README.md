@@ -79,6 +79,18 @@ hickory and tests use `FakeResolver`. Every result says how it was found:
   literals.
 - `bimi` looks at `<selector>._bimi.` on the domain, then on its
   organisational domain.
+- `mta_sts_policy` (feature `http`) fetches
+  `https://mta-sts.<domain>/.well-known/mta-sts.txt` following RFC 8461 §3.3:
+  no redirects, `200` and `text/plain` only, and at most 64 KiB. A failure is
+  a typed `FetchFailure`.
+
+  It's safe to point at a domain anyone supplies. It resolves the policy host
+  through your `Resolver` and refuses, without connecting, if any address
+  isn't globally routable (`NonGlobalAddress`). Otherwise it connects only to
+  the addresses it checked, so DNS rebinding can't redirect it into a private
+  network or to `169.254.169.254`. `HttpClients` makes the
+  `reqwest::ClientBuilder` it starts from, which is where your TLS provider
+  and timeouts go. Don't configure a proxy: a proxy resolves the host itself.
 - `dnsbl` tells `Listed`, `NotListed`, `QueryBlocked` and `Failed` apart. A
   zone that answers outside `127.0.0.2`–`127` is refusing the query, as
   Spamhaus does for cloud resolvers. That isn't a clean result.
@@ -87,7 +99,8 @@ Discovery futures are `Send`, and concurrency within a call needs no runtime.
 
 ## SPF evaluation
 
-- `spf::tree::walk` builds an `SpfTree`: the record, every `include:` and
+- `spf::tree::walk` builds an `SpfTree` (`walk_record` does the same from a
+  draft record that isn't published): the record, every `include:` and
   applicable `redirect=` it reaches, and the result of each `a`, `mx` and
   `exists` lookup, in evaluation order. `Accounting` gives the §4.6.4 cost of
   evaluating it when nothing matches:
@@ -101,14 +114,57 @@ Discovery futures are `Send`, and concurrency within a call needs no runtime.
   such as `exists:%{i}…` and `ptr`, are counted but not looked up.
 - `SpfTree::flatten` lists every netblock with the path that produced it, its
   qualifier, and whether it was resolved from `a` or `mx` (`dynamic`). It also
-  gives the duplicates and overlaps, the total of IPv4 addresses with each
-  counted once, and the number of IPv6 networks.
+  gives the duplicates and overlaps across all qualifiers. Its totals, IPv4
+  addresses (each counted once) and IPv6 networks, count only `pass` blocks.
+  `Netblock::is_global` tells whether a block avoids private and reserved
+  space.
 - `SpfTree::targets` lists every `include:` and `redirect=` target with its
   record.
 - `spf::check_host(resolver, ip, helo, sender)` is the full RFC 7208 §4
   evaluation: macros (§7), `exp=` explanations, and the lookup, void and
   name limits. It returns the result, the term that decided it (through any
   `include:`s), and why it was a `temperror`, `permerror` or `none`.
+
+## Checks
+
+`check` turns what was found into findings: data, not prose.
+
+```rust
+pub struct Finding {
+    pub code: FindingCode,   // stable, snake_case, #[non_exhaustive]
+    pub kind: Kind,          // Spec | Practice | Observation
+    pub severity: Severity,  // Error | Warning | Info
+    pub subject: String,     // the DNS name or record it's about
+    pub reference: Cow<'static, str>, // e.g. "RFC 7208 §4.6.4"
+    pub detail: Detail,      // typed: the fault and its span, counts, paths, …
+}
+```
+
+`FindingCode::ALL` lists the catalogue, and each code carries a default kind,
+severity and reference. `Spec` means a MUST is broken. `Practice` means the
+record is in spec but inadvisable. `Observation` is a fact about the domain
+(an inherited DMARC policy) or about the check itself (`lookup_failed`,
+`incomplete`). There's no product posture: `dmarc_policy_none` is `Info`, and
+how much it matters is the consumer's call. `Display` gives neutral wording.
+
+Advisory parser faults map to `Spec` findings. `v=dmarc1` is usable, because
+receivers accept it, and is still `dmarc_version_noncanonical`, Spec/Error,
+with the risk in its detail.
+
+Each family runs on its own: `check_spf`, `check_dmarc` (including the §7.1
+report authorisation), `check_dkim`, `check_mx` (with DNSBL zones), plus the
+pure `bimi_findings` and `mta_sts_findings`. Each `*_findings` function also
+works on results a caller already holds.
+
+`check_domain(resolver, domain, &CheckOptions)` runs them all concurrently.
+With `http` and `mta_sts_http`, it also fetches the MTA-STS policy. That
+gives the policy findings and the check of MX coverage, and the policy host's
+lookup counts towards the query budget.
+It's bounded by `deadline` and `max_queries` (10 s and 200 by default), and
+can keep a query log. A query the bounds stopped is never a `lookup_failed`.
+The checks it cut short are named in a single `incomplete` finding instead.
+The deadline only stops new queries. One already in flight can run up to the
+resolver's timeout × attempts past it: 4 s with `HickoryOptions::default()`.
 
 ## Building and editing records
 
@@ -122,8 +178,17 @@ Discovery futures are `Send`, and concurrency within a call needs no runtime.
 
 ## Features
 
-| Feature | Adds                                           |
-| ------- | ---------------------------------------------- |
-| `serde` | `Serialize`/`Deserialize` on every public type |
+| Feature | Adds                                                         |
+| ------- | ------------------------------------------------------------ |
+| `serde` | `Serialize`/`Deserialize` on every public type               |
+| `http`  | `discover::mta_sts_policy` and `CheckOptions::mta_sts_http`   |
 
-None are on by default. The parsers need no async runtime.
+None are on by default. The parsers need no async runtime. `http` uses
+reqwest with rustls and no crypto provider; the application installs one, as
+for every wslib crate.
+
+## Known gaps
+
+- BIMI logos aren't fetched, so their SVG Tiny PS profile isn't checked.
+- Mark certificates (VMC) aren't validated.
+- DNSSEC status isn't reported (see `wslib-dns`).

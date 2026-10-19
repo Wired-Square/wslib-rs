@@ -17,11 +17,13 @@
 //! assert!(parsed.is_usable());
 //! ```
 
+mod address;
 mod fault;
 mod text;
 mod uri;
 
 pub mod bimi;
+pub mod check;
 pub mod discover;
 pub mod dkim;
 pub mod dmarc;

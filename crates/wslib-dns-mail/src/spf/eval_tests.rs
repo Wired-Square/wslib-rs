@@ -85,8 +85,7 @@ fn the_lookup_limit_is_crossed_where_the_eleventh_term_is() {
 fn void_lookups_count_nxdomain_and_nodata() {
     let dns = FakeResolver::new()
         .with_txt("example.com", ["v=spf1 a:gone.example.com mx:example.net exists:none.example.org include:absent.example.com -all"])
-        .with_txt("example.net", ["unrelated"])
-        .with_txt("absent.example.com", ["not spf"]);
+        .with_txt("example.net", ["unrelated"]);
     let walked = tree(&dns, "example.com");
     assert_eq!(walked.accounting.void_lookups, 4);
     assert!(walked.accounting.exceeds_void_limit());
@@ -94,6 +93,65 @@ fn void_lookups_count_nxdomain_and_nodata() {
         walked.accounting.void_limit_crossed.unwrap().text,
         "exists:none.example.org"
     );
+}
+
+#[test]
+fn an_include_target_with_only_other_txt_is_not_void() {
+    let dns = FakeResolver::new()
+        .with_txt("example.com", ["v=spf1 include:verify.example.net -all"])
+        .with_txt("verify.example.net", ["google-site-verification=abc123"]);
+    let walked = tree(&dns, "example.com");
+    assert_eq!(walked.accounting.void_lookups, 0);
+    let TermOutcome::Record(child) = &walked.root.lookups[0].outcome else {
+        panic!("the include is walked");
+    };
+    assert!(child.records.is_absent());
+}
+
+#[test]
+fn a_draft_record_is_walked_without_querying_its_own_name() {
+    let dns = FakeResolver::new()
+        .with_txt("example.com", ["v=spf1 -all"])
+        .with_txt("_spf.example.net", ["v=spf1 ip4:192.0.2.0/24 -all"]);
+    let walked = block_on(tree::walk_record(
+        &dns,
+        "example.com",
+        "v=spf1 include:_spf.example.net ~all",
+        WalkLimits::default(),
+    ));
+    assert_eq!(dns.queries("example.com", RecordType::Txt), 0);
+    assert_eq!(walked.accounting.lookups, 1);
+    assert_eq!(
+        walked.flatten().netblocks[0].source,
+        ["example.com", "include:_spf.example.net"]
+    );
+}
+
+#[test]
+fn totals_count_only_pass_netblocks() {
+    let dns = FakeResolver::new().with_txt(
+        "example.com",
+        ["v=spf1 ip4:192.0.2.0/28 -ip4:198.51.100.0/24 ~ip4:203.0.113.0/24 ?ip6:2001:db8::/32 ip6:2001:db8:1::/48 -all"],
+    );
+    let flat = tree(&dns, "example.com").flatten();
+    assert_eq!(flat.netblocks.len(), 5);
+    assert_eq!(flat.total_ipv4_addresses, 16);
+    assert_eq!(flat.ipv6_prefix_count, 1);
+}
+
+#[test]
+fn global_netblocks_exclude_private_and_reserved_space() {
+    let dns = FakeResolver::new().with_txt(
+        "example.com",
+        ["v=spf1 ip4:8.8.8.0/24 ip4:10.1.0.0/16 ip4:192.0.2.1 ip4:0.0.0.0/0 ip6:2606:4700::/32 ip6:fd00::/8 -all"],
+    );
+    let globals: Vec<bool> = tree(&dns, "example.com")
+        .flatten()
+        .netblocks
+        .iter()
+        .map(|b| b.is_global())
+        .collect();
+    assert_eq!(globals, [true, false, false, false, true, false]);
 }
 
 #[test]

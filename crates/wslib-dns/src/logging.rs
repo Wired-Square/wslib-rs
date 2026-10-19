@@ -39,6 +39,10 @@ impl<R: Resolver> LoggingResolver<R> {
             .clone()
     }
 
+    pub fn inner(&self) -> &R {
+        &self.inner
+    }
+
     pub fn into_log(self) -> Vec<QueryRecord> {
         self.log
             .into_inner()

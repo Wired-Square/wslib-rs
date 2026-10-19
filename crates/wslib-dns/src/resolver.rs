@@ -160,6 +160,7 @@ fn merge_addresses(v4: Lookup<Ipv4Addr>, v6: Lookup<Ipv6Addr>) -> Lookup<IpAddr>
     match (v4, v6) {
         (Ok(a), Ok(b)) => Ok(Answer {
             ttl: [a.ttl, b.ttl].into_iter().flatten().min(),
+            canonical_name: a.canonical_name.or(b.canonical_name),
             records: [a.records, b.records].concat(),
         }),
         (Ok(answer), Err(_)) | (Err(_), Ok(answer)) => Ok(answer),

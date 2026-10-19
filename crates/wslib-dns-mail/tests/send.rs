@@ -1,4 +1,5 @@
 use wslib_dns::Resolver;
+use wslib_dns_mail::check::{self, CheckOptions};
 use wslib_dns_mail::discover::{self, DmarcDiscoveryMode};
 use wslib_dns_mail::spf;
 
@@ -43,6 +44,18 @@ fn discovery_futures_are_send<R: Resolver>(dns: &R, uri: &wslib_dns_mail::Report
         "192.0.2.1".parse().unwrap(),
         "mx.example.com",
         "a@example.com",
+    ));
+    assert_send(check::check_domain(
+        dns,
+        "example.com",
+        &CheckOptions::default(),
+    ));
+    #[cfg(feature = "http")]
+    assert_send(discover::mta_sts_policy(
+        dns,
+        &discover::HttpClients::new(reqwest::Client::builder),
+        "example.com",
+        None,
     ));
 }
 

@@ -7,6 +7,7 @@
 //! [`HickoryResolver`] and `testing` an in-memory [`FakeResolver`] that counts
 //! queries.
 
+mod address;
 mod budget;
 mod logging;
 mod lookup;
@@ -18,6 +19,7 @@ mod fake;
 #[cfg(feature = "hickory")]
 mod hickory;
 
+pub use address::{is_global, is_global_network};
 pub use budget::BudgetResolver;
 #[cfg(any(test, feature = "testing"))]
 pub use fake::FakeResolver;

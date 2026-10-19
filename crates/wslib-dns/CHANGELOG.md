@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `is_global` and `is_global_network`: whether an address or network is
+  outside every IANA special-purpose range, the check every fetch of a
+  DNS-named host needs before it connects.
+
 ## 0.1.0
 
 - `Resolver`: one query per record type (TXT, A, AAAA, MX, NS, CNAME, PTR),

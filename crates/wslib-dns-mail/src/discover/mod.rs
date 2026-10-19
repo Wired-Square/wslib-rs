@@ -3,9 +3,11 @@
 //! Each function reports what it found and how: every matching record (so
 //! duplicates can be reported), and why a query came back empty.
 
+mod bimi_logo;
 mod dkim;
 mod dmarc;
 mod dnsbl;
+mod fetch;
 mod mta_sts_policy;
 mod mx;
 
@@ -13,15 +15,22 @@ use std::future::{Future, poll_fn};
 use std::pin::Pin;
 use std::task::Poll;
 
+#[cfg(feature = "http")]
+pub use bimi_logo::bimi_logo;
+pub use bimi_logo::{LOGO_FETCH_LIMIT, LOGO_INFLATE_LIMIT, LogoFetch};
 pub use dkim::{COMMON_SELECTORS, DkimDiscovery, dkim, probe_dkim};
 pub use dmarc::{
     AppliedPolicy, DmarcDiscovery, DmarcDiscoveryMode, PolicyTag, ReportAuthorisation, dmarc,
     dmarc_report_authorisation,
 };
 pub use dnsbl::{DnsblResult, DnsblStatus, dnsbl};
-pub use mta_sts_policy::{FetchFailure, POLICY_SIZE_LIMIT, PolicyFetch, policy_url};
+pub use fetch::FetchFailure;
 #[cfg(feature = "http")]
-pub use mta_sts_policy::{HttpClients, mta_sts_policy};
+pub use fetch::HttpClients;
+pub(crate) use fetch::media_type;
+#[cfg(feature = "http")]
+pub use mta_sts_policy::mta_sts_policy;
+pub use mta_sts_policy::{POLICY_SIZE_LIMIT, PolicyFetch, policy_url};
 pub use mx::{MxDiscovery, MxHost, ReverseDns, mx};
 use wslib_dns::{LookupError, Resolver};
 

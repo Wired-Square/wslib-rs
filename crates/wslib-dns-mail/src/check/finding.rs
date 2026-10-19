@@ -5,6 +5,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use wslib_dns::LookupError;
 
 use crate::SyntaxFault;
+use crate::bimi::SvgRule;
 use crate::discover::FetchFailure;
 use crate::dmarc::Policy;
 use crate::spf::tree::TermPath;
@@ -154,6 +155,10 @@ finding_codes! {
     BimiSyntax => "bimi_syntax", Spec, Error, "draft-brand-indicators-for-message-identification";
     BimiInsecureUri => "bimi_insecure_uri", Spec, Error, "draft-brand-indicators-for-message-identification";
     BimiDmarcNotEnforcing => "bimi_dmarc_not_enforcing", Spec, Error, "draft-brand-indicators-for-message-identification";
+    BimiLogoUnreachable => "bimi_logo_unreachable", Spec, Error, "draft-brand-indicators-for-message-identification";
+    BimiLogoInvalid => "bimi_logo_invalid", Spec, Error, "draft-svg-tiny-ps-abrotman";
+    BimiLogoTooLarge => "bimi_logo_too_large", Practice, Warning, "BIMI Group implementation guide";
+    BimiLogoContentType => "bimi_logo_content_type", Practice, Warning, "draft-brand-indicators-for-message-identification";
     MtaStsSyntax => "mta_sts_syntax", Spec, Error, "RFC 8461 §3";
     MtaStsMultipleRecords => "mta_sts_multiple_records", Spec, Error, "RFC 8461 §3.1";
     MtaStsPolicyUnreachable => "mta_sts_policy_unreachable", Spec, Error, "RFC 8461 §3.3";
@@ -272,6 +277,15 @@ pub enum Detail {
     Unreachable {
         url: String,
         failure: FetchFailure,
+    },
+    /// One way a logo breaks SVG Tiny PS.
+    LogoViolation {
+        rule: SvgRule,
+        offset: Option<usize>,
+        detail: Option<String>,
+    },
+    ContentType {
+        content_type: Option<String>,
     },
     Uncovered {
         exchange: String,

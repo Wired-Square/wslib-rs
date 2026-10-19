@@ -14,7 +14,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::{Duration, Instant};
 
-pub use bimi::bimi_findings;
+pub use bimi::{bimi_findings, bimi_logo_findings};
 pub use dkim::{DkimCheck, RSA_MINIMUM_BITS, RSA_RECOMMENDED_BITS, check_dkim, dkim_findings};
 pub use dmarc::{DmarcCheck, check_dmarc, dmarc_findings};
 pub use finding::{Detail, Finding, FindingCode, Kind, Severity};
@@ -26,8 +26,8 @@ use wslib_dns::{BudgetResolver, LoggingResolver, LookupError, QueryRecord, Resol
 use crate::ReportUri;
 use crate::bimi::BimiRecord;
 use crate::discover::{
-    self, DkimDiscovery, DmarcDiscovery, DmarcDiscoveryMode, DnsblResult, Inherited, MxDiscovery,
-    PolicyFetch, RecordSet, ReportAuthorisation, join_all,
+    self, DkimDiscovery, DmarcDiscovery, DmarcDiscoveryMode, DnsblResult, Inherited, LogoFetch,
+    MxDiscovery, Outcome, PolicyFetch, RecordSet, ReportAuthorisation, join_all,
 };
 use crate::mta_sts::MtaStsRecord;
 use crate::spf::tree::{SpfTree, WalkLimits};
@@ -60,6 +60,7 @@ pub(crate) fn incomplete(check: &str, subject: &str) -> Finding {
 
 /// What [`check_domain`] looks at, and its bounds.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct CheckOptions {
     /// DKIM selectors the domain is expected to publish.
     pub dkim_selectors: Vec<String>,
@@ -80,6 +81,10 @@ pub struct CheckOptions {
     /// domain publishes an MTA-STS record.
     #[cfg(feature = "http")]
     pub mta_sts_http: Option<discover::HttpClients>,
+    /// Fetches and checks the BIMI logo, with clients made by these, when the
+    /// governing BIMI record names one.
+    #[cfg(feature = "http")]
+    pub bimi_http: Option<discover::HttpClients>,
 }
 
 /// No selectors or blocklists, RFC 7489 discovery, a 10 s deadline and 200
@@ -98,6 +103,8 @@ impl Default for CheckOptions {
             query_log: false,
             #[cfg(feature = "http")]
             mta_sts_http: None,
+            #[cfg(feature = "http")]
+            bimi_http: None,
         }
     }
 }
@@ -105,6 +112,7 @@ impl Default for CheckOptions {
 /// Everything [`check_domain`] found and everything wrong with it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct DomainReport {
     pub domain: String,
     pub spf: SpfTree,
@@ -118,6 +126,8 @@ pub struct DomainReport {
     pub tls_rpt: RecordSet<TlsRptRecord>,
     /// Set when the policy file was fetched.
     pub mta_sts_policy: Option<PolicyFetch>,
+    /// Set when the logo was fetched.
+    pub bimi_logo: Option<LogoFetch>,
     /// Ordered by family, as the checks run.
     pub findings: Vec<Finding>,
     pub queries_sent: u32,
@@ -130,7 +140,7 @@ enum Part {
     Dmarc(DmarcCheck),
     Dkim(DkimCheck),
     Mx(MxCheck),
-    Bimi(Inherited<BimiRecord>),
+    Bimi(Inherited<BimiRecord>, Option<LogoFetch>),
     MtaSts(
         RecordSet<MtaStsRecord>,
         RecordSet<TlsRptRecord>,
@@ -166,7 +176,11 @@ pub async fn check_domain(
             )
         }),
         Box::pin(async { Part::Mx(check_mx(dns, &domain, &options.dnsbl_zones).await) }),
-        Box::pin(async { Part::Bimi(discover::bimi(dns, &domain, &options.bimi_selector).await) }),
+        Box::pin(async {
+            let records = discover::bimi(dns, &domain, &options.bimi_selector).await;
+            let logo = logo(dns, &records, options, deadline).await;
+            Part::Bimi(records, logo)
+        }),
         Box::pin(async {
             let record = discover::mta_sts(dns, &domain).await;
             let policy = policy(dns, &record, &domain, options, deadline).await;
@@ -181,11 +195,11 @@ pub async fn check_domain(
             Part::Dmarc(check) => dmarc = Some(check),
             Part::Dkim(check) => dkim = Some(check),
             Part::Mx(check) => mx = Some(check),
-            Part::Bimi(records) => bimi = Some(records),
+            Part::Bimi(records, logo) => bimi = Some((records, logo)),
             Part::MtaSts(record, tls_rpt, policy) => mta_sts = Some((record, tls_rpt, policy)),
         }
     }
-    let (spf, dmarc, dkim, mx, bimi, (mta_sts, tls_rpt, mta_sts_policy)) = (
+    let (spf, dmarc, dkim, mx, (bimi, bimi_logo), (mta_sts, tls_rpt, mta_sts_policy)) = (
         spf.expect("every part runs"),
         dmarc.expect("every part runs"),
         dkim.expect("every part runs"),
@@ -206,6 +220,9 @@ pub async fn check_domain(
     findings.extend(dkim.findings);
     findings.extend(mx.findings);
     findings.extend(bimi_findings(&bimi, &governing));
+    if let (Outcome::Found { at }, Some(logo)) = (bimi.outcome, &bimi_logo) {
+        findings.extend(bimi_logo_findings(&bimi.attempts[at].set.name, logo));
+    }
     findings.extend(mta_sts_findings(
         &mta_sts,
         mta_sts_policy.as_ref(),
@@ -228,10 +245,35 @@ pub async fn check_domain(
         mta_sts,
         tls_rpt,
         mta_sts_policy,
+        bimi_logo,
         findings,
         queries_sent,
         queries,
     }
+}
+
+/// The logo, when the governing BIMI record names one and clients were
+/// given, fetched within what's left of the deadline.
+#[cfg_attr(not(feature = "http"), allow(unused_variables))]
+async fn logo(
+    resolver: &impl Resolver,
+    records: &Inherited<BimiRecord>,
+    options: &CheckOptions,
+    deadline: Option<Instant>,
+) -> Option<LogoFetch> {
+    let url = records
+        .found()?
+        .parsed
+        .record
+        .location
+        .clone()
+        .filter(|url| !url.is_empty())?;
+    #[cfg(feature = "http")]
+    if let Some(clients) = &options.bimi_http {
+        let remaining = deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
+        return Some(discover::bimi_logo(resolver, clients, &url, remaining).await);
+    }
+    None
 }
 
 /// The policy file, when the domain publishes an MTA-STS record and a

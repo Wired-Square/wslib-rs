@@ -4,9 +4,7 @@ use std::net::IpAddr;
 
 use super::tree::{SpfNode, SpfTree, TermOutcome};
 use super::{Mechanism, Qualifier, Term};
-use crate::address::{
-    PRIVATE_IPV4, PRIVATE_IPV6, SPECIAL_IPV4, SPECIAL_IPV6, host_mask, overlaps, range,
-};
+use crate::address::{PRIVATE_IPV4, PRIVATE_IPV6, host_mask, overlaps, range};
 
 /// Every `ip4`, `ip6`, `a` and `mx` netblock in a tree, with totals.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -168,7 +166,13 @@ impl Netblock {
     /// documentation. Lets a public tool drop netblocks that would map
     /// internal addresses.
     pub fn is_global(&self) -> bool {
-        range(&self.cidr).is_some() && !overlaps(&self.cidr, SPECIAL_IPV4, SPECIAL_IPV6)
+        let Some((address, prefix)) = self.cidr.split_once('/') else {
+            return false;
+        };
+        match (address.parse(), prefix.parse()) {
+            (Ok(address), Ok(prefix)) => wslib_dns::is_global_network(address, prefix),
+            _ => false,
+        }
     }
 
     /// Whether it overlaps private or local space: RFC 1918, shared, loopback

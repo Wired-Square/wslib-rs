@@ -690,3 +690,74 @@ fn bimi_checks_the_organisational_domain_policy_too() {
         matches!(&not_enforcing[0].detail, Detail::Enforcement { domain, .. } if domain == "example.com")
     );
 }
+
+fn logo(svg: &str, content_type: Option<&str>) -> discover::LogoFetch {
+    discover::LogoFetch::Fetched {
+        url: "https://example.com/logo.svg".into(),
+        content_type: content_type.map(str::to_owned),
+        gzip: false,
+        body: svg.as_bytes().to_vec(),
+        validation: crate::bimi::validate_logo(svg.as_bytes()),
+    }
+}
+
+const GOOD_LOGO: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" version="1.2" baseProfile="tiny-ps" viewBox="0 0 1 1"><title>Example</title></svg>"#;
+
+#[test]
+fn logo_findings() {
+    let subject = "default._bimi.example.com";
+    assert_eq!(
+        codes(&bimi_logo_findings(
+            subject,
+            &logo(GOOD_LOGO, Some("image/svg+xml; charset=utf-8"))
+        )),
+        []
+    );
+    assert_eq!(
+        codes(&bimi_logo_findings(
+            subject,
+            &logo(GOOD_LOGO, Some("text/plain"))
+        )),
+        [FindingCode::BimiLogoContentType]
+    );
+    let bad = GOOD_LOGO.replace("<title>Example</title>", "<script/>");
+    let invalid = bimi_logo_findings(subject, &logo(&bad, Some("image/svg+xml")));
+    assert_eq!(
+        codes(&invalid),
+        [FindingCode::BimiLogoInvalid, FindingCode::BimiLogoInvalid]
+    );
+    assert!(matches!(
+        invalid[0].detail,
+        Detail::LogoViolation {
+            rule: crate::bimi::SvgRule::ProhibitedElement,
+            ..
+        }
+    ));
+    let padded = GOOD_LOGO.replace(
+        "<title>",
+        &format!("<desc>{}</desc><title>", "x".repeat(40 * 1024)),
+    );
+    assert_eq!(
+        codes(&bimi_logo_findings(
+            subject,
+            &logo(&padded, Some("image/svg+xml"))
+        )),
+        [FindingCode::BimiLogoTooLarge]
+    );
+    let unreachable = discover::LogoFetch::Unreachable {
+        url: "https://example.com/logo.svg".into(),
+        failure: FetchFailure::Status { status: 404 },
+    };
+    assert_eq!(
+        codes(&bimi_logo_findings(subject, &unreachable)),
+        [FindingCode::BimiLogoUnreachable]
+    );
+    let not_sent = discover::LogoFetch::Unreachable {
+        url: "https://example.com/logo.svg".into(),
+        failure: FetchFailure::NotSent,
+    };
+    assert_eq!(
+        codes(&bimi_logo_findings(subject, &not_sent)),
+        [FindingCode::Incomplete]
+    );
+}

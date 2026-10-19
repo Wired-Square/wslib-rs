@@ -2206,7 +2206,7 @@ checksum = "2896bade328c13f7042a297ea5ac5b0951f6cf989dea5f32c2fd98da398195cb"
 dependencies = [
  "base64 0.23.1",
  "indexmap 2.14.2",
- "quick-xml",
+ "quick-xml 0.42.0",
  "serde",
  "time",
 ]
@@ -2351,6 +2351,15 @@ name = "psl-types"
 version = "2.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33cb294fe86a74cbcf50d4445b37da762029549ebeea341421c7c70370f86cac"
+
+[[package]]
+name = "quick-xml"
+version = "0.38.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "quick-xml"
@@ -4658,7 +4667,7 @@ version = "0.1.0"
 
 [[package]]
 name = "wslib-dns"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "hickory-resolver",
  "idna",
@@ -4670,13 +4679,16 @@ dependencies = [
 
 [[package]]
 name = "wslib-dns-mail"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
+ "flate2",
+ "quick-xml 0.38.4",
  "reqwest",
  "rustls",
  "serde",
  "serde_json",
  "tokio",
+ "url",
  "wslib-dns",
 ]
 

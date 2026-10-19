@@ -1,5 +1,6 @@
 use wslib_dns::Resolver;
 use wslib_dns_mail::discover::{self, DmarcDiscoveryMode};
+use wslib_dns_mail::spf;
 
 fn assert_send<T: Send>(_: T) {}
 
@@ -31,6 +32,17 @@ fn discovery_futures_are_send<R: Resolver>(dns: &R, uri: &wslib_dns_mail::Report
         dns,
         "192.0.2.1".parse().unwrap(),
         "bl.example.org",
+    ));
+    assert_send(spf::tree::walk(
+        dns,
+        "example.com",
+        spf::tree::WalkLimits::default(),
+    ));
+    assert_send(spf::check_host(
+        dns,
+        "192.0.2.1".parse().unwrap(),
+        "mx.example.com",
+        "a@example.com",
     ));
 }
 

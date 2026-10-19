@@ -13,5 +13,11 @@
   address, alias and forward-confirmed reverse DNS inspection, BIMI, MTA-STS
   and TLS-RPT records, and DNSBL lookups that tell a refused query from a
   clean one.
+- `spf::tree::walk`: the SPF record and everything it reaches, with RFC 7208
+  §4.6.4 accounting (lookups, void lookups, where each limit was crossed,
+  `mx` name counts, loops) beyond the limits up to a ceiling. `flatten` gives
+  the netblocks with their paths, duplicates, overlaps and totals, and
+  `targets` gives every include and redirect target.
+- `spf::check_host`: RFC 7208 §4 evaluation with macro expansion and `exp=`.
 - Canonical `Display` on every record, `DmarcBuilder`, and the editors
   `dmarc::with_aggregate` and `spf::with_includes`.

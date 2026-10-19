@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - **Breaking:** `CheckOptions` and `DomainReport` are `#[non_exhaustive]`, so
   they can no longer be built with a struct literal outside the crate. Start

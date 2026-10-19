@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1
 
 - `is_global` and `is_global_network`: whether an address or network is
   outside every IANA special-purpose range, the check every fetch of a

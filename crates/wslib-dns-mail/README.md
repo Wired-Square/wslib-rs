@@ -173,7 +173,9 @@ resolver's timeout × attempts past it: 4 s with `HickoryOptions::default()`.
 
 With a validating resolver (`Resolver::validates`), `check_domain` reports
 the domain's DNSSEC status in `DomainReport::dnssec` and a `dnssec_status`
-finding. Any lookup that came back bogus is `dnssec_bogus`. One query, the
+finding: Bogus if any lookup at or under the domain was, else the worst of
+its MX and SPF answers, else Indeterminate. Any lookup that came back bogus
+is `dnssec_bogus`. One query, the
 root's NS records, tells whether the resolver gets signatures at all: if
 that answer isn't Secure, the status is Indeterminate and
 `dnssec_unsupported_resolver` says why. Behind an upstream that validates, a
@@ -184,7 +186,9 @@ with those DS records.
 `discover::mx` also looks up each MX host's TLSA records at
 `_25._tcp.<exchange>` when the resolver validates. They count only from a
 Secure answer reached through a Secure MX answer (RFC 7672 §2.2), hence
-`dane_tlsa_insecure` and `dane_mx_insecure`; `dane_tlsa_syntax` and
+`dane_tlsa_insecure` and `dane_mx_insecure` for an Insecure answer (an
+Indeterminate one is the resolver's problem, not the domain's);
+`dane_tlsa_syntax` and
 `dane_tlsa_usage_discouraged` (PKIX usages 0 and 1) check the records
 themselves. Nothing connects to port 25, so the records aren't compared with
 the servers' certificates.
@@ -254,4 +258,6 @@ for every wslib crate.
 - DANE: TLSA records aren't matched against the MX hosts' certificates,
   which needs an outbound SMTP connection.
 - DNSSEC: bogus zones behind a validating upstream are only suspected, and
-  secure denial of existence isn't reported (see `wslib-dns`).
+  secure denial of existence isn't reported (see `wslib-dns`). The suspicion
+  asks only for the registrable domain's DS, so it misses a signed delegated
+  subzone.

@@ -133,8 +133,10 @@ pub struct DomainReport {
     pub dkim: Vec<DkimDiscovery>,
     pub mx: MxDiscovery,
     pub dnsbl: Vec<DnsblResult>,
-    /// The worst status among the domain's own answers, or Indeterminate
-    /// when the resolver can't validate; set only by a validating resolver.
+    /// Bogus if any lookup at or under the domain was, else the worst status
+    /// among its MX and SPF answers; Indeterminate with neither, or when the
+    /// resolver can't validate. Always set by a validating resolver, unless
+    /// the budget ran out first.
     pub dnssec: Option<DnssecStatus>,
     pub bimi: Inherited<BimiRecord>,
     pub mta_sts: RecordSet<MtaStsRecord>,

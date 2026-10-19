@@ -8,8 +8,8 @@
 - DNSSEC validation in `HickoryResolver`, behind feature `dnssec-ring` or
   `dnssec-aws-lc-rs` (the caller picks the crypto provider) and
   `HickoryOptions::validate`. Answers carry `Answer::dnssec`
-  (`DnssecStatus`: Secure, Insecure, Bogus or Indeterminate), set only when
-  validating; a bogus answer is `LookupError::Bogus`, never NODATA.
+  (`DnssecStatus`: Secure, Insecure, Bogus or Indeterminate, the worst of
+  the records and any CNAMEs that led to them), set only when validating; a bogus answer is `LookupError::Bogus`, never NODATA.
 - `Resolver::tlsa` and `Resolver::ds` (`Tlsa`, `Ds`), provided methods that
   answer `LookupError::Other` unless a resolver supports them, and
   `Resolver::validates`.

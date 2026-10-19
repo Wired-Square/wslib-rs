@@ -187,9 +187,12 @@ fn dane_findings(mx: &MxDiscovery, exchange: &str, tlsa: &TlsaSet) -> Vec<Findin
             },
         )
     };
-    if tlsa.dnssec != Some(DnssecStatus::Secure) {
+    // Indeterminate means the resolver got no signatures, which
+    // dnssec_unsupported_resolver reports; it's no fault of the domain's.
+    if tlsa.dnssec == Some(DnssecStatus::Insecure) {
         findings.push(insecure(FindingCode::DaneTlsaInsecure, tlsa.dnssec));
-    } else if mx.dnssec != Some(DnssecStatus::Secure) {
+    } else if tlsa.dnssec == Some(DnssecStatus::Secure) && mx.dnssec == Some(DnssecStatus::Insecure)
+    {
         findings.push(insecure(FindingCode::DaneMxInsecure, mx.dnssec));
     }
     for (index, record) in tlsa.records.iter().enumerate() {

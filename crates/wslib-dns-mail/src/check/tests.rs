@@ -515,6 +515,26 @@ fn a_non_validating_resolver_skips_tlsa() {
 }
 
 #[test]
+fn an_indeterminate_tlsa_is_no_fault_of_the_domain() {
+    assert_eq!(
+        mx(
+            &dane_mx().with_dnssec(TLSA_NAME, DnssecStatus::Indeterminate),
+            &[]
+        ),
+        []
+    );
+    assert_eq!(
+        mx(
+            &dane_mx()
+                .with_dnssec(TLSA_NAME, DnssecStatus::Secure)
+                .with_dnssec("example.com", DnssecStatus::Indeterminate),
+            &[]
+        ),
+        []
+    );
+}
+
+#[test]
 fn mx_addresses_against_blocklists() {
     let dns = good_mx()
         .with_ip("25.2.0.192.listed.example.org", [ip("127.0.0.2")])
@@ -712,6 +732,22 @@ fn a_validating_resolver_reports_the_domain_status() {
     assert_eq!(report.dnssec, Some(DnssecStatus::Insecure));
 
     assert_eq!(dnssec_report(&clean_domain()).dnssec, None);
+}
+
+#[test]
+fn any_bogus_lookup_in_the_domain_makes_it_bogus() {
+    let dns = signed_domain().with_error("example.com", RecordType::Mx, LookupError::Bogus);
+    assert_eq!(dnssec_report(&dns).dnssec, Some(DnssecStatus::Bogus));
+}
+
+#[test]
+fn a_domain_with_no_mx_or_spf_is_indeterminate_not_unreported() {
+    let dns = FakeResolver::new()
+        .with_ns(".", "a.root-servers.net")
+        .with_dnssec(".", DnssecStatus::Secure);
+    let report = dnssec_report(&dns);
+    assert_eq!(report.dnssec, Some(DnssecStatus::Indeterminate));
+    assert!(codes(&report.findings).contains(&FindingCode::DnssecStatus));
 }
 
 #[test]

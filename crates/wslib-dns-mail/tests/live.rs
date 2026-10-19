@@ -154,12 +154,12 @@ async fn validation_reports_dnssec_and_dane() {
     );
 
     let broken = check::check_domain(&dns, "dnssec-failed.org", &CheckOptions::default()).await;
+    let codes: Vec<FindingCode> = broken.findings.iter().map(|finding| finding.code).collect();
+    // Exactly one: suspected behind a validating upstream, bogus behind one
+    // that passes the signatures through.
     assert!(
-        broken.findings.iter().any(|finding| matches!(
-            finding.code,
-            FindingCode::DnssecBogus | FindingCode::DnssecSuspectedBogus
-        )),
-        "{:?}",
-        broken.findings
+        codes.contains(&FindingCode::DnssecBogus)
+            != codes.contains(&FindingCode::DnssecSuspectedBogus),
+        "{codes:?}"
     );
 }

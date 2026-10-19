@@ -17,7 +17,9 @@ pub(crate) async fn probe(resolver: &impl Resolver) -> Option<Lookup<String>> {
 /// The domain's DNSSEC status and the findings about it, given the probe,
 /// the worst status among the domain's own answers, and the other findings.
 /// A SERVFAIL inside a zone with DS records is likely a validation failure
-/// an upstream resolver hid, so it's flagged as a suspected bogus.
+/// an upstream resolver hid, so it's flagged as a suspected bogus. Only the
+/// registrable domain's DS is asked for, so a signed delegated subzone is
+/// missed.
 pub(crate) async fn dnssec_findings(
     resolver: &impl Resolver,
     domain: &str,
@@ -30,7 +32,16 @@ pub(crate) async fn dnssec_findings(
     };
     let mut out = Vec::new();
     let status = match probe {
-        Ok(answer) if answer.dnssec == Some(DnssecStatus::Secure) => apex,
+        Ok(answer) if answer.dnssec == Some(DnssecStatus::Secure) => {
+            let bogus = findings.iter().any(|finding| {
+                finding.code == FindingCode::DnssecBogus && failed_in(finding, domain, None)
+            });
+            Some(if bogus {
+                DnssecStatus::Bogus
+            } else {
+                apex.unwrap_or(DnssecStatus::Indeterminate)
+            })
+        }
         Ok(answer) => {
             out.push(Finding::new(
                 FindingCode::DnssecUnsupportedResolver,
@@ -58,7 +69,9 @@ pub(crate) async fn dnssec_findings(
         ));
     }
     if let Some(zone) = wslib_dns::registrable_domain(domain)
-        && findings.iter().any(|finding| servfail_in(finding, &zone))
+        && findings
+            .iter()
+            .any(|finding| failed_in(finding, &zone, Some(&LookupError::ServFail)))
         && let Ok(answer) = resolver.ds(&zone).await
     {
         out.push(Finding::new(
@@ -73,10 +86,12 @@ pub(crate) async fn dnssec_findings(
     (status, out)
 }
 
-fn servfail_in(finding: &Finding, zone: &str) -> bool {
+/// A failed lookup at or under `zone`, with `error` if given.
+fn failed_in(finding: &Finding, zone: &str, error: Option<&LookupError>) -> bool {
     matches!(
         &finding.detail,
-        Detail::Lookup { name, error: LookupError::ServFail }
-            if name == zone || name.strip_suffix(zone).is_some_and(|rest| rest.ends_with('.'))
+        Detail::Lookup { name, error: failed }
+            if error.is_none_or(|error| error == failed)
+                && (name == zone || name.strip_suffix(zone).is_some_and(|rest| rest.ends_with('.')))
     )
 }

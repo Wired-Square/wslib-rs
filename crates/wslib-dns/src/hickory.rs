@@ -141,7 +141,8 @@ fn nameserver(address: SocketAddr) -> NameServerConfig {
     NameServerConfig::new(address.ip(), true, connections)
 }
 
-/// The worst proof among the answer's records of the queried type.
+/// The worst proof among the answer's records of the queried type and the
+/// CNAMEs that led to them: every link must be secure (RFC 7672 §2.2.2).
 #[cfg(feature = "__dnssec")]
 fn answer_status(
     lookup: &HickoryLookup,
@@ -151,7 +152,7 @@ fn answer_status(
     lookup
         .answers()
         .iter()
-        .filter(|record| wanted(&record.data))
+        .filter(|record| wanted(&record.data) || matches!(record.data, RData::CNAME(_)))
         .map(|record| match record.proof {
             Proof::Secure => crate::DnssecStatus::Secure,
             Proof::Insecure => crate::DnssecStatus::Insecure,
@@ -365,6 +366,30 @@ mod tests {
 
     fn no_records(code: ResponseCode) -> NetError {
         NoRecords::new(Query::default(), code).into()
+    }
+
+    #[cfg(feature = "__dnssec")]
+    #[test]
+    fn an_insecure_cname_makes_the_answer_insecure() {
+        use hickory_resolver::proto::dnssec::Proof;
+        use hickory_resolver::proto::rr::Record;
+        use hickory_resolver::proto::rr::rdata::{CNAME, TLSA};
+
+        let alias = Name::from_ascii("_25._tcp.mx.example.com.").unwrap();
+        let target = Name::from_ascii("_25._tcp.mx.example.net.").unwrap();
+        let mut cname = Record::from_rdata(alias.clone(), 300, RData::CNAME(CNAME(target.clone())));
+        cname.proof = Proof::Insecure;
+        let tlsa = TLSA::new(3.into(), 1.into(), 1.into(), vec![0xab; 32]);
+        let mut tlsa = Record::from_rdata(target, 300, RData::TLSA(tlsa));
+        tlsa.proof = Proof::Secure;
+        let lookup =
+            HickoryLookup::new_with_max_ttl(Query::query(alias, RecordType::TLSA), [cname, tlsa]);
+        let answer = answer(
+            &lookup,
+            |data| matches!(data, RData::TLSA(_)).then_some(()),
+            true,
+        );
+        assert_eq!(answer.unwrap().dnssec, Some(crate::DnssecStatus::Insecure));
     }
 
     #[test]

@@ -60,8 +60,11 @@ from a repository secret as `CARGO_REGISTRIES_WIRED_SQUARE_MIRROR_TOKEN`.
 ## Working here
 
 Each crate has its own `version` and `CHANGELOG.md`. Crates depend on each
-other by `path` plus `version`. No crate enables a rustls provider by
-default; the app installs one.
+other by `path`, `version` and `registry = "wired-square"`; without the
+registry, the published crate looks for its sibling on crates.io. Publish the
+dependency and run `scripts/mirror.sh` before the crate that needs it, since
+lookups go through the mirror. No crate enables a rustls provider by default;
+the app installs one.
 
 `scripts/ci.sh` is the CI definition: text gates, fmt and a workspace check,
 then clippy, tests and each feature for the crates changed since their last

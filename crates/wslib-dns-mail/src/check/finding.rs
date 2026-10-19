@@ -160,6 +160,9 @@ finding_codes! {
     BimiLogoInvalid => "bimi_logo_invalid", Spec, Error, "draft-svg-tiny-ps-abrotman";
     BimiLogoTooLarge => "bimi_logo_too_large", Practice, Warning, "BIMI Group implementation guide";
     BimiLogoContentType => "bimi_logo_content_type", Practice, Warning, "draft-brand-indicators-for-message-identification";
+    BimiLogoOffCentre => "bimi_logo_off_centre", Practice, Warning, "BIMI Group implementation guide";
+    BimiLogoCropRisk => "bimi_logo_crop_risk", Practice, Warning, "BIMI Group implementation guide";
+    BimiLogoTransparentBackground => "bimi_logo_transparent_background", Practice, Info, "BIMI Group implementation guide";
     BimiVmcAbsent => "bimi_vmc_absent", Observation, Info, "draft-brand-indicators-for-message-identification";
     BimiVmcUnreachable => "bimi_vmc_unreachable", Spec, Error, "draft-fetch-validation-vmc-wchuang §3";
     BimiVmcInvalid => "bimi_vmc_invalid", Spec, Error, "draft-fetch-validation-vmc-wchuang §5";
@@ -301,6 +304,11 @@ pub enum Detail {
     },
     ContentType {
         content_type: Option<String>,
+    },
+    /// A logo measurement against its limit, both in thousandths.
+    Geometry {
+        measured: u32,
+        limit: u32,
     },
     /// Why a mark certificate fails.
     Vmc {

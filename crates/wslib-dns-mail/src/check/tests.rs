@@ -1000,3 +1000,43 @@ fn a_logo_without_a_certificate_is_noted() {
         []
     );
 }
+
+#[cfg(feature = "render")]
+#[test]
+fn render_findings_judge_the_marks_against_the_limits() {
+    let geometry = |body: &str| {
+        crate::bimi::measure_logo(
+            format!(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">{body}</svg>"#
+            )
+            .as_bytes(),
+        )
+        .unwrap()
+    };
+    let render = |body: &str| {
+        codes(&bimi_logo_render_findings(
+            "default._bimi.example.com",
+            &geometry(body),
+            &crate::bimi::RenderOptions::default(),
+        ))
+    };
+    let background = r##"<rect width="100" height="100" fill="#fff"/>"##;
+    assert_eq!(
+        render(&format!(r#"{background}<circle cx="50" cy="50" r="30"/>"#)),
+        []
+    );
+    assert_eq!(
+        render(r#"<rect x="40" y="10" width="58" height="80"/>"#),
+        [
+            FindingCode::BimiLogoOffCentre,
+            FindingCode::BimiLogoCropRisk,
+            FindingCode::BimiLogoTransparentBackground
+        ]
+    );
+    assert_eq!(
+        render(&format!(
+            r#"{background}<text x="90" y="95">Example</text>"#
+        )),
+        []
+    );
+}

@@ -205,6 +205,20 @@ resolved and vetted, or vetted directly if it's an IP literal, before any
 connection. A `.svgz` or gzip-encoded logo is inflated, with a cap on both
 the compressed and the inflated size.
 
+## Logo geometry
+
+`bimi::measure_logo(svg)` (feature `render`) measures what the BIMI Group's
+guidance asks of a mark: centred, inside the circle that mailbox providers
+crop it to, on a solid background. It reports the offset of the marks'
+bounding box from the viewBox's centre, how far they reach past the inscribed
+circle (a full-viewBox background is left out of both, since the crop is
+meant to cut it), and whether one is there at all. `<text>` can't be
+measured without its font, so a logo with text gets only the background
+judged. `check_domain` measures a fetched logo and raises
+`bimi_logo_off_centre`, `bimi_logo_crop_risk` and
+`bimi_logo_transparent_background` against `CheckOptions::bimi_render`.
+These are Practice findings: receivers don't reject on them.
+
 ## Mark certificates
 
 `bimi::verify_vmc(pem, domain, selector, logo, &VmcOptions)` verifies the PEM
@@ -243,6 +257,7 @@ fetch's protections.
 | ------- | ------------------------------------------------------------ |
 | `serde` | `Serialize`/`Deserialize` on every public type               |
 | `http`  | The MTA-STS and BIMI logo fetches, `CheckOptions::{mta_sts_http, bimi_http}` |
+| `render` | `bimi::measure_logo` and the logo geometry findings, over usvg |
 
 None are on by default. The parsers need no async runtime. `http` uses
 reqwest with rustls and no crypto provider; the application installs one, as
@@ -252,7 +267,9 @@ for every wslib crate.
 
 - Mark certificates: revocation (CRLs) isn't checked, and SCT signatures
   aren't verified against a CT log list.
-- Logo rendering (centring within the circle crop, colours) isn't checked.
+- Logo geometry doesn't measure `<text>`, and it doesn't apply clip paths or
+  masks, so a clipped logo can measure larger than it renders. Colours
+  aren't checked.
 - DANE: TLSA records aren't matched against the MX hosts' certificates,
   which needs an outbound SMTP connection.
 - DNSSEC: bogus zones behind a validating upstream are only suspected, and

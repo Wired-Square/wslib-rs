@@ -164,6 +164,48 @@ pub fn bimi_logo_findings(subject: &str, logo: &LogoFetch) -> Vec<Finding> {
     findings
 }
 
+/// Where the logo's marks fall against `options`. With `<text>` in the logo,
+/// only the background is judged: the text's extent is unknown.
+#[cfg(feature = "render")]
+pub fn bimi_logo_render_findings(
+    subject: &str,
+    geometry: &crate::bimi::LogoGeometry,
+    options: &crate::bimi::RenderOptions,
+) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    if !geometry.text {
+        let measured = [
+            (
+                FindingCode::BimiLogoOffCentre,
+                geometry.off_centre,
+                options.off_centre_limit,
+            ),
+            (
+                FindingCode::BimiLogoCropRisk,
+                geometry.crop_overflow,
+                options.crop_limit,
+            ),
+        ];
+        for (code, measured, limit) in measured {
+            if let Some(measured) = measured.filter(|&measured| measured > limit) {
+                findings.push(Finding::new(
+                    code,
+                    subject,
+                    Detail::Geometry { measured, limit },
+                ));
+            }
+        }
+    }
+    if !geometry.solid_background {
+        findings.push(Finding::new(
+            FindingCode::BimiLogoTransparentBackground,
+            subject,
+            Detail::None,
+        ));
+    }
+    findings
+}
+
 /// The findings for a BIMI record's mark certificate, as fetched and, when
 /// it was, verified.
 pub fn bimi_vmc_findings(

@@ -2,9 +2,13 @@
 //! and their logos.
 
 mod logo;
+#[cfg(feature = "render")]
+mod render;
 mod vmc;
 
 pub use logo::{LOGO_SIZE_GUIDANCE, LogoValidation, SvgRule, SvgViolation, validate_logo};
+#[cfg(feature = "render")]
+pub use render::{LogoGeometry, RenderFailure, RenderOptions, measure_logo};
 pub use vmc::{
     MarkCertificateKind, VmcOptions, VmcProblem, VmcTrustAnchors, VmcVerification, verify_vmc,
 };

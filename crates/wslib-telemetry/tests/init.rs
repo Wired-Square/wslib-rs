@@ -1,5 +1,5 @@
 //! A process of its own, since a global subscriber is once per process.
-#![cfg(all(feature = "setup", feature = "ring"))]
+#![cfg(all(feature = "setup-core", feature = "ring"))]
 
 use wslib_telemetry::{LogLevel, Logs, Telemetry};
 

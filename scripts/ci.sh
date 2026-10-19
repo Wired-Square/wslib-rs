@@ -32,6 +32,10 @@ in_default_graph() { cargo tree --workspace -e normal -i "$1" 2>/dev/null | grep
 ! in_default_graph aws-lc-rs || die "aws-lc-rs is in the default graph"
 ! in_default_graph ring || die "ring is in the default graph"
 
+step "wslib-telemetry's setup-core has no regex engine"
+! cargo tree -p wslib-telemetry --no-default-features --features setup-core -e normal --prefix none \
+  | grep -qE '^(regex|regex-automata|matchers) ' || die "setup-core pulls in a regex engine"
+
 step "Format"
 cargo fmt --all --check
 

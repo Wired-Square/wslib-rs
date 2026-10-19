@@ -148,6 +148,8 @@ works on results a caller already holds.
 It's bounded by `deadline` and `max_queries` (10 s and 200 by default), and
 can keep a query log. A query the bounds stopped is never a `lookup_failed`.
 The checks it cut short are named in a single `incomplete` finding instead.
+The deadline only stops new queries. One already in flight can run up to the
+resolver's timeout × attempts past it: 4 s with `HickoryOptions::default()`.
 
 ## Building and editing records
 

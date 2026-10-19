@@ -165,10 +165,12 @@ impl FakeResolver {
             .entry((name.clone(), record_type))
             .or_default() += 1;
         let mut entry = self.names.get(&name).ok_or(LookupError::NxDomain)?;
+        let mut canonical_name = None;
         if record_type != RecordType::Cname {
             for _ in 0..crate::DEFAULT_MAX_CNAME_HOPS {
                 let Some(target) = &entry.cname else { break };
                 entry = self.names.get(target).ok_or(LookupError::NxDomain)?;
+                canonical_name = Some(target.clone());
             }
         }
         if let Some(error) = entry.errors.get(&record_type).or(entry.all_types.as_ref()) {
@@ -178,7 +180,10 @@ impl FakeResolver {
         if records.is_empty() {
             Err(LookupError::NoData)
         } else {
-            Ok(Answer::new(records))
+            Ok(Answer {
+                canonical_name,
+                ..Answer::new(records)
+            })
         }
     }
 }
@@ -347,6 +352,19 @@ mod tests {
                 .records[0]
                 .joined(),
             "v=DKIM1; p="
+        );
+        assert_eq!(
+            block_on(dns.txt("s1._domainkey.example.com"))
+                .unwrap()
+                .canonical_name
+                .as_deref(),
+            Some("s1.keys.example.org")
+        );
+        assert_eq!(
+            block_on(dns.txt("s1.keys.example.org"))
+                .unwrap()
+                .canonical_name,
+            None
         );
 
         let direct =

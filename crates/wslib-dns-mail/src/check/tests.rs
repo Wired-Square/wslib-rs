@@ -420,6 +420,9 @@ fn mx_findings_per_exchange() {
     assert_eq!(mx(&null, &[]), []);
     let mixed = good_mx().with_mx("example.com", 0, ".");
     assert_eq!(mx(&mixed, &[]), [FindingCode::MxNullWithOthers]);
+    let servfail_on_cname =
+        good_mx().with_error("mail.example.com", RecordType::Cname, LookupError::ServFail);
+    assert_eq!(mx(&servfail_on_cname, &[]), []);
     let alias = good_mx()
         .with_cname("mail.example.com", "host.example.net")
         .with_ip("host.example.net", [ip("192.0.2.25")]);
@@ -428,6 +431,18 @@ fn mx_findings_per_exchange() {
     assert_eq!(mx(&literal, &[]), [FindingCode::MxExchangeIsIpLiteral]);
     let nowhere = FakeResolver::new().with_mx("example.com", 10, "gone.example.com");
     assert_eq!(mx(&nowhere, &[]), [FindingCode::MxExchangeNoAddress]);
+    let severity = |dns: &FakeResolver| {
+        let check = block_on(check_mx(dns, "example.com", &[]));
+        check
+            .findings
+            .iter()
+            .find(|f| f.code == FindingCode::MxExchangeNoAddress)
+            .map(|f| f.severity)
+    };
+    assert_eq!(severity(&nowhere), Some(Severity::Error));
+    let alongside = good_mx().with_mx("example.com", 50, "token.verify.example.net");
+    assert_eq!(mx(&alongside, &[]), [FindingCode::MxExchangeNoAddress]);
+    assert_eq!(severity(&alongside), Some(Severity::Warning));
     let no_ptr = FakeResolver::new()
         .with_mx("example.com", 10, "mail.example.com")
         .with_ip("mail.example.com", [ip("192.0.2.25")]);

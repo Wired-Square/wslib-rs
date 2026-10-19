@@ -137,7 +137,30 @@ fn answer<T>(lookup: &HickoryLookup, extract: impl Fn(&RData) -> Option<T>) -> L
             _ => LookupError::NoData,
         });
     }
-    Ok(Answer { records, ttl })
+    Ok(Answer {
+        records,
+        ttl,
+        canonical_name: canonical_name(lookup),
+    })
+}
+
+/// Follows the answer section's CNAMEs from the queried name.
+fn canonical_name(lookup: &HickoryLookup) -> Option<String> {
+    let mut current = lookup.query().name().clone();
+    let mut aliased = false;
+    for _ in 0..crate::DEFAULT_MAX_CNAME_HOPS {
+        let next = lookup
+            .answers()
+            .iter()
+            .find_map(|record| match &record.data {
+                RData::CNAME(target) if record.name == current => Some(target.0.clone()),
+                _ => None,
+            });
+        let Some(next) = next else { break };
+        current = next;
+        aliased = true;
+    }
+    aliased.then(|| name(&current))
 }
 
 fn classify(error: NetError) -> LookupError {

@@ -2,7 +2,7 @@ use std::net::IpAddr;
 
 use wslib_dns::Resolver;
 
-use super::{Detail, Finding, FindingCode, lookup_failure};
+use super::{Detail, Finding, FindingCode, Severity, lookup_failure};
 use crate::discover::{DnsblResult, DnsblStatus, MxDiscovery, dnsbl, join_all, mx};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,6 +67,7 @@ pub fn mx_findings(mx: &MxDiscovery, dnsbl: &[DnsblResult]) -> Vec<Finding> {
     if mx.is_null() {
         return findings;
     }
+    let deliverable = mx.hosts.iter().any(|host| !host.addresses.is_empty());
     for host in mx.hosts.iter().filter(|host| !host.is_null()) {
         let exchange = |target: Option<String>| Detail::Exchange {
             exchange: host.exchange.clone(),
@@ -87,16 +88,17 @@ pub fn mx_findings(mx: &MxDiscovery, dnsbl: &[DnsblResult]) -> Vec<Finding> {
                 exchange(Some(target.clone())),
             ));
         }
-        if let Some(error) = &host.cname_error {
-            findings.push(lookup_failure("mx", &host.exchange, error));
-        }
         match &host.address_error {
             Some(error) if error.is_absent() => {
-                findings.push(Finding::new(
-                    FindingCode::MxExchangeNoAddress,
-                    domain,
-                    exchange(None),
-                ));
+                let finding =
+                    Finding::new(FindingCode::MxExchangeNoAddress, domain, exchange(None));
+                // Mail still flows through the hosts that resolve, as with a
+                // provider's ownership-check MX left at a low preference.
+                findings.push(if deliverable {
+                    finding.severity(Severity::Warning)
+                } else {
+                    finding
+                });
             }
             Some(error) => findings.push(lookup_failure("mx", &host.exchange, error)),
             None => {}

@@ -33,5 +33,9 @@
 - `RecordSet::others` keeps the TXT strings at a name that aren't the record
   kind looked for, so a DMARC record with `v` out of place can be reported.
 - An unknown DKIM `k=` no longer has its key read as RSA.
+- MX inspection takes an exchange's alias from its address answer rather
+  than a separate CNAME query, which some providers answer SERVFAIL;
+  `MxHost::cname_error` is gone. `mx_exchange_no_address` is a Warning while
+  another MX host resolves.
 - Canonical `Display` on every record, `DmarcBuilder`, and the editors
   `dmarc::with_aggregate` and `spf::with_includes`.

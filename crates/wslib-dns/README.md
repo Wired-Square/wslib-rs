@@ -46,7 +46,10 @@ match dns.txt("_dmarc.example.com").await {
   deadline or after a set number. The queries it holds back answer
   `LookupError::NotSent`, so a caller can tell work that was cut short from a
   lookup that failed. A query already in flight runs to the inner resolver's
-  own timeout.
+  own timeout × attempts.
+- **`Answer::canonical_name`**: the name the records belong to, when the
+  queried name is an alias for it, taken from the CNAME chain in the answer.
+  You can tell an alias apart without a separate CNAME query.
 - **Names**: `normalise`, `validate_hostname` (RFC 1035/1123) and
   `validate_service_name` (which also allows `_`), `to_ascii`/`to_unicode`
   (IDNA, UTS #46), `public_suffix` and `registrable_domain` (the Public Suffix

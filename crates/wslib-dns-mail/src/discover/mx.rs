@@ -33,10 +33,9 @@ impl MxDiscovery {
 pub struct MxHost {
     pub preference: u16,
     pub exchange: String,
-    /// The exchange's own CNAME target: RFC 2181 §10.3 says it must be
-    /// neither an alias nor point at one.
+    /// The name the exchange is an alias for, from the CNAME chain its
+    /// address answer came with: RFC 2181 §10.3 says it must not be one.
     pub cname: Option<String>,
-    pub cname_error: Option<LookupError>,
     pub addresses: Vec<IpAddr>,
     /// Why the exchange has no addresses.
     pub address_error: Option<LookupError>,
@@ -99,7 +98,6 @@ async fn inspect(resolver: &impl Resolver, preference: u16, exchange: String) ->
         preference,
         exchange,
         cname: None,
-        cname_error: None,
         addresses: Vec::new(),
         address_error: None,
         reverse: Vec::new(),
@@ -107,13 +105,11 @@ async fn inspect(resolver: &impl Resolver, preference: u16, exchange: String) ->
     if host.is_null() || host.is_ip_literal() {
         return host;
     }
-    match resolver.cname(&host.exchange).await {
-        Ok(answer) => host.cname = answer.records.into_iter().next(),
-        Err(error) if error.is_absent() => {}
-        Err(error) => host.cname_error = Some(error),
-    }
     match resolver.ip(&host.exchange).await {
-        Ok(answer) => host.addresses = answer.records,
+        Ok(answer) => {
+            host.cname = answer.canonical_name;
+            host.addresses = answer.records;
+        }
         Err(error) => host.address_error = Some(error),
     }
     host.reverse = join_all(

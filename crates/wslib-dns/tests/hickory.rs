@@ -28,26 +28,34 @@ async fn debug_shows_the_options_not_the_internals() {
     assert!(format!("{dns:?}").starts_with("HickoryResolver { options:"));
 }
 
-mod truncating {
+mod local {
     use std::net::SocketAddr;
 
     use hickory_resolver::proto::op::Message;
-    use hickory_resolver::proto::rr::rdata::TXT;
-    use hickory_resolver::proto::rr::{RData, Record};
+    use hickory_resolver::proto::rr::Record;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, UdpSocket};
 
-    /// A nameserver that answers every UDP query truncated and every TCP
-    /// query in full with `records` TXT strings, on one local port.
-    pub async fn server(records: usize) -> SocketAddr {
+    /// A nameserver on one local port that answers every query with
+    /// `records` for the queried name: over TCP in full, and over UDP in
+    /// full or, when `truncate_udp`, empty with TC set.
+    pub async fn server(
+        truncate_udp: bool,
+        records: fn(&hickory_resolver::proto::rr::Name) -> Vec<Record>,
+    ) -> SocketAddr {
         let udp = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let address = udp.local_addr().unwrap();
         let tcp = TcpListener::bind(address).await.unwrap();
         tokio::spawn(async move {
             let mut buffer = [0u8; 4096];
             while let Ok((len, peer)) = udp.recv_from(&mut buffer).await {
-                let mut response = answer(&buffer[..len], 0);
-                response.metadata.truncation = true;
+                let response = if truncate_udp {
+                    let mut empty = answer(&buffer[..len], |_| Vec::new());
+                    empty.metadata.truncation = true;
+                    empty
+                } else {
+                    answer(&buffer[..len], records)
+                };
                 udp.send_to(&response.to_vec().unwrap(), peer).await.ok();
             }
         });
@@ -72,16 +80,15 @@ mod truncating {
         address
     }
 
-    fn answer(query: &[u8], records: usize) -> Message {
+    fn answer(
+        query: &[u8],
+        records: impl Fn(&hickory_resolver::proto::rr::Name) -> Vec<Record>,
+    ) -> Message {
         let query = Message::from_vec(query).unwrap();
         let name = query.queries[0].name().clone();
         let mut response = query.into_response();
-        for n in 0..records {
-            let txt = TXT::new(vec![format!(
-                "verification-token-{n:03}-{}",
-                "x".repeat(40)
-            )]);
-            response.add_answer(Record::from_rdata(name.clone(), 300, RData::TXT(txt)));
+        for record in records(&name) {
+            response.add_answer(record);
         }
         response
     }
@@ -89,8 +96,47 @@ mod truncating {
 
 #[tokio::test]
 async fn a_truncated_answer_retries_over_tcp_with_several_servers() {
-    let servers = [truncating::server(60).await, truncating::server(60).await];
+    use hickory_resolver::proto::rr::rdata::TXT;
+    use hickory_resolver::proto::rr::{RData, Record};
+    fn sixty(name: &hickory_resolver::proto::rr::Name) -> Vec<Record> {
+        (0..60)
+            .map(|n| {
+                let txt = TXT::new(vec![format!(
+                    "verification-token-{n:03}-{}",
+                    "x".repeat(40)
+                )]);
+                Record::from_rdata(name.clone(), 300, RData::TXT(txt))
+            })
+            .collect()
+    }
+    let servers = [
+        local::server(true, sixty).await,
+        local::server(true, sixty).await,
+    ];
     let dns = HickoryResolver::from_nameservers(servers, HickoryOptions::default()).unwrap();
-    let answer = dns.txt("example.com").await.unwrap();
-    assert_eq!(answer.records.len(), 60);
+    assert_eq!(dns.txt("example.com").await.unwrap().records.len(), 60);
+}
+
+#[tokio::test]
+async fn an_answer_through_a_cname_reports_its_canonical_name() {
+    use hickory_resolver::proto::rr::rdata::{A, CNAME};
+    use hickory_resolver::proto::rr::{Name, RData, Record};
+    fn aliased(name: &Name) -> Vec<Record> {
+        let target = Name::from_ascii("host.example.net.").unwrap();
+        vec![
+            Record::from_rdata(name.clone(), 300, RData::CNAME(CNAME(target.clone()))),
+            Record::from_rdata(target, 300, RData::A(A::new(192, 0, 2, 25))),
+        ]
+    }
+    let dns = HickoryResolver::from_nameservers(
+        [local::server(false, aliased).await],
+        HickoryOptions::default(),
+    )
+    .unwrap();
+    let answer = dns.a("mail.example.com").await.unwrap();
+    assert_eq!(
+        answer.records,
+        ["192.0.2.25".parse::<std::net::Ipv4Addr>().unwrap()]
+    );
+    assert_eq!(answer.canonical_name.as_deref(), Some("host.example.net"));
 }

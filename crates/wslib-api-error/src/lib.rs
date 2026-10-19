@@ -2,5 +2,7 @@
 //! and the error that answers it.
 
 mod body;
+mod error;
 
 pub use body::ApiErrorBody;
+pub use error::ApiError;

@@ -85,6 +85,31 @@ hickory and tests use `FakeResolver`. Every result says how it was found:
 
 Discovery futures are `Send`, and concurrency within a call needs no runtime.
 
+## SPF evaluation
+
+- `spf::tree::walk` builds an `SpfTree`: the record, every `include:` and
+  applicable `redirect=` it reaches, and the result of each `a`, `mx` and
+  `exists` lookup, in evaluation order. `Accounting` gives the §4.6.4 cost of
+  evaluating it when nothing matches:
+  - DNS-querying terms and void lookups;
+  - the term where each limit was crossed, with the domains leading to it;
+  - any `mx` with more than ten names;
+  - loops.
+  The walk goes past the RFC limits to report the real count, up to
+  `WalkLimits` (50 lookups, depth 12 by default). `redirect=` is ignored
+  beside `all`, as §6.1 says. Terms whose target needs a message to expand,
+  such as `exists:%{i}…` and `ptr`, are counted but not looked up.
+- `SpfTree::flatten` lists every netblock with the path that produced it, its
+  qualifier, and whether it was resolved from `a` or `mx` (`dynamic`). It also
+  gives the duplicates and overlaps, the total of IPv4 addresses with each
+  counted once, and the number of IPv6 networks.
+- `SpfTree::targets` lists every `include:` and `redirect=` target with its
+  record.
+- `spf::check_host(resolver, ip, helo, sender)` is the full RFC 7208 §4
+  evaluation: macros (§7), `exp=` explanations, and the lookup, void and
+  name limits. It returns the result, the term that decided it (through any
+  `include:`s), and why it was a `temperror`, `permerror` or `none`.
+
 ## Building and editing records
 
 - `Display` on every record renders it canonically: `v=spf1` and single-spaced

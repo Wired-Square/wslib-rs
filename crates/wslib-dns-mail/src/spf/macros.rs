@@ -201,6 +201,132 @@ pub(crate) fn has_domain_end(spec: &MacroString) -> bool {
         && !top.bytes().all(|b| b.is_ascii_digit())
 }
 
+/// What macros expand from (RFC 7208 §7.3). A letter whose value isn't known
+/// makes [`MacroString::expand`] return `None`, which is how a walk without a
+/// sender skips `exists:%{i}…`.
+#[derive(Clone, Debug, Default)]
+pub struct MacroContext {
+    /// `<local-part>@<domain>`.
+    pub sender: Option<String>,
+    /// The domain being evaluated, `%{d}`.
+    pub domain: String,
+    pub ip: Option<std::net::IpAddr>,
+    pub helo: Option<String>,
+    /// `%{p}`, looked up by the caller when a string uses it.
+    pub validated_domain: Option<String>,
+    /// `%{r}`, the receiving host; `unknown` when unset.
+    pub receiver: Option<String>,
+    /// `%{t}`, seconds since the epoch.
+    pub timestamp: Option<u64>,
+}
+
+impl MacroString {
+    /// Whether expanding it needs `%{p}`, which costs DNS queries.
+    pub fn uses_validated_domain(&self) -> bool {
+        self.tokens
+            .iter()
+            .any(|token| matches!(token, MacroToken::Macro(m) if m.letter == MacroLetter::ValidatedDomain))
+    }
+
+    /// The expansion, or `None` when a letter's value isn't in `context`.
+    pub fn expand(&self, context: &MacroContext) -> Option<String> {
+        let mut out = String::new();
+        for token in &self.tokens {
+            match token {
+                MacroToken::Literal(text) => out.push_str(text),
+                MacroToken::Percent => out.push('%'),
+                MacroToken::Space => out.push(' '),
+                MacroToken::UrlSpace => out.push_str("%20"),
+                MacroToken::Macro(m) => out.push_str(&expand_macro(m, context)?),
+            }
+        }
+        Some(out)
+    }
+
+    /// The expansion as a domain to query: trailing dot dropped, and labels
+    /// removed from the left until it fits in 253 octets (§7.3).
+    pub fn expand_domain(&self, context: &MacroContext) -> Option<String> {
+        let expanded = self.expand(context)?;
+        let mut name = expanded.trim_end_matches('.');
+        while name.len() > 253 {
+            name = name.split_once('.')?.1;
+        }
+        Some(name.to_ascii_lowercase())
+    }
+}
+
+fn expand_macro(m: &Macro, context: &MacroContext) -> Option<String> {
+    use std::net::IpAddr;
+    let sender = || context.sender.as_deref();
+    let value = match m.letter {
+        MacroLetter::Sender => sender()?.to_owned(),
+        MacroLetter::LocalPart => sender()?
+            .rsplit_once('@')
+            .map_or("postmaster", |(local, _)| local)
+            .to_owned(),
+        MacroLetter::SenderDomain => sender()?
+            .rsplit_once('@')
+            .map_or(sender()?, |(_, domain)| domain)
+            .to_owned(),
+        MacroLetter::Domain => context.domain.clone(),
+        MacroLetter::Ip => match context.ip? {
+            IpAddr::V4(v4) => v4.to_string(),
+            IpAddr::V6(v6) => v6
+                .octets()
+                .iter()
+                .flat_map(|byte| [byte >> 4, byte & 0x0f])
+                .map(|nibble| format!("{nibble:x}"))
+                .collect::<Vec<_>>()
+                .join("."),
+        },
+        MacroLetter::ValidatedDomain => context
+            .validated_domain
+            .clone()
+            .unwrap_or_else(|| "unknown".into()),
+        MacroLetter::IpVersion => match context.ip? {
+            IpAddr::V4(_) => "in-addr".into(),
+            IpAddr::V6(_) => "ip6".into(),
+        },
+        MacroLetter::Helo => context.helo.clone()?,
+        MacroLetter::ClientIp => context.ip?.to_string(),
+        MacroLetter::ReceivingDomain => {
+            context.receiver.clone().unwrap_or_else(|| "unknown".into())
+        }
+        MacroLetter::Timestamp => context.timestamp?.to_string(),
+    };
+    let delimiters: &[char] = &if m.delimiters.is_empty() {
+        vec!['.']
+    } else {
+        m.delimiters.chars().collect()
+    };
+    let mut parts: Vec<&str> = value.split(delimiters).collect();
+    if m.reverse {
+        parts.reverse();
+    }
+    if let Some(keep) = m.keep {
+        let keep = usize::try_from(keep).unwrap_or(usize::MAX).min(parts.len());
+        parts.drain(..parts.len() - keep);
+    }
+    let joined = parts.join(".");
+    Some(if m.url_escape {
+        url_escape(&joined)
+    } else {
+        joined
+    })
+}
+
+/// Percent-encodes everything but RFC 3986's unreserved characters.
+fn url_escape(text: &str) -> String {
+    text.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,6 +384,122 @@ mod tests {
         assert_eq!(parse("%{c}", false), Err(0));
         assert!(parse("%{c} at %{t}", true).is_ok());
         assert_eq!(parse("a b", false), Err(1));
+    }
+
+    /// RFC 7208 §7.4.
+    fn rfc_context() -> MacroContext {
+        MacroContext {
+            sender: Some("strong-bad@email.example.com".into()),
+            domain: "email.example.com".into(),
+            ip: Some("192.0.2.3".parse().unwrap()),
+            helo: Some("mx.example.org".into()),
+            ..MacroContext::default()
+        }
+    }
+
+    #[test]
+    fn expansions_from_rfc_7208_section_7_4() {
+        let context = rfc_context();
+        for (raw, expected) in [
+            ("%{s}", "strong-bad@email.example.com"),
+            ("%{o}", "email.example.com"),
+            ("%{d}", "email.example.com"),
+            ("%{d4}", "email.example.com"),
+            ("%{d3}", "email.example.com"),
+            ("%{d2}", "example.com"),
+            ("%{d1}", "com"),
+            ("%{dr}", "com.example.email"),
+            ("%{d2r}", "example.email"),
+            ("%{l}", "strong-bad"),
+            ("%{l-}", "strong.bad"),
+            ("%{lr}", "strong-bad"),
+            ("%{lr-}", "bad.strong"),
+            ("%{l1r-}", "strong"),
+            (
+                "%{ir}.%{v}._spf.%{d2}",
+                "3.2.0.192.in-addr._spf.example.com",
+            ),
+            ("%{lr-}.lp._spf.%{d2}", "bad.strong.lp._spf.example.com"),
+            (
+                "%{lr-}.lp.%{ir}.%{v}._spf.%{d2}",
+                "bad.strong.lp.3.2.0.192.in-addr._spf.example.com",
+            ),
+            (
+                "%{ir}.%{v}.%{l1r-}.lp._spf.%{d2}",
+                "3.2.0.192.in-addr.strong.lp._spf.example.com",
+            ),
+            (
+                "%{d2}.trusted-domains.example.net",
+                "example.com.trusted-domains.example.net",
+            ),
+        ] {
+            assert_eq!(
+                parse(raw, false).unwrap().expand(&context).as_deref(),
+                Some(expected),
+                "{raw}"
+            );
+        }
+        let v6 = MacroContext {
+            ip: Some("2001:db8::cb01".parse().unwrap()),
+            ..rfc_context()
+        };
+        assert_eq!(
+            parse("%{ir}.%{v}._spf.%{d2}", false)
+                .unwrap()
+                .expand(&v6)
+                .as_deref(),
+            Some(
+                "1.0.b.c.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6._spf.example.com"
+            )
+        );
+    }
+
+    #[test]
+    fn uppercase_letters_url_escape_and_escapes_expand() {
+        let context = rfc_context();
+        assert_eq!(
+            parse("%{S}", false).unwrap().expand(&context).as_deref(),
+            Some("strong-bad%40email.example.com")
+        );
+        assert_eq!(
+            parse("a%%b%_c%-d", false)
+                .unwrap()
+                .expand(&context)
+                .as_deref(),
+            Some("a%b c%20d")
+        );
+        assert_eq!(
+            parse("%{p}", false).unwrap().expand(&context).as_deref(),
+            Some("unknown")
+        );
+    }
+
+    #[test]
+    fn missing_values_and_long_names() {
+        let domain_only = MacroContext {
+            domain: "example.com".into(),
+            ..MacroContext::default()
+        };
+        assert_eq!(
+            parse("_spf.%{d}", false)
+                .unwrap()
+                .expand(&domain_only)
+                .as_deref(),
+            Some("_spf.example.com")
+        );
+        assert_eq!(
+            parse("%{i}._spf.%{d}", false).unwrap().expand(&domain_only),
+            None
+        );
+        let long = MacroContext {
+            domain: format!("{}.example.com", vec!["a".repeat(60); 5].join(".")),
+            ..MacroContext::default()
+        };
+        let name = parse("%{d}", false).unwrap().expand_domain(&long).unwrap();
+        assert!(
+            name.len() <= 253 && name.ends_with(".example.com"),
+            "{name}"
+        );
     }
 
     #[test]

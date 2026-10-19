@@ -1,12 +1,17 @@
 //! SPF records (RFC 7208).
 
+mod check;
+mod flatten;
 mod macros;
+pub mod tree;
 
 use std::fmt;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::ops::Range;
 
-pub use macros::{Macro, MacroLetter, MacroString, MacroToken};
+pub use check::{CheckHost, Reason, SpfResult, check_host};
+pub use flatten::{DuplicateNetblock, Flattened, Netblock, Overlap};
+pub use macros::{Macro, MacroContext, MacroLetter, MacroString, MacroToken};
 
 use crate::text::{offset_in, unwrap};
 use crate::{FaultCode, Parsed, SyntaxFault};
@@ -142,6 +147,26 @@ pub struct DualCidr {
     pub ip6: Option<u8>,
 }
 
+impl DualCidr {
+    /// The prefix length for an address of `ip`'s family.
+    pub fn prefix_for(&self, ip: std::net::IpAddr) -> u8 {
+        match ip {
+            std::net::IpAddr::V4(_) => self.ip4.unwrap_or(32),
+            std::net::IpAddr::V6(_) => self.ip6.unwrap_or(128),
+        }
+    }
+}
+
+/// The host bits of a `bits`-wide address under `prefix`.
+pub(crate) fn host_mask(bits: u8, prefix: u8) -> u128 {
+    let host = u32::from(bits - prefix.min(bits));
+    if host == 128 {
+        u128::MAX
+    } else {
+        (1u128 << host) - 1
+    }
+}
+
 impl fmt::Display for DualCidr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(ip4) = self.ip4 {
@@ -181,10 +206,19 @@ impl SpfRecord {
 
     /// The first `redirect=`.
     pub fn redirect(&self) -> Option<&MacroString> {
-        self.terms.iter().find_map(|term| match &term.term {
-            Term::Redirect(target) => Some(target),
-            _ => None,
-        })
+        self.redirect_at().map(|(_, target)| target)
+    }
+
+    /// The first `redirect=` and its index, which evaluation follows only
+    /// when the record has no `all` (§6.1).
+    pub(crate) fn redirect_at(&self) -> Option<(usize, &MacroString)> {
+        self.terms
+            .iter()
+            .enumerate()
+            .find_map(|(index, term)| match &term.term {
+                Term::Redirect(target) => Some((index, target)),
+                _ => None,
+            })
     }
 
     /// The first `exp=`.
@@ -553,5 +587,7 @@ pub fn with_includes<'a>(record: &str, domains: impl IntoIterator<Item = &'a str
     tokens.join(" ")
 }
 
+#[cfg(test)]
+mod eval_tests;
 #[cfg(test)]
 mod tests;

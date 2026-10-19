@@ -4,9 +4,11 @@
 
 - `bimi::measure_logo` (feature `render`, over usvg without fonts) measures
   where a logo's marks fall: their bounding-box centre against the viewBox's,
-  how far they reach past the inscribed circle, whether a filled shape covers
-  the whole viewBox, and whether there's `<text>`, which isn't measured. No
-  DOCTYPE is accepted, and `<image>` references load nothing.
+  how far they reach past the inscribed circle, whether an opaque fill covers
+  all four corners of the viewBox (a roundel doesn't), and whether there's
+  `<text>`, which isn't measured. Clip paths bound what's measured. A
+  DOCTYPE or anything unreadable is refused, and `<image>` references load
+  nothing.
 - Findings `bimi_logo_off_centre` and `bimi_logo_crop_risk` (by default past
   5% of the viewBox and 2% of the radius, set in `RenderOptions`) and
   `bimi_logo_transparent_background`. `check_domain` measures the fetched

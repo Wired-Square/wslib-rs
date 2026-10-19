@@ -211,8 +211,11 @@ the compressed and the inflated size.
 guidance asks of a mark: centred, inside the circle that mailbox providers
 crop it to, on a solid background. It reports the offset of the marks'
 bounding box from the viewBox's centre, how far they reach past the inscribed
-circle (a full-viewBox background is left out of both, since the crop is
-meant to cut it), and whether one is there at all. `<text>` can't be
+circle (a background, an opaque fill covering all four corners of the
+viewBox, is left out of both, since the crop is meant to cut it), and whether
+one is there at all. A roundel or rounded square leaves the corners
+transparent, so it's a mark, not a background. Clip paths bound what's
+measured. `<text>` can't be
 measured without its font, so a logo with text gets only the background
 judged. `check_domain` measures a fetched logo and raises
 `bimi_logo_off_centre`, `bimi_logo_crop_risk` and
@@ -267,8 +270,10 @@ for every wslib crate.
 
 - Mark certificates: revocation (CRLs) isn't checked, and SCT signatures
   aren't verified against a CT log list.
-- Logo geometry doesn't measure `<text>`, and it doesn't apply clip paths or
-  masks, so a clipped logo can measure larger than it renders. Colours
+- Logo geometry doesn't measure `<text>` or apply masks, and approximates a
+  clip path by its outline, so a masked or intricately clipped logo can
+  measure larger than it renders. A background's opacity is its fill's
+  alone: group opacity and gradient stop opacity aren't counted. Colours
   aren't checked.
 - DANE: TLSA records aren't matched against the MX hosts' certificates,
   which needs an outbound SMTP connection.

@@ -5274,21 +5274,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
-name = "wslib-api-error"
-version = "0.1.0"
-dependencies = [
- "axum",
- "http",
- "http-body-util",
- "serde",
- "serde_json",
- "tokio",
- "tower",
- "tracing",
- "ts-rs",
-]
-
-[[package]]
 name = "wslib-backoff"
 version = "0.1.1"
 dependencies = [
@@ -5344,6 +5329,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-http-error"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "http",
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "tracing",
+ "ts-rs",
+]
+
+[[package]]
 name = "wslib-http-scaffold"
 version = "0.1.0"
 dependencies = [
@@ -5355,7 +5355,7 @@ dependencies = [
  "tokio",
  "tower",
  "tower-http",
- "wslib-api-error",
+ "wslib-http-error",
 ]
 
 [[package]]

@@ -15,7 +15,7 @@ default = []
 embed = ["dep:rust-embed"]
 
 [dependencies]
-wslib-api-error = { path = "../wslib-api-error", version = "0.1", registry = "wired-square" }
+wslib-http-error = { path = "../wslib-http-error", version = "0.1", registry = "wired-square" }
 axum = { version = "0.8", default-features = false }
 percent-encoding = "2.3"
 serde_json = "1.0.85"

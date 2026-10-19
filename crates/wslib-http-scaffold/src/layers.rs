@@ -6,7 +6,7 @@ use tower::ServiceBuilder;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::compression::CompressionLayer;
 use tower_http::trace::TraceLayer;
-use wslib_api_error::ApiError;
+use wslib_http_error::ApiError;
 
 /// `router` traced, gzipped, and answering a panic as a 500 error body.
 ///

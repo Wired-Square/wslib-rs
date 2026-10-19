@@ -13,7 +13,7 @@ use axum::response::{IntoResponse, Response};
 use percent_encoding::percent_decode_str;
 use tower::{Service, ServiceExt};
 use tower_http::services::{ServeDir, ServeFile};
-use wslib_api_error::ApiError;
+use wslib_http_error::ApiError;
 
 pub(crate) const INDEX: &str = "index.html";
 const ASSETS: &str = "assets";

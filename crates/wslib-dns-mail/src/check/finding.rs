@@ -5,6 +5,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use wslib_dns::LookupError;
 
 use crate::SyntaxFault;
+use crate::discover::FetchFailure;
 use crate::dmarc::Policy;
 use crate::spf::tree::TermPath;
 
@@ -270,7 +271,7 @@ pub enum Detail {
     },
     Unreachable {
         url: String,
-        reason: String,
+        failure: FetchFailure,
     },
     Uncovered {
         exchange: String,

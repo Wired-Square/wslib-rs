@@ -1,25 +1,8 @@
 use super::{Detail, Finding, FindingCode, Severity, lookup_failure};
-use crate::discover::{MxDiscovery, RecordSet};
+use crate::discover::{FetchFailure, MxDiscovery, PolicyFetch, RecordSet};
 use crate::mta_sts::{MAX_AGE_LIMIT, Mode, MtaStsPolicy, MtaStsRecord};
 use crate::tls_rpt::TlsRptRecord;
 use crate::{FaultCode, Parsed};
-
-/// The outcome of fetching an MTA-STS policy file.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "snake_case", tag = "kind"))]
-pub enum PolicyFetch {
-    /// `body` is the file as served, which the policy's spans index.
-    Fetched {
-        url: String,
-        body: String,
-        policy: Parsed<MtaStsPolicy>,
-    },
-    Unreachable {
-        url: String,
-        reason: String,
-    },
-}
 
 /// The findings for the MTA-STS and TLS-RPT records of a domain, the policy
 /// when it was fetched, and the MX hosts it must cover.
@@ -52,12 +35,16 @@ pub fn mta_sts_findings(
         ));
     }
     match policy {
-        Some(PolicyFetch::Unreachable { url, reason }) => findings.push(Finding::new(
+        Some(PolicyFetch::Unreachable {
+            failure: FetchFailure::NotSent,
+            ..
+        }) => findings.push(super::incomplete("mta_sts", &record.name)),
+        Some(PolicyFetch::Unreachable { url, failure }) => findings.push(Finding::new(
             FindingCode::MtaStsPolicyUnreachable,
             &record.name,
             Detail::Unreachable {
                 url: url.clone(),
-                reason: reason.clone(),
+                failure: failure.clone(),
             },
         )),
         Some(PolicyFetch::Fetched { url, body, policy }) => {

@@ -50,6 +50,13 @@ fn discovery_futures_are_send<R: Resolver>(dns: &R, uri: &wslib_dns_mail::Report
         "example.com",
         &CheckOptions::default(),
     ));
+    #[cfg(feature = "http")]
+    assert_send(discover::mta_sts_policy(
+        dns,
+        &discover::HttpClients::new(reqwest::Client::builder),
+        "example.com",
+        None,
+    ));
 }
 
 #[test]

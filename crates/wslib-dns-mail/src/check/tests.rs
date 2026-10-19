@@ -5,6 +5,7 @@ use wslib_dns::{FakeResolver, LookupError, RecordType};
 
 use super::*;
 use crate::discover::block_on;
+use crate::discover::{FetchFailure, PolicyFetch};
 
 const RSA_512: &str = include_str!("../../testdata/dkim/rsa512.b64");
 const RSA_1024: &str = include_str!("../../testdata/dkim/rsa1024.b64");
@@ -554,11 +555,19 @@ fn mta_sts_and_tls_rpt() {
     );
     let unreachable = Some(PolicyFetch::Unreachable {
         url: "https://mta-sts.example.com/.well-known/mta-sts.txt".into(),
-        reason: "connection refused".into(),
+        failure: FetchFailure::Status { status: 404 },
     });
     assert_eq!(
         sts("v=STSv1; id=1", rpt, unreachable, good_mx()),
         [FindingCode::MtaStsPolicyUnreachable]
+    );
+    let out_of_time = Some(PolicyFetch::Unreachable {
+        url: "https://mta-sts.example.com/.well-known/mta-sts.txt".into(),
+        failure: FetchFailure::NotSent,
+    });
+    assert_eq!(
+        sts("v=STSv1; id=1", rpt, out_of_time, good_mx()),
+        [FindingCode::Incomplete]
     );
     let testing = "version: STSv1\nmode: testing\nmx: *.example.net\nmax_age: 86400\n";
     assert_eq!(

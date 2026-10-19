@@ -33,6 +33,13 @@
 - `RecordSet::others` keeps the TXT strings at a name that aren't the record
   kind looked for, so a DMARC record with `v` out of place can be reported.
 - An unknown DKIM `k=` no longer has its key read as RSA.
+- Feature `http`: `discover::mta_sts_policy` fetches the MTA-STS policy file
+  per RFC 8461 §3.3 (no redirects, `200` and `text/plain` only, 64 KiB cap).
+  The policy host is resolved through the crate's `Resolver`, refused if any
+  address isn't globally routable, and connected to only at those addresses.
+  `check_domain` fetches it when given `CheckOptions::mta_sts_http`. Failures
+  are a typed `FetchFailure`, which `PolicyFetch::Unreachable` and the
+  `mta_sts_policy_unreachable` detail carry.
 - MX inspection takes an exchange's alias from its address answer rather
   than a separate CNAME query, which some providers answer SERVFAIL;
   `MxHost::cname_error` is gone. `mx_exchange_no_address` is a Warning while

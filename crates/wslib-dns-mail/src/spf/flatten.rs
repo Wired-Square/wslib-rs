@@ -3,7 +3,10 @@
 use std::net::IpAddr;
 
 use super::tree::{SpfNode, SpfTree, TermOutcome};
-use super::{Mechanism, Qualifier, Term, host_mask};
+use super::{Mechanism, Qualifier, Term};
+use crate::address::{
+    PRIVATE_IPV4, PRIVATE_IPV6, SPECIAL_IPV4, SPECIAL_IPV6, host_mask, overlaps, range,
+};
 
 /// Every `ip4`, `ip6`, `a` and `mx` netblock in a tree, with totals.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -165,68 +168,15 @@ impl Netblock {
     /// documentation. Lets a public tool drop netblocks that would map
     /// internal addresses.
     pub fn is_global(&self) -> bool {
-        range(&self.cidr).is_some() && !self.overlaps_any(SPECIAL_IPV4, SPECIAL_IPV6)
+        range(&self.cidr).is_some() && !overlaps(&self.cidr, SPECIAL_IPV4, SPECIAL_IPV6)
     }
 
     /// Whether it overlaps private or local space: RFC 1918, shared, loopback
     /// and link-local IPv4, or loopback, unique-local and link-local IPv6.
     pub fn is_private(&self) -> bool {
-        self.overlaps_any(PRIVATE_IPV4, PRIVATE_IPV6)
-    }
-
-    fn overlaps_any(&self, ipv4: &[&str], ipv6: &[&str]) -> bool {
-        let Some((is_ipv6, start, end)) = range(&self.cidr) else {
-            return false;
-        };
-        let networks = if is_ipv6 { ipv6 } else { ipv4 };
-        networks
-            .iter()
-            .filter_map(|cidr| range(cidr))
-            .any(|(_, s, e)| start <= e && s <= end)
+        overlaps(&self.cidr, PRIVATE_IPV4, PRIVATE_IPV6)
     }
 }
-
-const PRIVATE_IPV4: &[&str] = &[
-    "10.0.0.0/8",
-    "100.64.0.0/10",
-    "127.0.0.0/8",
-    "169.254.0.0/16",
-    "172.16.0.0/12",
-    "192.168.0.0/16",
-];
-
-const PRIVATE_IPV6: &[&str] = &["::1/128", "fc00::/7", "fe80::/10"];
-
-/// IANA special-purpose IPv4 ranges (RFC 6890 and its updates).
-const SPECIAL_IPV4: &[&str] = &[
-    "0.0.0.0/8",
-    "10.0.0.0/8",
-    "100.64.0.0/10",
-    "127.0.0.0/8",
-    "169.254.0.0/16",
-    "172.16.0.0/12",
-    "192.0.0.0/24",
-    "192.0.2.0/24",
-    "192.88.99.0/24",
-    "192.168.0.0/16",
-    "198.18.0.0/15",
-    "198.51.100.0/24",
-    "203.0.113.0/24",
-    "224.0.0.0/4",
-    "240.0.0.0/4",
-];
-
-/// IANA special-purpose IPv6 ranges that aren't globally routable.
-const SPECIAL_IPV6: &[&str] = &[
-    "::/127",
-    "::ffff:0:0/96",
-    "64:ff9b:1::/48",
-    "100::/64",
-    "2001:db8::/32",
-    "fc00::/7",
-    "fe80::/10",
-    "ff00::/8",
-];
 
 fn block(
     address: IpAddr,
@@ -253,17 +203,6 @@ fn block(
         is_ipv6,
         dynamic,
     }
-}
-
-/// Whether a canonical network is IPv6, and its first and last address.
-fn range(cidr: &str) -> Option<(bool, u128, u128)> {
-    let (address, prefix) = cidr.split_once('/')?;
-    let prefix: u8 = prefix.parse().ok()?;
-    let (is_ipv6, start, bits) = match address.parse::<IpAddr>().ok()? {
-        IpAddr::V4(v4) => (false, u128::from(u32::from(v4)), 32),
-        IpAddr::V6(v6) => (true, u128::from(v6), 128),
-    };
-    Some((is_ipv6, start, start | host_mask(bits, prefix)))
 }
 
 fn summarise(netblocks: Vec<Netblock>) -> Flattened {

@@ -17,6 +17,7 @@
 //! assert!(parsed.is_usable());
 //! ```
 
+mod address;
 mod fault;
 mod text;
 mod uri;

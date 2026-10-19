@@ -18,7 +18,7 @@ pub use bimi::bimi_findings;
 pub use dkim::{DkimCheck, RSA_MINIMUM_BITS, RSA_RECOMMENDED_BITS, check_dkim, dkim_findings};
 pub use dmarc::{DmarcCheck, check_dmarc, dmarc_findings};
 pub use finding::{Detail, Finding, FindingCode, Kind, Severity};
-pub use mta_sts::{PolicyFetch, mta_sts_findings};
+pub use mta_sts::mta_sts_findings;
 pub use mx::{MxCheck, check_mx, mx_findings};
 pub use spf::{SPF_LENGTH_LIMIT, SpfCheck, check_spf, spf_findings};
 use wslib_dns::{BudgetResolver, LoggingResolver, LookupError, QueryRecord, Resolver};
@@ -27,7 +27,7 @@ use crate::ReportUri;
 use crate::bimi::BimiRecord;
 use crate::discover::{
     self, DkimDiscovery, DmarcDiscovery, DmarcDiscoveryMode, DnsblResult, Inherited, MxDiscovery,
-    RecordSet, ReportAuthorisation, join_all,
+    PolicyFetch, RecordSet, ReportAuthorisation, join_all,
 };
 use crate::mta_sts::MtaStsRecord;
 use crate::spf::tree::{SpfTree, WalkLimits};
@@ -76,6 +76,10 @@ pub struct CheckOptions {
     pub max_queries: Option<u32>,
     /// Keep every query and its outcome in the report.
     pub query_log: bool,
+    /// Fetches the MTA-STS policy file, with clients made by these, when the
+    /// domain publishes an MTA-STS record.
+    #[cfg(feature = "http")]
+    pub mta_sts_http: Option<discover::HttpClients>,
 }
 
 /// No selectors or blocklists, RFC 7489 discovery, a 10 s deadline and 200
@@ -92,6 +96,8 @@ impl Default for CheckOptions {
             deadline: Some(Duration::from_secs(10)),
             max_queries: Some(200),
             query_log: false,
+            #[cfg(feature = "http")]
+            mta_sts_http: None,
         }
     }
 }
@@ -110,6 +116,8 @@ pub struct DomainReport {
     pub bimi: Inherited<BimiRecord>,
     pub mta_sts: RecordSet<MtaStsRecord>,
     pub tls_rpt: RecordSet<TlsRptRecord>,
+    /// Set when the policy file was fetched.
+    pub mta_sts_policy: Option<PolicyFetch>,
     /// Ordered by family, as the checks run.
     pub findings: Vec<Finding>,
     pub queries_sent: u32,
@@ -123,7 +131,11 @@ enum Part {
     Dkim(DkimCheck),
     Mx(MxCheck),
     Bimi(Inherited<BimiRecord>),
-    MtaSts(RecordSet<MtaStsRecord>, RecordSet<TlsRptRecord>),
+    MtaSts(
+        RecordSet<MtaStsRecord>,
+        RecordSet<TlsRptRecord>,
+        Option<PolicyFetch>,
+    ),
 }
 
 type BoxedPart<'a> = Pin<Box<dyn Future<Output = Part> + Send + 'a>>;
@@ -156,10 +168,9 @@ pub async fn check_domain(
         Box::pin(async { Part::Mx(check_mx(dns, &domain, &options.dnsbl_zones).await) }),
         Box::pin(async { Part::Bimi(discover::bimi(dns, &domain, &options.bimi_selector).await) }),
         Box::pin(async {
-            Part::MtaSts(
-                discover::mta_sts(dns, &domain).await,
-                discover::tls_rpt(dns, &domain).await,
-            )
+            let record = discover::mta_sts(dns, &domain).await;
+            let policy = policy(dns, &record, &domain, options, deadline).await;
+            Part::MtaSts(record, discover::tls_rpt(dns, &domain).await, policy)
         }),
     ];
     let (mut spf, mut dmarc, mut dkim, mut mx, mut bimi, mut mta_sts) =
@@ -171,10 +182,10 @@ pub async fn check_domain(
             Part::Dkim(check) => dkim = Some(check),
             Part::Mx(check) => mx = Some(check),
             Part::Bimi(records) => bimi = Some(records),
-            Part::MtaSts(record, tls_rpt) => mta_sts = Some((record, tls_rpt)),
+            Part::MtaSts(record, tls_rpt, policy) => mta_sts = Some((record, tls_rpt, policy)),
         }
     }
-    let (spf, dmarc, dkim, mx, bimi, (mta_sts, tls_rpt)) = (
+    let (spf, dmarc, dkim, mx, bimi, (mta_sts, tls_rpt, mta_sts_policy)) = (
         spf.expect("every part runs"),
         dmarc.expect("every part runs"),
         dkim.expect("every part runs"),
@@ -195,7 +206,12 @@ pub async fn check_domain(
     findings.extend(dkim.findings);
     findings.extend(mx.findings);
     findings.extend(bimi_findings(&bimi, &governing));
-    findings.extend(mta_sts_findings(&mta_sts, None, &tls_rpt, Some(&mx.mx)));
+    findings.extend(mta_sts_findings(
+        &mta_sts,
+        mta_sts_policy.as_ref(),
+        &tls_rpt,
+        Some(&mx.mx),
+    ));
     merge_incomplete(&domain, &mut findings);
 
     let queries_sent = dns.inner().queries_sent();
@@ -211,10 +227,30 @@ pub async fn check_domain(
         bimi,
         mta_sts,
         tls_rpt,
+        mta_sts_policy,
         findings,
         queries_sent,
         queries,
     }
+}
+
+/// The policy file, when the domain publishes an MTA-STS record and a
+/// client was given, fetched within what's left of the deadline.
+#[cfg_attr(not(feature = "http"), allow(unused_variables))]
+async fn policy(
+    resolver: &impl Resolver,
+    record: &RecordSet<MtaStsRecord>,
+    domain: &str,
+    options: &CheckOptions,
+    deadline: Option<Instant>,
+) -> Option<PolicyFetch> {
+    record.single()?;
+    #[cfg(feature = "http")]
+    if let Some(clients) = &options.mta_sts_http {
+        let remaining = deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
+        return Some(discover::mta_sts_policy(resolver, clients, domain, remaining).await);
+    }
+    None
 }
 
 /// BIMI needs the organisational domain's DMARC policy to enforce as well as

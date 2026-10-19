@@ -6,6 +6,7 @@
 mod dkim;
 mod dmarc;
 mod dnsbl;
+mod mta_sts_policy;
 mod mx;
 
 use std::future::{Future, poll_fn};
@@ -18,6 +19,9 @@ pub use dmarc::{
     dmarc_report_authorisation,
 };
 pub use dnsbl::{DnsblResult, DnsblStatus, dnsbl};
+pub use mta_sts_policy::{FetchFailure, POLICY_SIZE_LIMIT, PolicyFetch, policy_url};
+#[cfg(feature = "http")]
+pub use mta_sts_policy::{HttpClients, mta_sts_policy};
 pub use mx::{MxDiscovery, MxHost, ReverseDns, mx};
 use wslib_dns::{LookupError, Resolver};
 

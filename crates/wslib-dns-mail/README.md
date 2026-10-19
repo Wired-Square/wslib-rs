@@ -79,6 +79,18 @@ hickory and tests use `FakeResolver`. Every result says how it was found:
   literals.
 - `bimi` looks at `<selector>._bimi.` on the domain, then on its
   organisational domain.
+- `mta_sts_policy` (feature `http`) fetches
+  `https://mta-sts.<domain>/.well-known/mta-sts.txt` following RFC 8461 §3.3:
+  no redirects, `200` and `text/plain` only, and at most 64 KiB. A failure is
+  a typed `FetchFailure`.
+
+  It's safe to point at a domain anyone supplies. It resolves the policy host
+  through your `Resolver` and refuses, without connecting, if any address
+  isn't globally routable (`NonGlobalAddress`). Otherwise it connects only to
+  the addresses it checked, so DNS rebinding can't redirect it into a private
+  network or to `169.254.169.254`. `HttpClients` makes the
+  `reqwest::ClientBuilder` it starts from, which is where your TLS provider
+  and timeouts go. Don't configure a proxy: a proxy resolves the host itself.
 - `dnsbl` tells `Listed`, `NotListed`, `QueryBlocked` and `Failed` apart. A
   zone that answers outside `127.0.0.2`–`127` is refusing the query, as
   Spamhaus does for cloud resolvers. That isn't a clean result.
@@ -145,6 +157,9 @@ pure `bimi_findings` and `mta_sts_findings`. Each `*_findings` function also
 works on results a caller already holds.
 
 `check_domain(resolver, domain, &CheckOptions)` runs them all concurrently.
+With `http` and `mta_sts_http`, it also fetches the MTA-STS policy. That
+gives the policy findings and the check of MX coverage, and the policy host's
+lookup counts towards the query budget.
 It's bounded by `deadline` and `max_queries` (10 s and 200 by default), and
 can keep a query log. A query the bounds stopped is never a `lookup_failed`.
 The checks it cut short are named in a single `incomplete` finding instead.
@@ -163,8 +178,17 @@ resolver's timeout × attempts past it: 4 s with `HickoryOptions::default()`.
 
 ## Features
 
-| Feature | Adds                                           |
-| ------- | ---------------------------------------------- |
-| `serde` | `Serialize`/`Deserialize` on every public type |
+| Feature | Adds                                                         |
+| ------- | ------------------------------------------------------------ |
+| `serde` | `Serialize`/`Deserialize` on every public type               |
+| `http`  | `discover::mta_sts_policy` and `CheckOptions::mta_sts_http`   |
 
-None are on by default. The parsers need no async runtime.
+None are on by default. The parsers need no async runtime. `http` uses
+reqwest with rustls and no crypto provider; the application installs one, as
+for every wslib crate.
+
+## Known gaps
+
+- BIMI logos aren't fetched, so their SVG Tiny PS profile isn't checked.
+- Mark certificates (VMC) aren't validated.
+- DNSSEC status isn't reported (see `wslib-dns`).

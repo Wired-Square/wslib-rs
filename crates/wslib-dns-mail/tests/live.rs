@@ -52,3 +52,19 @@ async fn check_domain_reports_on_example_com_within_its_budget() {
     );
     assert!(report.queries.is_some_and(|log| !log.is_empty()));
 }
+
+#[cfg(feature = "http")]
+#[tokio::test]
+#[ignore = "needs the network"]
+async fn a_published_mta_sts_policy_is_fetched_over_https() {
+    use wslib_dns_mail::discover::PolicyFetch;
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let dns = HickoryResolver::from_system(HickoryOptions::default()).unwrap();
+    let clients = discover::HttpClients::new(reqwest::Client::builder);
+    let PolicyFetch::Fetched { policy, .. } =
+        discover::mta_sts_policy(&dns, &clients, "google.com", None).await
+    else {
+        panic!("google.com serves an MTA-STS policy");
+    };
+    assert!(policy.is_usable());
+}

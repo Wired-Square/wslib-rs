@@ -521,6 +521,6 @@ fn within(ip: IpAddr, network: IpAddr, prefix: u8) -> bool {
         (IpAddr::V6(ip), IpAddr::V6(network)) => (u128::from(ip), u128::from(network), 128),
         _ => return false,
     };
-    let mask = !super::host_mask(bits, prefix);
+    let mask = !crate::address::host_mask(bits, prefix);
     ip & mask == network & mask
 }

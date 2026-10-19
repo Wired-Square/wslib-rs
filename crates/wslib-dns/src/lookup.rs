@@ -41,6 +41,8 @@ pub enum LookupError {
     ServFail,
     Refused,
     Timeout,
+    /// Never sent: the caller's deadline or query budget had run out.
+    NotSent,
     /// A failure the backend could not classify, in its own words.
     Other(String),
 }
@@ -60,6 +62,7 @@ impl fmt::Display for LookupError {
             Self::ServFail => f.write_str("server failure (SERVFAIL)"),
             Self::Refused => f.write_str("query refused (REFUSED)"),
             Self::Timeout => f.write_str("query timed out"),
+            Self::NotSent => f.write_str("query not sent: deadline or query budget exhausted"),
             Self::Other(message) => f.write_str(message),
         }
     }
@@ -150,6 +153,7 @@ mod tests {
             LookupError::ServFail,
             LookupError::Refused,
             LookupError::Timeout,
+            LookupError::NotSent,
         ]
         .iter()
         .map(|error| serde_json::to_string(error).unwrap())
@@ -161,7 +165,8 @@ mod tests {
                 r#""nodata""#,
                 r#""servfail""#,
                 r#""refused""#,
-                r#""timeout""#
+                r#""timeout""#,
+                r#""not_sent""#
             ]
         );
         assert_eq!(

@@ -45,6 +45,8 @@ pub struct RecordSet<T> {
     pub ttl: Option<u32>,
     /// Every TXT string at the name that is this kind of record.
     pub records: Vec<Published<T>>,
+    /// The other TXT strings at the name, which receivers skip.
+    pub others: Vec<String>,
 }
 
 impl<T> RecordSet<T> {
@@ -80,26 +82,32 @@ pub(crate) async fn txt_set<T>(
     parse: fn(&str) -> Parsed<T>,
 ) -> RecordSet<T> {
     match resolver.txt(&name).await {
-        Ok(answer) => RecordSet {
-            name,
-            error: None,
-            ttl: answer.ttl,
-            records: answer
+        Ok(answer) => {
+            let (kind, others): (Vec<String>, Vec<String>) = answer
                 .records
                 .iter()
                 .map(|txt| txt.joined())
-                .filter(|text| is_kind(text))
-                .map(|text| Published {
-                    parsed: parse(&text),
-                    text,
-                })
-                .collect(),
-        },
+                .partition(|text| is_kind(text));
+            RecordSet {
+                name,
+                error: None,
+                ttl: answer.ttl,
+                records: kind
+                    .into_iter()
+                    .map(|text| Published {
+                        parsed: parse(&text),
+                        text,
+                    })
+                    .collect(),
+                others,
+            }
+        }
         Err(error) => RecordSet {
             name,
             error: Some(error),
             ttl: None,
             records: Vec::new(),
+            others: Vec::new(),
         },
     }
 }

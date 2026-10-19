@@ -189,6 +189,7 @@ pub async fn walk_record(
             text: record.trim().to_owned(),
             parsed: super::parse(record),
         }],
+        others: Vec::new(),
     };
     let mut state = Walk {
         limits,

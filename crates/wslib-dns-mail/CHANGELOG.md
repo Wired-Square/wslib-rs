@@ -24,5 +24,14 @@
   space. An include or redirect target whose TXT answer holds no SPF record
   is no longer counted as a void lookup.
 - `spf::check_host`: RFC 7208 §4 evaluation with macro expansion and `exp=`.
+- `check`: a findings catalogue (stable code, Spec/Practice/Observation,
+  severity, RFC reference, typed detail) for SPF, DMARC, DKIM, MX and DNSBL,
+  BIMI, MTA-STS and TLS-RPT. Each family can run on its own, and
+  `check_domain` runs them all concurrently under a deadline and a query
+  budget, with an optional query log. Checks the bounds cut short are named in
+  one `incomplete` finding.
+- `RecordSet::others` keeps the TXT strings at a name that aren't the record
+  kind looked for, so a DMARC record with `v` out of place can be reported.
+- An unknown DKIM `k=` no longer has its key read as RSA.
 - Canonical `Display` on every record, `DmarcBuilder`, and the editors
   `dmarc::with_aggregate` and `spf::with_includes`.

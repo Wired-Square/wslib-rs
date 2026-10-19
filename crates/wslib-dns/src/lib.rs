@@ -7,6 +7,7 @@
 //! [`HickoryResolver`] and `testing` an in-memory [`FakeResolver`] that counts
 //! queries.
 
+mod budget;
 mod logging;
 mod lookup;
 mod name;
@@ -17,6 +18,7 @@ mod fake;
 #[cfg(feature = "hickory")]
 mod hickory;
 
+pub use budget::BudgetResolver;
 #[cfg(any(test, feature = "testing"))]
 pub use fake::FakeResolver;
 #[cfg(feature = "hickory")]

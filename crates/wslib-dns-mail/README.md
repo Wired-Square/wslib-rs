@@ -113,6 +113,42 @@ Discovery futures are `Send`, and concurrency within a call needs no runtime.
   name limits. It returns the result, the term that decided it (through any
   `include:`s), and why it was a `temperror`, `permerror` or `none`.
 
+## Checks
+
+`check` turns what was found into findings: data, not prose.
+
+```rust
+pub struct Finding {
+    pub code: FindingCode,   // stable, snake_case, #[non_exhaustive]
+    pub kind: Kind,          // Spec | Practice | Observation
+    pub severity: Severity,  // Error | Warning | Info
+    pub subject: String,     // the DNS name or record it's about
+    pub reference: Cow<'static, str>, // e.g. "RFC 7208 §4.6.4"
+    pub detail: Detail,      // typed: the fault and its span, counts, paths, …
+}
+```
+
+`FindingCode::ALL` lists the catalogue, and each code carries a default kind,
+severity and reference. `Spec` means a MUST is broken. `Practice` means the
+record is in spec but inadvisable. `Observation` is a fact about the domain
+(an inherited DMARC policy) or about the check itself (`lookup_failed`,
+`incomplete`). There's no product posture: `dmarc_policy_none` is `Info`, and
+how much it matters is the consumer's call. `Display` gives neutral wording.
+
+Advisory parser faults map to `Spec` findings. `v=dmarc1` is usable, because
+receivers accept it, and is still `dmarc_version_noncanonical`, Spec/Error,
+with the risk in its detail.
+
+Each family runs on its own: `check_spf`, `check_dmarc` (including the §7.1
+report authorisation), `check_dkim`, `check_mx` (with DNSBL zones), plus the
+pure `bimi_findings` and `mta_sts_findings`. Each `*_findings` function also
+works on results a caller already holds.
+
+`check_domain(resolver, domain, &CheckOptions)` runs them all concurrently.
+It's bounded by `deadline` and `max_queries` (10 s and 200 by default), and
+can keep a query log. A query the bounds stopped is never a `lookup_failed`.
+The checks it cut short are named in a single `incomplete` finding instead.
+
 ## Building and editing records
 
 - `Display` on every record renders it canonically: `v=spf1` and single-spaced

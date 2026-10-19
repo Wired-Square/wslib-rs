@@ -165,16 +165,37 @@ impl Netblock {
     /// documentation. Lets a public tool drop netblocks that would map
     /// internal addresses.
     pub fn is_global(&self) -> bool {
+        range(&self.cidr).is_some() && !self.overlaps_any(SPECIAL_IPV4, SPECIAL_IPV6)
+    }
+
+    /// Whether it overlaps private or local space: RFC 1918, shared, loopback
+    /// and link-local IPv4, or loopback, unique-local and link-local IPv6.
+    pub fn is_private(&self) -> bool {
+        self.overlaps_any(PRIVATE_IPV4, PRIVATE_IPV6)
+    }
+
+    fn overlaps_any(&self, ipv4: &[&str], ipv6: &[&str]) -> bool {
         let Some((is_ipv6, start, end)) = range(&self.cidr) else {
             return false;
         };
-        let special: &[&str] = if is_ipv6 { SPECIAL_IPV6 } else { SPECIAL_IPV4 };
-        !special
+        let networks = if is_ipv6 { ipv6 } else { ipv4 };
+        networks
             .iter()
             .filter_map(|cidr| range(cidr))
             .any(|(_, s, e)| start <= e && s <= end)
     }
 }
+
+const PRIVATE_IPV4: &[&str] = &[
+    "10.0.0.0/8",
+    "100.64.0.0/10",
+    "127.0.0.0/8",
+    "169.254.0.0/16",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+];
+
+const PRIVATE_IPV6: &[&str] = &["::1/128", "fc00::/7", "fe80::/10"];
 
 /// IANA special-purpose IPv4 ranges (RFC 6890 and its updates).
 const SPECIAL_IPV4: &[&str] = &[

@@ -113,3 +113,13 @@ fn the_wrong_case_of_dkim1_is_out_of_spec_but_usable() {
     assert_eq!(codes("v=dkim1; p="), [FaultCode::NoncanonicalVersion]);
     assert!(parse("v=dkim1; p=").is_usable());
 }
+
+#[test]
+fn a_key_of_unknown_type_is_not_judged() {
+    let parsed = parse(&format!("v=DKIM1; k=dsa; p={RSA_1024}"));
+    assert_eq!(
+        codes(&format!("v=DKIM1; k=dsa; p={RSA_1024}")),
+        [FaultCode::UnknownKeyType]
+    );
+    assert_eq!(parsed.record.rsa_bits, None);
+}

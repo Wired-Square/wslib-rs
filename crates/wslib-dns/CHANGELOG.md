@@ -14,6 +14,8 @@
 - `FakeResolver` (feature `testing`): an in-memory zone that counts queries per
   name and type.
 - `LoggingResolver`: records every query and its outcome.
+- `BudgetResolver`: stops sending queries at a deadline or a query count,
+  answering `LookupError::NotSent`.
 - `normalise`, `validate_hostname`, `validate_service_name`, IDNA `to_ascii`
   and `to_unicode`, `public_suffix` and `registrable_domain` from the Public
   Suffix List, and `reverse_name`.

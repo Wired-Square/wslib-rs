@@ -135,7 +135,10 @@ pub fn parse(input: &str) -> Parsed<DkimKeyRecord> {
                 "p",
             )),
             Some(bytes) => {
-                if !bytes.is_empty() {
+                let unknown_type = faults
+                    .iter()
+                    .any(|fault| fault.code == FaultCode::UnknownKeyType);
+                if !bytes.is_empty() && !unknown_type {
                     let valid = match record.effective_key_type() {
                         KeyType::Rsa => key::rsa_modulus_bits(&bytes)
                             .inspect(|&bits| record.rsa_bits = Some(bits))

@@ -15,9 +15,10 @@ pub struct Flattened {
     pub duplicates: Vec<DuplicateNetblock>,
     /// Networks inside another, different one.
     pub overlaps: Vec<Overlap>,
-    /// IPv4 addresses covered, each counted once however many blocks hold it.
+    /// IPv4 addresses `pass` netblocks authorise, each counted once however
+    /// many blocks hold it.
     pub total_ipv4_addresses: u64,
-    /// Distinct IPv6 networks.
+    /// Distinct IPv6 networks among the `pass` netblocks.
     pub ipv6_prefix_count: u32,
 }
 
@@ -158,6 +159,54 @@ fn descend(lookup: &super::tree::TermLookup, source: &mut Vec<String>, out: &mut
     }
 }
 
+impl Netblock {
+    /// Whether every address in it is globally routable: none is private,
+    /// loopback, link-local, shared, multicast, reserved or for
+    /// documentation. Lets a public tool drop netblocks that would map
+    /// internal addresses.
+    pub fn is_global(&self) -> bool {
+        let Some((is_ipv6, start, end)) = range(&self.cidr) else {
+            return false;
+        };
+        let special: &[&str] = if is_ipv6 { SPECIAL_IPV6 } else { SPECIAL_IPV4 };
+        !special
+            .iter()
+            .filter_map(|cidr| range(cidr))
+            .any(|(_, s, e)| start <= e && s <= end)
+    }
+}
+
+/// IANA special-purpose IPv4 ranges (RFC 6890 and its updates).
+const SPECIAL_IPV4: &[&str] = &[
+    "0.0.0.0/8",
+    "10.0.0.0/8",
+    "100.64.0.0/10",
+    "127.0.0.0/8",
+    "169.254.0.0/16",
+    "172.16.0.0/12",
+    "192.0.0.0/24",
+    "192.0.2.0/24",
+    "192.88.99.0/24",
+    "192.168.0.0/16",
+    "198.18.0.0/15",
+    "198.51.100.0/24",
+    "203.0.113.0/24",
+    "224.0.0.0/4",
+    "240.0.0.0/4",
+];
+
+/// IANA special-purpose IPv6 ranges that aren't globally routable.
+const SPECIAL_IPV6: &[&str] = &[
+    "::/127",
+    "::ffff:0:0/96",
+    "64:ff9b:1::/48",
+    "100::/64",
+    "2001:db8::/32",
+    "fc00::/7",
+    "fe80::/10",
+    "ff00::/8",
+];
+
 fn block(
     address: IpAddr,
     prefix: u8,
@@ -241,12 +290,18 @@ fn summarise(netblocks: Vec<Netblock>) -> Flattened {
         }
     }
 
-    let mut v4: Vec<(u128, u128)> = ranges
+    let mut authorised: Vec<(bool, u128, u128)> = netblocks
         .iter()
-        .filter(|(_, (v6, ..))| !v6)
-        .map(|(_, (_, s, e))| (*s, *e))
+        .filter(|netblock| netblock.qualifier == Qualifier::Pass)
+        .filter_map(|netblock| range(&netblock.cidr))
         .collect();
-    v4.sort_unstable();
+    authorised.sort_unstable();
+    authorised.dedup();
+    let v4: Vec<(u128, u128)> = authorised
+        .iter()
+        .filter(|(v6, ..)| !v6)
+        .map(|(_, s, e)| (*s, *e))
+        .collect();
     let mut total_ipv4_addresses = 0u64;
     let mut covered_to: Option<u128> = None;
     for (start, end) in v4 {
@@ -257,7 +312,7 @@ fn summarise(netblocks: Vec<Netblock>) -> Flattened {
         covered_to = Some(covered_to.map_or(end, |covered| covered.max(end)));
     }
     let ipv6_prefix_count =
-        u32::try_from(ranges.iter().filter(|(_, (v6, ..))| *v6).count()).unwrap_or(u32::MAX);
+        u32::try_from(authorised.iter().filter(|(v6, ..)| *v6).count()).unwrap_or(u32::MAX);
 
     Flattened {
         netblocks,

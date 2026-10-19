@@ -18,6 +18,11 @@
   `mx` name counts, loops) beyond the limits up to a ceiling. `flatten` gives
   the netblocks with their paths, duplicates, overlaps and totals, and
   `targets` gives every include and redirect target.
+- `spf::tree::walk_record` walks a record that isn't published, such as a
+  draft. Flattened totals count only `pass` netblocks, and
+  `Netblock::is_global` tells whether a block avoids private and reserved
+  space. An include or redirect target whose TXT answer holds no SPF record
+  is no longer counted as a void lookup.
 - `spf::check_host`: RFC 7208 §4 evaluation with macro expansion and `exp=`.
 - Canonical `Display` on every record, `DmarcBuilder`, and the editors
   `dmarc::with_aggregate` and `spf::with_includes`.

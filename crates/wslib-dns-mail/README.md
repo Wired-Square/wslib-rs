@@ -87,7 +87,8 @@ Discovery futures are `Send`, and concurrency within a call needs no runtime.
 
 ## SPF evaluation
 
-- `spf::tree::walk` builds an `SpfTree`: the record, every `include:` and
+- `spf::tree::walk` builds an `SpfTree` (`walk_record` does the same from a
+  draft record that isn't published): the record, every `include:` and
   applicable `redirect=` it reaches, and the result of each `a`, `mx` and
   `exists` lookup, in evaluation order. `Accounting` gives the §4.6.4 cost of
   evaluating it when nothing matches:
@@ -101,8 +102,10 @@ Discovery futures are `Send`, and concurrency within a call needs no runtime.
   such as `exists:%{i}…` and `ptr`, are counted but not looked up.
 - `SpfTree::flatten` lists every netblock with the path that produced it, its
   qualifier, and whether it was resolved from `a` or `mx` (`dynamic`). It also
-  gives the duplicates and overlaps, the total of IPv4 addresses with each
-  counted once, and the number of IPv6 networks.
+  gives the duplicates and overlaps across all qualifiers. Its totals, IPv4
+  addresses (each counted once) and IPv6 networks, count only `pass` blocks.
+  `Netblock::is_global` tells whether a block avoids private and reserved
+  space.
 - `SpfTree::targets` lists every `include:` and `redirect=` target with its
   record.
 - `spf::check_host(resolver, ip, helo, sender)` is the full RFC 7208 §4

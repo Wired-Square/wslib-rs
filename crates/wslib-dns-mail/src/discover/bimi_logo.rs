@@ -11,6 +11,9 @@ pub const LOGO_FETCH_LIMIT: usize = 64 * 1024;
 /// can't expand into a large one.
 pub const LOGO_INFLATE_LIMIT: usize = 256 * 1024;
 
+#[cfg(feature = "http")]
+const LOGO_ACCEPT: &str = "image/svg+xml, */*;q=0.1";
+
 /// The outcome of fetching a BIMI logo.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -56,7 +59,17 @@ pub(crate) async fn fetch(
         url: url.to_owned(),
         failure,
     };
-    let got = match get(resolver, clients, url, timeout, reach, LOGO_FETCH_LIMIT).await {
+    let got = match get(
+        resolver,
+        clients,
+        url,
+        timeout,
+        reach,
+        LOGO_FETCH_LIMIT,
+        LOGO_ACCEPT,
+    )
+    .await
+    {
         Ok(got) => got,
         Err(failure) => return unreachable(failure),
     };

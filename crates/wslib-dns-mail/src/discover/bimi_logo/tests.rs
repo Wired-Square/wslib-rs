@@ -5,7 +5,8 @@ use wslib_dns::FakeResolver;
 
 use super::*;
 use crate::bimi::SvgRule;
-use crate::discover::fetch::testing::{clients, response, serve};
+use crate::discover::fetch::testing::{clients, response, serve, serve_with};
+use crate::discover::fetch::{DEFAULT_USER_AGENT, HttpClients};
 
 const HOST: &str = "logo.example.com";
 
@@ -212,4 +213,50 @@ async fn violations_come_through_the_fetch() {
     };
     let rules: Vec<SvgRule> = validation.violations.iter().map(|v| v.rule).collect();
     assert_eq!(rules, [SvgRule::ProhibitedElement, SvgRule::Title]);
+}
+
+/// As some real hosts do: 406 without a User-Agent.
+fn strict(request: &str) -> Vec<u8> {
+    let lower = request.to_ascii_lowercase();
+    if !lower.contains("\r\nuser-agent: ") || !lower.contains("\r\naccept: image/svg+xml") {
+        return response("406 Not Acceptable", &[], b"");
+    }
+    response("200 OK", &["Content-Type: image/svg+xml"], LOGO.as_bytes())
+}
+
+#[tokio::test]
+async fn a_user_agent_and_accept_are_always_sent() {
+    let (port, _) = serve_with(strict).await;
+    let url = format!("http://{HOST}:{port}/logo.svg");
+    let fetched = fetch(&loopback(), &clients(), &url, None, Reach::Anywhere).await;
+    assert!(matches!(fetched, LogoFetch::Fetched { .. }), "{fetched:?}");
+    assert!(DEFAULT_USER_AGENT.starts_with("wslib-dns-mail/"));
+}
+
+#[tokio::test]
+async fn the_user_agent_can_be_replaced_but_not_dropped() {
+    let (port, _) = serve_with(|request| {
+        let agent = request
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("user-agent: ")
+                    .or_else(|| line.strip_prefix("User-Agent: "))
+            })
+            .unwrap_or("")
+            .to_owned();
+        response("200 OK", &["Content-Type: image/svg+xml"], agent.as_bytes())
+    })
+    .await;
+    let url = format!("http://{HOST}:{port}/logo.svg");
+    let clients = HttpClients::new(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        reqwest::Client::builder().user_agent("caller/9")
+    })
+    .user_agent("example-checker/1.0");
+    let LogoFetch::Fetched { body, .. } =
+        fetch(&loopback(), &clients, &url, None, Reach::Anywhere).await
+    else {
+        panic!("the logo is served");
+    };
+    assert_eq!(body, b"example-checker/1.0");
 }

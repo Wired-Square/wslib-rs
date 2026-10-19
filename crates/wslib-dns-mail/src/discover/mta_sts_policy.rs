@@ -81,7 +81,16 @@ async fn read(
     timeout: Option<std::time::Duration>,
     reach: Reach,
 ) -> Result<String, FetchFailure> {
-    let got = get(resolver, clients, url, timeout, reach, POLICY_SIZE_LIMIT).await?;
+    let got = get(
+        resolver,
+        clients,
+        url,
+        timeout,
+        reach,
+        POLICY_SIZE_LIMIT,
+        "text/plain",
+    )
+    .await?;
     if media_type(got.content_type.as_deref()).as_deref() != Some("text/plain") {
         return Err(FetchFailure::ContentType {
             content_type: got.content_type,

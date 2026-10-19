@@ -25,9 +25,9 @@ pub use dmarc::{
 };
 pub use dnsbl::{DnsblResult, DnsblStatus, dnsbl};
 pub use fetch::FetchFailure;
-#[cfg(feature = "http")]
-pub use fetch::HttpClients;
 pub(crate) use fetch::media_type;
+#[cfg(feature = "http")]
+pub use fetch::{DEFAULT_USER_AGENT, HttpClients};
 #[cfg(feature = "http")]
 pub use mta_sts_policy::mta_sts_policy;
 pub use mta_sts_policy::{POLICY_SIZE_LIMIT, PolicyFetch, policy_url};

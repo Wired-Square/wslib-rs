@@ -23,7 +23,10 @@
   `bimi_logo_too_large` (over the BIMI Group's 32 KiB) and
   `bimi_logo_content_type`. `check_domain` fetches the logo when given
   `CheckOptions::bimi_http`, and reports it as `DomainReport::bimi_logo`.
-- The MTA-STS and logo fetches share one vetted request path.
+- The MTA-STS and logo fetches share one vetted request path. It always
+  sends a user agent, since some hosts refuse a request without one:
+  `DEFAULT_USER_AGENT` unless `HttpClients::user_agent` replaces it. It also
+  sends an `Accept` header for what it wants.
 
 ## 0.1.0
 

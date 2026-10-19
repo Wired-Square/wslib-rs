@@ -51,16 +51,44 @@ pub enum FetchFailure {
 
 /// Makes the `reqwest::ClientBuilder` each fetch starts from, so the caller
 /// chooses the TLS provider and timeouts. Each fetch adds its own address
-/// pinning and turns redirects off. Give it no proxy: a proxy resolves the
-/// host itself, past the address check.
+/// pinning and user agent and turns redirects off. Give it no proxy: a proxy
+/// resolves the host itself, past the address check.
 #[cfg(feature = "http")]
 #[derive(Clone)]
-pub struct HttpClients(std::sync::Arc<dyn Fn() -> reqwest::ClientBuilder + Send + Sync>);
+pub struct HttpClients {
+    make: std::sync::Arc<dyn Fn() -> reqwest::ClientBuilder + Send + Sync>,
+    user_agent: String,
+}
+
+/// Sent unless [`HttpClients::user_agent`] says otherwise. Some hosts refuse
+/// a request with none, and reqwest sends none by default.
+#[cfg(feature = "http")]
+pub const DEFAULT_USER_AGENT: &str = concat!(
+    "wslib-dns-mail/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/Wired-Square/wslib-rs)"
+);
 
 #[cfg(feature = "http")]
 impl HttpClients {
     pub fn new(make: impl Fn() -> reqwest::ClientBuilder + Send + Sync + 'static) -> Self {
-        Self(std::sync::Arc::new(make))
+        Self {
+            make: std::sync::Arc::new(make),
+            user_agent: DEFAULT_USER_AGENT.to_owned(),
+        }
+    }
+
+    /// Sends `user_agent`; it's applied after the caller's builder, so one
+    /// set there is replaced by this.
+    pub fn user_agent(mut self, user_agent: impl Into<String>) -> Self {
+        self.user_agent = user_agent.into();
+        self
+    }
+
+    fn builder(&self) -> reqwest::ClientBuilder {
+        (self.make)()
+            .user_agent(self.user_agent.clone())
+            .redirect(reqwest::redirect::Policy::none())
     }
 }
 
@@ -100,6 +128,7 @@ pub(crate) async fn get(
     timeout: Option<std::time::Duration>,
     reach: Reach,
     limit: usize,
+    accept: &str,
 ) -> Result<Got, FetchFailure> {
     use std::net::{IpAddr, SocketAddr};
 
@@ -136,7 +165,7 @@ pub(crate) async fn get(
     let request_failed = |error: reqwest::Error| FetchFailure::Request {
         message: error.to_string(),
     };
-    let mut builder = (clients.0)().redirect(reqwest::redirect::Policy::none());
+    let mut builder = clients.builder();
     if let Some(host) = &host {
         let pinned: Vec<SocketAddr> = addresses
             .iter()
@@ -145,7 +174,7 @@ pub(crate) async fn get(
         builder = builder.resolve_to_addrs(host, &pinned);
     }
     let client = builder.build().map_err(request_failed)?;
-    let mut request = client.get(parsed);
+    let mut request = client.get(parsed).header(reqwest::header::ACCEPT, accept);
     if let Some(timeout) = timeout {
         request = request.timeout(timeout);
     }
@@ -208,6 +237,14 @@ pub(crate) mod testing {
     /// Serves one raw HTTP response to every connection on a local port, and
     /// counts the connections.
     pub(crate) async fn serve(response: Vec<u8>) -> (u16, Arc<AtomicUsize>) {
+        serve_with(move |_| response.clone()).await
+    }
+
+    /// As [`serve`], answering each request with what `respond` makes of it.
+    pub(crate) async fn serve_with(
+        respond: impl Fn(&str) -> Vec<u8> + Send + Sync + 'static,
+    ) -> (u16, Arc<AtomicUsize>) {
+        let respond = Arc::new(respond);
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let connections = Arc::new(AtomicUsize::new(0));
@@ -215,12 +252,13 @@ pub(crate) mod testing {
         tokio::spawn(async move {
             while let Ok((mut stream, _)) = listener.accept().await {
                 counted.fetch_add(1, Ordering::SeqCst);
-                let response = response.clone();
+                let respond = respond.clone();
                 tokio::spawn(async move {
                     let mut request = [0u8; 2048];
                     let read = stream.read(&mut request).await.unwrap_or(0);
-                    assert!(request[..read].starts_with(b"GET "));
-                    stream.write_all(&response).await.ok();
+                    let request = String::from_utf8_lossy(&request[..read]).into_owned();
+                    assert!(request.starts_with("GET "));
+                    stream.write_all(&respond(&request)).await.ok();
                     stream.shutdown().await.ok();
                 });
             }

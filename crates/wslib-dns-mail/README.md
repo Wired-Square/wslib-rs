@@ -90,7 +90,10 @@ hickory and tests use `FakeResolver`. Every result says how it was found:
   the addresses it checked, so DNS rebinding can't redirect it into a private
   network or to `169.254.169.254`. `HttpClients` makes the
   `reqwest::ClientBuilder` it starts from, which is where your TLS provider
-  and timeouts go. Don't configure a proxy: a proxy resolves the host itself.
+  and timeouts go. Every fetch sends a user agent, because some hosts refuse
+  a request without one. It's `DEFAULT_USER_AGENT` unless
+  `HttpClients::user_agent` sets another. Don't configure a proxy: a proxy
+  resolves the host itself.
 - `dnsbl` tells `Listed`, `NotListed`, `QueryBlocked` and `Failed` apart. A
   zone that answers outside `127.0.0.2`–`127` is refusing the query, as
   Spamhaus does for cloud resolvers. That isn't a clean result.

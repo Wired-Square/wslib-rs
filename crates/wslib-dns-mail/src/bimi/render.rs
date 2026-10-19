@@ -202,8 +202,9 @@ impl Shape<'_> {
 
     /// The farthest any point of the outline, stroke included, gets from
     /// `centre`. Under a clip, that's at most the clip's own reach, and at
-    /// most the outline held within the clip's bounds (with any of their
-    /// corners the shape covers).
+    /// most the farthest vertex of the outline cut to the clip's bounds: the
+    /// outline's points held within them, where its edges cross them, and
+    /// the corners of the bounds the shape covers.
     fn reach(&self, centre: Point) -> f32 {
         let stroke = self.path.stroke().map_or(0.0, |stroke| {
             let (sx, sy) = self.path.abs_transform().get_scale();
@@ -219,10 +220,14 @@ impl Shape<'_> {
                 p.y.clamp(bounds.top(), bounds.bottom()),
             )
         });
+        let crossings = self.outline.iter().flat_map(|polygon| {
+            (0..polygon.len())
+                .flat_map(move |i| crossings(polygon[i], polygon[(i + 1) % polygon.len()], bounds))
+        });
         let covered = corners(bounds)
             .into_iter()
             .filter(|&corner| contains(&self.outline, corner, rule));
-        (farthest(held.chain(covered), centre) + stroke).min(clip.reach)
+        (farthest(held.chain(crossings).chain(covered), centre) + stroke).min(clip.reach)
     }
 }
 
@@ -303,6 +308,30 @@ fn clip_paths<'a>(group: &'a Group, paths: &mut Vec<&'a Path>) {
             _ => {}
         }
     }
+}
+
+/// Where the edge from `a` to `b` crosses the sides of `bounds`.
+fn crossings(a: Point, b: Point, bounds: usvg::Rect) -> impl Iterator<Item = Point> {
+    let on_vertical = [bounds.left(), bounds.right()].map(|x| {
+        let t = (x - a.x) / (b.x - a.x);
+        (0.0..=1.0)
+            .contains(&t)
+            .then(|| Point::from_xy(x, a.y + t * (b.y - a.y)))
+    });
+    let on_horizontal = [bounds.top(), bounds.bottom()].map(|y| {
+        let t = (y - a.y) / (b.y - a.y);
+        (0.0..=1.0)
+            .contains(&t)
+            .then(|| Point::from_xy(a.x + t * (b.x - a.x), y))
+    });
+    on_vertical
+        .into_iter()
+        .chain(on_horizontal)
+        .flatten()
+        .filter(move |p| {
+            (bounds.left()..=bounds.right()).contains(&p.x)
+                && (bounds.top()..=bounds.bottom()).contains(&p.y)
+        })
 }
 
 fn union(a: usvg::Rect, b: usvg::Rect) -> usvg::Rect {
@@ -480,6 +509,26 @@ mod tests {
         assert_eq!(geometry.off_centre, Some(0));
         // The bar, held to the artboard, ends at (0, 40): √(50² + 10²) ≈ 51.
         assert_eq!(geometry.crop_overflow, Some(20));
+    }
+
+    #[test]
+    fn an_edge_crossing_the_clip_counts_where_it_crosses() {
+        let geometry = measure(
+            r#"<clipPath id="a"><rect width="100" height="100"/></clipPath><path clip-path="url(#a)" d="M-100 50L10 0L10 60Z"/>"#,
+        );
+        // The edge from (-100, 50) to (10, 0) crosses x = 0 at (0, 4.5),
+        // 67.6 from the centre.
+        assert_eq!(geometry.crop_overflow, Some(351));
+    }
+
+    #[test]
+    fn a_clip_on_a_transformed_group_is_placed_once() {
+        let geometry = measure(
+            r#"<clipPath id="a"><rect width="100" height="100"/></clipPath><g transform="translate(10 0)" clip-path="url(#a)"><rect x="-50" y="40" width="200" height="20"/></g>"#,
+        );
+        // The clip lands at x 10 to 110, so the bar's visible part is
+        // centred at 60.
+        assert_eq!(geometry.off_centre, Some(100));
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 mod key;
 
-use crate::text::{first_of_each, tag_list, unwrap};
+use crate::text::{first_of_each, tag_list, unwrap, version_value_fault};
 use crate::{FaultCode, Parsed, SyntaxFault, Tag};
 
 /// The tags of a DKIM key record. Tag names are case-sensitive (§3.2).
@@ -63,9 +63,7 @@ impl Parsed<DkimKeyRecord> {
     /// A verifier ignores unknown tags; any other fault makes the whole
     /// record invalid (§3.2, §3.6.1).
     pub fn is_usable(&self) -> bool {
-        self.faults
-            .iter()
-            .all(|fault| fault.code == FaultCode::UnknownTag)
+        self.faults.iter().all(|fault| fault.code.is_advisory())
     }
 }
 
@@ -85,13 +83,7 @@ pub fn parse(input: &str) -> Parsed<DkimKeyRecord> {
                 "v",
             ));
         }
-        if all[index].value != "DKIM1" {
-            faults.push(SyntaxFault::named(
-                FaultCode::InvalidVersion,
-                all[index].value_span.clone(),
-                "v",
-            ));
-        }
+        faults.extend(version_value_fault(&all[index], "DKIM1"));
     }
     let tags = first_of_each(all, |a, b| a == b, &mut faults);
     let mut key_data = None;

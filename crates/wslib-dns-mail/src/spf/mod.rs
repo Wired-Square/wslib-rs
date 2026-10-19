@@ -197,10 +197,9 @@ impl SpfRecord {
 }
 
 impl Parsed<SpfRecord> {
-    /// Every syntax fault is a permerror (§4.6), so a receiver can use the
-    /// record only when there are none.
+    /// Every syntax fault but a tab for a space is a permerror (§4.6).
     pub fn is_usable(&self) -> bool {
-        self.faults.is_empty()
+        self.faults.iter().all(|fault| fault.code.is_advisory())
     }
 }
 
@@ -214,8 +213,11 @@ pub fn is_spf(txt: &str) -> bool {
 }
 
 pub fn parse(input: &str) -> Parsed<SpfRecord> {
-    let (_, text) = unwrap(input);
-    let mut faults = Vec::new();
+    let (offset, text) = unwrap(input);
+    let mut faults: Vec<SyntaxFault> = text
+        .match_indices(|c: char| c.is_ascii_whitespace() && c != ' ')
+        .map(|(at, _)| SyntaxFault::new(FaultCode::InvalidSeparator, offset + at..offset + at + 1))
+        .collect();
     let mut tokens = text.split_ascii_whitespace().peekable();
     match tokens.peek() {
         Some(first) if first.eq_ignore_ascii_case("v=spf1") => {
@@ -251,6 +253,7 @@ pub fn parse(input: &str) -> Parsed<SpfRecord> {
         }
         terms.push(SpfTerm { term, span });
     }
+    faults.sort_by_key(|fault| fault.span.start);
     Parsed {
         record: SpfRecord { terms },
         faults,

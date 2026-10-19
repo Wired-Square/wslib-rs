@@ -79,6 +79,27 @@ pub enum FaultCode {
     UnknownKeyType,
     /// A policy-file line with no `:`.
     MalformedLine,
+    /// A version value with the wrong case, such as `v=dmarc1`: out of spec,
+    /// but receivers accept it.
+    NoncanonicalVersion,
+    /// A tag the specification places elsewhere, such as DMARC's `p` after
+    /// another tag.
+    TagOutOfOrder,
+    /// SPF terms separated by whitespace other than spaces (RFC 7208 §12).
+    InvalidSeparator,
+}
+
+impl FaultCode {
+    /// Out of spec, but receivers still use the record.
+    pub fn is_advisory(self) -> bool {
+        matches!(
+            self,
+            Self::UnknownTag
+                | Self::NoncanonicalVersion
+                | Self::TagOutOfOrder
+                | Self::InvalidSeparator
+        )
+    }
 }
 
 impl fmt::Display for FaultCode {
@@ -106,6 +127,9 @@ impl fmt::Display for FaultCode {
             Self::InvalidKey => "invalid public key",
             Self::UnknownKeyType => "unknown key type",
             Self::MalformedLine => "malformed line",
+            Self::NoncanonicalVersion => "version has the wrong case",
+            Self::TagOutOfOrder => "tag out of order",
+            Self::InvalidSeparator => "invalid separator",
         })
     }
 }

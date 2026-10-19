@@ -24,9 +24,7 @@ impl BimiRecord {
 impl Parsed<BimiRecord> {
     /// Unknown tags are ignored; any other fault discards the record.
     pub fn is_usable(&self) -> bool {
-        self.faults
-            .iter()
-            .all(|fault| fault.code == FaultCode::UnknownTag)
+        self.faults.iter().all(|fault| fault.code.is_advisory())
     }
 }
 
@@ -150,6 +148,8 @@ mod tests {
         }
         assert_eq!(codes("v=BIMI1; l=; avp=brand"), [FaultCode::UnknownTag]);
         assert!(parse("v=BIMI1; l=; avp=brand").is_usable());
+        assert_eq!(codes("v=bimi1; l="), [FaultCode::NoncanonicalVersion]);
+        assert!(parse("v=bimi1; l=").is_usable());
     }
 
     #[test]

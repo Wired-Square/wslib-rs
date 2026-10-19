@@ -134,47 +134,47 @@ pub(crate) fn first_of_each<'a>(
     kept
 }
 
-/// Checks the first tag is the version tag `v=<expected>`, compared without
-/// case, and reports what's wrong otherwise. True when it is.
+/// Checks the first tag is the version tag `v=<expected>` and reports what's
+/// wrong otherwise.
 pub(crate) fn check_version(
     input: &str,
     tags: &[RawTag<'_>],
     expected: &str,
     faults: &mut Vec<SyntaxFault>,
-) -> bool {
-    let version = tags
+) {
+    let Some(index) = tags
         .iter()
-        .position(|tag| tag.name.eq_ignore_ascii_case("v"));
-    match version {
-        None => {
-            faults.push(SyntaxFault::new(
-                FaultCode::MissingVersion,
-                input.len()..input.len(),
-            ));
-            false
-        }
-        Some(index) => {
-            let tag = &tags[index];
-            let mut ok = true;
-            if index != 0 {
-                faults.push(SyntaxFault::named(
-                    FaultCode::VersionNotFirst,
-                    tag.span.clone(),
-                    "v",
-                ));
-                ok = false;
-            }
-            if !tag.value.eq_ignore_ascii_case(expected) {
-                faults.push(SyntaxFault::named(
-                    FaultCode::InvalidVersion,
-                    tag.value_span.clone(),
-                    "v",
-                ));
-                ok = false;
-            }
-            ok
-        }
+        .position(|tag| tag.name.eq_ignore_ascii_case("v"))
+    else {
+        faults.push(SyntaxFault::new(
+            FaultCode::MissingVersion,
+            input.len()..input.len(),
+        ));
+        return;
+    };
+    if index != 0 {
+        faults.push(SyntaxFault::named(
+            FaultCode::VersionNotFirst,
+            tags[index].span.clone(),
+            "v",
+        ));
     }
+    if let Some(fault) = version_value_fault(&tags[index], expected) {
+        faults.push(fault);
+    }
+}
+
+/// Version values are case-sensitive in every record type here; the wrong
+/// case alone is [`FaultCode::NoncanonicalVersion`], which receivers forgive.
+pub(crate) fn version_value_fault(tag: &RawTag<'_>, expected: &str) -> Option<SyntaxFault> {
+    let code = if tag.value == expected {
+        return None;
+    } else if tag.value.eq_ignore_ascii_case(expected) {
+        FaultCode::NoncanonicalVersion
+    } else {
+        FaultCode::InvalidVersion
+    };
+    Some(SyntaxFault::named(code, tag.value_span.clone(), "v"))
 }
 
 /// Whether a tag-list's first tag is `v=<version>`, compared without case.

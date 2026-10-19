@@ -25,7 +25,10 @@ assert!(parsed.is_usable());
 A `SyntaxFault` carries a stable `FaultCode`, a byte span into the input (so a
 UI can highlight the bad token), and the tag or mechanism it's about. Each
 record type answers "would a receiver use this?" with `is_usable()`, derived
-from the faults; it's the one definition of valid. Inputs are unwrapped first:
+from the faults; it's the one definition of valid. Some faults are advisory
+(`FaultCode::is_advisory`): the record is out of spec, but receivers still use
+it. Examples are `v=dmarc1` in the wrong case, a DMARC `p` that isn't directly
+after `v`, a tab between SPF terms, and unknown tags. Inputs are unwrapped first:
 a UTF-8 BOM, outer whitespace and stray wrapping quotes are removed, and spans
 still point into the original text.
 

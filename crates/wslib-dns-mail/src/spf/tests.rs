@@ -229,3 +229,13 @@ fn with_includes_inserts_before_all_and_skips_existing() {
         "v=spf1 include:a.example.com -all"
     );
 }
+
+#[test]
+fn a_tab_between_terms_is_out_of_spec_but_usable() {
+    let input = "v=spf1 mx\t-all";
+    let parsed = parse(input);
+    assert_eq!(codes(input), [FaultCode::InvalidSeparator]);
+    assert_eq!(parsed.faults[0].span, 9..10);
+    assert!(parsed.is_usable());
+    assert_eq!(parsed.record.terms.len(), 2);
+}

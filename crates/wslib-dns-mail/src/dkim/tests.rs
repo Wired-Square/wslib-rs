@@ -107,3 +107,9 @@ fn display_renders_the_tags_as_written() {
         "v=DKIM1; k=ed25519; p="
     );
 }
+
+#[test]
+fn the_wrong_case_of_dkim1_is_out_of_spec_but_usable() {
+    assert_eq!(codes("v=dkim1; p="), [FaultCode::NoncanonicalVersion]);
+    assert!(parse("v=dkim1; p=").is_usable());
+}

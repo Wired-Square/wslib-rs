@@ -19,9 +19,7 @@ pub struct MtaStsRecord {
 impl Parsed<MtaStsRecord> {
     /// Extension tags are allowed (§3.1); any other fault discards the record.
     pub fn is_usable(&self) -> bool {
-        self.faults
-            .iter()
-            .all(|fault| fault.code == FaultCode::UnknownTag)
+        self.faults.iter().all(|fault| fault.code.is_advisory())
     }
 }
 
@@ -264,6 +262,12 @@ mod tests {
             assert!(!parsed.is_usable(), "{input}");
         }
         assert!(is_mta_sts("v=STSv1; id=1"));
+        let parsed = parse_record("v=stsv1; id=1");
+        assert_eq!(
+            parsed.faults.iter().map(|f| f.code).collect::<Vec<_>>(),
+            [FaultCode::NoncanonicalVersion]
+        );
+        assert!(parsed.is_usable());
     }
 
     #[test]

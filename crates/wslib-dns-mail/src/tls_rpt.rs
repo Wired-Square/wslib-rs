@@ -67,6 +67,13 @@ mod tests {
     }
 
     #[test]
+    fn the_wrong_case_of_the_version_is_out_of_spec_but_usable() {
+        let input = "v=tlsrptv1; rua=mailto:tls@example.com";
+        assert_eq!(codes(input), [FaultCode::NoncanonicalVersion]);
+        assert!(parse(input).is_usable());
+    }
+
+    #[test]
     fn every_fault_code() {
         for (input, code) in [
             ("v=TLSRPTv1", FaultCode::MissingTag),

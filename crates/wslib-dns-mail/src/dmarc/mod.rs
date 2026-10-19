@@ -146,35 +146,39 @@ impl DmarcRecord {
     /// RFC 7489 §6.6.3: with no valid `p`, or an invalid `sp`, a receiver
     /// still acts as if `p=none` was published when `rua` has a valid URI.
     pub fn policy_treated_as_none(&self) -> bool {
-        let broken =
-            self.policy.is_none() || (self.written("sp") && self.subdomain_policy.is_none());
-        broken && !self.aggregate.is_empty()
+        self.policy_broken() && !self.aggregate.is_empty()
+    }
+
+    fn policy_broken(&self) -> bool {
+        self.policy.is_none() || (self.written("sp") && self.subdomain_policy.is_none())
+    }
+
+    /// With a broken policy every effective policy is the §6.6.3 outcome:
+    /// `none` if `rua` saves it, else no DMARC processing.
+    fn fallback(&self) -> Option<Option<Policy>> {
+        self.policy_broken()
+            .then(|| self.policy_treated_as_none().then_some(Policy::None))
     }
 
     /// The policy for the domain itself, or `None` when a receiver applies no
     /// DMARC processing at all.
     pub fn effective_policy(&self) -> Option<Policy> {
-        if self.policy_treated_as_none() {
-            return Some(Policy::None);
-        }
-        self.policy
+        self.fallback().unwrap_or(self.policy)
     }
 
     /// `sp`, defaulting to the domain's policy.
     pub fn effective_subdomain_policy(&self) -> Option<Policy> {
-        if self.policy_treated_as_none() {
-            return Some(Policy::None);
-        }
-        self.subdomain_policy.or(self.policy)
+        self.fallback()
+            .unwrap_or(self.subdomain_policy.or(self.policy))
     }
 
     /// `np` (DMARCbis), defaulting to the subdomain policy.
     pub fn effective_non_existent_policy(&self) -> Option<Policy> {
-        if self.policy_treated_as_none() {
-            return Some(Policy::None);
-        }
-        self.non_existent_policy
-            .or(self.effective_subdomain_policy())
+        self.fallback().unwrap_or(
+            self.non_existent_policy
+                .or(self.subdomain_policy)
+                .or(self.policy),
+        )
     }
 
     pub fn effective_dkim_alignment(&self) -> Alignment {
@@ -250,6 +254,21 @@ pub fn parse(input: &str) -> Parsed<DmarcRecord> {
     let mut faults = Vec::new();
     let all = tag_list(input, text, &mut faults);
     check_version(input, &all, "DMARC1", &mut faults);
+    // §6.3: "the "v" and "p" tags MUST be present and MUST appear in that
+    // order", and the §6.4 grammar puts `p` directly after `v`.
+    let version_first = all
+        .first()
+        .is_some_and(|tag| tag.name.eq_ignore_ascii_case("v"));
+    let p = all
+        .iter()
+        .position(|tag| tag.name.eq_ignore_ascii_case("p"));
+    if let Some(p) = p.filter(|&at| version_first && at != 1) {
+        faults.push(SyntaxFault::named(
+            FaultCode::TagOutOfOrder,
+            all[p].span.clone(),
+            "p",
+        ));
+    }
     let mut record = DmarcRecord {
         tags: all.iter().map(|tag| tag.written(true)).collect(),
         ..DmarcRecord::default()

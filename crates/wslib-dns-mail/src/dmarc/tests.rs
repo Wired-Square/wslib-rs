@@ -263,3 +263,37 @@ fn with_aggregate_appends_or_adds_rua_and_keeps_the_rest() {
         "v=DMARC1; p=none; rua=mailto:R@example.com"
     );
 }
+
+#[test]
+fn an_invalid_sp_without_a_usable_rua_means_no_dmarc_processing() {
+    let parsed = parse("v=DMARC1; p=reject; sp=bogus");
+    assert!(!parsed.record.policy_treated_as_none());
+    assert_eq!(parsed.record.effective_policy(), None);
+    assert_eq!(parsed.record.effective_subdomain_policy(), None);
+    assert_eq!(parsed.record.effective_non_existent_policy(), None);
+    assert!(!parsed.is_usable());
+    let parsed = parse("v=DMARC1; p=reject; sp=bogus; rua=reports@example.com");
+    assert_eq!(parsed.record.effective_policy(), None);
+    assert!(!parsed.is_usable());
+}
+
+#[test]
+fn the_wrong_case_of_dmarc1_is_out_of_spec_but_usable() {
+    let input = "v=dmarc1; p=none";
+    let parsed = parse(input);
+    assert_eq!(codes(input), [FaultCode::NoncanonicalVersion]);
+    assert_eq!(&input[parsed.faults[0].span.clone()], "dmarc1");
+    assert!(parsed.is_usable());
+}
+
+#[test]
+fn p_belongs_directly_after_v() {
+    let input = "v=DMARC1; rua=mailto:r@example.com; p=reject";
+    let parsed = parse(input);
+    assert_eq!(codes(input), [FaultCode::TagOutOfOrder]);
+    assert_eq!(parsed.faults[0].name.as_deref(), Some("p"));
+    assert_eq!(&input[parsed.faults[0].span.clone()], "p=reject");
+    assert_eq!(parsed.record.effective_policy(), Some(Policy::Reject));
+    assert!(parsed.is_usable());
+    assert_eq!(codes("p=none; v=DMARC1"), [FaultCode::VersionNotFirst]);
+}

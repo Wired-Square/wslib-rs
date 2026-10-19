@@ -8,7 +8,9 @@
   (loop-detecting, hop-capped).
 - `HickoryResolver` (feature `hickory`, hickory 0.26) from the system
   configuration with a Cloudflare fallback, or from explicit nameserver socket
-  addresses; 2 s timeout and 2 attempts by default, EDNS0 always on.
+  addresses; 2 s timeout and 2 attempts by default, EDNS0 always on. Queries
+  go to one server at a time, because hickory 0.26 drops the TCP retry of a
+  truncated answer when it races two.
 - Internationalised names are queried as A-labels by every resolver here.
 - `&R` and `Arc<R>` implement `Resolver`.
 - `FakeResolver` (feature `testing`): an in-memory zone that counts queries per

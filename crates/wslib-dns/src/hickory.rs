@@ -78,6 +78,10 @@ impl HickoryResolver {
         // resolv.conf leaves EDNS0 off unless it says `options edns0`, which caps
         // UDP answers at 512 bytes and sends large TXT sets round again over TCP.
         opts.edns0 = true;
+        // hickory 0.26 races queries across servers by default, and in that
+        // race the second truncated UDP answer reads as "TCP already tried",
+        // failing any answer too big for UDP whenever there are two servers.
+        opts.num_concurrent_reqs = 1;
         let inner = TokioResolver::builder_with_config(config, TokioRuntimeProvider::default())
             .with_options(opts)
             .build()

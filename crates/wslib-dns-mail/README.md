@@ -28,7 +28,13 @@ record type answers "would a receiver use this?" with `is_usable()`, derived
 from the faults; it's the one definition of valid. Some faults are advisory
 (`FaultCode::is_advisory`): the record is out of spec, but receivers still use
 it. Examples are `v=dmarc1` in the wrong case, a DMARC `p` that isn't directly
-after `v`, a tab between SPF terms, and unknown tags. Inputs are unwrapped first:
+after `v`, a tab between SPF terms, and unknown tags.
+
+"Usable" describes what receivers do, not what the RFC says. `v=dmarc1` is
+usable because reports still arrive for it, yet RFC 7489 §6.3 says a
+conforming receiver ignores the whole record. So an advisory fault can still
+be out of spec, and the checks report it that way: as a `Spec` finding, with
+the risk spelled out in its detail. Inputs are unwrapped first:
 a UTF-8 BOM, outer whitespace and stray wrapping quotes are removed, and spans
 still point into the original text.
 

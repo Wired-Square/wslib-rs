@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::io::{self, IsTerminal};
 
@@ -40,7 +41,8 @@ enum Output {
 
 impl Telemetry {
     /// Text to stdout, with time and target, filtered by `default_filter`
-    /// unless `RUST_LOG` says otherwise: the daemon style.
+    /// unless `RUST_LOG` says otherwise: the daemon style. A `RUST_LOG` that
+    /// parses replaces `default_filter` rather than adding to it.
     pub fn new(default_filter: &str) -> Self {
         Self {
             default_filter: default_filter.to_string(),
@@ -136,8 +138,11 @@ impl Telemetry {
         let subscriber = subscriber.with(self.ring.as_ref().map(|logs| logs.layer()));
         subscriber.try_init()?;
 
-        if let Some((value, error)) = rejected {
+        if let Some((value, error)) = rejected.rust_log {
             tracing::warn!(rust_log = %value, %error, "RUST_LOG did not parse; using the default filter");
+        }
+        if let Some((value, error)) = rejected.default {
+            tracing::warn!(default_filter = %value, %error, "the default filter did not parse; using what of it does");
         }
         Ok(())
     }
@@ -195,8 +200,6 @@ type Filter = Targets;
 
 trait Directives: Sized {
     fn parse(directives: &str) -> Result<Self, String>;
-    /// Skips the directives that do not parse.
-    fn parse_lossy(directives: &str) -> Self;
     fn with_own_warnings(self) -> Self;
 }
 
@@ -204,10 +207,6 @@ trait Directives: Sized {
 impl Directives for EnvFilter {
     fn parse(directives: &str) -> Result<Self, String> {
         Self::try_new(directives).map_err(|e| e.to_string())
-    }
-
-    fn parse_lossy(directives: &str) -> Self {
-        Self::builder().parse_lossy(directives)
     }
 
     fn with_own_warnings(self) -> Self {
@@ -225,56 +224,107 @@ impl Directives for Targets {
         directives.parse::<Self>().map_err(|e| e.to_string())
     }
 
-    fn parse_lossy(directives: &str) -> Self {
-        directives
-            .split(',')
-            .filter(|d| d.parse::<Self>().is_ok())
-            .collect::<Vec<_>>()
-            .join(",")
-            .parse()
-            .unwrap_or_default()
-    }
-
     fn with_own_warnings(self) -> Self {
         self.with_target(env!("CARGO_CRATE_NAME"), tracing::Level::WARN)
     }
 }
 
-/// `RUST_LOG` when it is set and parses; otherwise the default, and what was
-/// rejected with why, for a warning once there is a subscriber to take one.
-fn choose_filter<F: Directives>(
-    default: &str,
-    rust_log: Option<&OsStr>,
-) -> (F, Option<(String, String)>) {
-    let Some(value) = rust_log.filter(|v| !v.is_empty()) else {
-        return (F::parse_lossy(default), None);
-    };
-    let parsed = value
-        .to_str()
-        .ok_or_else(|| "not valid Unicode".to_string())
-        .and_then(F::parse);
-    match parsed {
-        Ok(filter) => (filter, None),
-        Err(error) => (
-            // A default with no global level would otherwise drop the warning.
-            F::parse_lossy(default).with_own_warnings(),
-            Some((value.to_string_lossy().into_owned(), error)),
-        ),
+/// Bare, tracing reads `warning` as a target at `trace`, which logs nothing.
+fn warning_as_warn(directive: &str) -> Cow<'_, str> {
+    match directive.rsplit_once('=') {
+        Some((target, level)) if level.eq_ignore_ascii_case("warning") => {
+            format!("{target}=warn").into()
+        }
+        None if directive.eq_ignore_ascii_case("warning") => "warn".into(),
+        _ => directive.into(),
     }
+}
+
+fn directives(filter: &str) -> impl Iterator<Item = Cow<'_, str>> {
+    filter
+        .split(',')
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .map(warning_as_warn)
+}
+
+fn parse<F: Directives>(filter: &str) -> Result<F, String> {
+    let directives: Vec<_> = directives(filter).collect();
+    if directives.is_empty() {
+        return Err("it has no directives".into());
+    }
+    F::parse(&directives.join(","))
+}
+
+/// The directives that parse, or `info` when none does.
+fn parse_lossy<F: Directives>(filter: &str) -> F {
+    let parseable: Vec<_> = directives(filter).filter(|d| F::parse(d).is_ok()).collect();
+    let directives = if parseable.is_empty() {
+        "info".into()
+    } else {
+        parseable.join(",")
+    };
+    parse(&directives).expect("directives that each parse")
+}
+
+/// The filters that did not parse, and why.
+#[derive(Default)]
+struct Rejected {
+    default: Option<(String, String)>,
+    rust_log: Option<(String, String)>,
+}
+
+/// `RUST_LOG` when it has directives and they parse; otherwise the default, or
+/// what of it parses. What was rejected is kept for a warning once there is a
+/// subscriber to take one.
+fn choose_filter<F: Directives>(default: &str, rust_log: Option<&OsStr>) -> (F, Rejected) {
+    let mut rejected = Rejected::default();
+    let has_directives = |v: &&OsStr| v.to_str().is_none_or(|v| directives(v).next().is_some());
+    if let Some(value) = rust_log.filter(has_directives) {
+        let parsed = value
+            .to_str()
+            .ok_or_else(|| "not valid Unicode".to_string())
+            .and_then(parse);
+        match parsed {
+            Ok(filter) => return (filter, rejected),
+            Err(error) => rejected.rust_log = Some((value.to_string_lossy().into_owned(), error)),
+        }
+    }
+    let filter = parse(default).unwrap_or_else(|error| {
+        rejected.default = Some((default.to_string(), error));
+        parse_lossy(default)
+    });
+    if rejected.default.is_none() && rejected.rust_log.is_none() {
+        return (filter, rejected);
+    }
+    // A default with no global level would otherwise drop the warning.
+    (filter.with_own_warnings(), rejected)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    type Chosen = (String, Option<String>);
+    const DEFAULT: &str = "foo=info,warn";
 
-    fn chosen<F: Directives + std::fmt::Display>(rust_log: Option<&str>) -> Chosen {
-        let (filter, rejected) = choose_filter::<F>("foo=info,warn", rust_log.map(OsStr::new));
-        (filter.to_string(), rejected.map(|(value, _)| value))
+    type Chosen = (String, Vec<String>);
+
+    fn chosen<F: Directives + std::fmt::Display>(default: &str, rust_log: Option<&str>) -> Chosen {
+        let (filter, rejected) = choose_filter::<F>(default, rust_log.map(OsStr::new));
+        let rejected = [rejected.default, rejected.rust_log].into_iter().flatten();
+        (
+            filter.to_string(),
+            rejected.map(|(value, _)| value).collect(),
+        )
     }
 
-    fn each_filter() -> Vec<fn(Option<&str>) -> Chosen> {
+    fn sorted(filter: &str) -> Vec<&str> {
+        let mut directives: Vec<_> = filter.split(',').collect();
+        directives.sort();
+        directives
+    }
+
+    fn each_filter() -> Vec<fn(&str, Option<&str>) -> Chosen> {
         vec![
             #[cfg(feature = "setup")]
             chosen::<EnvFilter>,
@@ -285,16 +335,19 @@ mod tests {
     #[test]
     fn rust_log_wins_when_it_parses() {
         for chosen in each_filter() {
-            assert_eq!(chosen(Some("bar=debug")), ("bar=debug".into(), None));
+            assert_eq!(
+                chosen(DEFAULT, Some("bar=debug")),
+                ("bar=debug".into(), vec![])
+            );
         }
     }
 
     #[test]
     fn an_unset_or_empty_rust_log_is_the_default_without_a_warning() {
         for chosen in each_filter() {
-            for rust_log in [None, Some("")] {
-                let (filter, rejected) = chosen(rust_log);
-                assert_eq!(rejected, None);
+            for rust_log in [None, Some(""), Some(" , ")] {
+                let (filter, rejected) = chosen(DEFAULT, rust_log);
+                assert!(rejected.is_empty());
                 assert!(filter.contains("foo=info"), "{filter}");
             }
         }
@@ -303,17 +356,77 @@ mod tests {
     #[test]
     fn a_rust_log_that_does_not_parse_falls_back_and_says_what_it_was() {
         for chosen in each_filter() {
-            let (filter, rejected) = chosen(Some("bar=loudest"));
+            let (filter, rejected) = chosen(DEFAULT, Some("bar=loudest"));
             assert!(filter.contains("foo=info"), "{filter}");
             assert!(filter.contains("wslib_telemetry=warn"), "{filter}");
-            assert_eq!(rejected.as_deref(), Some("bar=loudest"));
+            assert_eq!(rejected, ["bar=loudest"]);
+        }
+    }
+
+    #[test]
+    fn a_default_filter_that_does_not_parse_is_warned_about() {
+        for chosen in each_filter() {
+            let (filter, rejected) = chosen("foo=loudest,warn", None);
+            assert!(filter.contains("wslib_telemetry=warn"), "{filter}");
+            assert_eq!(rejected, ["foo=loudest,warn"]);
+        }
+    }
+
+    #[test]
+    fn warning_in_any_case_is_warn() {
+        for chosen in each_filter() {
+            assert_eq!(chosen("WARNING", None), ("warn".into(), vec![]));
+            assert_eq!(chosen("foo=Warning", None), ("foo=warn".into(), vec![]));
+        }
+    }
+
+    #[test]
+    fn empty_directives_are_skipped() {
+        for chosen in each_filter() {
+            let (filter, rejected) = chosen("foo=info, ,warn,", None);
+            assert_eq!(
+                (sorted(&filter), rejected),
+                (vec!["foo=info", "warn"], vec![])
+            );
+            assert_eq!(
+                chosen(DEFAULT, Some("bar=debug,")),
+                ("bar=debug".into(), vec![])
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_default_is_info_with_a_warning() {
+        for chosen in each_filter() {
+            for default in ["", " ", ","] {
+                let (filter, rejected) = chosen(default, None);
+                assert_eq!(
+                    (sorted(&filter), rejected),
+                    (
+                        vec!["info", "wslib_telemetry=warn"],
+                        vec![default.to_string()]
+                    )
+                );
+            }
         }
     }
 
     #[test]
     fn a_default_that_partly_parses_keeps_what_does() {
-        let filter = Targets::parse_lossy("foo=info,bar=loudest,warn");
-        assert_eq!(filter.to_string(), "foo=info,warn");
+        for chosen in each_filter() {
+            let (filter, _) = chosen("foo=info,bar=loudest,warn", None);
+            assert!(filter.contains("foo=info"), "{filter}");
+            assert!(filter.split(',').any(|d| d == "warn"), "{filter}");
+            assert!(!filter.contains("bar"), "{filter}");
+        }
+    }
+
+    #[test]
+    fn a_default_of_which_nothing_parses_is_info() {
+        for chosen in each_filter() {
+            let (filter, _) = chosen("foo=loudest", None);
+            assert!(filter.split(',').any(|d| d == "info"), "{filter}");
+        }
     }
 
     #[test]

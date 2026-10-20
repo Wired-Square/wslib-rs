@@ -1,0 +1,25 @@
+[package]
+name = "wslib-systemd"
+version = "0.1.0"
+description = "Typed zbus proxies for systemd, hostnamed, timedated, timesyncd and logind, how to read their refusals, and hostname validation."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+testing = ["zbus/p2p", "dep:tokio"]
+
+[dependencies]
+tokio = { version = "1.37", default-features = false, features = ["macros", "net"], optional = true }
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+
+[dev-dependencies]
+tokio = { version = "1.37", features = ["macros", "rt"] }
+
+[[test]]
+name = "proxies"
+required-features = ["testing"]

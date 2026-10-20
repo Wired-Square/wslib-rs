@@ -1,0 +1,26 @@
+[package]
+name = "wslib-tailscale"
+version = "0.1.0"
+description = "A client for tailscaled's LocalAPI over its Unix socket, and a fake tailscaled for tests."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+testing = ["tokio/rt"]
+
+[dependencies]
+serde = { version = "1.0.225", features = ["derive"] }
+serde_json = "1.0.85"
+tokio = { version = "1.19", default-features = false, features = ["io-util", "net", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1.19", features = ["macros", "rt"] }
+
+[[test]]
+name = "local_api"
+required-features = ["testing"]

@@ -18,6 +18,7 @@ appliance chassis and every app beside it.
 | `wslib-http-server`    | HTTP, TLS and a redirect listener, bounded and drained      |
 | `wslib-systemd-notify` | Ready, status and watchdog pings to systemd, no libsystemd  |
 | `wslib-tailscale`      | tailscaled's LocalAPI: status, logout, and a fake for tests |
+| `wslib-file-atomic`    | Crash-safe whole-file writes, readers set from creation     |
 
 † Not pure Rust: it carries TypeScript in `js/` that apps vendor into their
 frontend. Every crate that ships other languages is marked here, and says so

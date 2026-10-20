@@ -20,13 +20,20 @@ staged.promote()?;
 // After a restart that found `<path>.next`, keep it or drop it:
 wslib_file_atomic::promote(path, "next")?;
 wslib_file_atomic::discard(path, "next")?;
+
+// Staged as `.<name>.new`, out of a directory listing:
+let hidden = Options::new().hidden_staging(true);
+hidden.write(path, contents)?;
+// After a restart, in whatever form the options name it:
+hidden.promote_staged(path)?;
+hidden.discard_staged(path)?;
 ```
 
 ## What it guarantees
 
 - **Whole or not at all.** The contents go to `<name>.new` (or your suffix),
-  appended to the whole name so `app.crt` and `app.key` never share one, are
-  synced, and renamed over the target. On Unix the directory is synced too, so
+  appended to the whole name so `app.crt` and `app.key` never share one, or
+  to `.<name>.new` under `Options::hidden_staging(true)`, are synced, and renamed over the target. On Unix the directory is synced too, so
   a power cut leaves the old file or the new one, never a name with nothing
   behind it. A directory that is writable but can't be opened (`0300`) is
   not synced, and that isn't an error.
@@ -42,13 +49,16 @@ wslib_file_atomic::discard(path, "next")?;
   left is cleared first rather than reused, so its mode never carries over.
 - **`write_private`** (or `Options::create_new`) writes at the path itself and
   refuses one that exists; a failed write removes what it made.
-- **`stage`** returns a `Staged` you `promote()` or `discard()`, and
-  `Options::staged_path` names where it goes. Dropping it leaves the file, so
-  a restart can find it with `promote(path, suffix)` or
-  `discard(path, suffix)`. A promote's `PromoteError` says which half failed: `Unmoved`
-  hands the `Staged` back for a retry or discard, and `Unsynced` means the
-  file is in place but its directory wasn't synced. It converts to an
-  `io::Error` of the same kind for `?`.
+- **`stage`** returns a `Staged` you `promote()` or `discard()`;
+  `Staged::path()` is where it is and `Staged::target()` what it replaces,
+  and `Options::staged_path` names where it goes. Dropping it leaves the
+  file, so a restart can find it with `Options::promote_staged(path)` or
+  `Options::discard_staged(path)`, given the same options, or for the default
+  form with `promote(path, suffix)` or `discard(path, suffix)`. A promote's
+  `PromoteError` says which half failed: `Unmoved` hands the `Staged` back
+  for a retry or discard, and `Unsynced` means the file is in place but its
+  directory wasn't synced. Neither message names a path, so a caller adds
+  it. It converts to an `io::Error` of the same kind for `?`.
 - **`promote_unsynced`** renames without the directory sync, and
   **`sync_dir`** syncs once after the last of several renames. That narrows
   the window in which a power cut leaves a key and its certificate

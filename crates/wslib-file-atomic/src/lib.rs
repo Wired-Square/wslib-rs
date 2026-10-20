@@ -16,6 +16,7 @@
 //! The staged name is fixed, so writers to one path are serialised by the
 //! caller: two at once clear each other's staged file.
 
+use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -58,16 +59,12 @@ pub fn beside(path: &Path, suffix: &str) -> PathBuf {
 
 /// Rename the file staged beside `path` under `suffix` over it, as a restart finds one.
 pub fn promote(path: &Path, suffix: &str) -> Result<(), PromoteError> {
-    Staged {
-        path: beside(path, suffix),
-        target: path.to_owned(),
-    }
-    .promote()
+    Options::new().staging_suffix(suffix).promote_staged(path)
 }
 
 /// Remove the file staged beside `path` under `suffix`, if there is one.
 pub fn discard(path: &Path, suffix: &str) -> io::Result<()> {
-    remove_if_there(&beside(path, suffix))
+    Options::new().staging_suffix(suffix).discard_staged(path)
 }
 
 fn remove_if_there(path: &Path) -> io::Result<()> {
@@ -132,6 +129,7 @@ pub struct Options {
     create_new: bool,
     create_parents: bool,
     suffix: String,
+    hidden_staging: bool,
 }
 
 impl Default for Options {
@@ -141,6 +139,7 @@ impl Default for Options {
             create_new: false,
             create_parents: false,
             suffix: "new".into(),
+            hidden_staging: false,
         }
     }
 }
@@ -175,9 +174,38 @@ impl Options {
         self
     }
 
+    /// Stage as `.<name>.<suffix>`, hidden from a directory listing on Unix;
+    /// Windows gives a leading dot no meaning.
+    pub fn hidden_staging(mut self, hidden_staging: bool) -> Self {
+        self.hidden_staging = hidden_staging;
+        self
+    }
+
     /// Where a file staged for `path` goes.
     pub fn staged_path(&self, path: &Path) -> PathBuf {
-        beside(path, &self.suffix)
+        let staged = beside(path, &self.suffix);
+        match staged.file_name() {
+            Some(name) if self.hidden_staging => {
+                let mut hidden = OsString::from(".");
+                hidden.push(name);
+                staged.with_file_name(hidden)
+            }
+            _ => staged,
+        }
+    }
+
+    /// Rename the file staged for `path` over it, as a restart finds one.
+    pub fn promote_staged(&self, path: &Path) -> Result<(), PromoteError> {
+        Staged {
+            path: self.staged_path(path),
+            target: path.to_owned(),
+        }
+        .promote()
+    }
+
+    /// Remove the file staged for `path`, if there is one.
+    pub fn discard_staged(&self, path: &Path) -> io::Result<()> {
+        remove_if_there(&self.staged_path(path))
     }
 
     /// Write `contents` to `path` durably, whole or not at all; an error after
@@ -259,6 +287,11 @@ impl Staged {
         &self.path
     }
 
+    /// The file it is renamed over.
+    pub fn target(&self) -> &Path {
+        &self.target
+    }
+
     /// Rename the staged file over its target and sync its directory.
     pub fn promote(self) -> Result<(), PromoteError> {
         let target = self.rename()?;
@@ -309,11 +342,9 @@ impl PromoteError {
 impl fmt::Display for PromoteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unmoved { staged, error } => write!(
+            Self::Unmoved { error, .. } => write!(
                 f,
-                "{} was not renamed over {}: {error}",
-                staged.path.display(),
-                staged.target.display()
+                "the staged file was not renamed over its target: {error}"
             ),
             Self::Unsynced(error) => {
                 write!(f, "renamed, but its directory was not synced: {error}")

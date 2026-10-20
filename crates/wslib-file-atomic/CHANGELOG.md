@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.2
+
+- `Options::hidden_staging(true)` stages as `.<file>.<suffix>`, so
+  `/data/options.json` stages as `/data/.options.json.new`; `staged_path`,
+  `stage` and `write` follow it, and clear a stale staged file of that name
+  first. Off by default; `Transaction` staged names are unchanged.
+- `Options::promote_staged(path)` and `Options::discard_staged(path)` finish
+  a staged file a restart finds, in whatever form the options name it.
+- `Staged::target()` is the file it is renamed over.
+- `PromoteError::Unmoved` no longer names the paths in its message, as
+  `Unsynced` never did; a caller adds the path once.
+
 ## 0.1.1
 
 - `Transaction`: several files, in any directories, replaced together or

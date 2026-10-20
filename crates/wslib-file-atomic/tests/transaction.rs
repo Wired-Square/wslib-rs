@@ -82,6 +82,22 @@ fn stage_pair(dir: &Scratch) -> Transaction {
 }
 
 #[test]
+fn hidden_staging_options_do_not_change_a_transaction_s_staged_names() {
+    let dir = pair("txn-hidden");
+    let mut transaction = Transaction::begin(&dir.0, "tls").unwrap();
+    transaction
+        .stage(
+            &dir.join(KEY),
+            b"new key",
+            &Options::new().hidden_staging(true),
+        )
+        .unwrap();
+    assert_eq!(read(&dir.join(STAGED_KEY)), b"new key");
+    transaction.abort().unwrap();
+    assert_old_pair(&dir);
+}
+
+#[test]
 fn a_commit_replaces_every_file_and_leaves_nothing_else() {
     let dir = pair("txn-commit");
     stage_pair(&dir).commit().unwrap();

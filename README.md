@@ -3,19 +3,20 @@
 Shared Rust crates for Wired Square projects: the building blocks under the
 appliance chassis and every app beside it.
 
-| Crate                 | What it does                                                |
-| --------------------- | ----------------------------------------------------------- |
-| `wslib-build-id`      | Stamps the commit an artefact was built from into it        |
-| `wslib-secret`        | A credential that never prints, loaded from env or file     |
-| `wslib-backoff`       | Capped exponential backoff, reset on success                |
-| `wslib-telemetry`     | One tracing setup, and an in-memory ring of a service's log |
-| `wslib-mcp` †         | Hosting layer for tools-only MCP servers over rmcp          |
-| `wslib-dns`           | DNS lookups that keep NXDOMAIN, NODATA and failures apart   |
-| `wslib-dns-mail`      | SPF, DMARC, DKIM, BIMI, MTA-STS and TLS-RPT records in DNS  |
-| `wslib-cli`           | Tables or JSON, exit codes, config lookup and `op://`       |
-| `wslib-http-error`    | One HTTP error body, the axum error and extractors for it   |
-| `wslib-http-scaffold` | SPA fallback, health and version routes, standard layers    |
-| `wslib-http-server`   | HTTP, TLS and a redirect listener, bounded and drained      |
+| Crate                  | What it does                                                |
+| ---------------------- | ----------------------------------------------------------- |
+| `wslib-build-id`       | Stamps the commit an artefact was built from into it        |
+| `wslib-secret`         | A credential that never prints, loaded from env or file     |
+| `wslib-backoff`        | Capped exponential backoff, reset on success                |
+| `wslib-telemetry`      | One tracing setup, and an in-memory ring of a service's log |
+| `wslib-mcp` †          | Hosting layer for tools-only MCP servers over rmcp          |
+| `wslib-dns`            | DNS lookups that keep NXDOMAIN, NODATA and failures apart   |
+| `wslib-dns-mail`       | SPF, DMARC, DKIM, BIMI, MTA-STS and TLS-RPT records in DNS  |
+| `wslib-cli`            | Tables or JSON, exit codes, config lookup and `op://`       |
+| `wslib-http-error`     | One HTTP error body, the axum error and extractors for it   |
+| `wslib-http-scaffold`  | SPA fallback, health and version routes, standard layers    |
+| `wslib-http-server`    | HTTP, TLS and a redirect listener, bounded and drained      |
+| `wslib-systemd-notify` | Ready, status and watchdog pings to systemd, no libsystemd  |
 
 † Not pure Rust: it carries TypeScript in `js/` that apps vendor into their
 frontend. Every crate that ships other languages is marked here, and says so

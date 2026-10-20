@@ -14,6 +14,9 @@
 //! # }
 //! ```
 //!
+//! Every method's `interactive` asks polkit to prompt; with no agent to
+//! answer, the call waits for nobody. Pass `false` on a headless box.
+//!
 //! The `testing` feature adds [`testing::Fakes`], on Unix.
 
 mod hostname;

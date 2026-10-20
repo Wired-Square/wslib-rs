@@ -49,8 +49,8 @@ impl Fakes {
         self
     }
 
-    /// A peer-to-peer connection to the fakes, and the fakes' own end, which
-    /// must be kept alive as long as the client is used.
+    /// `(client, served)`: a peer-to-peer connection to the fakes, and the
+    /// fakes' own end, which must be kept alive as long as the client is used.
     pub async fn connect(self) -> zbus::Result<(Connection, Connection)> {
         let (ours, theirs) = tokio::net::UnixStream::pair()?;
         let mut served = Builder::unix_stream(theirs).server(Guid::generate())?.p2p();

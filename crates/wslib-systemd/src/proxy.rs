@@ -71,9 +71,6 @@ pub trait Unit {
 
 /// systemd-hostnamed. Activatable: the first call starts it, or fails with
 /// [`nobody_owns`](crate::nobody_owns) where it is not installed.
-///
-/// `interactive` asks polkit to prompt; with no agent to answer, the call
-/// waits for nobody. Pass `false` on a headless box.
 #[proxy(
     interface = "org.freedesktop.hostname1",
     default_service = "org.freedesktop.hostname1",
@@ -131,7 +128,8 @@ pub trait Timesync {
     fn server_name(&self) -> zbus::Result<String>;
 }
 
-/// systemd-logind's manager: reboot and power-off.
+/// systemd-logind's manager: reboot and power-off. Prefer it to
+/// `StartUnit("reboot.target")`, which takes any unit name; these take none.
 #[proxy(
     interface = "org.freedesktop.login1.Manager",
     default_service = "org.freedesktop.login1",

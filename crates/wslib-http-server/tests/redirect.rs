@@ -110,3 +110,24 @@ async fn the_stop_drains_both_listeners() {
         .expect("served");
     assert!(closed(&mut held, PATIENT).await);
 }
+
+#[tokio::test]
+async fn the_redirect_closes_the_connection_it_answered() {
+    let mut peer = dial(redirecting(watch::channel(443).1).await).await;
+    peer.write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        .await
+        .expect("a keep-alive request");
+    let mut answer = Vec::new();
+    tokio::time::timeout(
+        Bounds::REDIRECT.head / 2,
+        tokio::io::AsyncReadExt::read_to_end(&mut peer, &mut answer),
+    )
+    .await
+    .expect("closed rather than held for a second request")
+    .expect("read");
+    assert!(
+        answer.starts_with(b"HTTP/1.1 307"),
+        "{}",
+        String::from_utf8_lossy(&answer)
+    );
+}

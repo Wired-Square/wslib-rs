@@ -240,22 +240,25 @@ fn warning_as_warn(directive: &str) -> Cow<'_, str> {
     }
 }
 
-fn parse<F: Directives>(directives: &str) -> Result<F, String> {
-    F::parse(
-        &directives
-            .split(',')
-            .map(warning_as_warn)
-            .collect::<Vec<_>>()
-            .join(","),
-    )
+fn directives(filter: &str) -> impl Iterator<Item = Cow<'_, str>> {
+    filter
+        .split(',')
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .map(warning_as_warn)
+}
+
+fn parse<F: Directives>(filter: &str) -> Result<F, String> {
+    let directives: Vec<_> = directives(filter).collect();
+    if directives.is_empty() {
+        return Err("it has no directives".into());
+    }
+    F::parse(&directives.join(","))
 }
 
 /// The directives that parse, or `info` when none does.
-fn parse_lossy<F: Directives>(directives: &str) -> F {
-    let parseable: Vec<_> = directives
-        .split(',')
-        .filter(|d| parse::<F>(d).is_ok())
-        .collect();
+fn parse_lossy<F: Directives>(filter: &str) -> F {
+    let parseable: Vec<_> = directives(filter).filter(|d| F::parse(d).is_ok()).collect();
     let directives = if parseable.is_empty() {
         "info".into()
     } else {
@@ -271,12 +274,13 @@ struct Rejected {
     rust_log: Option<(String, String)>,
 }
 
-/// `RUST_LOG` when it is set and parses; otherwise the default, or what of it
-/// parses. What was rejected is kept for a warning once there is a subscriber
-/// to take one.
+/// `RUST_LOG` when it has directives and they parse; otherwise the default, or
+/// what of it parses. What was rejected is kept for a warning once there is a
+/// subscriber to take one.
 fn choose_filter<F: Directives>(default: &str, rust_log: Option<&OsStr>) -> (F, Rejected) {
     let mut rejected = Rejected::default();
-    if let Some(value) = rust_log.filter(|v| !v.is_empty()) {
+    let has_directives = |v: &&OsStr| v.to_str().is_none_or(|v| directives(v).next().is_some());
+    if let Some(value) = rust_log.filter(has_directives) {
         let parsed = value
             .to_str()
             .ok_or_else(|| "not valid Unicode".to_string())
@@ -314,6 +318,12 @@ mod tests {
         )
     }
 
+    fn sorted(filter: &str) -> Vec<&str> {
+        let mut directives: Vec<_> = filter.split(',').collect();
+        directives.sort();
+        directives
+    }
+
     fn each_filter() -> Vec<fn(&str, Option<&str>) -> Chosen> {
         vec![
             #[cfg(feature = "setup")]
@@ -335,7 +345,7 @@ mod tests {
     #[test]
     fn an_unset_or_empty_rust_log_is_the_default_without_a_warning() {
         for chosen in each_filter() {
-            for rust_log in [None, Some("")] {
+            for rust_log in [None, Some(""), Some(" , ")] {
                 let (filter, rejected) = chosen(DEFAULT, rust_log);
                 assert!(rejected.is_empty());
                 assert!(filter.contains("foo=info"), "{filter}");
@@ -367,6 +377,37 @@ mod tests {
         for chosen in each_filter() {
             assert_eq!(chosen("WARNING", None), ("warn".into(), vec![]));
             assert_eq!(chosen("foo=Warning", None), ("foo=warn".into(), vec![]));
+        }
+    }
+
+    #[test]
+    fn empty_directives_are_skipped() {
+        for chosen in each_filter() {
+            let (filter, rejected) = chosen("foo=info, ,warn,", None);
+            assert_eq!(
+                (sorted(&filter), rejected),
+                (vec!["foo=info", "warn"], vec![])
+            );
+            assert_eq!(
+                chosen(DEFAULT, Some("bar=debug,")),
+                ("bar=debug".into(), vec![])
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_default_is_info_with_a_warning() {
+        for chosen in each_filter() {
+            for default in ["", " ", ","] {
+                let (filter, rejected) = chosen(default, None);
+                assert_eq!(
+                    (sorted(&filter), rejected),
+                    (
+                        vec!["info", "wslib_telemetry=warn"],
+                        vec![default.to_string()]
+                    )
+                );
+            }
         }
     }
 

@@ -6,6 +6,11 @@
   installed, as a bad `RUST_LOG` is, and the directives of it that parse are
   used, or `info` when none does. `warning`, in any case, is read as `warn`,
   where tracing took a bare `WARNING` for a target and logged nothing.
+- Empty directives are skipped and each is trimmed, under `setup-core` as under
+  `setup`: `Targets` read an empty one, as in `"foo=info,"`, as a global
+  `error`. A default filter with no directives is `info`, with a warning, as
+  one that does not parse is; a `RUST_LOG` of only commas and spaces counts as
+  unset.
 - Docs: a `RUST_LOG` that parses replaces the default filter rather than
   adding to it.
 

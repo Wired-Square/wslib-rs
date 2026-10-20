@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.5
+
+- `Telemetry::set_default` installs the same subscriber for the current thread
+  until its guard drops, for a test that captures logs without a global
+  subscriber. It honours `RUST_LOG` as `init` does, and a filter that does not
+  parse is warned about in the scoped subscriber. The global default and the
+  `log` bridge are left alone.
+
 ## 0.1.4
 
 - A default filter that does not parse is warned about once the subscriber is

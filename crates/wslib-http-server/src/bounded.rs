@@ -104,13 +104,32 @@ impl AddrListener<Permitted, Peer> for Listener {
             .acquire_owned()
             .await
             .map_err(io::Error::other)?;
-        let (stream, peer) = self.tcp.accept().await?;
-        Ok((Permitted { stream, permit }, Peer(peer)))
+        loop {
+            match self.tcp.accept().await {
+                Ok((stream, peer)) => return Ok((Permitted { stream, permit }, Peer(peer))),
+                Err(e) => backed_off(e).await,
+            }
+        }
     }
 
     fn get_local_addr(&self) -> io::Result<Peer> {
         Ok(Peer(self.local))
     }
+}
+
+// As axum's own `serve`: a peer gone before its accept is retried at once, and
+// anything else, such as EMFILE, is logged and waited out rather than spun on.
+async fn backed_off(e: io::Error) {
+    if matches!(
+        e.kind(),
+        io::ErrorKind::ConnectionRefused
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset
+    ) {
+        return;
+    }
+    tracing::error!("accept error: {e}");
+    tokio::time::sleep(Duration::from_secs(1)).await;
 }
 
 /// A connection that gives its permit back when it ends.
@@ -157,5 +176,32 @@ impl AsyncWrite for Permitted {
 
     fn is_write_vectored(&self) -> bool {
         self.stream.is_write_vectored()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::time::Instant;
+
+    async fn waited(kind: io::ErrorKind) -> Duration {
+        let started = Instant::now();
+        backed_off(io::Error::from(kind)).await;
+        started.elapsed()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_peer_gone_before_its_accept_is_retried_at_once() {
+        assert_eq!(
+            waited(io::ErrorKind::ConnectionAborted).await,
+            Duration::ZERO
+        );
+        assert_eq!(waited(io::ErrorKind::ConnectionReset).await, Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn any_other_accept_error_waits_a_second() {
+        let emfile = io::Error::from_raw_os_error(24).kind();
+        assert_eq!(waited(emfile).await, Duration::from_secs(1));
     }
 }

@@ -25,7 +25,7 @@ mod transaction;
 #[cfg(windows)]
 mod windows;
 
-pub use transaction::{Recovered, Transaction, recover};
+pub use transaction::{CommitError, Recovered, Transaction, recover};
 
 /// Create `path` readable by its owner alone and write `contents` to it
 /// durably, refusing a path that exists.

@@ -2,6 +2,7 @@ use std::fs::{self, File};
 use std::io::{self, Write};
 use std::mem;
 use std::path::{Path, PathBuf};
+use std::{error, fmt};
 
 use crate::{Options, PromoteError, beside, remove_if_there, sync_dir, sync_parent};
 
@@ -34,11 +35,55 @@ pub enum Recovered {
     RolledForward,
 }
 
+/// Why a [`Transaction::commit`] failed, and on which side of the commit point.
+#[non_exhaustive]
+#[derive(Debug)]
+pub enum CommitError {
+    /// Before it: every target is untouched, and anything left is a pending
+    /// record [`recover`] rolls back.
+    RolledBack(io::Error),
+    /// After it: the committed record is left, and [`recover`] rolls it forward,
+    /// unless the failure was syncing the record's directory and a power cut
+    /// then undoes the commit, leaving every target as it was.
+    Committed(io::Error),
+}
+
+impl CommitError {
+    fn io(&self) -> &io::Error {
+        match self {
+            Self::RolledBack(error) | Self::Committed(error) => error,
+        }
+    }
+}
+
+impl fmt::Display for CommitError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RolledBack(error) => write!(f, "not committed, and rolled back: {error}"),
+            Self::Committed(error) => {
+                write!(f, "committed, but left for recovery to finish: {error}")
+            }
+        }
+    }
+}
+
+impl error::Error for CommitError {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        Some(self.io())
+    }
+}
+
+impl From<CommitError> for io::Error {
+    fn from(e: CommitError) -> Self {
+        io::Error::new(e.io().kind(), e)
+    }
+}
+
 impl Transaction {
     /// Start a transaction named `name` with its record in `dir`, refused while
     /// an unfinished one of that name is there.
     pub fn begin(dir: &Path, name: &str) -> io::Result<Self> {
-        let record = record_path(&fs::canonicalize(dir)?, name)?;
+        let record = record_path(&fs::canonicalize(or_here(dir))?, name)?;
         if record.try_exists()? {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
@@ -84,14 +129,18 @@ impl Transaction {
     }
 
     /// Replace every staged file's target, or, failing before the commit
-    /// point, none of them; a failure after it leaves the record for [`recover`].
-    pub fn commit(mut self) -> io::Result<()> {
-        self.ensure_open()?;
-        let staged = match Options::new().stage(&self.record, self.contents(COMMITTED).as_bytes()) {
+    /// point, none of them.
+    pub fn commit(mut self) -> Result<(), CommitError> {
+        let staged = self
+            .ensure_open()
+            // Under a committed record a missing staged file must mean renamed.
+            .and_then(|()| sync_parents(&self.targets))
+            .and_then(|()| Options::new().stage(&self.record, self.contents(COMMITTED).as_bytes()));
+        let staged = match staged {
             Ok(staged) => staged,
             Err(e) => {
                 let _ = self.roll_back();
-                return Err(e);
+                return Err(CommitError::RolledBack(e));
             }
         };
         // The rename of the committed record is the commit point: from there
@@ -100,14 +149,21 @@ impl Transaction {
             Err(PromoteError::Unmoved { staged, error }) => {
                 let _ = staged.discard();
                 let _ = self.roll_back();
-                Err(error)
+                Err(CommitError::RolledBack(error))
             }
             promoted => {
                 self.open = false;
-                promoted?;
-                roll_forward(&self.record, &self.suffix, &self.targets)
+                promoted
+                    .map_err(io::Error::from)
+                    .and_then(|()| roll_forward(&self.record, &self.suffix, &self.targets))
+                    .map_err(CommitError::Committed)
             }
         }
+    }
+
+    /// Where the record is.
+    pub fn record(&self) -> &Path {
+        &self.record
     }
 
     /// Remove the staged files and the record, leaving every target as it was.
@@ -132,8 +188,8 @@ impl Transaction {
             return invalid("not a file");
         };
         options.make_parents(path)?;
-        let parent = path.parent().filter(|dir| !dir.as_os_str().is_empty());
-        let target = fs::canonicalize(parent.unwrap_or(Path::new(".")))?.join(name);
+        let parent = path.parent().map_or(Path::new("."), or_here);
+        let target = fs::canonicalize(parent)?.join(name);
         if target.to_str().is_none_or(|text| !plain_line(text)) {
             return invalid("not UTF-8 free of tabs and newlines");
         }
@@ -221,6 +277,14 @@ fn record_path(dir: &Path, name: &str) -> io::Result<PathBuf> {
         ));
     }
     Ok(dir.join(format!("{name}.txn")))
+}
+
+fn or_here(dir: &Path) -> &Path {
+    if dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        dir
+    }
 }
 
 fn suffix(name: &str) -> String {

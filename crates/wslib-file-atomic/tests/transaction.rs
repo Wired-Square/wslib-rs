@@ -1,11 +1,13 @@
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 mod common;
 
 use common::{Scratch, read};
-use wslib_file_atomic::{Options, Readers, Recovered, Transaction, recover, replace_private};
+use wslib_file_atomic::{
+    CommitError, Options, Readers, Recovered, Transaction, recover, replace_private,
+};
 
 const KEY: &str = "app.key";
 const CERT: &str = "app.crt";
@@ -338,4 +340,69 @@ fn a_malformed_record_is_an_error_and_nothing_is_touched() {
         assert_old_pair(&dir);
         assert_only(&dir, &[KEY, CERT, STAGED_KEY, RECORD]);
     }
+}
+
+fn occupy(path: &Path) {
+    let _ = fs::remove_file(path);
+    fs::create_dir(path).unwrap();
+    fs::write(path.join("inside"), b"").unwrap();
+}
+
+#[test]
+fn a_commit_failing_before_the_commit_point_is_rolled_back() {
+    let dir = pair("txn-commit-rolled-back");
+    let transaction = stage_pair(&dir);
+    occupy(&dir.join("tls.txn.new"));
+    let Err(CommitError::RolledBack(_)) = transaction.commit() else {
+        panic!("the committed record could not be staged");
+    };
+    assert_old_pair(&dir);
+    assert_only(&dir, &[KEY, CERT, "tls.txn.new"]);
+}
+
+#[test]
+fn a_commit_failing_after_the_commit_point_is_left_for_recover() {
+    let dir = pair("txn-commit-committed");
+    let transaction = stage_pair(&dir);
+    occupy(&dir.join(CERT));
+    let Err(CommitError::Committed(_)) = transaction.commit() else {
+        panic!("the certificate could not be renamed over a directory");
+    };
+    assert!(
+        fs::read_to_string(dir.join(RECORD))
+            .unwrap()
+            .starts_with("committed\n")
+    );
+
+    fs::remove_dir_all(dir.join(CERT)).unwrap();
+    assert_eq!(recover(&dir.0, "tls").unwrap(), Recovered::RolledForward);
+    assert_eq!(read(&dir.join(KEY)), b"new key");
+    assert_eq!(read(&dir.join(CERT)), b"new cert");
+    assert_only(&dir, &[KEY, CERT]);
+}
+
+#[test]
+fn a_commit_error_says_which_side_and_keeps_its_kind() {
+    let committed = CommitError::Committed(io::ErrorKind::PermissionDenied.into());
+    assert!(
+        committed.to_string().starts_with("committed"),
+        "{committed}"
+    );
+    let error = io::Error::from(committed);
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    let rolled_back = CommitError::RolledBack(io::ErrorKind::NotFound.into());
+    assert!(
+        rolled_back.to_string().contains("rolled back"),
+        "{rolled_back}"
+    );
+}
+
+#[test]
+fn an_empty_directory_is_the_current_one() {
+    let name = "wslib-file-atomic-empty-dir";
+    let transaction = Transaction::begin(Path::new(""), name).unwrap();
+    let record = fs::canonicalize(".").unwrap().join(format!("{name}.txn"));
+    assert_eq!(transaction.record(), record);
+    transaction.abort().unwrap();
+    assert!(!record.exists());
 }

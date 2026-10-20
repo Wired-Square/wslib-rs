@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.0
 
 - `serve_http`: an axum `Router` over plain HTTP on a `Listener` bound by the
   caller, until a stop future completes; what is open then gets the

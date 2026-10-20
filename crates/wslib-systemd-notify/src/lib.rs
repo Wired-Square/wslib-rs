@@ -40,6 +40,11 @@ pub fn watchdog() -> io::Result<()> {
     notify(&[("WATCHDOG", "1")])
 }
 
+/// Sends `EXTEND_TIMEOUT_USEC=`: a slow start or stop needs `timeout` more from now.
+pub fn extend_timeout(timeout: Duration) -> io::Result<()> {
+    notify(&[("EXTEND_TIMEOUT_USEC", &timeout.as_micros().to_string())])
+}
+
 /// Sends `KEY=value` lines in one datagram; a key that is empty or holds `=`,
 /// or a newline anywhere, is refused as [`io::ErrorKind::InvalidInput`].
 pub fn notify(fields: &[(&str, &str)]) -> io::Result<()> {

@@ -14,7 +14,7 @@ publish = ["wired-square"]
 tokio = ["dep:tokio"]
 
 [dependencies]
-tokio = { version = "1.19", features = ["time"], optional = true }
+tokio = { version = "1.19", default-features = false, features = ["time"], optional = true }
 
 [dev-dependencies]
 tokio = { version = "1.19", features = ["macros", "rt", "sync", "test-util", "time"] }

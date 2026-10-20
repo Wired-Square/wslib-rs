@@ -1,5 +1,4 @@
 use std::env;
-use std::ffi::OsString;
 use std::future::{Future, poll_fn};
 use std::io;
 use std::pin::pin;
@@ -9,14 +8,16 @@ use std::time::Duration;
 use crate::{send, watchdog_interval};
 
 /// Sends `WATCHDOG=1` at half of [`watchdog_interval`] until `stop` completes,
-/// ending early with the first send that fails; with no interval it only waits
-/// for `stop`.
+/// ending early with the first send that fails other than a full socket; with no
+/// interval it only waits for `stop`.
 pub async fn feed_watchdog(stop: impl Future<Output = ()>) -> io::Result<()> {
-    feed(env::var_os("NOTIFY_SOCKET"), watchdog_interval(), stop).await
+    let socket = env::var_os("NOTIFY_SOCKET");
+    let ping = || send(socket.as_deref(), "WATCHDOG=1");
+    feed(ping, watchdog_interval(), stop).await
 }
 
 async fn feed(
-    socket: Option<OsString>,
+    mut ping: impl FnMut() -> io::Result<()>,
     interval: Option<Duration>,
     stop: impl Future<Output = ()>,
 ) -> io::Result<()> {
@@ -37,17 +38,29 @@ async fn feed(
         if !ticked {
             return Ok(());
         }
-        send(socket.as_deref(), "WATCHDOG=1")?;
+        match ping() {
+            // A full socket is transient, and the next ping comes well within
+            // the interval.
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+            result => result?,
+        }
     }
 }
 
 #[cfg(all(test, unix))]
 mod tests {
+    use std::ffi::OsString;
+
     use tokio::sync::oneshot;
     use tokio::time::sleep;
 
     use super::*;
     use crate::tests::socket::Listener;
+
+    fn pinging(socket: impl Into<OsString>) -> impl FnMut() -> io::Result<()> {
+        let socket = socket.into();
+        move || send(Some(&socket), "WATCHDOG=1")
+    }
 
     fn stop_signal() -> (oneshot::Sender<()>, impl Future<Output = ()>) {
         let (tx, rx) = oneshot::channel();
@@ -60,8 +73,8 @@ mod tests {
     async fn pings_at_half_the_interval_until_stopped() {
         let listener = Listener::bind();
         let (tx, stop) = stop_signal();
-        let socket = Some(listener.path.clone().into_os_string());
-        let task = tokio::spawn(feed(socket, Some(Duration::from_secs(10)), stop));
+        let ping = pinging(listener.path.clone());
+        let task = tokio::spawn(feed(ping, Some(Duration::from_secs(10)), stop));
 
         sleep(Duration::from_millis(1)).await;
         assert_eq!(listener.received(), ["WATCHDOG=1"]);
@@ -80,8 +93,7 @@ mod tests {
     async fn without_an_interval_it_waits_for_stop_and_sends_nothing() {
         let listener = Listener::bind();
         let (tx, stop) = stop_signal();
-        let socket = Some(listener.path.clone().into_os_string());
-        let task = tokio::spawn(feed(socket, None, stop));
+        let task = tokio::spawn(feed(pinging(listener.path.clone()), None, stop));
 
         sleep(Duration::from_secs(3600)).await;
         assert!(!task.is_finished());
@@ -91,10 +103,30 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn a_full_socket_skips_the_ping_and_carries_on() {
+        let (_tx, stop) = stop_signal();
+        let mut pings = 0;
+        let ping = move || {
+            pings += 1;
+            match pings {
+                1 => Err(io::ErrorKind::WouldBlock.into()),
+                _ => Err(io::ErrorKind::NotFound.into()),
+            }
+        };
+        let task = tokio::spawn(feed(ping, Some(Duration::from_secs(10)), stop));
+
+        sleep(Duration::from_secs(1)).await;
+        assert!(!task.is_finished());
+        sleep(Duration::from_secs(5)).await;
+        let error = task.await.unwrap().unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn a_failed_send_ends_the_task() {
         let (_tx, stop) = stop_signal();
-        let gone = Some(OsString::from("/nonexistent/wslib-sd/notify"));
-        let error = feed(gone, Some(Duration::from_secs(10)), stop)
+        let ping = pinging("/nonexistent/wslib-sd/notify");
+        let error = feed(ping, Some(Duration::from_secs(10)), stop)
             .await
             .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::NotFound);

@@ -228,6 +228,86 @@ fn discarding_by_path_removes_the_staged_file_and_tolerates_none() {
     discard(&path, "next").unwrap();
 }
 
+#[test]
+fn hidden_staging_stages_as_a_dot_file_and_writes_through_it() {
+    let dir = Scratch::new("hidden");
+    let path = dir.join("options.json");
+    let options = Options::new().hidden_staging(true);
+    assert_eq!(options.staged_path(&path), dir.join(".options.json.new"));
+    let staged = options.stage(&path, b"staged").unwrap();
+    assert_eq!(staged.path(), dir.join(".options.json.new"));
+    staged.discard().unwrap();
+
+    options.write(&path, b"written").unwrap();
+    assert_eq!(read(&path), b"written");
+    assert_eq!(fs::read_dir(&dir.0).unwrap().count(), 1);
+}
+
+#[test]
+fn hidden_staging_follows_the_suffix() {
+    let options = Options::new().staging_suffix("next").hidden_staging(true);
+    assert_eq!(
+        options.staged_path(Path::new("/x/app.crt")),
+        PathBuf::from("/x/.app.crt.next")
+    );
+}
+
+#[test]
+fn a_stale_hidden_staged_file_is_cleared() {
+    let dir = Scratch::new("hidden-stale");
+    let path = dir.join("options.json");
+    let stale = dir.join(".options.json.new");
+    fs::write(&stale, b"stale").unwrap();
+    Options::new()
+        .hidden_staging(true)
+        .write(&path, b"written")
+        .unwrap();
+    assert_eq!(read(&path), b"written");
+    assert!(!stale.exists());
+}
+
+#[test]
+fn a_restart_promotes_or_discards_a_staged_file_in_either_form() {
+    for hidden in [false, true] {
+        let dir = Scratch::new(&format!("restart-staged-{hidden}"));
+        let path = dir.join("options.json");
+        let options = Options::new().hidden_staging(hidden);
+        let staged = options.staged_path(&path);
+
+        drop(options.stage(&path, b"promoted"));
+        options.promote_staged(&path).unwrap();
+        assert_eq!(read(&path), b"promoted");
+        assert!(!staged.exists());
+
+        drop(options.stage(&path, b"discarded"));
+        options.discard_staged(&path).unwrap();
+        assert!(!staged.exists());
+        assert_eq!(read(&path), b"promoted");
+        options.discard_staged(&path).unwrap();
+    }
+}
+
+#[test]
+fn a_staged_file_knows_its_target() {
+    let dir = Scratch::new("target");
+    let path = dir.join("password");
+    let staged = Options::new().stage(&path, b"").unwrap();
+    assert_eq!(staged.target(), path);
+    staged.discard().unwrap();
+}
+
+#[test]
+fn an_unmoved_promote_names_no_path() {
+    let dir = Scratch::new("unmoved-message");
+    let path = dir.join("password");
+    let error = promote(&path, "next").unwrap_err().to_string();
+    assert!(
+        error.starts_with("the staged file was not renamed over its target: "),
+        "{error}"
+    );
+    assert!(!error.contains("password"), "{error}");
+}
+
 /// A writable but unreadable directory: the file can be made and renamed, but
 /// the directory can't be opened to sync.
 #[cfg(unix)]

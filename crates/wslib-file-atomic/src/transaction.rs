@@ -120,6 +120,7 @@ impl Transaction {
             options
                 .clone()
                 .staging_suffix(&self.suffix)
+                .hidden_staging(false)
                 .stage_with(&target, write)
         });
         if staged.is_err() {

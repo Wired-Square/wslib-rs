@@ -69,6 +69,7 @@ impl FakeTailscaled {
     }
 
     /// Binds the socket and answers on it until [`stop`](Self::stop); needs a tokio runtime.
+    /// Fails with `AddrInUse` while the socket file exists, so a second start is refused.
     pub fn start(&self) -> io::Result<()> {
         let listener = UnixListener::bind(&self.socket)?;
         let state = self.state.clone();

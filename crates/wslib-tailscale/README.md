@@ -32,7 +32,8 @@ match api.status().await {
 - **`Error`**: `Absent` (no socket, or a stale one that refuses), `Silent`
   (the timeout passed), `Refused` (a status outside 2xx, with the first line
   of the body, up to 200 characters), `Malformed`, and `Io`. Nothing is
-  logged; the caller logs with its own context.
+  logged; the caller logs with its own context. `Refused` and `Malformed`
+  display tailscaled's own text: log it, and show users a fixed message.
 - **`is_tailnet_address`**: `100.64.0.0/10` or `fd7a:115c:a1e0::/48`, taking an
   IPv4-mapped address as its IPv4 one, as a dual-stack listener reports it.
 - **`testing::FakeTailscaled`** (feature `testing`): answers status, prefs,

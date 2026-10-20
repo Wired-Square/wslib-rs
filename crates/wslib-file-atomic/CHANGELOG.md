@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.1
+
+- `Transaction`: several files, in any directories, replaced together or
+  not at all, across a crash. `begin`, `stage` or `stage_with` per file with
+  its own `Options`, then `commit`; `abort` or dropping it uncommitted rolls
+  back.
+  A `<name>.txn` record in one directory, pending then committed, is the
+  commit point.
+- `recover(dir, name)` finishes what a crash left: a pending transaction is
+  rolled back and a committed one forward, as `Recovered` says.
+
 ## 0.1.0
 
 - `write_private`, `replace_private` and `replace_readable`: whole-file writes

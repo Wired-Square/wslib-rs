@@ -1,0 +1,22 @@
+[package]
+name = "wslib-file-atomic"
+version = "0.1.0"
+description = "Crash-safe whole-file writes: replaced whole or not at all, readable by whom it should be from creation."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+] }
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2.172"

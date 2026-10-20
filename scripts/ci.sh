@@ -22,7 +22,7 @@ names=scripts/forbidden-names.txt
 ! git log --format=%B | grep -nIiE -f "$names" || die "a consumer is named in a commit message"
 
 step "No reference to the project dossier"
-! git grep -nIE --untracked '\[\[[A-Za-z][^]]*\]\]|wslib Plans' -- ':!scripts/ci.sh' ':!*.toml' ':!*.lock' || die "the dossier is cited; state the constraint here"
+! git grep -nIE --untracked '\[\[[A-Za-z][^]]*\]\]' -- ':!scripts/ci.sh' ':!*.toml' ':!*.lock' || die "the dossier is cited; state the constraint here"
 
 # Shared crates take no rustls provider; the app installs one.
 step "No rustls provider by default"

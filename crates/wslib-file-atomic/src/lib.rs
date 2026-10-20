@@ -174,7 +174,8 @@ impl Options {
         self
     }
 
-    /// Stage as `.<name>.<suffix>`, hidden from a listing of the directory.
+    /// Stage as `.<name>.<suffix>`, hidden from a directory listing on Unix;
+    /// Windows gives a leading dot no meaning.
     pub fn hidden_staging(mut self, hidden_staging: bool) -> Self {
         self.hidden_staging = hidden_staging;
         self

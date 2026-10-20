@@ -6,6 +6,8 @@
 //! wslib_telemetry::Telemetry::new("myapp=info,warn").init();
 //! ```
 //!
+//! A `RUST_LOG` that parses replaces the default filter rather than adding to it.
+//!
 //! Features: `setup` (the default, with `ansi`) is [`Telemetry`]; `json` and
 //! `journald` add its other outputs. `setup-core` is [`Telemetry`] filtering by
 //! target and level only, without `tracing-subscriber`'s regex engine. `types`

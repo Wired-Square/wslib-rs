@@ -41,7 +41,8 @@ enum Output {
 
 impl Telemetry {
     /// Text to stdout, with time and target, filtered by `default_filter`
-    /// unless `RUST_LOG` says otherwise: the daemon style.
+    /// unless `RUST_LOG` says otherwise: the daemon style. A `RUST_LOG` that
+    /// parses replaces `default_filter` rather than adding to it.
     pub fn new(default_filter: &str) -> Self {
         Self {
             default_filter: default_filter.to_string(),

@@ -5466,6 +5466,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-systemd-notify"
+version = "0.1.0"
+dependencies = [
+ "tokio",
+]
+
+[[package]]
 name = "wslib-telemetry"
 version = "0.1.5"
 dependencies = [

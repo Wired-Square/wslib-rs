@@ -74,18 +74,23 @@ tls.commit()?;
   `<file>.<name>.txn`, so every rename stays within its own directory.
 - **The commit point is the record.** `<name>.txn` lists each target's
   absolute path and reads `pending` while files are staged, then `committed`
-  once all of them are synced. The renames follow, then a sync of each
+  once all of them and their directories are synced. The renames follow, then a sync of each
   target's directory, then the record is removed. Each version of the record
   is written whole, as any `replace` is.
 - **Readers call `recover(dir, name)` first**, once at start. It rolls a
   pending transaction back (`Recovered::RolledBack`: its staged files are
   deleted) and a committed one forward (`Recovered::RolledForward`). It only
   ever renames or deletes a target's `<file>.<name>.txn`. A record it can't
-  read, or one naming a relative path, is `InvalidData`, and nothing is touched.
+  read, or one naming a relative path, is `InvalidData`, and nothing is touched:
+  an operator moves `<name>.txn` (`Transaction::record`) aside after checking
+  it. Never delete it automatically.
 - **`begin` refuses while a record is there** (`AlreadyExists`): recover first.
 - **A failure before the commit point rolls back**, a failed `stage`
-  included, and so does `abort` or dropping the transaction uncommitted. A
-  failure after it leaves the record for `recover`.
+  included, and so does `abort` or dropping the transaction uncommitted.
+  `commit` says which side it failed on: `CommitError::RolledBack` left every
+  target as it was; `CommitError::Committed` left the record, and `recover`
+  rolls it forward, so the new files will be served. It converts to an
+  `io::Error` of the same kind.
 - **Callers serialise transactions of one name**, as they do writers of one
   path.
 

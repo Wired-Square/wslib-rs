@@ -17,8 +17,9 @@ Options::new()
 // Staged now, renamed over the target later:
 let staged = Options::new().staging_suffix("next").stage(path, password)?;
 staged.promote()?;
-// After a restart that found `<path>.next`:
+// After a restart that found `<path>.next`, keep it or drop it:
 wslib_file_atomic::promote(path, "next")?;
+wslib_file_atomic::discard(path, "next")?;
 ```
 
 ## What it guarantees
@@ -27,20 +28,31 @@ wslib_file_atomic::promote(path, "next")?;
   appended to the whole name so `app.crt` and `app.key` never share one, are
   synced, and renamed over the target. On Unix the directory is synced too, so
   a power cut leaves the old file or the new one, never a name with nothing
-  behind it.
+  behind it. A directory that is writable but can't be opened (`0300`) is
+  not synced, and that isn't an error.
 - **Readers from creation.** The file is created `0600` (`Readers::Private`)
   or `0644` (`Readers::Readable`) and set again on the open file, so a
   restrictive umask such as `UMask=0077` doesn't change it. On Windows a
   private file is opened unshared and given a protected DACL granting its
   owner and SYSTEM; a readable one inherits the directory's ACL.
 - **A failure leaves nothing.** A failed write, sync or rename removes the
-  staged file, and the old file is untouched. A staged file an earlier run
+  staged file, and the old file is untouched. A failed directory sync after
+  the rename removes nothing: the file has landed, so an error from `write`
+  can mean the new file is in place. A staged file an earlier run
   left is cleared first rather than reused, so its mode never carries over.
 - **`write_private`** (or `Options::create_new`) writes at the path itself and
-  refuses one that exists; a failure removes what it made.
-- **`stage`** returns a `Staged` you `promote()` or `discard()`. Dropping it
-  leaves the file, and a failed `promote()` keeps it, so a restart can find it
-  with `promote(path, suffix)`.
+  refuses one that exists; a failed write removes what it made.
+- **`stage`** returns a `Staged` you `promote()` or `discard()`, and
+  `Options::staged_path` names where it goes. Dropping it leaves the file, so
+  a restart can find it with `promote(path, suffix)` or
+  `discard(path, suffix)`. A promote's `PromoteError` says which half failed: `Unmoved`
+  hands the `Staged` back for a retry or discard, and `Unsynced` means the
+  file is in place but its directory wasn't synced. It converts to an
+  `io::Error` of the same kind for `?`.
+- **`promote_unsynced`** renames without the directory sync, and
+  **`sync_dir`** syncs once after the last of several renames. That narrows
+  the window in which a power cut leaves a key and its certificate
+  mismatched; it doesn't make the pair atomic.
 - **`owner_only`** restricts an existing file the same way, for files
   something else created.
 

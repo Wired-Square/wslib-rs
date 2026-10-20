@@ -1,9 +1,11 @@
+use std::error::Error;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
 use wslib_file_atomic::{
-    Options, beside, promote, replace_private, replace_readable, write_private,
+    Options, PromoteError, beside, discard, promote, replace_private, replace_readable, sync_dir,
+    write_private,
 };
 
 struct Scratch(PathBuf);
@@ -175,14 +177,103 @@ fn a_staged_file_outlives_its_handle_and_is_promoted_by_path() {
 }
 
 #[test]
-fn a_failed_promote_leaves_the_staged_file_for_a_retry() {
+fn an_unmoved_promote_hands_back_a_staged_file_that_can_be_promoted_again() {
     let dir = Scratch::new("failed-promote");
     let path = dir.join("occupied");
     let staged = Options::new().stage(&path, b"secret").unwrap();
     fs::create_dir(&path).unwrap();
     fs::write(path.join("inside"), b"").unwrap();
-    assert!(staged.promote().is_err());
-    assert_eq!(read(&beside(&path, "new")), b"secret");
+    let Err(PromoteError::Unmoved { staged, .. }) = staged.promote() else {
+        panic!("a rename onto a non-empty directory fails");
+    };
+    assert_eq!(read(staged.path()), b"secret");
+
+    fs::remove_dir_all(&path).unwrap();
+    staged.promote().unwrap();
+    assert_eq!(read(&path), b"secret");
+}
+
+#[test]
+fn promoting_by_path_with_nothing_staged_is_unmoved_and_not_found() {
+    let dir = Scratch::new("promote-nothing");
+    let path = dir.join("password");
+    let Err(PromoteError::Unmoved { staged, error }) = promote(&path, "next") else {
+        panic!("there is nothing to rename");
+    };
+    assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    assert_eq!(staged.path(), dir.join("password.next"));
+}
+
+#[test]
+fn a_promote_error_becomes_an_io_error_of_the_same_kind() {
+    let unsynced = PromoteError::Unsynced(io::ErrorKind::PermissionDenied.into());
+    assert!(unsynced.source().is_some());
+    let error = io::Error::from(unsynced);
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    assert!(error.to_string().contains("not synced"), "{error}");
+}
+
+#[test]
+fn renames_promoted_unsynced_land_and_one_sync_follows() {
+    let dir = Scratch::new("pair");
+    let (key, cert) = (dir.join("app.key"), dir.join("app.crt"));
+    let options = Options::new();
+    let staged_key = options.stage(&key, b"key").unwrap();
+    let staged_cert = options.stage(&cert, b"cert").unwrap();
+    staged_key.promote_unsynced().unwrap();
+    staged_cert.promote_unsynced().unwrap();
+    sync_dir(&dir.0).unwrap();
+    assert_eq!(read(&key), b"key");
+    assert_eq!(read(&cert), b"cert");
+}
+
+#[test]
+fn staged_path_follows_the_suffix() {
+    let dir = Scratch::new("staged-path");
+    let path = dir.join("password");
+    let options = Options::new().staging_suffix("next");
+    assert_eq!(options.staged_path(&path), dir.join("password.next"));
+    let staged = options.stage(&path, b"").unwrap();
+    assert_eq!(staged.path(), options.staged_path(&path));
+}
+
+#[test]
+fn discarding_by_path_removes_the_staged_file_and_tolerates_none() {
+    let dir = Scratch::new("discard-path");
+    let path = dir.join("password");
+    drop(
+        Options::new()
+            .staging_suffix("next")
+            .stage(&path, b"rotated"),
+    );
+    discard(&path, "next").unwrap();
+    assert!(!dir.join("password.next").exists());
+    discard(&path, "next").unwrap();
+}
+
+/// A writable but unreadable directory: the file can be made and renamed, but
+/// the directory can't be opened to sync.
+#[cfg(unix)]
+#[test]
+fn a_directory_that_cannot_be_opened_to_sync_keeps_what_was_written() {
+    use std::os::unix::fs::PermissionsExt;
+    // SAFETY: a plain syscall with no arguments.
+    if unsafe { libc::geteuid() } == 0 {
+        eprintln!("skipped: root opens a 0300 directory regardless");
+        return;
+    }
+    let dir = Scratch::new("unreadable");
+    let sealed = dir.join("sealed");
+    fs::create_dir(&sealed).unwrap();
+    fs::set_permissions(&sealed, fs::Permissions::from_mode(0o300)).unwrap();
+    let written = write_private(&sealed.join("backup"), b"sealed")
+        .and_then(|()| replace_private(&sealed.join("config"), b"replaced"))
+        .and_then(|()| sync_dir(&sealed));
+    fs::set_permissions(&sealed, fs::Permissions::from_mode(0o700)).unwrap();
+    written.unwrap();
+    assert_eq!(read(&sealed.join("backup")), b"sealed");
+    assert_eq!(read(&sealed.join("config")), b"replaced");
+    assert!(!sealed.join("config.new").exists());
 }
 
 #[test]

@@ -19,6 +19,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::{error, fmt};
 
 #[cfg(windows)]
 mod windows;
@@ -53,8 +54,45 @@ pub fn beside(path: &Path, suffix: &str) -> PathBuf {
 }
 
 /// Rename the file staged beside `path` under `suffix` over it, as a restart finds one.
-pub fn promote(path: &Path, suffix: &str) -> io::Result<()> {
-    rename_into(&beside(path, suffix), path)
+pub fn promote(path: &Path, suffix: &str) -> Result<(), PromoteError> {
+    Staged {
+        path: beside(path, suffix),
+        target: path.to_owned(),
+    }
+    .promote()
+}
+
+/// Remove the file staged beside `path` under `suffix`, if there is one.
+pub fn discard(path: &Path, suffix: &str) -> io::Result<()> {
+    match fs::remove_file(beside(path, suffix)) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        removed => removed,
+    }
+}
+
+/// Sync `dir` so the renames into it survive a power cut; a caller renaming
+/// several files with [`Staged::promote_unsynced`] syncs once, after the last.
+pub fn sync_dir(dir: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        match File::open(dir) {
+            // A writable but unreadable directory can't be opened to sync; its renames stand.
+            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => Ok(()),
+            opened => opened?.sync_all(),
+        }
+    }
+    // `File::open` refuses a directory on Windows, so the rename is not flushed
+    // there; NTFS keeps it atomic, but a power cut can undo it.
+    #[cfg(windows)]
+    {
+        let _ = dir;
+        Ok(())
+    }
+}
+
+fn sync_parent(path: &Path) -> io::Result<()> {
+    let dir = path.parent().filter(|dir| !dir.as_os_str().is_empty());
+    sync_dir(dir.unwrap_or(Path::new(".")))
 }
 
 /// Make `path` readable by its owner alone: `0600`, or on Windows a protected
@@ -130,7 +168,13 @@ impl Options {
         self
     }
 
-    /// Write `contents` to `path` durably, whole or not at all.
+    /// Where a file staged for `path` goes.
+    pub fn staged_path(&self, path: &Path) -> PathBuf {
+        beside(path, &self.suffix)
+    }
+
+    /// Write `contents` to `path` durably, whole or not at all; an error after
+    /// the rename can mean the file landed but its directory wasn't synced.
     pub fn write(&self, path: &Path, contents: &[u8]) -> io::Result<()> {
         self.write_with(path, |file| file.write_all(contents))
     }
@@ -144,14 +188,17 @@ impl Options {
         if self.create_new {
             self.make_parents(path)?;
             create(path, self.readers, write)?;
-            return sync_parent(path).inspect_err(|_| {
-                let _ = fs::remove_file(path);
-            });
+            return sync_parent(path);
         }
-        let staged = self.stage_with(path, write)?;
-        rename_into(&staged.path, path).inspect_err(|_| {
-            let _ = fs::remove_file(&staged.path);
-        })
+        self.stage_with(path, write)?
+            .promote()
+            .map_err(|e| match e {
+                PromoteError::Unmoved { staged, error } => {
+                    let _ = staged.discard();
+                    error
+                }
+                PromoteError::Unsynced(error) => error,
+            })
     }
 
     /// Write `contents` durably beside `path`, for [`Staged::promote`] to rename over it.
@@ -172,7 +219,7 @@ impl Options {
             ));
         }
         self.make_parents(path)?;
-        let staged = beside(path, &self.suffix);
+        let staged = self.staged_path(path);
         // One an interrupted run left, which `create_new` would refuse for ever.
         let _ = fs::remove_file(&staged);
         create(&staged, self.readers, write)?;
@@ -205,14 +252,78 @@ impl Staged {
         &self.path
     }
 
-    /// Rename the staged file over its target; on failure it is left for [`promote`] to retry.
-    pub fn promote(self) -> io::Result<()> {
-        rename_into(&self.path, &self.target)
+    /// Rename the staged file over its target and sync its directory.
+    pub fn promote(self) -> Result<(), PromoteError> {
+        let target = self.rename()?;
+        sync_parent(&target).map_err(PromoteError::Unsynced)
+    }
+
+    /// Rename the staged file over its target without syncing, for a caller
+    /// that renames several and then calls [`sync_dir`] once.
+    pub fn promote_unsynced(self) -> Result<(), PromoteError> {
+        self.rename().map(drop)
+    }
+
+    fn rename(self) -> Result<PathBuf, PromoteError> {
+        match fs::rename(&self.path, &self.target) {
+            Ok(()) => Ok(self.target),
+            Err(error) => Err(PromoteError::Unmoved {
+                staged: self,
+                error,
+            }),
+        }
     }
 
     /// Remove the staged file.
     pub fn discard(self) -> io::Result<()> {
         fs::remove_file(&self.path)
+    }
+}
+
+/// Why a staged file was not promoted.
+#[non_exhaustive]
+#[derive(Debug)]
+pub enum PromoteError {
+    /// The rename failed and the staged file is still there.
+    Unmoved { staged: Staged, error: io::Error },
+    /// The file is in place, but its directory wasn't synced, so the rename may
+    /// not survive a power cut.
+    Unsynced(io::Error),
+}
+
+impl PromoteError {
+    fn io(&self) -> &io::Error {
+        match self {
+            Self::Unmoved { error, .. } | Self::Unsynced(error) => error,
+        }
+    }
+}
+
+impl fmt::Display for PromoteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unmoved { staged, error } => write!(
+                f,
+                "{} was not renamed over {}: {error}",
+                staged.path.display(),
+                staged.target.display()
+            ),
+            Self::Unsynced(error) => {
+                write!(f, "renamed, but its directory was not synced: {error}")
+            }
+        }
+    }
+}
+
+impl error::Error for PromoteError {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        Some(self.io())
+    }
+}
+
+impl From<PromoteError> for io::Error {
+    fn from(e: PromoteError) -> Self {
+        io::Error::new(e.io().kind(), e)
     }
 }
 
@@ -233,11 +344,6 @@ fn create(
         let _ = fs::remove_file(path);
     }
     written
-}
-
-fn rename_into(staged: &Path, path: &Path) -> io::Result<()> {
-    fs::rename(staged, path)?;
-    sync_parent(path)
 }
 
 #[cfg(unix)]
@@ -268,12 +374,6 @@ fn restrict(file: &File, _: &Path, readers: Readers) -> io::Result<()> {
     file.set_permissions(fs::Permissions::from_mode(readers.mode()))
 }
 
-#[cfg(unix)]
-fn sync_parent(path: &Path) -> io::Result<()> {
-    let dir = path.parent().filter(|dir| !dir.as_os_str().is_empty());
-    File::open(dir.unwrap_or(Path::new(".")))?.sync_all()
-}
-
 /// A private file is opened unshared, so nothing can open its contents before
 /// the DACL is set; access is checked at the open.
 #[cfg(windows)]
@@ -293,11 +393,4 @@ fn restrict(_: &File, path: &Path, readers: Readers) -> io::Result<()> {
         Readers::Private => windows::owner_only(path),
         Readers::Readable => Ok(()),
     }
-}
-
-/// `File::open` refuses a directory on Windows, so the rename is not flushed
-/// there; NTFS keeps it atomic, but a power cut can undo it.
-#[cfg(windows)]
-fn sync_parent(_: &Path) -> io::Result<()> {
-    Ok(())
 }

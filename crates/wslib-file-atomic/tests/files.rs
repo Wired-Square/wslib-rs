@@ -3,41 +3,18 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+mod common;
+
+use common::{Scratch, read};
 use wslib_file_atomic::{
     Options, PromoteError, beside, discard, promote, replace_private, replace_readable, sync_dir,
     write_private,
 };
 
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new(name: &str) -> Self {
-        let dir =
-            std::env::temp_dir().join(format!("wslib-file-atomic-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        Self(dir)
-    }
-
-    fn join(&self, name: &str) -> PathBuf {
-        self.0.join(name)
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
 #[cfg(unix)]
 fn mode(path: &Path) -> u32 {
     use std::os::unix::fs::PermissionsExt;
     fs::metadata(path).unwrap().permissions().mode() & 0o777
-}
-
-fn read(path: &Path) -> Vec<u8> {
-    fs::read(path).unwrap()
 }
 
 #[test]

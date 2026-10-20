@@ -21,8 +21,11 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::{error, fmt};
 
+mod transaction;
 #[cfg(windows)]
 mod windows;
+
+pub use transaction::{CommitError, Recovered, Transaction, recover};
 
 /// Create `path` readable by its owner alone and write `contents` to it
 /// durably, refusing a path that exists.
@@ -64,7 +67,11 @@ pub fn promote(path: &Path, suffix: &str) -> Result<(), PromoteError> {
 
 /// Remove the file staged beside `path` under `suffix`, if there is one.
 pub fn discard(path: &Path, suffix: &str) -> io::Result<()> {
-    match fs::remove_file(beside(path, suffix)) {
+    remove_if_there(&beside(path, suffix))
+}
+
+fn remove_if_there(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
         removed => removed,
     }
@@ -229,7 +236,7 @@ impl Options {
         })
     }
 
-    fn make_parents(&self, path: &Path) -> io::Result<()> {
+    pub(crate) fn make_parents(&self, path: &Path) -> io::Result<()> {
         match path.parent() {
             Some(dir) if self.create_parents => fs::create_dir_all(dir),
             _ => Ok(()),

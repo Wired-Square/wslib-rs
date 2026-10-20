@@ -52,9 +52,47 @@ wslib_file_atomic::discard(path, "next")?;
 - **`promote_unsynced`** renames without the directory sync, and
   **`sync_dir`** syncs once after the last of several renames. That narrows
   the window in which a power cut leaves a key and its certificate
-  mismatched; it doesn't make the pair atomic.
+  mismatched; it doesn't make the pair atomic: `Transaction` does.
 - **`owner_only`** restricts an existing file the same way, for files
   something else created.
+
+## Several files together: `Transaction`
+
+```rust
+use wslib_file_atomic::{Options, Readers, Transaction};
+
+wslib_file_atomic::recover(state_dir, "tls")?;
+
+let mut tls = Transaction::begin(state_dir, "tls")?;
+tls.stage(key_path, key, &Options::new())?;
+tls.stage(cert_path, cert, &Options::new().readers(Readers::Readable))?;
+tls.commit()?;
+```
+
+- **All or none, across a crash.** The record lives in one directory; the
+  files may be anywhere. Each is staged beside its target as
+  `<file>.<name>.txn`, so every rename stays within its own directory.
+- **The commit point is the record.** `<name>.txn` lists each target's
+  absolute path and reads `pending` while files are staged, then `committed`
+  once all of them and their directories are synced. The renames follow, then a sync of each
+  target's directory, then the record is removed. Each version of the record
+  is written whole, as any `replace` is.
+- **Readers call `recover(dir, name)` first**, once at start. It rolls a
+  pending transaction back (`Recovered::RolledBack`: its staged files are
+  deleted) and a committed one forward (`Recovered::RolledForward`). It only
+  ever renames or deletes a target's `<file>.<name>.txn`. A record it can't
+  read, or one naming a relative path, is `InvalidData`, and nothing is touched:
+  an operator moves `<name>.txn` (`Transaction::record`) aside after checking
+  it. Never delete it automatically.
+- **`begin` refuses while a record is there** (`AlreadyExists`): recover first.
+- **A failure before the commit point rolls back**, a failed `stage`
+  included, and so does `abort` or dropping the transaction uncommitted.
+  `commit` says which side it failed on: `CommitError::RolledBack` left every
+  target as it was; `CommitError::Committed` left the record, and `recover`
+  rolls it forward, so the new files will be served. It converts to an
+  `io::Error` of the same kind.
+- **Callers serialise transactions of one name**, as they do writers of one
+  path.
 
 ## Writers to one path are serialised by the caller
 

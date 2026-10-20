@@ -2,6 +2,8 @@ use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::io::{self, IsTerminal};
 
+use tracing::subscriber::DefaultGuard;
+
 #[cfg(feature = "setup")]
 use tracing_subscriber::EnvFilter;
 #[cfg(any(test, not(feature = "setup")))]
@@ -15,10 +17,10 @@ use tracing_subscriber::{Layer, fmt};
 #[cfg(feature = "ring")]
 use crate::Logs;
 
-/// The process's one subscriber: `RUST_LOG`, or the caller's default filter
-/// when it is unset or does not parse, ahead of a formatter.
+/// The process's subscriber, or a thread's: `RUST_LOG`, or the caller's default
+/// filter when it is unset or does not parse, ahead of a formatter.
 #[derive(Debug)]
-#[must_use = "nothing is installed until `init`"]
+#[must_use = "nothing is installed until `init` or `set_default`"]
 pub struct Telemetry {
     default_filter: String,
     output: Output,
@@ -128,6 +130,24 @@ impl Telemetry {
     /// [`init`](Self::init), failing rather than panicking when a global
     /// subscriber is already installed.
     pub fn try_init(self) -> Result<(), TryInitError> {
+        let (subscriber, rejected) = self.subscriber();
+        subscriber.try_init()?;
+        rejected.warn();
+        Ok(())
+    }
+
+    /// Installs the subscriber for this thread until the guard drops, leaving
+    /// the global default and the `log` bridge alone.
+    pub fn set_default(self) -> DefaultGuard {
+        let (subscriber, rejected) = self.subscriber();
+        // Not `SubscriberInitExt::set_default`, which installs the `log` bridge
+        // whenever another crate turns on `tracing-log`.
+        let guard = tracing::subscriber::set_default(subscriber);
+        rejected.warn();
+        guard
+    }
+
+    fn subscriber(self) -> (impl tracing::Subscriber + Send + Sync, Rejected) {
         let rust_log = std::env::var_os("RUST_LOG");
         let (filter, rejected) = choose_filter::<Filter>(&self.default_filter, rust_log.as_deref());
 
@@ -135,16 +155,8 @@ impl Telemetry {
             .with(filter)
             .with(self.formatter());
         #[cfg(feature = "ring")]
-        let subscriber = subscriber.with(self.ring.as_ref().map(|logs| logs.layer()));
-        subscriber.try_init()?;
-
-        if let Some((value, error)) = rejected.rust_log {
-            tracing::warn!(rust_log = %value, %error, "RUST_LOG did not parse; using the default filter");
-        }
-        if let Some((value, error)) = rejected.default {
-            tracing::warn!(default_filter = %value, %error, "the default filter did not parse; using what of it does");
-        }
-        Ok(())
+        let subscriber = subscriber.with(self.ring.as_ref().map(|logs| logs.layer().boxed()));
+        (subscriber, rejected)
     }
 
     fn formatter<S>(&self) -> Box<dyn Layer<S> + Send + Sync>
@@ -272,6 +284,17 @@ fn parse_lossy<F: Directives>(filter: &str) -> F {
 struct Rejected {
     default: Option<(String, String)>,
     rust_log: Option<(String, String)>,
+}
+
+impl Rejected {
+    fn warn(self) {
+        if let Some((value, error)) = self.rust_log {
+            tracing::warn!(rust_log = %value, %error, "RUST_LOG did not parse; using the default filter");
+        }
+        if let Some((value, error)) = self.default {
+            tracing::warn!(default_filter = %value, %error, "the default filter did not parse; using what of it does");
+        }
+    }
 }
 
 /// `RUST_LOG` when it has directives and they parse; otherwise the default, or

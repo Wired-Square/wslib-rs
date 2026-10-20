@@ -1,6 +1,6 @@
 [package]
 name = "wslib-telemetry"
-version = "0.1.4"
+version = "0.1.5"
 description = "One tracing setup for daemons and command lines, and an in-memory ring of a service's own log."
 edition.workspace = true
 rust-version.workspace = true

@@ -22,7 +22,9 @@ wslib_systemd_notify::stopping()?;
   `EXTEND_TIMEOUT_USEC=`, asking for that much more time from now for a slow
   start or stop. **`notify`** sends any `KEY=value` fields in one datagram.
   A newline in a value, or a key that is empty or holds `=`, is
-  refused as `InvalidInput` rather than sent as an extra line.
+  refused as `InvalidInput` rather than sent as an extra line. The whole
+  datagram is refused, so a bad `STATUS` sent with `READY=1` in one `notify`
+  holds back the `READY` too.
 - Every call is a successful no-op when `$NOTIFY_SOCKET` is unset or empty, so
   the same binary runs outside systemd, and on targets other than Unix. The
   socket is an absolute path, or on Linux an abstract name written `@name`.
@@ -38,6 +40,10 @@ wslib_systemd_notify::stopping()?;
   Don't stop it when shutdown starts: a long drain or flush still needs
   pings. Pass a future that completes when the process is really done, or
   `std::future::pending()` and let the runtime drop the task.
+
+  A ping from its own task proves the runtime is alive, not that the service
+  answers: a frozen process trips the watchdog, a deadlocked handler on a live
+  runtime doesn't. Ping from the work itself if that matters.
 
 ## The unit file
 
@@ -56,7 +62,9 @@ for `Type=notify`, accepts messages only from the main process; use `all` if
 a child sends them.
 
 The watchdog's default signal is `SIGABRT`, which dumps core; `WatchdogSignal=`
-changes it.
+changes it. With systemd-coredump, that core is the process's memory on disk,
+secrets included; set `WatchdogSignal=SIGTERM` or `LimitCORE=0` if that
+matters.
 
 ## Re-exec
 

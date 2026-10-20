@@ -124,7 +124,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_request_with_no_usable_host_is_refused() {
-        for host in [None, Some(":8080"), Some("[")] {
+        for host in [None, Some(""), Some(":8080"), Some("[")] {
             let response = redirected(8443, host, "/").await;
             assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{host:?}");
         }

@@ -24,6 +24,9 @@ Without TLS, `serve_http(Listener::bind(address, Bounds::SERVING).await?, app, s
 `stop` is any `Future<Output = ()>`: a `CancellationToken`'s
 `cancelled_owned()`, or several sources joined by the caller.
 
+The listeners log under the `wslib_http_server` tracing target; an app that
+filters by target has to include it.
+
 ## What's here
 
 - **No crypto provider.** The crate enables none and never reads the process

@@ -1,6 +1,13 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.1
+
+- Accept errors are no longer silent. A peer gone before its accept is
+  retried at once; anything else, such as EMFILE, is logged and retried a
+  second later, holding the connection's permit, rather than dropped and
+  retried every 50ms.
+
+## 0.1.0
 
 - `serve_http`: an axum `Router` over plain HTTP on a `Listener` bound by the
   caller, until a stop future completes; what is open then gets the

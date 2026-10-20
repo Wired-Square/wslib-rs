@@ -34,6 +34,7 @@ struct Answer {
 
 impl Issuer {
     async fn serving(jwks: &[&str]) -> Self {
+        install_providers();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/jwks.json", listener.local_addr().unwrap());
         let state = Arc::new(Mutex::new(Answer {
@@ -75,7 +76,6 @@ impl Issuer {
     }
 
     fn verifier(&self) -> Verifier {
-        let _ = rustls::crypto::ring::default_provider().install_default();
         Verifier::new(reqwest::Client::new(), ISSUER, AUDIENCE).with_jwks_url(&self.url)
     }
 
@@ -94,6 +94,12 @@ impl Issuer {
     fn delay(&self, delay: Duration) {
         self.state.lock().unwrap().delay = delay;
     }
+}
+
+/// Explicit, since `--all-features` enables both jsonwebtoken backends.
+fn install_providers() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let _ = jsonwebtoken::crypto::rust_crypto::DEFAULT_PROVIDER.install_default();
 }
 
 fn jwks_of(keys: &[&str]) -> String {
@@ -369,7 +375,6 @@ async fn a_jwks_without_a_usable_key_is_unavailable() {
 
 #[tokio::test]
 async fn the_cognito_issuer_and_token_use() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
     let issuer = Issuer::serving(&[JWK_A]).await;
     let pool = "https://cognito-idp.ap-southeast-2.amazonaws.com/ap-southeast-2_TEST";
     let verifier = Verifier::cognito(

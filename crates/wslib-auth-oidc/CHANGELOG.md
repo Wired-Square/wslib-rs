@@ -13,4 +13,5 @@
 - Non-RS256 and non-signing keys in the JWKS are skipped.
 - `Error` keeps `Rejected` (a bad token) and `Unavailable` (keys couldn't be
   fetched) apart. No logging.
-- The app builds the `reqwest::Client` and picks jsonwebtoken's crypto backend.
+- The app builds the `reqwest::Client` and picks the crypto backend, with the
+  `rust-crypto` or `aws-lc-rs` feature or its own jsonwebtoken `CryptoProvider`.

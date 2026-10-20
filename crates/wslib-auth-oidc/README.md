@@ -23,13 +23,12 @@ match verifier.verify::<Claims>(token).await {
 
 ## Setting it up
 
-- **The crypto backend is the app's.** jsonwebtoken 11 checks signatures with
-  the backend it is built with, and this crate enables none. Add
-  `jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto"] }`
-  (or `aws_lc_rs`, not both) to the app, or install a `CryptoProvider`.
-  Without one, the first verify panics.
+- **The crypto backend is the app's.** Enable exactly one of the
+  `rust-crypto` and `aws-lc-rs` features (they pick jsonwebtoken's), or
+  install a jsonwebtoken `CryptoProvider`. Without one, or with both, the
+  first verify panics.
 - **So is the HTTP client.** Pass a `reqwest::Client` (0.13) built with the
-  app's TLS provider and roots.
+  app's TLS provider and roots. An app still on reqwest 0.12 carries both.
 - **One `Verifier` per issuer, shared** (in an `Arc` or app state): each holds
   its own key cache. Call `refresh` at start-up to warm it, if the first
   sign-in shouldn't wait on a fetch.
@@ -60,7 +59,8 @@ match verifier.verify::<Claims>(token).await {
 - **`Error`**: `Rejected` (malformed, unknown key, bad signature, wrong
   issuer, audience or use, expired, or claims that don't fit) and
   `Unavailable` (the key isn't cached and the JWKS couldn't be fetched, so the
-  token may be good). Both carry text for the log; show users a fixed message.
+  token may be good). Both carry text for the log, `Unavailable`'s naming the
+  JWKS URL; show users a fixed message.
   Nothing is logged.
 
 ## What isn't

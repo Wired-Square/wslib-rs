@@ -23,9 +23,10 @@
 //! # }
 //! ```
 //!
-//! jsonwebtoken does the signature checks with the crypto backend the app
-//! picks: enable exactly one of its `rust_crypto` and `aws_lc_rs` features, or
-//! install a `CryptoProvider`. Without one, the first verify panics.
+//! Signatures are checked by jsonwebtoken with the crypto backend the app
+//! picks: exactly one of the `rust-crypto` and `aws-lc-rs` features, or a
+//! jsonwebtoken `CryptoProvider` the app installs. Without one, or with both,
+//! the first verify panics.
 
 use std::collections::HashMap;
 use std::fmt;

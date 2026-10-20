@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.4
+
+- A default filter that does not parse is warned about once the subscriber is
+  installed, as a bad `RUST_LOG` is, and the directives of it that parse are
+  used, or `info` when none does. `warning`, in any case, is read as `warn`,
+  where tracing took a bare `WARNING` for a target and logged nothing.
+- Docs: a `RUST_LOG` that parses replaces the default filter rather than
+  adding to it.
+
 ## 0.1.3
 
 - `setup-core` is `Telemetry` without tracing-subscriber's `env-filter`, and so

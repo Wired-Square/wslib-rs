@@ -6747,6 +6747,7 @@ dependencies = [
  "wslib-crypto",
  "wslib-crypto-x509",
  "wslib-file-atomic",
+ "wslib-secret",
 ]
 
 [[package]]

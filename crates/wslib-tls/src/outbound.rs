@@ -13,7 +13,7 @@ use wslib_crypto::Fingerprint;
 use crate::os::{OsRoots, ReadOs};
 use crate::{Rejection, Trust, normalise_host};
 
-const OS_WAIT: Duration = Duration::from_secs(30);
+pub(crate) const OS_WAIT: Duration = Duration::from_secs(30);
 
 /// What an app trusts for the connections it makes, on the caller's provider.
 pub struct Outbound {
@@ -71,6 +71,11 @@ impl Outbound {
     pub fn set_trust(&self, trust: Trust) {
         self.replace(trust);
         self.changed.send_modify(|generation| *generation += 1);
+    }
+
+    /// What is trusted now, as last given to [`set_trust`](Self::set_trust).
+    pub fn trust(&self) -> Trust {
+        self.reading().trust.clone()
     }
 
     /// Changes whenever [`set_trust`](Self::set_trust) is called; the value is a generation.
@@ -197,7 +202,7 @@ impl Reading {
             return built.verifier.clone();
         }
         let mut roots = os.as_deref().cloned().unwrap_or_else(RootCertStore::empty);
-        roots.extend(self.trust.anchors.iter().cloned());
+        roots.extend(self.trust.anchors.iter().map(|(_, anchor)| anchor.clone()));
         let verifier =
             WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider.clone())
                 .build()
@@ -295,28 +300,20 @@ mod tests {
     use rustls_native_certs::CertificateResult;
 
     use super::*;
-    use crate::testing::{Authority, TlsPeer, providers, self_signed};
+    use crate::testing::{Authority, TlsPeer, outbound_with_os_roots, providers, self_signed};
     use crate::{Cause, cause};
 
-    fn os_holding(roots: Vec<CertificateDer<'static>>) -> ReadOs {
-        Arc::new(move || {
-            let mut read = CertificateResult::default();
-            read.certs = roots.clone();
-            read
-        })
-    }
-
     /// An OS store holding one root that signed nothing here.
-    fn unrelated_os(provider: &Arc<CryptoProvider>) -> ReadOs {
-        os_holding(vec![
-            Authority::new(provider.clone(), "OS Root").certificate,
-        ])
+    fn unrelated_os(provider: &Arc<CryptoProvider>) -> Vec<CertificateDer<'static>> {
+        vec![Authority::new(provider.clone(), "OS Root").certificate]
     }
 
-    fn outbound(provider: &Arc<CryptoProvider>, trust: Trust, read: ReadOs) -> Arc<Outbound> {
-        Arc::new(
-            Outbound::reading_os_with(provider.clone(), trust, read, OS_WAIT).expect("a client"),
-        )
+    fn outbound(
+        provider: &Arc<CryptoProvider>,
+        trust: Trust,
+        os: Vec<CertificateDer<'static>>,
+    ) -> Arc<Outbound> {
+        Arc::new(outbound_with_os_roots(provider.clone(), trust, os).expect("a client"))
     }
 
     fn refused(result: std::io::Result<()>) -> Cause {
@@ -386,6 +383,7 @@ mod tests {
             trust.anchor(&ca.certificate).expect("an authority");
             outbound.set_trust(trust);
             assert!(changes.has_changed().expect("open"), "{name}");
+            assert!(outbound.trust().anchors().eq([&ca.certificate]), "{name}");
             peer.handshake(&config).await.expect(name);
 
             outbound.set_trust(Trust::os_roots());
@@ -427,9 +425,7 @@ mod tests {
                 &self_signed(provider.clone(), &["127.0.0.1"]),
             )
             .await;
-            let config = Arc::new(
-                outbound(&provider, Trust::os_roots(), os_holding(vec![])).client_config(),
-            );
+            let config = Arc::new(outbound(&provider, Trust::os_roots(), vec![]).client_config());
             assert_eq!(
                 refused(peer.handshake(&config).await),
                 Cause::Rejected(Rejection::NoAuthority {
@@ -447,7 +443,7 @@ mod tests {
             let mut pair = ca.sign(&["widget-02.local"]);
             pair.chain.push(ca.certificate.clone());
             let peer = TlsPeer::presenting(provider.clone(), &pair).await;
-            let outbound = outbound(&provider, Trust::default(), os_holding(vec![]));
+            let outbound = outbound(&provider, Trust::default(), vec![]);
 
             let seen = outbound.inspect(&peer.target()).await.expect(name);
             assert_eq!(seen.host, "127.0.0.1");
@@ -460,7 +456,7 @@ mod tests {
     #[tokio::test]
     async fn a_host_that_presents_nothing_is_reported_by_host_and_port() {
         let (_, provider) = &providers()[0];
-        let outbound = outbound(provider, Trust::default(), os_holding(vec![]));
+        let outbound = outbound(provider, Trust::default(), vec![]);
         let addr = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind")

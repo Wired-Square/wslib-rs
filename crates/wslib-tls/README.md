@@ -11,6 +11,7 @@ use wslib_tls::{Cause, Outbound, Rejection, Trust};
 
 let mut trust = Trust::os_roots();
 trust.anchor(&authority_der)?; // must be CA:TRUE
+trust.anchor_pem(&authorities_pem)?; // each one, or none
 trust.pin("10.0.50.198", fingerprint);
 let outbound = Arc::new(Outbound::new(provider.clone(), trust)?);
 
@@ -37,7 +38,9 @@ let view = wslib_crypto_x509::inspect(&presented.end_entity)?;
 
 - **`Trust`**: plain values. `Trust::os_roots()` or `Trust::default()`
   (nothing), `anchor` for an authority's certificate (refused unless it is
-  `CA:TRUE`, so a leaf cannot anchor itself), and `pin` for a host and a
+  `CA:TRUE`, so a leaf cannot anchor itself), `anchor_pem` for one or more
+  in PEM, all anchored or none, `anchors()` to read them back as DER (for
+  a Docker daemon's CA file, say), and `pin` for a host and a
   `wslib_crypto::Fingerprint`. Hosts are keyed as `normalise_host` spells
   them: an address in canonical form, a name in lowercase without a
   trailing dot.
@@ -52,8 +55,9 @@ let view = wslib_crypto_x509::inspect(&presented.end_entity)?;
   unpinned handshake waits up to 30 s for the first OS read, handing a
   multi-threaded runtime's worker on while it waits. An authority's own
   dates are not checked.
-- **`set_trust` and `subscribe`**: every client built from `client_config`
-  reads the trust last set at its next handshake. Pooled connections are
+- **`set_trust`, `trust` and `subscribe`**: every client built from
+  `client_config` reads the trust last set at its next handshake, and
+  `trust()` hands it back. Pooled connections are
   not reached; drop clients when the `watch` generation changes to make a
   removal bite at once.
 - **`client_config()`**: on the caller's provider, session resumption off
@@ -67,7 +71,9 @@ let view = wslib_crypto_x509::inspect(&presented.end_entity)?;
   presented chain. Offers ALPN `h2` and `http/1.1`. `ProbeError` says
   which part failed.
 - **`testing`** (feature): an `Authority` that signs, a `self_signed` pair
-  and a loopback `TlsPeer` answering 204, each on the provider passed in.
+  and a loopback `TlsPeer` answering 204, each on the provider passed in;
+  `outbound_with_os_roots` for an `Outbound` whose OS store holds the
+  roots given, or none, rather than the machine's.
 
 Needs tokio's multi-threaded runtime feature, for `block_in_place`.
 
@@ -88,7 +94,9 @@ let serving = tokio::task::spawn_blocking(move || {
 let tls = wslib_http_server::Tls::new(serving.config()); // adds h2 and http/1.1
 
 // An operator's pair: refused before a file is touched, or written and handed back.
-let installed = serving.install_pem(&cert_pem, &key_pem, Some(host)).await?;
+let installed = serving
+    .install_pem(&cert_pem, &key_pem, Some(host), SystemTime::now()) // key_pem: Secret
+    .await?;
 tls.reload(installed.config);
 for warning in &installed.report.warnings { /* expired, host not covered, ... */ }
 ```
@@ -109,14 +117,21 @@ for warning in &installed.report.warnings { /* expired, host not covered, ... */
 - **`replaceable()`**: whether both directories took a new file when the
   pair was loaded, for a caller about to do something an install failing
   would leave half done.
-- **`install_pem(cert, key, host)`**: normalises both, refuses anything but
+- **`install_pem(cert, key, host, now)`**: the key a `wslib_secret::Secret`;
+  normalises both, refuses anything but
   certificates in the chain, an encrypted key, a key that is not the
   certificate's, or a pair rustls will not serve, and builds the new
   `ServerConfig`, all before the lock and the write. Installs are taken one
   at a time. `Installed` carries the config for `Tls::reload` and the
-  `wslib_crypto_x509::Report` for `host`, whose warnings refuse nothing.
+  `wslib_crypto_x509::Report` for `host` at `now`, whose warnings refuse
+  nothing. A restore installs its backup's pair through it too, so the
+  files have one writer and `config()` never goes stale.
+- **`regenerate(names, algorithm)`**: a fresh self-signed pair for the
+  caller's names, minted off the runtime and written under the same lock;
+  returns the config for `Tls::reload`.
 - **`pair()`** and **`Location::read_pair()`**: the PEM on disk for a
-  backup, the certificate file filtered to its `CERTIFICATE` sections;
+  backup, the certificate file filtered to its `CERTIFICATE` sections and
+  the key a `Secret`;
   `pair()` under the install lock, `read_pair()` with nothing serving.
 
 ## What isn't

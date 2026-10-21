@@ -24,4 +24,13 @@
   staged as a `ServerConfig` before the files are written, one install at a
   time; `replaceable` from a startup write probe; `pair` and
   `Location::read_pair` for backups.
+- `install_pem` takes the time to examine the certificate at.
+- `install_pem` takes the key as a `wslib_secret::Secret`, and `ServingPair`
+  carries it as one.
+- `Serving::regenerate`: a fresh self-signed pair for given names, written
+  under the install lock.
+- A restore goes through `install_pem`, the pair's one writer.
+- `testing::outbound_with_os_roots`: an `Outbound` over a stub OS store.
+- `Trust::anchors` and `Outbound::trust`: the current authorities as DER.
+- `Trust::anchor_pem`: one or more authorities from PEM, all or none.
 - Moved from the chassis's outbound TLS and serving pair.

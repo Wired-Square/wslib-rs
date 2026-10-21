@@ -1,5 +1,6 @@
 //! Loopback peers for tests: an authority that signs, a self-signed pair, and
 //! a TLS listener presenting one. Each takes the provider to sign and serve with.
+//! And an [`Outbound`] whose OS store is the test's.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -9,12 +10,16 @@ use rcgen::{
 };
 use rustls::crypto::CryptoProvider;
 use rustls::{ClientConfig, ServerConfig};
+use rustls_native_certs::CertificateResult;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 use wslib_crypto::{KeyAlgorithm, Signer, random_serial};
 use wslib_crypto_x509::SubjectAltName;
+
+use crate::outbound::OS_WAIT;
+use crate::{Outbound, Trust};
 
 /// A certificate chain, leaf first, and its key.
 #[derive(Debug)]
@@ -78,6 +83,20 @@ pub fn self_signed(provider: Arc<CryptoProvider>, names: &[&str]) -> Pair {
         chain: vec![wslib_crypto_x509::mint(&signer, &names).expect("mints")],
         key,
     }
+}
+
+/// An [`Outbound`] whose OS store holds `roots` alone, empty for none, rather than the machine's.
+pub fn outbound_with_os_roots(
+    provider: Arc<CryptoProvider>,
+    trust: Trust,
+    roots: Vec<CertificateDer<'static>>,
+) -> Result<Outbound, rustls::Error> {
+    let read = move || {
+        let mut read = CertificateResult::default();
+        read.certs = roots.clone();
+        read
+    };
+    Outbound::reading_os_with(provider, trust, Arc::new(read), OS_WAIT)
 }
 
 #[cfg(test)]

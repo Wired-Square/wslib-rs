@@ -33,13 +33,13 @@ impl<K: Hash + Eq + Clone> Default for Attempts<K> {
 /// An admitted attempt, counted as wrong unless it [`succeeded`](Attempt::succeeded)
 /// or is [`uncounted`](Attempt::uncounted).
 #[must_use]
-pub struct Attempt<'a, K: Hash + Eq + Clone> {
-    attempts: &'a Attempts<K>,
+pub struct Attempt<K: Hash + Eq + Clone> {
+    attempts: Attempts<K>,
     key: K,
     at: Instant,
 }
 
-impl<K: Hash + Eq + Clone> Attempt<'_, K> {
+impl<K: Hash + Eq + Clone> Attempt<K> {
     /// Clears the key's count.
     pub fn succeeded(self) {
         self.attempts.lock().remove(&self.key);
@@ -74,11 +74,11 @@ impl<K: Hash + Eq + Clone> Attempts<K> {
     ///
     /// Counted as wrong on admission, so attempts in flight at once cannot all
     /// slip under the limit.
-    pub fn admit(&self, key: K) -> Result<Attempt<'_, K>, TooManyAttempts> {
+    pub fn admit(&self, key: K) -> Result<Attempt<K>, TooManyAttempts> {
         self.admit_at(key, Instant::now())
     }
 
-    fn admit_at(&self, key: K, now: Instant) -> Result<Attempt<'_, K>, TooManyAttempts> {
+    fn admit_at(&self, key: K, now: Instant) -> Result<Attempt<K>, TooManyAttempts> {
         let mut map = self.lock();
         map.retain(|_, wrong| {
             while wrong
@@ -97,7 +97,7 @@ impl<K: Hash + Eq + Clone> Attempts<K> {
         }
         wrong.push_back(now);
         Ok(Attempt {
-            attempts: self,
+            attempts: self.clone(),
             key,
             at: now,
         })
@@ -166,6 +166,18 @@ mod tests {
         attempts.admit_at("u1", now).unwrap().uncounted();
         let _ = attempts.admit_at("u1", now).unwrap();
         assert!(refused_for(&attempts, "u1", now).is_some());
+    }
+
+    #[test]
+    fn an_attempt_outlives_its_borrow_and_moves_across_threads() {
+        fn send_sync<T: Send + Sync>(_: &T) {}
+        let attempts = Attempts::new(1, WINDOW);
+        send_sync(&attempts);
+        let attempt = attempts.clone().admit("u1").unwrap();
+        std::thread::spawn(move || attempt.uncounted())
+            .join()
+            .unwrap();
+        assert!(attempts.admit("u1").is_ok(), "the clone shares the count");
     }
 
     #[test]

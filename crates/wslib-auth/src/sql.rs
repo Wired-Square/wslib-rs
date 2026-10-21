@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt;
 use std::marker::PhantomData;
 use std::str::FromStr;
@@ -10,9 +11,8 @@ use crate::token::TokenHash;
 
 /// A [`SessionStore`] in a table of the caller's, on a sqlx pool; the README carries its DDL.
 ///
-/// Times are stored as fixed-width RFC 3339 text, UTC with six subsecond
-/// digits, so they compare as text in time order. The user id is stored as
-/// its `Display` and read back with `FromStr`.
+/// Times are stored as [`stamp`]s. The user id is stored as its `Display` and
+/// read back with `FromStr`.
 pub struct SqlSessionStore<DB: Database, U> {
     pool: Pool<DB>,
     queries: Queries,
@@ -45,12 +45,12 @@ impl<DB: Database, U> fmt::Debug for SqlSessionStore<DB, U> {
 
 impl<DB: Database, U> SqlSessionStore<DB, U> {
     /// Sessions in `table` of `pool`'s database.
-    pub fn new(pool: Pool<DB>, table: &str) -> Result<Self, InvalidTableName> {
-        Ok(Self {
+    pub fn new(pool: Pool<DB>, table: TableName) -> Self {
+        Self {
             pool,
-            queries: Queries::for_table(table)?,
+            queries: Queries::for_table(table),
             user_id: PhantomData,
-        })
+        }
     }
 
     pub fn pool(&self) -> &Pool<DB> {
@@ -58,54 +58,62 @@ impl<DB: Database, U> SqlSessionStore<DB, U> {
     }
 }
 
-#[derive(Debug, Clone)]
-struct Queries {
-    table: String,
-    insert: String,
-    find: String,
-    set_reauthenticated_at: String,
-    remove: String,
-    remove_user: String,
-    remove_expired: String,
-}
+/// A plain table name: an ASCII letter or `_`, then letters, digits or `_`, at most 63 bytes.
+///
+/// [`TableName::new`] in a const refuses an invalid literal at compile time:
+///
+/// ```
+/// # use wslib_auth::TableName;
+/// const SESSIONS: TableName = TableName::new("app_sessions");
+/// ```
+///
+/// ```compile_fail
+/// # use wslib_auth::TableName;
+/// const SESSIONS: TableName = TableName::new("app sessions");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableName(Cow<'static, str>);
 
-impl Queries {
-    fn for_table(table: &str) -> Result<Self, InvalidTableName> {
-        if !is_plain_identifier(table) {
-            return Err(InvalidTableName(table.to_owned()));
+impl TableName {
+    /// # Panics
+    ///
+    /// If `name` is not a plain table name; at compile time in a const.
+    pub const fn new(name: &'static str) -> Self {
+        assert!(is_plain_identifier(name), "not a plain table name");
+        Self(Cow::Borrowed(name))
+    }
+
+    /// A name known only at run time.
+    pub fn parse(name: impl Into<String>) -> Result<Self, InvalidTableName> {
+        let name = name.into();
+        if is_plain_identifier(&name) {
+            Ok(Self(Cow::Owned(name)))
+        } else {
+            Err(InvalidTableName(name))
         }
-        Ok(Self {
-            table: table.to_owned(),
-            insert: format!(
-                "INSERT INTO {table} \
-                 (token_hash, user_id, created_at, expires_at, reauthenticated_at) \
-                 VALUES ($1, $2, $3, $4, $5)"
-            ),
-            find: format!(
-                "SELECT user_id, created_at, expires_at, reauthenticated_at FROM {table} \
-                 WHERE token_hash = $1 AND expires_at > $2"
-            ),
-            set_reauthenticated_at: format!(
-                "UPDATE {table} SET reauthenticated_at = $1 WHERE token_hash = $2"
-            ),
-            remove: format!("DELETE FROM {table} WHERE token_hash = $1"),
-            remove_user: format!("DELETE FROM {table} WHERE user_id = $1"),
-            remove_expired: format!("DELETE FROM {table} WHERE expires_at <= $1"),
-        })
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
-fn is_plain_identifier(name: &str) -> bool {
-    let mut bytes = name.bytes();
-    bytes
-        .next()
-        .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
-        && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
-        && name.len() <= 63
+const fn is_plain_identifier(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    if bytes.is_empty() || bytes.len() > 63 || bytes[0].is_ascii_digit() {
+        return false;
+    }
+    let mut i = 0;
+    while i < bytes.len() {
+        if !(bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+            return false;
+        }
+        i += 1;
+    }
+    true
 }
 
-/// A table name that is not a plain identifier: an ASCII letter or `_`, then
-/// letters, digits or `_`, at most 63 bytes.
+/// A table name that is not a plain identifier, as [`TableName`] defines one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InvalidTableName(pub String);
 
@@ -117,18 +125,53 @@ impl fmt::Display for InvalidTableName {
 
 impl std::error::Error for InvalidTableName {}
 
-fn stamp(at: DateTime<Utc>) -> String {
+#[derive(Debug, Clone)]
+struct Queries {
+    table: TableName,
+    insert: String,
+    find: String,
+    set_reauthenticated_at: String,
+    remove: String,
+    remove_user: String,
+    remove_expired: String,
+}
+
+impl Queries {
+    fn for_table(table: TableName) -> Self {
+        let name = table.as_str();
+        Self {
+            insert: format!(
+                "INSERT INTO {name} \
+                 (token_hash, user_id, created_at, expires_at, proved_at, reauthenticated_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6)"
+            ),
+            find: format!(
+                "SELECT user_id, created_at, expires_at, proved_at, reauthenticated_at \
+                 FROM {name} WHERE token_hash = $1 AND expires_at > $2"
+            ),
+            set_reauthenticated_at: format!(
+                "UPDATE {name} SET reauthenticated_at = $1 WHERE token_hash = $2"
+            ),
+            remove: format!("DELETE FROM {name} WHERE token_hash = $1"),
+            remove_user: format!("DELETE FROM {name} WHERE user_id = $1"),
+            remove_expired: format!("DELETE FROM {name} WHERE expires_at <= $1"),
+            table,
+        }
+    }
+}
+
+/// An instant as the sqlx stores keep it: fixed-width RFC 3339, UTC, six
+/// subsecond digits, so stamps compare as text in time order.
+pub fn stamp(at: DateTime<Utc>) -> String {
     at.to_rfc3339_opts(SecondsFormat::Micros, true)
 }
 
-fn decoded<T, E>(value: Result<T, E>) -> Result<T, sqlx::Error>
-where
-    E: std::error::Error + Send + Sync + 'static,
-{
-    value.map_err(|e| sqlx::Error::Decode(Box::new(e)))
+/// A [`stamp`] read back.
+pub fn parse_stamp(stamp: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
+    DateTime::parse_from_rfc3339(stamp).map(|at| at.with_timezone(&Utc))
 }
 
-fn session_from<R, U>(row: &R) -> Result<Session<U>, sqlx::Error>
+fn session_from<R, U>(row: &R, table: &TableName) -> Result<Session<U>, sqlx::Error>
 where
     R: Row,
     for<'r> &'r str: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
@@ -136,15 +179,29 @@ where
     U: FromStr,
     U::Err: std::error::Error + Send + Sync + 'static,
 {
-    let time = |column: &str| -> Result<DateTime<Utc>, sqlx::Error> {
-        let raw: &str = row.try_get(column)?;
-        decoded(DateTime::parse_from_rfc3339(raw)).map(|at| at.with_timezone(&Utc))
-    };
+    fn column<'r, R, T, E>(
+        row: &'r R,
+        table: &TableName,
+        column: &str,
+        parse: impl FnOnce(&'r str) -> Result<T, E>,
+    ) -> Result<T, sqlx::Error>
+    where
+        R: Row,
+        &'r str: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
+        for<'c> &'c str: sqlx::ColumnIndex<R>,
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        parse(row.try_get(column)?).map_err(|e| sqlx::Error::ColumnDecode {
+            index: format!("{}.{column}", table.as_str()),
+            source: Box::new(e),
+        })
+    }
     Ok(Session {
-        user_id: decoded(row.try_get::<&str, _>("user_id")?.parse())?,
-        created_at: time("created_at")?,
-        expires_at: time("expires_at")?,
-        reauthenticated_at: time("reauthenticated_at")?,
+        user_id: column(row, table, "user_id", str::parse)?,
+        created_at: column(row, table, "created_at", parse_stamp)?,
+        expires_at: column(row, table, "expires_at", parse_stamp)?,
+        proved_at: column(row, table, "proved_at", parse_stamp)?,
+        reauthenticated_at: column(row, table, "reauthenticated_at", parse_stamp)?,
     })
 }
 
@@ -168,6 +225,7 @@ macro_rules! session_store_for {
                     .bind(session.user_id.to_string())
                     .bind(stamp(session.created_at))
                     .bind(stamp(session.expires_at))
+                    .bind(stamp(session.proved_at))
                     .bind(stamp(session.reauthenticated_at))
                     .execute(&self.pool)
                     .await?;
@@ -184,7 +242,7 @@ macro_rules! session_store_for {
                     .bind(stamp(now))
                     .fetch_optional(&self.pool)
                     .await?
-                    .map(|row| session_from(&row))
+                    .map(|row| session_from(&row, &self.queries.table))
                     .transpose()
             }
 
@@ -192,29 +250,29 @@ macro_rules! session_store_for {
                 &self,
                 hash: &TokenHash,
                 at: DateTime<Utc>,
-            ) -> Result<(), sqlx::Error> {
-                sqlx::query(&self.queries.set_reauthenticated_at)
+            ) -> Result<bool, sqlx::Error> {
+                let done = sqlx::query(&self.queries.set_reauthenticated_at)
                     .bind(stamp(at))
                     .bind(hash.as_str())
                     .execute(&self.pool)
                     .await?;
-                Ok(())
+                Ok(done.rows_affected() > 0)
             }
 
-            async fn remove(&self, hash: &TokenHash) -> Result<(), sqlx::Error> {
-                sqlx::query(&self.queries.remove)
+            async fn remove(&self, hash: &TokenHash) -> Result<bool, sqlx::Error> {
+                let done = sqlx::query(&self.queries.remove)
                     .bind(hash.as_str())
                     .execute(&self.pool)
                     .await?;
-                Ok(())
+                Ok(done.rows_affected() > 0)
             }
 
-            async fn remove_user(&self, user_id: &U) -> Result<(), sqlx::Error> {
-                sqlx::query(&self.queries.remove_user)
+            async fn remove_user(&self, user_id: &U) -> Result<bool, sqlx::Error> {
+                let done = sqlx::query(&self.queries.remove_user)
                     .bind(user_id.to_string())
                     .execute(&self.pool)
                     .await?;
-                Ok(())
+                Ok(done.rows_affected() > 0)
             }
 
             async fn remove_expired(&self, now: DateTime<Utc>) -> Result<(), sqlx::Error> {
@@ -241,7 +299,7 @@ mod tests {
     #[test]
     fn only_a_plain_identifier_names_the_table() {
         for good in ["app_sessions", "_s", "S1"] {
-            assert!(Queries::for_table(good).is_ok(), "{good}");
+            assert_eq!(TableName::parse(good).unwrap().as_str(), good);
         }
         for bad in [
             "",
@@ -253,38 +311,46 @@ mod tests {
             &"s".repeat(64),
         ] {
             assert_eq!(
-                Queries::for_table(bad).unwrap_err(),
+                TableName::parse(bad).unwrap_err(),
                 InvalidTableName(bad.to_owned())
             );
         }
     }
 
     #[test]
-    fn stamps_are_fixed_width_utc_micros() {
-        let at = DateTime::parse_from_rfc3339("2026-10-21T01:02:03Z")
-            .unwrap()
-            .with_timezone(&Utc);
+    #[should_panic(expected = "not a plain table name")]
+    fn an_invalid_name_outside_a_const_panics() {
+        let _ = TableName::new(std::hint::black_box("s;drop"));
+    }
+
+    #[test]
+    fn stamps_are_fixed_width_utc_micros_and_read_back() {
+        let at = parse_stamp("2026-10-21T01:02:03Z").unwrap();
         assert_eq!(stamp(at), "2026-10-21T01:02:03.000000Z");
+        assert_eq!(parse_stamp(&stamp(at)), Ok(at));
     }
 }
 
 #[cfg(all(test, feature = "sqlite"))]
 mod sqlite_tests {
+    use std::time::Duration;
+
     use chrono::TimeDelta;
     use sqlx::sqlite::SqlitePoolOptions;
 
     use super::*;
-    use crate::{SessionToken, Sessions};
+    use crate::{Proof, SessionError, SessionToken, Sessions};
 
     const DDL: &str = "CREATE TABLE app_sessions (
         token_hash          TEXT PRIMARY KEY NOT NULL,
         user_id             TEXT NOT NULL,
         created_at          TEXT NOT NULL,
         expires_at          TEXT NOT NULL,
+        proved_at           TEXT NOT NULL,
         reauthenticated_at  TEXT NOT NULL
     ) STRICT";
 
-    async fn store<U>(table: &str) -> SqliteSessionStore<U> {
+    async fn store<U>(table: &'static str) -> SqliteSessionStore<U> {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .idle_timeout(None)
@@ -296,11 +362,19 @@ mod sqlite_tests {
             .execute(&pool)
             .await
             .unwrap();
-        SqliteSessionStore::new(pool, table).unwrap()
+        SqliteSessionStore::new(pool, TableName::new(table))
     }
 
     async fn sessions() -> Sessions<SqliteSessionStore<String>> {
         Sessions::new(store("app_sessions").await)
+    }
+
+    async fn issue(sessions: &Sessions<SqliteSessionStore<String>>, user_id: &str) -> SessionToken {
+        sessions
+            .issue(user_id.to_owned(), Proof::begin())
+            .await
+            .unwrap()
+            .0
     }
 
     async fn rows(sessions: &Sessions<SqliteSessionStore<String>>) -> i64 {
@@ -310,11 +384,15 @@ mod sqlite_tests {
             .unwrap()
     }
 
+    fn a_moment_passes() {
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
     #[tokio::test]
     async fn the_calls_can_be_awaited_in_a_spawned_task() {
         let sessions = sessions().await;
         tokio::spawn(async move {
-            let (token, _) = sessions.issue("u1".to_owned()).await.unwrap();
+            let token = issue(&sessions, "u1").await;
             sessions.lookup(&token).await.unwrap()
         })
         .await
@@ -325,8 +403,12 @@ mod sqlite_tests {
     #[tokio::test]
     async fn an_issued_session_is_found_by_its_token_and_only_its_hash_is_kept() {
         let sessions = sessions().await;
-        let (token, issued) = sessions.issue("u1".to_owned()).await.unwrap();
+        let proof = Proof::begin();
+        a_moment_passes();
+        let (token, issued) = sessions.issue("u1".to_owned(), proof).await.unwrap();
         assert_eq!(issued.expires_at - issued.created_at, TimeDelta::hours(12));
+        assert_eq!(issued.proved_at, proof.at());
+        assert!(issued.created_at > issued.proved_at);
         assert_eq!(sessions.lookup(&token).await.unwrap(), Some(issued));
 
         let stored: String = sqlx::query_scalar("SELECT token_hash FROM app_sessions")
@@ -341,14 +423,27 @@ mod sqlite_tests {
     }
 
     #[tokio::test]
+    async fn a_proof_begun_before_the_cutoff_is_refused_though_issued_after_it() {
+        let sessions = sessions().await;
+        let proof = Proof::begin();
+        a_moment_passes();
+        let sessions_valid_from = crate::now();
+        a_moment_passes();
+        let (_, session) = sessions.issue("u1".to_owned(), proof).await.unwrap();
+        assert!(session.created_at > sessions_valid_from);
+        assert!(!session.proved_since(sessions_valid_from));
+        assert!(session.proved_since(proof.at()));
+    }
+
+    #[tokio::test]
     async fn an_expired_session_is_not_found_and_goes_at_the_next_issue() {
         let sessions = sessions().await.with_lifetime(TimeDelta::zero());
-        let (expired, _) = sessions.issue("u1".to_owned()).await.unwrap();
+        let expired = issue(&sessions, "u1").await;
         assert_eq!(sessions.lookup(&expired).await.unwrap(), None);
         assert_eq!(rows(&sessions).await, 1);
 
         let sessions = sessions.with_lifetime(TimeDelta::hours(1));
-        let (live, _) = sessions.issue("u1".to_owned()).await.unwrap();
+        let live = issue(&sessions, "u1").await;
         assert_eq!(rows(&sessions).await, 1, "the expired row went");
         assert!(sessions.lookup(&live).await.unwrap().is_some());
 
@@ -363,23 +458,28 @@ mod sqlite_tests {
     #[tokio::test]
     async fn ending_one_session_leaves_the_others_and_ending_all_leaves_other_users() {
         let sessions = sessions().await;
-        let (a1, _) = sessions.issue("a".to_owned()).await.unwrap();
-        let (a2, _) = sessions.issue("a".to_owned()).await.unwrap();
-        let (b, _) = sessions.issue("b".to_owned()).await.unwrap();
+        let a1 = issue(&sessions, "a").await;
+        let a2 = issue(&sessions, "a").await;
+        let b = issue(&sessions, "b").await;
 
-        sessions.end(&a1).await.unwrap();
+        assert!(sessions.end(&a1).await.unwrap());
+        assert!(!sessions.end(&a1).await.unwrap(), "already ended");
         assert_eq!(sessions.lookup(&a1).await.unwrap(), None);
         assert!(sessions.lookup(&a2).await.unwrap().is_some());
 
-        sessions.end_all(&"a".to_owned()).await.unwrap();
+        assert!(sessions.end_all(&"a".to_owned()).await.unwrap());
+        assert!(!sessions.end_all(&"a".to_owned()).await.unwrap());
         assert_eq!(sessions.lookup(&a2).await.unwrap(), None);
         assert!(sessions.lookup(&b).await.unwrap().is_some());
     }
 
     #[tokio::test]
-    async fn reauthenticating_moves_the_stamp_and_nothing_else() {
+    async fn reauthenticating_stamps_the_proofs_instant_and_nothing_else() {
         let sessions = sessions().await;
-        let (token, issued) = sessions.issue("u1".to_owned()).await.unwrap();
+        let (token, issued) = sessions
+            .issue("u1".to_owned(), Proof::begin())
+            .await
+            .unwrap();
         let earlier = issued.created_at - TimeDelta::minutes(10);
         sessions
             .store()
@@ -389,28 +489,38 @@ mod sqlite_tests {
         let stale = sessions.lookup(&token).await.unwrap().unwrap();
         assert!(!stale.reauthenticated_within(crate::REAUTHENTICATION_WINDOW, crate::now()));
 
-        sessions.reauthenticated(&token).await.unwrap();
+        let proof = Proof::begin();
+        a_moment_passes();
+        assert!(sessions.reauthenticated(&token, proof).await.unwrap());
         let fresh = sessions.lookup(&token).await.unwrap().unwrap();
-        assert!(fresh.reauthenticated_within(crate::REAUTHENTICATION_WINDOW, crate::now()));
+        assert_eq!(fresh.reauthenticated_at, proof.at());
         assert_eq!(
-            (fresh.created_at, fresh.expires_at),
-            (issued.created_at, issued.expires_at)
+            Session {
+                reauthenticated_at: issued.reauthenticated_at,
+                ..fresh
+            },
+            issued
         );
+
+        let stranger = SessionToken::generate().unwrap();
+        assert!(!sessions.reauthenticated(&stranger, proof).await.unwrap());
     }
 
     #[tokio::test]
-    async fn a_user_id_reads_back_through_from_str() {
+    async fn a_user_id_reads_back_through_from_str_and_a_bad_one_names_its_column() {
         let sessions = Sessions::new(store::<u64>("s").await);
-        let (token, _) = sessions.issue(42).await.unwrap();
+        let (token, _) = sessions.issue(42, Proof::begin()).await.unwrap();
         assert_eq!(sessions.lookup(&token).await.unwrap().unwrap().user_id, 42);
 
         sqlx::query("UPDATE s SET user_id = 'x'")
             .execute(sessions.store().pool())
             .await
             .unwrap();
-        assert!(matches!(
-            sessions.lookup(&token).await,
-            Err(sqlx::Error::Decode(_))
-        ));
+        let Err(SessionError::Store(sqlx::Error::ColumnDecode { index, .. })) =
+            sessions.lookup(&token).await
+        else {
+            panic!("a decode error");
+        };
+        assert_eq!(index, "s.user_id");
     }
 }

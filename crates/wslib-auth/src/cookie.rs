@@ -79,15 +79,18 @@ impl SessionCookie {
     ///
     /// If a token from [`SessionToken::from_presented`] holds a control character.
     pub fn set(&self, token: &SessionToken) -> HeaderValue {
-        self.header(token.expose(), self.max_age.map(|age| age.num_seconds()))
+        let max_age = self
+            .max_age
+            .map(|age| format!("Max-Age={}", age.num_seconds().max(0)));
+        self.header(token.expose(), max_age.as_deref())
     }
 
     /// The `Set-Cookie` value that removes the cookie, at the same path.
     pub fn clear(&self) -> HeaderValue {
-        self.header("", Some(0))
+        self.header("", Some("Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"))
     }
 
-    fn header(&self, value: &str, max_age: Option<i64>) -> HeaderValue {
+    fn header(&self, value: &str, lifetime: Option<&str>) -> HeaderValue {
         let same_site = match self.same_site {
             SameSite::Strict => "Strict",
             SameSite::Lax => "Lax",
@@ -100,17 +103,18 @@ impl SessionCookie {
         if self.secure {
             cookie.push_str("; Secure");
         }
-        if let Some(seconds) = max_age {
-            cookie.push_str(&format!("; Max-Age={}", seconds.max(0)));
+        if let Some(lifetime) = lifetime {
+            cookie.push_str("; ");
+            cookie.push_str(lifetime);
         }
         HeaderValue::try_from(cookie)
             .expect("a validated name and path, and a token a header can carry")
     }
 
-    /// The first non-empty value of this cookie across every `Cookie` header.
+    /// The last non-empty value of this cookie across every `Cookie` header.
     ///
-    /// Browsers send the cookie with the longest path first, so a duplicate
-    /// from a broader path set elsewhere comes after this one.
+    /// Browsers send longer paths first, so a same-name cookie a script planted
+    /// at a deeper path comes before this one and cannot shadow it.
     pub fn token_in(&self, headers: &HeaderMap) -> Option<SessionToken> {
         headers
             .get_all(COOKIE)
@@ -119,7 +123,7 @@ impl SessionCookie {
             .flat_map(|header| header.split(';'))
             .filter_map(|pair| pair.trim().split_once('='))
             .map(|(name, value)| (name, value.trim_matches('"')))
-            .find(|(name, value)| *name == self.name && !value.is_empty())
+            .rfind(|(name, value)| *name == self.name && !value.is_empty())
             .map(|(_, value)| SessionToken::from_presented(value))
     }
 }
@@ -161,7 +165,8 @@ mod tests {
         );
         assert_eq!(
             lax.clear(),
-            "app_session=; Path=/app; HttpOnly; SameSite=Lax; Max-Age=0"
+            "app_session=; Path=/app; HttpOnly; SameSite=Lax; Max-Age=0; \
+             Expires=Thu, 01 Jan 1970 00:00:00 GMT"
         );
     }
 
@@ -194,14 +199,19 @@ mod tests {
             Some("abc".into()),
             "a second header"
         );
-        assert_eq!(found(&["s=first; s=second"]), Some("first".into()));
         assert_eq!(
-            found(&["s=", "s=abc"]),
+            found(&["s=planted; s=abc"]),
+            Some("abc".into()),
+            "a deeper path's cookie comes first and is passed over"
+        );
+        assert_eq!(found(&["s=planted", "s=abc"]), Some("abc".into()));
+        assert_eq!(
+            found(&["s=abc", "s="]),
             Some("abc".into()),
             "an empty one skipped"
         );
         assert_eq!(found(&["ss=abc; s_=x"]), None, "names match exactly");
         assert_eq!(found(&["s=\"abc\""]), Some("abc".into()));
-        assert_eq!(found(&["s=\"\"; s=abc"]), Some("abc".into()));
+        assert_eq!(found(&["s=abc; s=\"\""]), Some("abc".into()));
     }
 }

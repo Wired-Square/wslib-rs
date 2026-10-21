@@ -17,10 +17,18 @@ pub struct Session<U> {
     pub user_id: U,
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
+    /// When the sign-in's credential check began: its [`Proof`].
+    pub proved_at: DateTime<Utc>,
     pub reauthenticated_at: DateTime<Utc>,
 }
 
 impl<U> Session<U> {
+    /// Whether the sign-in's credentials were proved at or after `cutoff`, as
+    /// the instant the account's sessions were last invalidated.
+    pub fn proved_since(&self, cutoff: DateTime<Utc>) -> bool {
+        self.proved_at >= cutoff
+    }
+
     /// Whether the session re-authenticated no longer than `window` before `now`, and not after it.
     pub fn reauthenticated_within(&self, window: TimeDelta, now: DateTime<Utc>) -> bool {
         let age = now - self.reauthenticated_at;
@@ -46,24 +54,43 @@ pub trait SessionStore: Send + Sync {
         now: DateTime<Utc>,
     ) -> impl Future<Output = Result<Option<Session<Self::UserId>>, Self::Error>> + Send;
 
+    /// Whether a session was under `hash` to stamp.
     fn set_reauthenticated_at(
         &self,
         hash: &TokenHash,
         at: DateTime<Utc>,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+    ) -> impl Future<Output = Result<bool, Self::Error>> + Send;
 
-    fn remove(&self, hash: &TokenHash) -> impl Future<Output = Result<(), Self::Error>> + Send;
+    /// Whether a session was under `hash` to remove.
+    fn remove(&self, hash: &TokenHash) -> impl Future<Output = Result<bool, Self::Error>> + Send;
 
+    /// Whether `user_id` had any session to remove.
     fn remove_user(
         &self,
         user_id: &Self::UserId,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+    ) -> impl Future<Output = Result<bool, Self::Error>> + Send;
 
     /// Removes every session that expires at or before `now`.
     fn remove_expired(
         &self,
         now: DateTime<Utc>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+}
+
+/// The instant a credential check began, taken before the check so a session
+/// issued on it cannot outlive a password change that raced it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Proof(DateTime<Utc>);
+
+impl Proof {
+    /// Call before checking any password, passkey or code.
+    pub fn begin() -> Self {
+        Self(now())
+    }
+
+    pub fn at(self) -> DateTime<Utc> {
+        self.0
+    }
 }
 
 /// Sessions over a [`SessionStore`]: issue, look up, re-stamp and end them.
@@ -99,27 +126,23 @@ impl<S: SessionStore> Sessions<S> {
         &self.store
     }
 
-    /// A new session for `user_id`, who has just proved their credentials. Expired sessions go first.
+    /// A new session for `user_id`, whose credentials `proof` covers. Expired sessions go first.
     pub async fn issue(
         &self,
         user_id: S::UserId,
-    ) -> Result<(SessionToken, Session<S::UserId>), IssueError<S::Error>> {
-        let token = SessionToken::generate().map_err(IssueError::Random)?;
+        proof: Proof,
+    ) -> Result<(SessionToken, Session<S::UserId>), SessionError<S::Error>> {
+        let token = SessionToken::generate().map_err(SessionError::Random)?;
         let at = now();
         let session = Session {
             user_id,
             created_at: at,
             expires_at: at + self.lifetime,
-            reauthenticated_at: at,
+            proved_at: proof.at(),
+            reauthenticated_at: proof.at(),
         };
-        self.store
-            .remove_expired(at)
-            .await
-            .map_err(IssueError::Store)?;
-        self.store
-            .insert(&token.hash(), &session)
-            .await
-            .map_err(IssueError::Store)?;
+        self.store.remove_expired(at).await?;
+        self.store.insert(&token.hash(), &session).await?;
         Ok((token, session))
     }
 
@@ -127,49 +150,61 @@ impl<S: SessionStore> Sessions<S> {
     pub async fn lookup(
         &self,
         token: &SessionToken,
-    ) -> Result<Option<Session<S::UserId>>, S::Error> {
-        self.store.find(&token.hash(), now()).await
+    ) -> Result<Option<Session<S::UserId>>, SessionError<S::Error>> {
+        Ok(self.store.find(&token.hash(), now()).await?)
     }
 
-    /// Records that `token`'s holder has just proved their credentials again.
-    pub async fn reauthenticated(&self, token: &SessionToken) -> Result<(), S::Error> {
-        self.store
-            .set_reauthenticated_at(&token.hash(), now())
-            .await
+    /// Records that `token`'s holder proved their credentials again, as `proof`
+    /// covers; false if `token` names no session.
+    pub async fn reauthenticated(
+        &self,
+        token: &SessionToken,
+        proof: Proof,
+    ) -> Result<bool, SessionError<S::Error>> {
+        Ok(self
+            .store
+            .set_reauthenticated_at(&token.hash(), proof.at())
+            .await?)
     }
 
-    /// Ends `token`'s session.
-    pub async fn end(&self, token: &SessionToken) -> Result<(), S::Error> {
-        self.store.remove(&token.hash()).await
+    /// Ends `token`'s session; false if there was none.
+    pub async fn end(&self, token: &SessionToken) -> Result<bool, SessionError<S::Error>> {
+        Ok(self.store.remove(&token.hash()).await?)
     }
 
-    /// Ends every session of `user_id`, as on a password change.
-    pub async fn end_all(&self, user_id: &S::UserId) -> Result<(), S::Error> {
-        self.store.remove_user(user_id).await
+    /// Ends every session of `user_id`, as on a password change; false if there were none.
+    pub async fn end_all(&self, user_id: &S::UserId) -> Result<bool, SessionError<S::Error>> {
+        Ok(self.store.remove_user(user_id).await?)
     }
 
-    pub async fn purge_expired(&self) -> Result<(), S::Error> {
-        self.store.remove_expired(now()).await
+    pub async fn purge_expired(&self) -> Result<(), SessionError<S::Error>> {
+        Ok(self.store.remove_expired(now()).await?)
     }
 }
 
-/// Why no session was issued.
+/// Why a [`Sessions`] call failed.
 #[derive(Debug)]
-pub enum IssueError<E> {
+pub enum SessionError<E> {
     Random(getrandom::Error),
     Store(E),
 }
 
-impl<E: fmt::Display> fmt::Display for IssueError<E> {
+impl<E> From<E> for SessionError<E> {
+    fn from(e: E) -> Self {
+        Self::Store(e)
+    }
+}
+
+impl<E: fmt::Display> fmt::Display for SessionError<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Random(e) => write!(f, "no session token could be made: {e}"),
-            Self::Store(e) => write!(f, "the session could not be stored: {e}"),
+            Self::Store(e) => write!(f, "the session store failed: {e}"),
         }
     }
 }
 
-impl<E: std::error::Error + 'static> std::error::Error for IssueError<E> {
+impl<E: std::error::Error + 'static> std::error::Error for SessionError<E> {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Random(e) => Some(e),
@@ -187,6 +222,7 @@ mod tests {
             user_id: (),
             created_at: reauthenticated_at,
             expires_at: reauthenticated_at + SESSION_LIFETIME,
+            proved_at: reauthenticated_at,
             reauthenticated_at,
         }
     }
@@ -203,5 +239,12 @@ mod tests {
             REAUTHENTICATION_WINDOW + TimeDelta::microseconds(1)
         ));
         assert!(!within(TimeDelta::seconds(-1)), "a stamp from the future");
+    }
+
+    #[test]
+    fn a_session_error_boxes_as_send_and_sync_for_question_mark() {
+        let boxed: Box<dyn std::error::Error + Send + Sync> =
+            SessionError::Store(std::io::Error::other("down")).into();
+        assert_eq!(boxed.to_string(), "the session store failed: down");
     }
 }

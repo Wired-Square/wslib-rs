@@ -16,7 +16,7 @@ sqlite = ["dep:sqlx", "sqlx/sqlite"]
 postgres = ["dep:sqlx", "sqlx/postgres"]
 
 [dependencies]
-base64 = { version = "0.22", default-features = false, features = ["alloc"] }
+base64 = { version = "0.23", default-features = false, features = ["alloc"] }
 chrono = { version = "0.4.38", default-features = false, features = ["clock", "std"] }
 getrandom = { version = "0.3", features = ["std"] }
 http = "1.1"

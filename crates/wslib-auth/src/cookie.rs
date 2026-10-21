@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use chrono::TimeDelta;
 use http::header::COOKIE;
 use http::{HeaderMap, HeaderValue};
@@ -16,8 +18,8 @@ pub enum SameSite {
 /// The session cookie as the caller names and scopes it; always `HttpOnly`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionCookie {
-    name: String,
-    path: String,
+    name: &'static str,
+    path: Cow<'static, str>,
     same_site: SameSite,
     secure: bool,
     max_age: Option<TimeDelta>,
@@ -28,13 +30,12 @@ impl SessionCookie {
     ///
     /// # Panics
     ///
-    /// If `name` is not an RFC 6265 cookie name.
-    pub fn new(name: impl Into<String>) -> Self {
-        let name = name.into();
-        assert!(is_cookie_name(&name), "{name:?} is not a cookie name");
+    /// If `name` is not an RFC 6265 cookie name; in a `const`, at compile time.
+    pub const fn new(name: &'static str) -> Self {
+        assert!(is_cookie_name(name), "not a cookie name");
         Self {
             name,
-            path: "/".into(),
+            path: Cow::Borrowed("/"),
             same_site: SameSite::Strict,
             secure: true,
             max_age: None,
@@ -44,7 +45,7 @@ impl SessionCookie {
     /// # Panics
     ///
     /// If `path` holds a `;` or a character a header cannot carry.
-    pub fn path(self, path: impl Into<String>) -> Self {
+    pub fn path(self, path: impl Into<Cow<'static, str>>) -> Self {
         let path = path.into();
         assert!(
             path.bytes().all(|b| b.is_ascii_graphic() && b != b';'),
@@ -53,12 +54,14 @@ impl SessionCookie {
         Self { path, ..self }
     }
 
-    pub fn same_site(self, same_site: SameSite) -> Self {
-        Self { same_site, ..self }
+    pub const fn same_site(mut self, same_site: SameSite) -> Self {
+        self.same_site = same_site;
+        self
     }
 
-    pub fn secure(self, secure: bool) -> Self {
-        Self { secure, ..self }
+    pub const fn secure(mut self, secure: bool) -> Self {
+        self.secure = secure;
+        self
     }
 
     /// Keeps the cookie past the browser session, for `max_age`.
@@ -69,8 +72,8 @@ impl SessionCookie {
         }
     }
 
-    pub fn name(&self) -> &str {
-        &self.name
+    pub const fn name(&self) -> &'static str {
+        self.name
     }
 
     /// The `Set-Cookie` value carrying `token`.
@@ -128,16 +131,46 @@ impl SessionCookie {
     }
 }
 
-fn is_cookie_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_graphic() && !b"()<>@,;:\\\"/[]?={}".contains(&b))
+const fn is_cookie_name(name: &str) -> bool {
+    const SEPARATORS: &[u8] = b"()<>@,;:\\\"/[]?={}";
+    let bytes = name.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if !b.is_ascii_graphic() {
+            return false;
+        }
+        let mut j = 0;
+        while j < SEPARATORS.len() {
+            if b == SEPARATORS[j] {
+                return false;
+            }
+            j += 1;
+        }
+        i += 1;
+    }
+    true
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const LAX: SessionCookie = SessionCookie::new("app_session").same_site(SameSite::Lax);
+
+    #[test]
+    fn a_cookie_can_be_a_const() {
+        assert_eq!(LAX.name(), "app_session");
+        assert!(
+            LAX.set(&SessionToken::generate().unwrap())
+                .to_str()
+                .unwrap()
+                .contains("SameSite=Lax")
+        );
+    }
 
     fn headers(cookies: &[&str]) -> HeaderMap {
         let mut headers = HeaderMap::new();
@@ -171,7 +204,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "is not a cookie name")]
+    #[should_panic(expected = "not a cookie name")]
     fn a_name_with_a_separator_is_refused() {
         let _ = SessionCookie::new("app;session");
     }

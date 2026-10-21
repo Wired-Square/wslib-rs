@@ -53,6 +53,9 @@ if !sign_count_moved(stored.sign_count, count) { /* refuse: possibly cloned */ }
   kept public key is unreadable). Each names the check for the log; show
   users a fixed message. Nothing is logged.
 - **`claimed_user_id`**: an answer's unverified user handle, for an audit log.
+- **The `ceremonies` feature**, on by default, is everything but the JSON
+  types; with `default-features = false` the crate is those types on serde
+  alone, for a types crate.
 - **The `testing` feature**: `SoftPasskey`, an ES256 passkey that answers
   options as a browser would.
 

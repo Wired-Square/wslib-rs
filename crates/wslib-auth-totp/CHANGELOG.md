@@ -7,4 +7,5 @@
 - `Key::accepted_step`: the step a code matched, one step either side of now,
   for the caller to spend once. `Key::code_at` for tests.
 - `check_clocks` and `ClockSkew`: the server's clock against the browser's.
+  With the default `codes` feature off, they are all that is left, on serde.
 - Moved from the chassis's `appliance-auth`, on RustCrypto rather than ring.

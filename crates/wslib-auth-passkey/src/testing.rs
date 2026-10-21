@@ -5,9 +5,10 @@ use p256::ecdsa::SigningKey;
 use p256::ecdsa::signature::Signer as _;
 
 use crate::cbor::encode;
+use crate::ceremonies::{b64, random_bytes, sha256};
 use crate::{
     AssertionCredential, AssertionResponse, AttestationResponse, CreationOptions,
-    RegistrationCredential, RequestOptions, b64, sha256,
+    RegistrationCredential, RequestOptions,
 };
 
 /// An ES256 passkey that verifies its user, keeping a count.
@@ -27,7 +28,7 @@ impl Default for SoftPasskey {
 impl SoftPasskey {
     pub fn new() -> Self {
         let key = std::iter::repeat_with(|| {
-            crate::random_bytes::<32>()
+            random_bytes::<32>()
                 .ok()
                 .and_then(|bytes| SigningKey::from_slice(&bytes).ok())
         })

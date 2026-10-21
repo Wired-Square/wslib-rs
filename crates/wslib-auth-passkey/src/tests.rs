@@ -4,11 +4,16 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt;
 use std::time::Duration;
 
 use ed25519_dalek::Signer as _;
 
 use super::cbor::encode;
+use super::ceremonies::*;
+use super::challenges::Purpose;
+use super::cose::PublicKey;
+use super::data::AuthenticatorData;
 use super::data::tests::{attested_data, header, okp_key};
 use super::*;
 

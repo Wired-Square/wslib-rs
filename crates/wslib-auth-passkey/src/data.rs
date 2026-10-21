@@ -131,7 +131,7 @@ pub(crate) mod tests {
 
     pub(crate) fn header(rp_id: &str, flags: u8, sign_count: u32) -> Vec<u8> {
         [
-            &crate::sha256(rp_id.as_bytes())[..],
+            &crate::ceremonies::sha256(rp_id.as_bytes())[..],
             &[flags],
             &sign_count.to_be_bytes(),
         ]

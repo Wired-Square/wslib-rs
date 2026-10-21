@@ -11,18 +11,20 @@ repository.workspace = true
 publish = ["wired-square"]
 
 [features]
-default = []
+default = ["codes"]
+# Keys and the code check. Off, only `ClockSkew` and `check_clocks` are left.
+codes = ["dep:getrandom", "dep:hmac", "dep:sha1", "dep:subtle", "dep:wslib-secret"]
 serde = ["dep:serde"]
 ts = ["serde", "dep:ts-rs"]
 
 [dependencies]
-getrandom = { version = "0.3", features = ["std"] }
-hmac = "0.12.1"
+getrandom = { version = "0.3", features = ["std"], optional = true }
+hmac = { version = "0.12.1", optional = true }
 serde = { version = "1.0.225", features = ["derive"], optional = true }
-sha1 = "0.10.6"
-subtle = { version = "2.5", default-features = false }
+sha1 = { version = "0.10.6", optional = true }
+subtle = { version = "2.5", default-features = false, optional = true }
 ts-rs = { version = "11.1", optional = true }
-wslib-secret = { path = "../wslib-secret", version = "0.1.1", registry = "wired-square" }
+wslib-secret = { path = "../wslib-secret", version = "0.1.1", registry = "wired-square", optional = true }
 
 [dev-dependencies]
 serde_json = "1.0.85"

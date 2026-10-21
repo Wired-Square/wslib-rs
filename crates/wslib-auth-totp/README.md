@@ -37,7 +37,9 @@ match key.accepted_step(&code, SystemTime::now()) {
   and the server's are more than two steps apart, in signed minutes. The
   browser's clock stands in for the phone's beside it: check it before a first
   code, and in place of "wrong code" when a code misses.
-- **Features:** `serde` and `ts` (ts-rs 11) for `ClockSkew`.
+- **Features:** `codes`, on by default, is `Key` and its dependencies; with
+  `default-features = false` only `ClockSkew` and `check_clocks` are left, for
+  a types crate. `serde` and `ts` (ts-rs 11) for `ClockSkew`.
 
 ## What isn't
 

@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use crate::random_bytes;
+use crate::ceremonies::random_bytes;
 
 pub(crate) const CHALLENGE_BYTES: usize = 32;
 const SIGN_IN_LIFETIME: Duration = Duration::from_secs(2 * 60);

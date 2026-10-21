@@ -1,0 +1,27 @@
+[package]
+name = "wslib-auth-passkey"
+version = "0.1.0"
+description = "Passkeys: the WebAuthn registration and authentication ceremonies, verified with no attestation, ES256 and EdDSA, the user verified every time."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+default = []
+# A software passkey that answers a ceremony's options as a browser's would.
+testing = []
+ts = ["dep:ts-rs"]
+
+[dependencies]
+base64 = { version = "0.23", default-features = false, features = ["alloc"] }
+ed25519-dalek = { version = "2.1", default-features = false, features = ["std"] }
+getrandom = { version = "0.3", features = ["std"] }
+p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "std"] }
+serde = { version = "1.0.225", features = ["derive"] }
+serde_json = "1.0.85"
+sha2 = "0.10.9"
+ts-rs = { version = "11.1", optional = true }

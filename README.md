@@ -21,6 +21,8 @@ appliance chassis and every app beside it.
 | `wslib-file-atomic`    | Crash-safe whole-file writes, readers set from creation     |
 | `wslib-systemd`        | systemd, hostnamed, timedated and logind over D-Bus, typed  |
 | `wslib-auth-oidc`      | OIDC ID-token checks against a cached, rotation-aware JWKS  |
+| `wslib-auth-totp`      | TOTP keys, the otpauth URI, code and clock-skew checks      |
+| `wslib-auth-passkey`   | WebAuthn passkey ceremonies, none attestation, ES256/EdDSA  |
 
 † Not pure Rust: it carries TypeScript in `js/` that apps vendor into their
 frontend. Every crate that ships other languages is marked here, and says so

@@ -1,0 +1,22 @@
+[package]
+name = "wslib-auth-password"
+version = "0.1.0"
+description = "Argon2id password hashes: hash, verify, a dummy verify for unknown accounts, rehash detection and a length policy."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+# Async wrappers that run the argon2 work on `spawn_blocking`.
+tokio = ["dep:tokio"]
+
+[dependencies]
+argon2 = { version = "0.6", default-features = false, features = ["alloc", "getrandom", "password-hash"] }
+tokio = { version = "1.37", default-features = false, features = ["rt"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1.37", features = ["macros", "rt"] }

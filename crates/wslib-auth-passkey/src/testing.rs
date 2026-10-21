@@ -29,13 +29,7 @@ impl Default for SoftPasskey {
 
 impl SoftPasskey {
     pub fn new() -> Self {
-        let key = std::iter::repeat_with(|| {
-            random_bytes::<32>()
-                .ok()
-                .and_then(|bytes| SigningKey::from_slice(&bytes).ok())
-        })
-        .find_map(|key| key)
-        .expect("a key");
+        let key = p256_key();
         let credential_id =
             sha256(key.verifying_key().to_encoded_point(false).as_bytes())[..16].to_vec();
         Self {
@@ -137,4 +131,10 @@ fn client_data(kind: &str, challenge: &str, origin: &str) -> Vec<u8> {
         r#"{{"type":"{kind}","challenge":"{challenge}","origin":"{origin}","crossOrigin":false}}"#
     )
     .into_bytes()
+}
+
+pub(crate) fn p256_key() -> SigningKey {
+    std::iter::repeat_with(|| random_bytes::<32>().expect("random"))
+        .find_map(|bytes| SigningKey::from_slice(&bytes).ok())
+        .expect("a scalar below the order")
 }

@@ -82,10 +82,7 @@ struct Authenticator {
 
 impl Authenticator {
     fn es256(credential: u8) -> Self {
-        let key = std::iter::repeat_with(|| random_bytes::<32>().expect("random"))
-            .find_map(|bytes| p256::ecdsa::SigningKey::from_slice(&bytes).ok())
-            .expect("a key");
-        Self::new(Key::Es256(key), credential)
+        Self::new(Key::Es256(testing::p256_key()), credential)
     }
 
     fn ed25519(credential: u8) -> Self {

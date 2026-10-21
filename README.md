@@ -26,6 +26,7 @@ appliance chassis and every app beside it.
 | `wslib-auth-password`  | Argon2id password hashes, a dummy verify, rehash, policy    |
 | `wslib-auth`           | Server-side sessions and their cookie, re-auth, attempts    |
 | `wslib-crypto`         | Keys via a rustls provider: generate, sign, fingerprint     |
+| `wslib-crypto-x509`    | Certificates read, examined, chain-checked and self-signed  |
 
 † Not pure Rust: it carries TypeScript in `js/` that apps vendor into their
 frontend. Every crate that ships other languages is marked here, and says so

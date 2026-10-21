@@ -85,8 +85,10 @@ and the commit still reads the old one.
   browser session. `set(token)` and `clear()` give `Set-Cookie` values;
   `token_in(headers)` reads the value across every `Cookie` header, and
   refuses two different values under the name: browsers order same-name
-  cookies by path, so either pick could be a cookie a script planted. Apps
-  sharing an origin give their cookies distinct names.
+  cookies by path, so either pick could be a cookie a script planted. A
+  planted duplicate signs that browser out wherever its path reaches, rather
+  than slipping in another session. Apps sharing an origin give their cookies
+  distinct names.
 - **`Session::reauthenticated_within(window, now)`**: re-authenticated no
   longer ago than `window` and not in the future. `REAUTHENTICATION_WINDOW`
   is 5 minutes.

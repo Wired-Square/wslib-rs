@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, PoisonError, RwLock};
 use std::time::SystemTime;
-use std::{fmt, fs, io};
+use std::{fs, io};
 
 use rustls::ServerConfig;
 use rustls::crypto::CryptoProvider;
@@ -10,6 +10,7 @@ use wslib_crypto::{KeyAlgorithm, Signer};
 use wslib_crypto_x509::pem::{self, CERTIFICATE, PRIVATE_KEY};
 use wslib_crypto_x509::{CertificateView, Report, SubjectAltName};
 use wslib_file_atomic::{Options, Transaction};
+use wslib_secret::Secret;
 
 const DISPLACED: &str = "unusable";
 const PROBE: &str = ".wslib-tls-write-probe";
@@ -65,19 +66,11 @@ impl Location {
 }
 
 /// A serving pair as PEM text: the certificate chain, leaf first, and its private key.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct ServingPair {
     pub cert_pem: String,
-    pub key_pem: String,
-}
-
-impl fmt::Debug for ServingPair {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ServingPair")
-            .field("cert_pem", &self.cert_pem)
-            .finish_non_exhaustive()
-    }
+    pub key_pem: Secret,
 }
 
 /// What [`Serving::install_pem`] put in place.
@@ -158,15 +151,8 @@ impl Serving {
         algorithm: KeyAlgorithm,
     ) -> Result<Self, ServingError> {
         tracing::info!(cert = %location.cert.display(), ?names, "minting a serving pair");
-        let key = PrivateKeyDer::from(algorithm.generate().map_err(ServingError::Generate)?);
-        let signer = Signer::new(provider.clone(), &key).map_err(ServingError::KeyRefused)?;
-        let cert = wslib_crypto_x509::mint(&signer, names).map_err(ServingError::Mint)?;
-        commit_pair(
-            &location,
-            &pem::encode(CERTIFICATE, &cert),
-            &pem::encode(PRIVATE_KEY, key.secret_der()),
-        )?;
-        let config = server_config(&provider, vec![cert], key)?;
+        let (pair, config) = mint_pair(&provider, names, algorithm)?;
+        commit_pair(&location, &pair)?;
         Ok(Self::new(provider, location, config))
     }
 
@@ -199,27 +185,52 @@ impl Serving {
     ///
     /// Everything that can refuse the pair runs before a file is touched, the
     /// configuration included; installs are taken one at a time. `host` is the
-    /// name the operator reached the app by, for the report.
+    /// name the operator reached the app by and `now` the time, for the report.
+    ///
+    /// A restore installs its backup's pair here too, so the files have one writer.
     pub async fn install_pem(
         &self,
         cert_pem: &str,
-        key_pem: &str,
+        key_pem: &Secret,
         host: Option<&str>,
+        now: SystemTime,
     ) -> Result<Installed, ServingError> {
-        let cert_pem = pem::normalise(cert_pem).map_err(ServingError::Certificate)?;
-        let key_pem = pem::normalise(key_pem).map_err(ServingError::Key)?;
-        let (chain, key, view) = parse(&self.provider, &cert_pem, &key_pem)?;
-        let report = wslib_crypto_x509::examine(view, host, SystemTime::now());
+        let pair = ServingPair {
+            cert_pem: pem::normalise(cert_pem).map_err(ServingError::Certificate)?,
+            key_pem: Secret::new(pem::normalise(key_pem.expose()).map_err(ServingError::Key)?),
+        };
+        let (chain, key, view) = parse(&self.provider, &pair)?;
+        let report = wslib_crypto_x509::examine(view, host, now);
         let config = server_config(&self.provider, chain, key)?;
+        self.commit(pair, config.clone()).await?;
+        Ok(Installed { config, report })
+    }
 
+    /// Replaces the pair with a fresh self-signed one for `names`, written as
+    /// [`install_pem`](Self::install_pem) writes, and returns the configuration
+    /// to reload the listener with.
+    pub async fn regenerate(
+        &self,
+        names: &[SubjectAltName],
+        algorithm: KeyAlgorithm,
+    ) -> Result<Arc<ServerConfig>, ServingError> {
+        let (provider, names) = (self.provider.clone(), names.to_vec());
+        let (pair, config) = blocking(move || mint_pair(&provider, &names, algorithm)).await?;
+        self.commit(pair, config.clone()).await?;
+        Ok(config)
+    }
+
+    async fn commit(
+        &self,
+        pair: ServingPair,
+        config: Arc<ServerConfig>,
+    ) -> Result<(), ServingError> {
         let _turn = self.installing.lock().await;
         self.replaceable()?;
         let location = self.location.clone();
-        tokio::task::spawn_blocking(move || commit_pair(&location, &cert_pem, &key_pem))
-            .await
-            .map_err(|e| ServingError::Write(io::Error::other(e)))??;
-        *self.current.write().unwrap_or_else(PoisonError::into_inner) = config.clone();
-        Ok(Installed { config, report })
+        blocking(move || commit_pair(&location, &pair)).await?;
+        *self.current.write().unwrap_or_else(PoisonError::into_inner) = config;
+        Ok(())
     }
 
     /// The pair on disk, for a backup; never one install's key beside another's certificate.
@@ -312,8 +323,7 @@ fn load(
     provider: &Arc<CryptoProvider>,
     location: &Location,
 ) -> Result<Arc<ServerConfig>, ServingError> {
-    let pair = read_pair(location)?;
-    let (chain, key, _) = parse(provider, &pair.cert_pem, &pair.key_pem)?;
+    let (chain, key, _) = parse(provider, &read_pair(location)?)?;
     server_config(provider, chain, key)
 }
 
@@ -334,14 +344,13 @@ fn read_pair(location: &Location) -> Result<ServingPair, ServingError> {
     }
     Ok(ServingPair {
         cert_pem,
-        key_pem: read(&location.key)?,
+        key_pem: Secret::new(read(&location.key)?),
     })
 }
 
 fn parse(
     provider: &CryptoProvider,
-    cert_pem: &str,
-    key_pem: &str,
+    pair: &ServingPair,
 ) -> Result<
     (
         Vec<CertificateDer<'static>>,
@@ -350,13 +359,28 @@ fn parse(
     ),
     ServingError,
 > {
-    let chain = pem::certificates(cert_pem).map_err(ServingError::Certificate)?;
-    let key = pem::private_key(key_pem).map_err(ServingError::Key)?;
+    let chain = pem::certificates(&pair.cert_pem).map_err(ServingError::Certificate)?;
+    let key = pem::private_key(pair.key_pem.expose()).map_err(ServingError::Key)?;
     let view = wslib_crypto_x509::inspect(&chain[0]).map_err(ServingError::Certificate)?;
     if !wslib_crypto::key_matches(provider, &key, &view.spki).map_err(ServingError::KeyRefused)? {
         return Err(ServingError::Mismatched);
     }
     Ok((chain, key, view))
+}
+
+fn mint_pair(
+    provider: &Arc<CryptoProvider>,
+    names: &[SubjectAltName],
+    algorithm: KeyAlgorithm,
+) -> Result<(ServingPair, Arc<ServerConfig>), ServingError> {
+    let key = PrivateKeyDer::from(algorithm.generate().map_err(ServingError::Generate)?);
+    let signer = Signer::new(provider.clone(), &key).map_err(ServingError::KeyRefused)?;
+    let cert = wslib_crypto_x509::mint(&signer, names).map_err(ServingError::Mint)?;
+    let pair = ServingPair {
+        cert_pem: pem::encode(CERTIFICATE, &cert),
+        key_pem: Secret::new(pem::encode(PRIVATE_KEY, key.secret_der())),
+    };
+    Ok((pair, server_config(provider, vec![cert], key)?))
 }
 
 fn server_config(
@@ -383,15 +407,26 @@ fn transaction(location: &Location) -> (&Path, String) {
 /// Both or neither, across a crash, once [`wslib_file_atomic::recover`] has
 /// run; the key is renamed into place first. Both `0600`, staged and renamed
 /// over the targets, so a symlink there is replaced and not followed.
-fn commit_pair(location: &Location, cert_pem: &str, key_pem: &str) -> Result<(), ServingError> {
+fn commit_pair(location: &Location, pair: &ServingPair) -> Result<(), ServingError> {
     let (record_dir, record) = transaction(location);
     let write = || -> io::Result<()> {
-        let mut pair = Transaction::begin(record_dir, &record)?;
-        pair.stage(&location.key, key_pem.as_bytes(), &Options::new())?;
-        pair.stage(&location.cert, cert_pem.as_bytes(), &Options::new())?;
-        Ok(pair.commit()?)
+        let mut txn = Transaction::begin(record_dir, &record)?;
+        txn.stage(
+            &location.key,
+            pair.key_pem.expose().as_bytes(),
+            &Options::new(),
+        )?;
+        txn.stage(&location.cert, pair.cert_pem.as_bytes(), &Options::new())?;
+        Ok(txn.commit()?)
     };
     write().map_err(ServingError::Write)
+}
+
+/// Off the runtime's workers; a panic there is carried on here.
+async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+    tokio::task::spawn_blocking(work)
+        .await
+        .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()))
 }
 
 fn displace(path: &Path) -> Result<(), ServingError> {
@@ -444,6 +479,7 @@ fn probe(directory: &Path) -> Result<(), (PathBuf, io::ErrorKind)> {
 #[cfg(test)]
 mod tests {
     use wslib_crypto::Fingerprint;
+    use wslib_crypto_x509::Warning;
 
     use super::*;
     use crate::testing::{TlsPeer, providers, self_signed};
@@ -498,6 +534,13 @@ mod tests {
             pem::encode(CERTIFICATE, &pair.chain[0]),
             pem::encode(PRIVATE_KEY, pair.key.secret_der()),
         )
+    }
+
+    async fn install(serving: &Serving, cert: &str, key: &str) -> Result<Installed, ServingError> {
+        let (key, host) = (Secret::new(key), Some("127.0.0.1"));
+        serving
+            .install_pem(cert, &key, host, SystemTime::now())
+            .await
     }
 
     fn fingerprint(cert_pem: &str) -> Fingerprint {
@@ -613,10 +656,7 @@ mod tests {
             let (cert, key) = another_pair(&provider);
             let crlf = cert.replace('\n', "\r\n");
 
-            let installed = serving
-                .install_pem(&crlf, &key, Some("127.0.0.1"))
-                .await
-                .expect(name);
+            let installed = install(&serving, &crlf, &key).await.expect(name);
             assert_eq!(installed.report.warnings, [], "{name}");
             assert_eq!(
                 served(&provider, installed.config).await,
@@ -636,6 +676,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_report_is_made_at_the_time_given() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("clock");
+        let serving = start(provider, dir.managed()).unwrap();
+        let (cert, key) = another_pair(provider);
+
+        let installed = serving
+            .install_pem(&cert, &Secret::new(key), None, SystemTime::UNIX_EPOCH)
+            .await
+            .unwrap();
+        assert_eq!(installed.report.warnings, [Warning::NotYetValid]);
+    }
+
+    #[tokio::test]
+    async fn a_regenerated_pair_is_written_served_and_kept_across_a_restart() {
+        for (name, provider) in providers() {
+            let dir = Scratch::new(&format!("regenerate-{name}"));
+            let serving = start(&provider, dir.managed()).expect(name);
+            let before = on_disk(&dir.join("cert.pem"));
+
+            let names = ["widget-02", "127.0.0.1"].map(|name| name.parse().unwrap());
+            let config = serving
+                .regenerate(&names, KeyAlgorithm::EcP256)
+                .await
+                .expect(name);
+            let regenerated = on_disk(&dir.join("cert.pem"));
+            assert_ne!(regenerated, before, "{name}");
+            assert_eq!(served(&provider, config).await, regenerated, "{name}");
+            assert_eq!(
+                served(&provider, serving.config()).await,
+                regenerated,
+                "{name}"
+            );
+            assert_eq!(dir.listing(), ["cert.pem", "key.pem"], "{name}");
+
+            let restarted = start(&provider, dir.managed()).expect(name);
+            assert_eq!(
+                served(&provider, restarted.config()).await,
+                regenerated,
+                "{name}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn a_pair_that_is_not_one_is_refused_before_disk() {
         for (name, provider) in providers() {
             let dir = Scratch::new(&format!("refused-{name}"));
@@ -644,14 +729,12 @@ mod tests {
             let (cert, key) = another_pair(&provider);
             let (_, other_key) = another_pair(&provider);
 
-            let mismatched = serving.install_pem(&cert, &other_key, None).await;
+            let mismatched = install(&serving, &cert, &other_key).await;
             assert!(
                 matches!(mismatched, Err(ServingError::Mismatched)),
                 "{name}"
             );
-            let combined = serving
-                .install_pem(&format!("{cert}{key}"), &key, None)
-                .await;
+            let combined = install(&serving, &format!("{cert}{key}"), &key).await;
             assert!(
                 matches!(
                     combined,
@@ -664,8 +747,8 @@ mod tests {
 
             let after = serving.pair().await.unwrap();
             assert_eq!(
-                (after.cert_pem, after.key_pem),
-                (before.cert_pem, before.key_pem)
+                (after.cert_pem, after.key_pem.expose()),
+                (before.cert_pem, before.key_pem.expose())
             );
             assert_eq!(dir.listing(), ["cert.pem", "key.pem"], "{name}");
         }
@@ -678,7 +761,7 @@ mod tests {
         let location = Location::named(dir.join("app.crt"), dir.join("app.key"));
         let serving = start(provider, location).unwrap();
         let (cert, key) = another_pair(provider);
-        serving.install_pem(&cert, &key, None).await.unwrap();
+        install(&serving, &cert, &key).await.unwrap();
         assert_eq!(dir.listing(), ["app.crt", "app.key"]);
         assert_eq!(on_disk(&dir.join("app.crt")), fingerprint(&cert));
     }
@@ -699,7 +782,8 @@ mod tests {
         write(&dir.join("cert.pem"), &format!("{key}{cert}"));
         write(&dir.join("key.pem"), &key);
         let pair = dir.managed().read_pair().unwrap().unwrap();
-        assert_eq!((pair.cert_pem, pair.key_pem), (cert, key));
+        assert!(!format!("{pair:?}").contains("PRIVATE KEY"));
+        assert_eq!((pair.cert_pem, pair.key_pem.expose()), (cert, key.as_str()));
     }
 
     #[test]
@@ -736,7 +820,7 @@ mod tests {
         let untouched = fs::read_to_string(&elsewhere).unwrap();
 
         let (cert, key) = another_pair(provider);
-        serving.install_pem(&cert, &key, None).await.unwrap();
+        install(&serving, &cert, &key).await.unwrap();
         assert_eq!(fs::read_to_string(&elsewhere).unwrap(), untouched);
         assert!(
             !fs::symlink_metadata(dir.join("cert.pem"))
@@ -768,9 +852,7 @@ mod tests {
             |e| matches!(e, Err(ServingError::Unwritable { directory, .. }) if directory == keys);
         assert!(unwritable(serving.replaceable()));
         let (cert, key) = another_pair(provider);
-        assert!(unwritable(
-            serving.install_pem(&cert, &key, None).await.map(drop)
-        ));
+        assert!(unwritable(install(&serving, &cert, &key).await.map(drop)));
         assert_eq!(serving.pair().await.unwrap().cert_pem, before.cert_pem);
         fs::set_permissions(&keys, fs::Permissions::from_mode(0o700)).unwrap();
     }

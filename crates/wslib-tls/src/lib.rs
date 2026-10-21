@@ -23,10 +23,10 @@
 //! key.
 //!
 //! [`Serving`] is the other direction: the pair an app's own listener serves,
-//! loaded or minted at startup and replaced by an operator's PEM, as a
-//! `ServerConfig` on the caller's provider. A pair that cannot be used is moved
-//! aside to `*.unusable` and replaced at the app's own location, and refused at
-//! one an operator named.
+//! loaded or minted at startup and replaced by an operator's PEM or a fresh
+//! mint, as a `ServerConfig` on the caller's provider. A pair that cannot be
+//! used is moved aside to `*.unusable` and replaced at the app's own location,
+//! and refused at one an operator named.
 
 mod os;
 mod outbound;

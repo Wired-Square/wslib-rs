@@ -28,6 +28,7 @@ tracing = "0.1.41"
 wslib-crypto = { version = "0.1", path = "../wslib-crypto", registry = "wired-square" }
 wslib-crypto-x509 = { version = "0.1", path = "../wslib-crypto-x509", registry = "wired-square" }
 wslib-file-atomic = { version = "0.1", path = "../wslib-file-atomic", registry = "wired-square" }
+wslib-secret = { version = "0.1", path = "../wslib-secret", registry = "wired-square" }
 
 [dev-dependencies]
 rcgen = { version = "0.14.10", default-features = false }

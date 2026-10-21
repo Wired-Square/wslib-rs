@@ -4,12 +4,13 @@ use std::net::IpAddr;
 use rustls_pki_types::{CertificateDer, TrustAnchor};
 use wslib_crypto::Fingerprint;
 use wslib_crypto_x509::chain::{ChainError, trust_anchor};
+use wslib_crypto_x509::pem;
 
 /// What to trust when dialling out: the OS's roots, authorities, and pins by host.
 #[derive(Clone, Debug, Default)]
 pub struct Trust {
     pub(crate) os_roots: bool,
-    pub(crate) anchors: Vec<TrustAnchor<'static>>,
+    pub(crate) anchors: Vec<(CertificateDer<'static>, TrustAnchor<'static>)>,
     pub(crate) pins: HashMap<String, Fingerprint>,
 }
 
@@ -24,20 +25,41 @@ impl Trust {
 
     /// Trusts what `certificate`, an authority's, signs.
     pub fn anchor(&mut self, certificate: &CertificateDer<'_>) -> Result<(), AnchorError> {
-        let view = wslib_crypto_x509::inspect(certificate)?;
-        if !view.ca {
-            return Err(AnchorError::NotAnAuthority {
-                fingerprint: view.fingerprint,
-            });
-        }
-        self.anchors.push(trust_anchor(certificate)?);
+        self.anchors.push(authority(certificate)?);
         Ok(())
+    }
+
+    /// Trusts what each certificate in `pem` signs, all of them or none.
+    pub fn anchor_pem(&mut self, pem: &str) -> Result<(), AnchorError> {
+        let anchors = pem::certificates(pem)?
+            .iter()
+            .map(authority)
+            .collect::<Result<Vec<_>, _>>()?;
+        self.anchors.extend(anchors);
+        Ok(())
+    }
+
+    /// The authorities' certificates, in the order anchored.
+    pub fn anchors(&self) -> impl Iterator<Item = &CertificateDer<'static>> {
+        self.anchors.iter().map(|(certificate, _)| certificate)
     }
 
     /// Trusts exactly the certificate with `fingerprint` for `host`, replacing any earlier pin.
     pub fn pin(&mut self, host: &str, fingerprint: Fingerprint) {
         self.pins.insert(normalise_host(host), fingerprint);
     }
+}
+
+fn authority(
+    certificate: &CertificateDer<'_>,
+) -> Result<(CertificateDer<'static>, TrustAnchor<'static>), AnchorError> {
+    let view = wslib_crypto_x509::inspect(certificate)?;
+    if !view.ca {
+        return Err(AnchorError::NotAnAuthority {
+            fingerprint: view.fingerprint,
+        });
+    }
+    Ok((certificate.clone().into_owned(), trust_anchor(certificate)?))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -115,5 +137,34 @@ mod tests {
             Err(AnchorError::Unreadable(_))
         ));
         assert_eq!(trust.anchors.len(), 1);
+    }
+
+    #[test]
+    fn a_pem_of_several_authorities_anchors_each_and_reads_back_as_der() {
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let roots = ["Widget Root", "Gadget Root"]
+            .map(|name| Authority::new(provider.clone(), name).certificate);
+        let bundle: String = roots
+            .iter()
+            .map(|root| pem::encode(pem::CERTIFICATE, root))
+            .collect();
+
+        let mut trust = Trust::default();
+        trust.anchor_pem(&bundle.replace('\n', "\r\n")).unwrap();
+        assert!(trust.anchors().eq(&roots));
+
+        let leaf = pem::encode(
+            pem::CERTIFICATE,
+            &self_signed(provider, &["127.0.0.1"]).chain[0],
+        );
+        assert!(matches!(
+            trust.anchor_pem(&format!("{bundle}{leaf}")),
+            Err(AnchorError::NotAnAuthority { .. })
+        ));
+        assert!(matches!(
+            trust.anchor_pem("not PEM"),
+            Err(AnchorError::Unreadable(_))
+        ));
+        assert_eq!(trust.anchors().count(), 2, "all or none");
     }
 }

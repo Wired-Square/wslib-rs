@@ -13,7 +13,9 @@
 //! Take a [`Proof`] with [`Proof::begin`] before checking any credential, and
 //! pass it to [`Sessions::issue`] or [`Sessions::reauthenticated`]. In a
 //! two-step sign-in, take it at the step that re-reads the account (the code
-//! step), not at the first. On each lookup, checking [`Session::proved_since`]
+//! step), not at the first. Where the request itself moves that cutoff (a
+//! password change, a first account), take it after the write instead, or the
+//! new session is refused at once. On each lookup, checking [`Session::proved_since`]
 //! against the instant the account's sessions were last invalidated refuses a
 //! sign-in that raced a password change.
 

@@ -47,7 +47,9 @@ A sign-in that checks the old password just before a password change, and
 issues its session just after that change's `end_all`, would otherwise survive
 the change. `proved_since` compares the instant the check began, not when the
 session was issued, so that sign-in is refused; in a two-step sign-in, begin
-the `Proof` at the step that re-reads the account.
+the `Proof` at the step that re-reads the account. Where the request itself
+moves the cutoff (a password change, a first account), begin it after that
+write, or the new session is refused at once.
 
 ## What's here
 

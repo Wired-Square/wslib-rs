@@ -83,7 +83,8 @@ pub trait SessionStore: Send + Sync {
 pub struct Proof(DateTime<Utc>);
 
 impl Proof {
-    /// Call before checking any password, passkey or code.
+    /// Call before checking any password, passkey or code, or after the write
+    /// when the request itself moves the account's cutoff.
     pub fn begin() -> Self {
         Self(now())
     }

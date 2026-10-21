@@ -31,7 +31,7 @@ pub fn certificate_sections(pem: &str) -> Result<String, Error> {
     sections(pem, |label| label == CERTIFICATE)
 }
 
-/// The certificates in `pem`, leaf first; any other section is refused, a private key above all.
+/// The certificates in `pem`, at least one and leaf first; any other section is refused, a private key above all.
 pub fn certificates(pem: &str) -> Result<Vec<CertificateDer<'static>>, Error> {
     within_length(pem)?;
     // Labels before the decoder, which would skip a foreign section silently.
@@ -43,9 +43,13 @@ pub fn certificates(pem: &str) -> Result<Vec<CertificateDer<'static>>, Error> {
             label: label.to_string(),
         });
     }
-    CertificateDer::pem_slice_iter(pem.as_bytes())
+    let certificates = CertificateDer::pem_slice_iter(sections(pem, |_| true)?.as_bytes())
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| Error::Malformed(e.to_string()))
+        .map_err(|e| Error::Malformed(e.to_string()))?;
+    if certificates.is_empty() {
+        return Err(none_decodes());
+    }
+    Ok(certificates)
 }
 
 /// The one private key in `pem`; an encrypted key and a second key are refused.
@@ -54,7 +58,8 @@ pub fn private_key(pem: &str) -> Result<PrivateKeyDer<'static>, Error> {
     if encrypted(pem) {
         return Err(Error::Encrypted);
     }
-    let mut keys = PrivateKeyDer::pem_slice_iter(pem.as_bytes());
+    let tidy = sections(pem, |_| true)?;
+    let mut keys = PrivateKeyDer::pem_slice_iter(tidy.as_bytes());
     let key = match keys.next() {
         Some(key) => key.map_err(|e| Error::Malformed(e.to_string()))?,
         None => return Err(missing(pem, PRIVATE_KEY)),
@@ -79,6 +84,10 @@ fn within_length(pem: &str) -> Result<(), Error> {
         });
     }
     Ok(())
+}
+
+pub(crate) fn none_decodes() -> Error {
+    Error::Malformed("no certificate decodes".into())
 }
 
 fn missing(pem: &str, wanted: &'static str) -> Error {
@@ -281,6 +290,18 @@ mod tests {
             pem.trim().replace('\n', "\r\n")
         );
         assert_eq!(normalise(&messy).expect("tidies"), pem);
+    }
+
+    #[test]
+    fn indented_markers_decode_as_if_they_were_not() {
+        let indent = |pem: &str| {
+            pem.lines()
+                .map(|line| format!("  {line}\n"))
+                .collect::<String>()
+        };
+        let pem = certificate(|_| {});
+        assert_eq!(certificates(&indent(&pem)), certificates(&pem));
+        assert_eq!(private_key(&indent(&key_pem())), private_key(&key_pem()));
     }
 
     #[test]

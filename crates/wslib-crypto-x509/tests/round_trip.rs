@@ -1,14 +1,18 @@
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime};
 
+use rcgen::SigningKey;
 use rcgen::{
     BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer,
     KeyIdMethod, KeyUsagePurpose, SerialNumber,
 };
 use rustls::crypto::CryptoProvider;
-use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use rustls_pki_types::{
+    AlgorithmIdentifier, CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, alg_id,
+};
 use wslib_crypto::{KeyAlgorithm, Signer, key_matches, random_serial};
 use wslib_crypto_x509::chain::{self, ChainError, Purpose};
+use wslib_crypto_x509::signature::{self, SignatureError};
 use wslib_crypto_x509::{SubjectAltName, examine, inspect, mint, pem};
 
 fn providers() -> [(&'static str, Arc<CryptoProvider>); 2] {
@@ -106,6 +110,15 @@ fn params(signer: &Signer, name: &str, ca: bool) -> CertificateParams {
 }
 
 fn issue(provider: &Arc<CryptoProvider>, root: KeyAlgorithm, leaf: KeyAlgorithm) -> Chain {
+    issue_with(provider, root, leaf, |_| {})
+}
+
+fn issue_with(
+    provider: &Arc<CryptoProvider>,
+    root: KeyAlgorithm,
+    leaf: KeyAlgorithm,
+    build: impl FnOnce(&mut CertificateParams),
+) -> Chain {
     let signer = |algorithm| Signer::new(provider.clone(), &key(algorithm)).unwrap();
     let (root_key, intermediate_key, leaf_key) = (signer(root), signer(root), signer(leaf));
 
@@ -124,6 +137,7 @@ fn issue(provider: &Arc<CryptoProvider>, root: KeyAlgorithm, leaf: KeyAlgorithm)
         "widget-01.local".try_into().unwrap(),
     )];
     leaf_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+    build(&mut leaf_params);
     let leaf = leaf_params
         .signed_by(&leaf_key, &intermediate_issuer)
         .unwrap();
@@ -212,4 +226,84 @@ fn a_chain_that_does_not_hold_says_why() {
         chain::trust_anchor(&not_a_certificate),
         Err(ChainError::Invalid(_))
     ));
+}
+
+fn der_sequence(contents: &AlgorithmIdentifier) -> Vec<u8> {
+    [&[0x30, contents.len() as u8], contents.as_ref()].concat()
+}
+
+#[test]
+fn a_signature_verifies_with_the_certificates_key_by_the_algorithm_it_names() {
+    let message = b"index.json";
+    for (name, provider) in providers() {
+        let algorithms = provider.signature_verification_algorithms.all;
+        for algorithm in KeyAlgorithm::ALL {
+            let signer = Signer::new(provider.clone(), &key(algorithm)).unwrap();
+            let spki = inspect(&mint(&signer, &["widget-01".parse().unwrap()]).unwrap())
+                .unwrap()
+                .spki;
+            let named = der_sequence(&match algorithm {
+                KeyAlgorithm::EcP256 => alg_id::ECDSA_SHA256,
+                KeyAlgorithm::EcP384 => alg_id::ECDSA_SHA384,
+                _ => alg_id::RSA_PKCS1_SHA256,
+            });
+            let mut signed = signer.sign(message).unwrap();
+            let verify = |algorithm: &[u8], signed: &[u8]| {
+                signature::verify(&spki, algorithm, message, signed, algorithms)
+            };
+
+            assert_eq!(verify(&named, &signed), Ok(()), "{name} {algorithm}");
+            let other = der_sequence(&alg_id::ED25519);
+            assert_eq!(
+                verify(&other, &signed),
+                Err(SignatureError::NoAlgorithm),
+                "{name} {algorithm}"
+            );
+            *signed.last_mut().unwrap() ^= 1;
+            assert_eq!(
+                verify(&named, &signed),
+                Err(SignatureError::BadSignature),
+                "{name} {algorithm}"
+            );
+            assert!(matches!(
+                signature::verify(&spki[1..], &named, message, &signed, algorithms),
+                Err(SignatureError::Malformed(_))
+            ));
+            assert!(matches!(
+                verify(&named[2..], &signed),
+                Err(SignatureError::Malformed(_))
+            ));
+        }
+    }
+}
+
+#[test]
+fn a_code_signing_leaf_must_allow_digital_signatures_when_it_limits_its_key() {
+    let (_, provider) = &providers()[0];
+    let algorithms = provider.signature_verification_algorithms.all;
+    let verify = |key_usages: Vec<KeyUsagePurpose>| {
+        let issued = issue_with(
+            provider,
+            KeyAlgorithm::EcP256,
+            KeyAlgorithm::EcP256,
+            |params| {
+                params.extended_key_usages = vec![ExtendedKeyUsagePurpose::CodeSigning];
+                params.key_usages = key_usages;
+            },
+        );
+        chain::verify(
+            &issued.leaf,
+            &[],
+            &[chain::trust_anchor(&issued.intermediate).unwrap()],
+            Purpose::CODE_SIGNING,
+            january(),
+            algorithms,
+        )
+    };
+    assert_eq!(verify(vec![]), Ok(()));
+    assert_eq!(verify(vec![KeyUsagePurpose::DigitalSignature]), Ok(()));
+    assert_eq!(
+        verify(vec![KeyUsagePurpose::KeyEncipherment]),
+        Err(ChainError::WrongKeyUsage)
+    );
 }

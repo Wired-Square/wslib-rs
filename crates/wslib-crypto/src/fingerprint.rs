@@ -46,7 +46,7 @@ impl FromStr for Fingerprint {
 
     fn from_str(s: &str) -> Result<Self, Error> {
         let digits: String = s.trim().chars().filter(|&c| c != ':').collect();
-        if digits.len() != 64 || !digits.is_ascii() {
+        if digits.len() != 64 || !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(Error::NotAFingerprint);
         }
         let mut bytes = [0; 32];
@@ -80,5 +80,6 @@ mod tests {
         );
         assert!(hex[..62].parse::<Fingerprint>().is_err());
         assert!(format!("{}zz", &hex[..62]).parse::<Fingerprint>().is_err());
+        assert!("+f".repeat(32).parse::<Fingerprint>().is_err());
     }
 }

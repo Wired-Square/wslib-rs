@@ -1,7 +1,7 @@
 use std::fmt;
 use std::time::SystemTime;
 
-use crate::{CertificateView, ExtendedKeyUsage};
+use crate::{CertificateView, ExtendedKeyUsage, SubjectAltName};
 
 /// A server's certificate, and what is odd about it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -18,8 +18,8 @@ pub enum Warning {
     Expired,
     /// Post-dated, or the clock is wrong.
     NotYetValid,
-    /// No client will match it to any name.
-    NoSubjectAltName,
+    /// No DNS name or address among the subject alternative names, so no client will match it to a host.
+    NoHostName,
     HostNotCovered {
         host: String,
     },
@@ -34,9 +34,9 @@ impl fmt::Display for Warning {
         match self {
             Self::Expired => f.write_str("the certificate has expired"),
             Self::NotYetValid => f.write_str("the certificate is not valid yet"),
-            Self::NoSubjectAltName => {
-                f.write_str("the certificate has no subject alternative names")
-            }
+            Self::NoHostName => f.write_str(
+                "the certificate names no host: no DNS name or address among its subject alternative names",
+            ),
             Self::HostNotCovered { host } => write!(f, "the certificate does not cover {host}"),
             Self::NoServerAuth => {
                 f.write_str("the certificate's extended key usage leaves out server authentication")
@@ -59,8 +59,8 @@ pub fn examine(certificate: CertificateView, host: Option<&str>, now: SystemTime
         warnings.push(Warning::NotYetValid);
     }
 
-    if certificate.sans.is_empty() {
-        warnings.push(Warning::NoSubjectAltName);
+    if !certificate.sans.iter().any(SubjectAltName::is_host) {
+        warnings.push(Warning::NoHostName);
     } else if let Some(host) = host
         && !certificate.sans.iter().any(|san| san.covers(host))
     {
@@ -139,7 +139,20 @@ mod tests {
     fn no_san_is_one_warning_and_not_also_a_mismatch() {
         let pem = certificate(|params| params.subject_alt_names.clear());
         let report = examined(&pem, Some("widget-01.local"));
-        assert_eq!(report.warnings, [Warning::NoSubjectAltName]);
+        assert_eq!(report.warnings, [Warning::NoHostName]);
+    }
+
+    #[test]
+    fn email_and_uri_names_alone_name_no_host() {
+        let pem = certificate(|params| {
+            params.subject_alt_names = vec![
+                rcgen::SanType::Rfc822Name("ops@widget-01.local".try_into().unwrap()),
+                rcgen::SanType::URI("spiffe://widgets/01".try_into().unwrap()),
+            ];
+        });
+        for host in [None, Some("widget-01.local")] {
+            assert_eq!(examined(&pem, host).warnings, [Warning::NoHostName]);
+        }
     }
 
     #[test]

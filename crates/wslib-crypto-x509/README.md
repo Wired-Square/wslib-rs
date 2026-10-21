@@ -2,12 +2,13 @@
 
 X.509 certificates on `wslib-crypto`: PEM as people paste it, what a
 certificate says and what is odd about it, whether a name is covered,
-whether a chain holds, and a self-signed certificate to serve. x509-parser
+whether a chain holds, whether a signature is a certificate's key's, and a
+self-signed certificate to serve. x509-parser
 reads and rcgen writes; no crypto provider is enabled here.
 
 ```rust
 use wslib_crypto::{KeyAlgorithm, Signer};
-use wslib_crypto_x509::{SubjectAltName, chain, examine, inspect_pem, mint, pem};
+use wslib_crypto_x509::{SubjectAltName, chain, examine, inspect, inspect_pem, mint, pem, signature};
 
 // A serving pair of our own:
 let key = KeyAlgorithm::EcP256.generate()?;
@@ -24,6 +25,10 @@ for warning in &report.warnings { /* Expired, HostNotCovered { host }, … */ }
 let anchors = [chain::trust_anchor(&root)?];
 chain::verify(&leaf, &intermediates, &anchors, chain::Purpose::CODE_SIGNING, at,
     provider.signature_verification_algorithms.all)?;
+
+// A signature by that leaf's key:
+signature::verify(&inspect(&leaf)?.spki, &algorithm_identifier, message, signed,
+    provider.signature_verification_algorithms.all)?;
 ```
 
 ## What's here
@@ -32,27 +37,37 @@ chain::verify(&leaf, &intermediates, &anchors, chain::Purpose::CODE_SIGNING, at,
   first, and refuses any other section beside them, a private key above
   all, since that text is usually served to anyone. `private_key` reads one
   key and refuses an encrypted one or two. `normalise` keeps every section
-  verbatim with LF endings and drops what is between them;
+  verbatim with LF endings and drops what is between them, and indented
+  markers read as if they were not;
   `certificate_sections` keeps only the certificates. Text over `MAX_LEN`
   (256 KiB) is refused before parsing. `encode` writes PEM with LF endings.
 - **`inspect` and `inspect_pem`**: a `CertificateView` copied out of the
-  certificate: subject, issuer, serial, subject alternative names, validity,
+  certificate: subject and issuer in RFC 4514 form (`CN=R3,O=Let's
+  Encrypt,C=US`), serial, subject alternative names, validity,
   the key (`RSA 2048`, `ECDSA P-256`), SHA-256 fingerprint, the
   SubjectPublicKeyInfo for `wslib_crypto::key_matches`, and the CA flag, key
   usages and extended key usages.
 - **`examine(view, host, now)`**: a `Report` of warnings: expired, not yet
-  valid, no subject alternative names, `host` not covered, an extended key
+  valid, no host name (no DNS name or address among the subject alternative
+  names), `host` not covered, an extended key
   usage without server authentication, `CA:TRUE`. `now` is an argument, so a
   host with no clock yet can be tested. Nothing here is a trust decision.
 - **`SubjectAltName`**: a DNS name, address, email or URI, parsed from what
-  a person types and refused when it is none of them. `covers(host)`
+  a person types and refused when it is none of them; a DNS name is what
+  rustls takes as a server name, or a wildcard over one. `covers(host)`
   ignores case and IPv6 brackets; a wildcard covers one label and never an
   address.
 - **`chain::verify`**: the end-entity certificate through its intermediates
   to a trust anchor at a given time, for a `Purpose` (an extended key usage,
-  required outright or only when the extension is there), with the
-  signature algorithms the caller passes. `ChainError` tells expiry, a wrong
-  purpose and an untrusted issuer apart. Revocation is not checked.
+  required outright or only when the extension is there, and optionally a
+  key usage the leaf must allow: code signing needs digital signatures), with
+  the signature algorithms the caller passes. `ChainError` tells expiry, a
+  wrong purpose or key usage and an untrusted issuer apart. Revocation and
+  the anchor's own validity are not checked.
+- **`signature::verify`**: a signature over a message with the key of a
+  SubjectPublicKeyInfo, by the AlgorithmIdentifier the signature names, with
+  whichever of the caller's algorithms fits both. `SignatureError` tells no
+  fitting algorithm from a signature that does not verify.
 - **`mint(signer, names)`**: a self-signed serving certificate. The first
   name is the common name; valid from 1 July 2026 into the year 4096;
   `CA:FALSE`, digital signature and server authentication, each stated;

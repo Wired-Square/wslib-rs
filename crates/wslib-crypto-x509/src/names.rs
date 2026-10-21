@@ -2,6 +2,8 @@ use std::fmt;
 use std::net::IpAddr;
 use std::str::FromStr;
 
+use rustls_pki_types::DnsName;
+
 use crate::Error;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -37,6 +39,11 @@ impl SubjectAltName {
             }
             Self::Email(_) | Self::Uri(_) => false,
         }
+    }
+
+    /// A DNS name or an address: what a client matches a host against.
+    pub fn is_host(&self) -> bool {
+        matches!(self, Self::Dns(_) | Self::Ip(_))
     }
 }
 
@@ -97,32 +104,19 @@ fn is_uri(v: &str) -> bool {
             }
             rest
         }
-        None if v.len() > 4 && v[..4].eq_ignore_ascii_case("urn:") => &v[4..],
+        None if v.len() > 4 && v.as_bytes()[..4].eq_ignore_ascii_case(b"urn:") => &v[4..],
         None => return false,
     };
     !rest.is_empty() && v.bytes().all(|b| b.is_ascii_graphic())
 }
 
-/// RFC 1123, with a wildcard only as the whole first label; an all-numeric
-/// last label is refused so a mistyped address isn't taken as a name.
+/// What rustls accepts as a server name, with a wildcard only as the whole first label.
 fn is_dns_name(v: &str, allow_wildcard: bool) -> bool {
     let name = match v.strip_prefix("*.") {
         Some(rest) if allow_wildcard => rest,
         _ => v,
     };
-    name.len() <= 253
-        && !name
-            .rsplit('.')
-            .next()
-            .is_some_and(|tld| tld.bytes().all(|b| b.is_ascii_digit()))
-        && name.split('.').all(|label| {
-            (1..=63).contains(&label.len())
-                && label
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-                && !label.starts_with('-')
-                && !label.ends_with('-')
-        })
+    DnsName::try_from(name).is_ok()
 }
 
 #[cfg(test)]
@@ -139,6 +133,13 @@ mod tests {
             ("www.example.com", dns("www.example.com")),
             ("*.example.com", dns("*.example.com")),
             ("localhost", dns("localhost")),
+            ("_dmarc.example.com", dns("_dmarc.example.com")),
+            ("*.my_host.internal", dns("*.my_host.internal")),
+            ("example.com.", dns("example.com.")),
+            (
+                "ops@mail_relay.example.com",
+                SubjectAltName::Email("ops@mail_relay.example.com".into()),
+            ),
             ("10.0.0.5", SubjectAltName::Ip("10.0.0.5".parse().unwrap())),
             (
                 "2001:db8::1",
@@ -178,7 +179,7 @@ mod tests {
             "1.2.3",
             "a@b@c",
             "@example.com",
-            "user@bad_domain",
+            "user@bad domain",
             "user@*.example.com",
             "-bad.example.com",
             "bad-.example.com",
@@ -191,6 +192,8 @@ mod tests {
             "www.*.example.com",
             "010.0.0.1",
             "::1]/x[",
+            "abcé",
+            "urn€",
         ] {
             assert!(
                 input.parse::<SubjectAltName>().is_err(),

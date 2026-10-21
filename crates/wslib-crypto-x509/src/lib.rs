@@ -3,8 +3,8 @@
 //! certificate.
 //!
 //! Parsing is x509-parser's and encoding rcgen's. Signing goes through a
-//! [`wslib_crypto::Signer`] and chain checks through the signature algorithms
-//! the caller passes, so no crypto provider is enabled here.
+//! [`wslib_crypto::Signer`], and chain and signature checks through the
+//! signature algorithms the caller passes, so no crypto provider is enabled here.
 //!
 //! Inspecting and examining are a report, never a trust decision: only
 //! [`chain::verify`] decides that a certificate is good.
@@ -17,6 +17,7 @@ mod inspect;
 mod mint;
 mod names;
 pub mod pem;
+pub mod signature;
 #[cfg(test)]
 mod testing;
 

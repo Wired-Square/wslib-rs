@@ -3,11 +3,14 @@ use std::net::IpAddr;
 use std::time::{Duration, SystemTime};
 
 use wslib_crypto::Fingerprint;
+use x509_parser::asn1_rs::ToDer;
 use x509_parser::certificate::X509Certificate;
+use x509_parser::error::X509Error;
 use x509_parser::extensions::GeneralName;
 use x509_parser::prelude::FromDer;
 use x509_parser::public_key::PublicKey;
 use x509_parser::time::ASN1Time;
+use x509_parser::x509::{AttributeTypeAndValue, X509Name};
 
 use crate::{Error, SubjectAltName, pem};
 
@@ -15,7 +18,9 @@ use crate::{Error, SubjectAltName, pem};
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct CertificateView {
+    /// In RFC 4514 form, most specific first: `CN=R3,O=Let's Encrypt,C=US`.
     pub subject: String,
+    /// As the subject.
     pub issuer: String,
     /// Lowercase hex, as encoded.
     pub serial: String,
@@ -105,18 +110,14 @@ pub fn inspect(der: &[u8]) -> Result<CertificateView, Error> {
         }
         Err(e) => return Err(Error::Malformed(e.to_string())),
     };
-    let subject = certificate.subject().to_string();
-    let issuer = certificate.issuer().to_string();
+    let subject = rfc_4514(certificate.subject());
+    let issuer = rfc_4514(certificate.issuer());
     let validity = certificate.validity();
     Ok(CertificateView {
         self_signed: subject == issuer,
         subject,
         issuer,
-        serial: certificate
-            .raw_serial()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect(),
+        serial: hex(certificate.raw_serial()),
         sans: sans(&certificate),
         not_before: instant(validity.not_before)?,
         not_after: instant(validity.not_after)?,
@@ -124,14 +125,68 @@ pub fn inspect(der: &[u8]) -> Result<CertificateView, Error> {
         key: key_description(&certificate),
         spki: certificate.public_key().raw.to_vec(),
         ca: matches!(certificate.basic_constraints(), Ok(Some(basic)) if basic.value.ca),
-        key_usages: key_usages(&certificate),
+        key_usages: key_usages(&certificate).ok().flatten(),
         extended_key_usages: extended_key_usages(&certificate),
     })
 }
 
 /// Reads the leaf, the first certificate, of some PEM text; see [`pem::certificates`] for what is refused.
 pub fn inspect_pem(pem: &str) -> Result<CertificateView, Error> {
-    inspect(&pem::certificates(pem)?[0])
+    let leaf = pem::certificates(pem)?.into_iter().next();
+    inspect(&leaf.ok_or_else(pem::none_decodes)?)
+}
+
+fn rfc_4514(name: &X509Name<'_>) -> String {
+    let rdns: Vec<_> = name.iter_rdn().collect();
+    rdns.iter()
+        .rev()
+        .map(|rdn| rdn.iter().map(attribute).collect::<Vec<_>>().join("+"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn attribute(attribute: &AttributeTypeAndValue<'_>) -> String {
+    let oid = attribute.attr_type().to_id_string();
+    let short = match oid.as_str() {
+        "2.5.4.3" => Some("CN"),
+        "2.5.4.6" => Some("C"),
+        "2.5.4.7" => Some("L"),
+        "2.5.4.8" => Some("ST"),
+        "2.5.4.9" => Some("STREET"),
+        "2.5.4.10" => Some("O"),
+        "2.5.4.11" => Some("OU"),
+        "0.9.2342.19200300.100.1.1" => Some("UID"),
+        "0.9.2342.19200300.100.1.25" => Some("DC"),
+        _ => None,
+    };
+    match (short, attribute.as_str()) {
+        (Some(short), Ok(value)) => format!("{short}={}", escaped(value)),
+        (short, _) => {
+            let der = attribute.attr_value().to_der_vec().unwrap_or_default();
+            format!("{}=#{}", short.unwrap_or(&oid), hex(&der))
+        }
+    }
+}
+
+fn escaped(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for (at, c) in value.char_indices() {
+        if c == '\0' {
+            out.push_str("\\00");
+            continue;
+        }
+        let leading = at == 0 && matches!(c, ' ' | '#');
+        let trailing = at + c.len_utf8() == value.len() && c == ' ';
+        if leading || trailing || "\"+,;<>\\".contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn instant(time: ASN1Time) -> Result<SystemTime, Error> {
@@ -205,9 +260,14 @@ fn modulus_bits(modulus: &[u8]) -> Option<u32> {
     Some((bytes - 1) * 8 + (8 - modulus[start].leading_zeros()))
 }
 
-fn key_usages(certificate: &X509Certificate<'_>) -> Option<Vec<KeyUsage>> {
-    let usage = certificate.key_usage().ok()??.value;
-    Some(
+pub(crate) fn key_usages(
+    certificate: &X509Certificate<'_>,
+) -> Result<Option<Vec<KeyUsage>>, X509Error> {
+    let Some(usage) = certificate.key_usage()? else {
+        return Ok(None);
+    };
+    let usage = usage.value;
+    Ok(Some(
         [
             (usage.digital_signature(), KeyUsage::DigitalSignature),
             (usage.non_repudiation(), KeyUsage::NonRepudiation),
@@ -222,7 +282,7 @@ fn key_usages(certificate: &X509Certificate<'_>) -> Option<Vec<KeyUsage>> {
         .into_iter()
         .filter_map(|(set, usage)| set.then_some(usage))
         .collect(),
-    )
+    ))
 }
 
 fn extended_key_usages(certificate: &X509Certificate<'_>) -> Option<Vec<ExtendedKeyUsage>> {
@@ -276,6 +336,62 @@ mod tests {
             view.fingerprint,
             Fingerprint::of(&pem::certificates(&pem).unwrap()[0])
         );
+    }
+
+    #[test]
+    fn an_indented_certificate_reads_rather_than_panicking() {
+        let pem = certificate(|_| {});
+        let indented: String = pem.lines().map(|line| format!("    {line}\n")).collect();
+        assert_eq!(inspect_pem(&indented), inspect_pem(&pem));
+    }
+
+    #[test]
+    fn names_read_in_rfc_4514_form_most_specific_first() {
+        let pem = certificate(|params| {
+            let mut name = rcgen::DistinguishedName::new();
+            name.push(rcgen::DnType::CountryName, "US");
+            name.push(rcgen::DnType::OrganizationName, "Let's Encrypt");
+            name.push(rcgen::DnType::CommonName, "R3");
+            params.distinguished_name = name;
+        });
+        assert_eq!(
+            inspect_pem(&pem).unwrap().subject,
+            "CN=R3,O=Let's Encrypt,C=US"
+        );
+    }
+
+    #[test]
+    fn a_value_with_special_characters_is_escaped_and_an_unknown_type_is_hex() {
+        let pem = certificate(|params| {
+            let mut name = rcgen::DistinguishedName::new();
+            name.push(
+                rcgen::DnType::OrganizationName,
+                "#Widgets, Inc. <1+1>; \\\"x\" ",
+            );
+            name.push(
+                rcgen::DnType::CustomDnType(vec![1, 2, 840, 113549, 1, 9, 1]),
+                "ops@widget-01.local",
+            );
+            params.distinguished_name = name;
+        });
+        assert_eq!(
+            inspect_pem(&pem).unwrap().subject,
+            "1.2.840.113549.1.9.1=#0c136f7073407769646765742d30312e6c6f63616c,\
+             O=\\#Widgets\\, Inc. \\<1\\+1\\>\\; \\\\\\\"x\\\"\\ "
+        );
+    }
+
+    #[test]
+    fn a_multi_valued_rdn_joins_with_a_plus_and_dc_has_its_short_name() {
+        let der = [
+            0x30, 0x2b, 0x31, 0x14, 0x30, 0x08, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0c, 0x01, b'a',
+            0x30, 0x08, 0x06, 0x03, 0x55, 0x04, 0x0a, 0x0c, 0x01, b'b', 0x31, 0x13, 0x30, 0x11,
+            0x06, 0x0a, 0x09, 0x92, 0x26, 0x89, 0x93, 0xf2, 0x2c, 0x64, 0x01, 0x19, 0x16, 0x03,
+            b'c', b'o', b'm',
+        ];
+        let (_, name) = X509Name::from_der(&der).expect("parses");
+        assert_eq!(rfc_4514(&name), "DC=com,CN=a+O=b");
+        assert_eq!(escaped(" a\0 "), "\\ a\\00\\ ");
     }
 
     #[test]

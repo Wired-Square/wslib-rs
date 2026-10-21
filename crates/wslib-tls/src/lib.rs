@@ -21,11 +21,18 @@
 //!
 //! **An authority's own dates are not checked**: a trust anchor is a name and a
 //! key.
+//!
+//! [`Serving`] is the other direction: the pair an app's own listener serves,
+//! loaded or minted at startup and replaced by an operator's PEM, as a
+//! `ServerConfig` on the caller's provider. A pair that cannot be used is moved
+//! aside to `*.unusable` and replaced at the app's own location, and refused at
+//! one an operator named.
 
 mod os;
 mod outbound;
 mod probe;
 mod rejection;
+mod serving;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 mod trust;
@@ -33,4 +40,5 @@ mod trust;
 pub use outbound::Outbound;
 pub use probe::{Presented, ProbeError};
 pub use rejection::{Cause, Rejection, cause};
+pub use serving::{Installed, Location, Serving, ServingError, ServingPair};
 pub use trust::{AnchorError, Trust, normalise_host};

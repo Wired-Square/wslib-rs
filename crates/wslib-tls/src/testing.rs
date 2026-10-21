@@ -80,6 +80,17 @@ pub fn self_signed(provider: Arc<CryptoProvider>, names: &[&str]) -> Pair {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn providers() -> [(&'static str, Arc<CryptoProvider>); 2] {
+    [
+        ("ring", Arc::new(rustls::crypto::ring::default_provider())),
+        (
+            "aws-lc-rs",
+            Arc::new(rustls::crypto::aws_lc_rs::default_provider()),
+        ),
+    ]
+}
+
 fn generate(provider: Arc<CryptoProvider>) -> (Signer, PrivateKeyDer<'static>) {
     let key = PrivateKeyDer::from(KeyAlgorithm::EcP256.generate().expect("generates"));
     (Signer::new(provider, &key).expect("loads"), key)
@@ -106,7 +117,11 @@ impl TlsPeer {
             .with_no_client_auth()
             .with_single_cert(pair.chain.clone(), pair.key.clone_key())
             .expect("a pair");
-        let acceptor = TlsAcceptor::from(Arc::new(config));
+        Self::serving(Arc::new(config)).await
+    }
+
+    pub async fn serving(config: Arc<ServerConfig>) -> Self {
+        let acceptor = TlsAcceptor::from(config);
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let addr = listener.local_addr().expect("addr");
         let accepting = tokio::spawn(async move {

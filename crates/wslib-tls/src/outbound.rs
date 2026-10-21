@@ -295,18 +295,8 @@ mod tests {
     use rustls_native_certs::CertificateResult;
 
     use super::*;
-    use crate::testing::{Authority, TlsPeer, self_signed};
+    use crate::testing::{Authority, TlsPeer, providers, self_signed};
     use crate::{Cause, cause};
-
-    fn providers() -> [(&'static str, Arc<CryptoProvider>); 2] {
-        [
-            ("ring", Arc::new(rustls::crypto::ring::default_provider())),
-            (
-                "aws-lc-rs",
-                Arc::new(rustls::crypto::aws_lc_rs::default_provider()),
-            ),
-        ]
-    }
 
     fn os_holding(roots: Vec<CertificateDer<'static>>) -> ReadOs {
         Arc::new(move || {

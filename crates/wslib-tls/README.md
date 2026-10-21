@@ -3,7 +3,8 @@
 What an app trusts when it dials out, over the app's rustls
 `CryptoProvider`: the OS's roots, authorities it installed and certificates
 pinned by host, replaced live, with typed rejections and a look at what a
-host presents before it is pinned. No provider is enabled here.
+host presents before it is pinned. And the pair its own listener serves,
+minted, kept and replaced. No provider is enabled here.
 
 ```rust
 use wslib_tls::{Cause, Outbound, Rejection, Trust};
@@ -70,7 +71,57 @@ let view = wslib_crypto_x509::inspect(&presented.end_entity)?;
 
 Needs tokio's multi-threaded runtime feature, for `block_in_place`.
 
+## Serving its own listener
+
+The certificate and key an app serves, as an `Arc<ServerConfig>` on the
+app's provider with ALPN left empty.
+
+```rust
+use wslib_tls::{Location, Serving};
+
+let location = Location::managed(state.join("cert.pem"), state.join("key.pem"));
+let names = ["widget-01", "widget-01.local", "127.0.0.1"].map(|n| n.parse().unwrap());
+let serving = tokio::task::spawn_blocking(move || {
+    Serving::load_or_mint(provider, location, &names, KeyAlgorithm::EcP256)
+})
+.await??;
+let tls = wslib_http_server::Tls::new(serving.config()); // adds h2 and http/1.1
+
+// An operator's pair: refused before a file is touched, or written and handed back.
+let installed = serving.install_pem(&cert_pem, &key_pem, Some(host)).await?;
+tls.reload(installed.config);
+for warning in &installed.report.warnings { /* expired, host not covered, ... */ }
+```
+
+- **`Serving::load_or_mint`**: both files there and loadable, they are
+  served; neither, a self-signed pair is minted with `wslib_crypto_x509::mint`
+  for the caller's names; one half, or a pair that will not read, parse,
+  match or load, is moved aside to `<file>.unusable` and replaced at a
+  `Location::managed` location, and refused with `ServingError::Named` at a
+  `Location::named` one. A path that cannot even be looked at is refused at
+  either. Blocks: it reads and writes files, and RSA generation takes
+  seconds.
+- **Writing the pair** goes through a `wslib_file_atomic::Transaction`
+  recorded beside the key as `<key file>.txn`: both files land or neither,
+  `0600`, key first, a symlink at either path replaced rather than
+  followed. `load_or_mint` finishes or rolls back an interrupted write before
+  it reads.
+- **`replaceable()`**: whether both directories took a new file when the
+  pair was loaded, for a caller about to do something an install failing
+  would leave half done.
+- **`install_pem(cert, key, host)`**: normalises both, refuses anything but
+  certificates in the chain, an encrypted key, a key that is not the
+  certificate's, or a pair rustls will not serve, and builds the new
+  `ServerConfig`, all before the lock and the write. Installs are taken one
+  at a time. `Installed` carries the config for `Tls::reload` and the
+  `wslib_crypto_x509::Report` for `host`, whose warnings refuse nothing.
+- **`pair()`** and **`Location::read_pair()`**: the PEM on disk for a
+  backup, the certificate file filtered to its `CERTIFICATE` sections;
+  `pair()` under the install lock, `read_pair()` with nothing serving.
+
 ## What isn't
 
 Storing trust (the app keeps its tables and calls `set_trust`), a reqwest
-dependency, installing a provider, and revocation.
+dependency, installing a provider, revocation, and the names a minted
+certificate covers (the app's hostname, `.local` and loopback are its own
+policy).

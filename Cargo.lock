@@ -6746,6 +6746,7 @@ dependencies = [
  "tracing",
  "wslib-crypto",
  "wslib-crypto-x509",
+ "wslib-file-atomic",
 ]
 
 [[package]]

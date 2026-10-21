@@ -2,6 +2,8 @@ use std::fmt;
 use std::net::IpAddr;
 use std::time::{Duration, SystemTime};
 
+use const_oid::ObjectIdentifier;
+use const_oid::db::DB;
 use wslib_crypto::Fingerprint;
 use x509_parser::asn1_rs::ToDer;
 use x509_parser::certificate::X509Certificate;
@@ -146,24 +148,15 @@ fn rfc_4514(name: &X509Name<'_>) -> String {
 }
 
 fn attribute(attribute: &AttributeTypeAndValue<'_>) -> String {
-    let oid = attribute.attr_type().to_id_string();
-    let short = match oid.as_str() {
-        "2.5.4.3" => Some("CN"),
-        "2.5.4.6" => Some("C"),
-        "2.5.4.7" => Some("L"),
-        "2.5.4.8" => Some("ST"),
-        "2.5.4.9" => Some("STREET"),
-        "2.5.4.10" => Some("O"),
-        "2.5.4.11" => Some("OU"),
-        "0.9.2342.19200300.100.1.1" => Some("UID"),
-        "0.9.2342.19200300.100.1.25" => Some("DC"),
-        _ => None,
-    };
+    let oid = attribute.attr_type();
+    let short = ObjectIdentifier::from_bytes(oid.as_bytes())
+        .ok()
+        .and_then(|oid| DB.find_names_for_oid(oid).min_by_key(|name| name.len()));
     match (short, attribute.as_str()) {
-        (Some(short), Ok(value)) => format!("{short}={}", escaped(value)),
-        (short, _) => {
+        (Some(short), Ok(value)) => format!("{}={}", short.to_ascii_uppercase(), escaped(value)),
+        _ => {
             let der = attribute.attr_value().to_der_vec().unwrap_or_default();
-            format!("{}=#{}", short.unwrap_or(&oid), hex(&der))
+            format!("{}=#{}", oid.to_id_string(), hex(&der))
         }
     }
 }
@@ -171,8 +164,8 @@ fn attribute(attribute: &AttributeTypeAndValue<'_>) -> String {
 fn escaped(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for (at, c) in value.char_indices() {
-        if c == '\0' {
-            out.push_str("\\00");
+        if c.is_ascii_control() {
+            out.push_str(&format!("\\{:02x}", c as u8));
             continue;
         }
         let leading = at == 0 && matches!(c, ' ' | '#');
@@ -369,14 +362,14 @@ mod tests {
                 "#Widgets, Inc. <1+1>; \\\"x\" ",
             );
             name.push(
-                rcgen::DnType::CustomDnType(vec![1, 2, 840, 113549, 1, 9, 1]),
-                "ops@widget-01.local",
+                rcgen::DnType::CustomDnType(vec![1, 3, 6, 1, 4, 1, 311, 60, 2, 1, 3]),
+                "AU",
             );
             params.distinguished_name = name;
         });
         assert_eq!(
             inspect_pem(&pem).unwrap().subject,
-            "1.2.840.113549.1.9.1=#0c136f7073407769646765742d30312e6c6f63616c,\
+            "1.3.6.1.4.1.311.60.2.1.3=#0c024155,\
              O=\\#Widgets\\, Inc. \\<1\\+1\\>\\; \\\\\\\"x\\\"\\ "
         );
     }
@@ -392,6 +385,61 @@ mod tests {
         let (_, name) = X509Name::from_der(&der).expect("parses");
         assert_eq!(rfc_4514(&name), "DC=com,CN=a+O=b");
         assert_eq!(escaped(" a\0 "), "\\ a\\00\\ ");
+    }
+
+    #[test]
+    fn names_read_as_x509_cert_reads_them() {
+        use x509_cert::der::asn1::{Any, ObjectIdentifier, SetOfVec};
+        use x509_cert::der::{Encode, Tag};
+        use x509_cert::name::{RdnSequence, RelativeDistinguishedName};
+
+        let attributes = [
+            ("2.5.4.3", Tag::Utf8String, "widget-01"),
+            ("2.5.4.6", Tag::PrintableString, "AU"),
+            ("2.5.4.7", Tag::Utf8String, "Perth"),
+            ("2.5.4.8", Tag::Utf8String, "WA"),
+            ("2.5.4.9", Tag::Utf8String, "1 Hay St"),
+            ("2.5.4.10", Tag::Utf8String, "Widgets"),
+            ("2.5.4.11", Tag::Utf8String, "Ops"),
+            ("0.9.2342.19200300.100.1.1", Tag::Utf8String, "ops"),
+            ("0.9.2342.19200300.100.1.25", Tag::Ia5String, "local"),
+            ("1.2.840.113549.1.9.1", Tag::Ia5String, "ops@widget.local"),
+            ("2.5.4.5", Tag::PrintableString, "ABN 12 345"),
+            ("2.5.4.15", Tag::Utf8String, "Private Organization"),
+            ("1.3.6.1.4.1.311.60.2.1.1", Tag::Utf8String, "Perth"),
+            ("1.3.6.1.4.1.311.60.2.1.2", Tag::Utf8String, "WA"),
+            ("1.3.6.1.4.1.311.60.2.1.3", Tag::PrintableString, "AU"),
+            ("2.5.4.12", Tag::Utf8String, "Engineer"),
+            ("2.5.4.42", Tag::Utf8String, "Alex"),
+            ("2.5.4.4", Tag::Utf8String, "Smith"),
+            ("2.5.4.43", Tag::Utf8String, "A"),
+            ("2.5.4.44", Tag::Utf8String, "Jr"),
+            ("2.5.4.46", Tag::PrintableString, "q1"),
+            ("2.5.4.65", Tag::Utf8String, "w1"),
+            ("2.5.4.17", Tag::Utf8String, "6000"),
+            ("2.5.4.97", Tag::Utf8String, "NTRAU-12345"),
+        ];
+        let name = RdnSequence(
+            attributes
+                .iter()
+                .map(|&(oid, tag, value)| {
+                    let atv = x509_cert::attr::AttributeTypeAndValue {
+                        oid: ObjectIdentifier::new_unwrap(oid),
+                        value: Any::new(tag, value.as_bytes()).unwrap(),
+                    };
+                    RelativeDistinguishedName(SetOfVec::try_from(vec![atv]).unwrap())
+                })
+                .collect(),
+        );
+        let der = name.to_der().unwrap();
+        let (_, parsed) = X509Name::from_der(&der).expect("parses");
+        assert_eq!(rfc_4514(&parsed), name.to_string());
+        assert!(rfc_4514(&parsed).contains("SERIALNUMBER=ABN 12 345,EMAIL=ops@widget.local,"));
+    }
+
+    #[test]
+    fn control_characters_escape_as_hex_pairs() {
+        assert_eq!(escaped("a\x01b\x1fc\x7fd\0"), "a\\01b\\1fc\\7fd\\00");
     }
 
     #[test]

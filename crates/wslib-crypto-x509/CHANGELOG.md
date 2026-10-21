@@ -7,7 +7,8 @@
   alone with LF endings; indented markers read; a 256 KiB cap; encode with
   LF endings.
 - `inspect` and `inspect_pem`: `CertificateView`, with subject and issuer
-  in RFC 4514 form, subject alternative names, validity, key description,
+  in RFC 4514 form (keywords and escaping as x509-cert prints them),
+  subject alternative names, validity, key description,
   fingerprint, CA flag and key usages.
 - `examine`: warnings for expired, not yet valid, no host name (no DNS or
   address subject alternative name), host not covered, no server

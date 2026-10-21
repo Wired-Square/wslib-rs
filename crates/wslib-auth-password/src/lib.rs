@@ -2,7 +2,7 @@
 //!
 //! Every hash is made at m=19456 KiB, t=2, p=1, pinned here so a dependency
 //! bump cannot move them. [`needs_rehash`] says when a stored hash was made
-//! otherwise, for the caller to re-hash on the next sign-in that verifies.
+//! otherwise, for [`rehash`] on the next sign-in that verifies.
 //!
 //! **Hashing and verifying block** for tens of milliseconds; on an async
 //! runtime use the [`tokio`] wrappers (feature `tokio`).
@@ -55,11 +55,7 @@ impl Policy {
 
     /// Whether `password` is long enough and no longer than [`MAX_BYTES`].
     pub fn check(&self, password: &str) -> Result<(), PasswordError> {
-        if password.len() > MAX_BYTES {
-            return Err(PasswordError::TooLong {
-                max_bytes: MAX_BYTES,
-            });
-        }
+        check_max(password)?;
         if password.chars().count() < self.min_chars {
             return Err(PasswordError::TooShort {
                 min_chars: self.min_chars,
@@ -73,6 +69,26 @@ impl Policy {
         self.check(password)?;
         hash_unchecked(password)
     }
+}
+
+fn check_max(password: &str) -> Result<(), PasswordError> {
+    if password.len() > MAX_BYTES {
+        return Err(PasswordError::TooLong {
+            max_bytes: MAX_BYTES,
+        });
+    }
+    Ok(())
+}
+
+/// A PHC string at today's parameters for a password that has just verified
+/// against a hash that [`needs_rehash`]. **Blocks.**
+///
+/// Only [`MAX_BYTES`] is enforced, not a [`Policy`] minimum, so a password set
+/// under an older, shorter minimum still upgrades. Never use it to set a new
+/// password.
+pub fn rehash(password: &str) -> Result<String, PasswordError> {
+    check_max(password)?;
+    hash_unchecked(password)
 }
 
 fn hash_unchecked(password: &str) -> Result<String, PasswordError> {
@@ -230,6 +246,31 @@ mod tests {
         );
         let refused = Policy::with_min_chars(0).hash(&"x".repeat(MAX_BYTES + 1));
         assert_eq!(refused, Err(too_long));
+    }
+
+    #[test]
+    fn a_rehash_upgrades_a_password_below_the_minimum_but_not_an_overlong_one() {
+        let short = "short";
+        let cheaper = Argon2::new(
+            Algorithm::Argon2id,
+            Version::V0x13,
+            Params::new(8 * 1024, 1, 1, None).unwrap(),
+        )
+        .hash_password(short.as_bytes())
+        .unwrap()
+        .to_string();
+        assert!(verify(&cheaper, short) && needs_rehash(&cheaper));
+
+        let upgraded = rehash(short).unwrap();
+        assert!(verify(&upgraded, short));
+        assert!(!needs_rehash(&upgraded));
+
+        assert_eq!(
+            rehash(&"x".repeat(MAX_BYTES + 1)),
+            Err(PasswordError::TooLong {
+                max_bytes: MAX_BYTES
+            })
+        );
     }
 
     #[test]

@@ -28,6 +28,17 @@ pub async fn hash(policy: Policy, password: &str) -> Result<String, PasswordErro
     .await
 }
 
+/// [`rehash`](crate::rehash) off the runtime's threads, for a password that has just verified.
+pub async fn rehash(password: &str) -> Result<String, PasswordError> {
+    crate::check_max(password)?;
+    let password = password.to_owned();
+    off_thread(
+        move || crate::rehash(&password),
+        Err(PasswordError::Hash("the runtime shut down".into())),
+    )
+    .await
+}
+
 /// [`verify`](crate::verify) off the runtime's threads.
 pub async fn verify(stored: &str, password: &str) -> bool {
     let (stored, password) = (stored.to_owned(), password.to_owned());
@@ -56,5 +67,6 @@ mod tests {
             hash(Policy::default(), "short").await,
             Err(PasswordError::TooShort { min_chars: 12 })
         );
+        assert!(verify(&rehash("short").await.unwrap(), "short").await);
     }
 }

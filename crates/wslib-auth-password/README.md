@@ -5,7 +5,7 @@ Argon2id password hashes as PHC strings, at parameters pinned in the crate
 the app keeps the string.
 
 ```rust
-use wslib_auth_password::{Policy, needs_rehash, verify, verify_absent};
+use wslib_auth_password::{Policy, needs_rehash, rehash, verify, verify_absent};
 
 // Setting a password:
 let stored = Policy::default().hash(&new_password)?; // PasswordError::TooShort / TooLong
@@ -17,7 +17,7 @@ let verified = match stored {
     None => verify_absent(&password),
 };
 if verified && stored.is_some_and(needs_rehash) {
-    /* store Policy::default().hash(&password) */
+    /* store rehash(&password)? */
 }
 ```
 
@@ -35,7 +35,11 @@ if verified && stored.is_some_and(needs_rehash) {
   hash is made once, by the same hasher.
 - **`needs_rehash(stored)`**: true when the string was made with another
   algorithm, version or parameters, or cannot be read.
-- **Blocking.** `hash`, `verify` and `verify_absent` take tens of
+- **`rehash(password)`**: a hash at today's parameters for a password that
+  has just verified. It enforces `MAX_BYTES` but not the policy's minimum, so
+  a password set under an older, shorter minimum still upgrades; never use it
+  to set a new password.
+- **Blocking.** `hash`, `rehash`, `verify` and `verify_absent` take tens of
   milliseconds. With the `tokio` feature, `wslib_auth_password::tokio` has
   async versions that run on `spawn_blocking`.
 

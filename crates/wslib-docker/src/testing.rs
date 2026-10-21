@@ -2,7 +2,7 @@
 //! each request and answers it by its method and path.
 
 use std::convert::Infallible;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
@@ -57,10 +57,6 @@ impl FakeEngine {
     /// A client for this engine.
     pub fn docker(&self) -> Docker {
         Docker::default().with_socket(&self.socket)
-    }
-
-    pub fn socket(&self) -> &Path {
-        &self.socket
     }
 
     /// Every request so far, oldest first.

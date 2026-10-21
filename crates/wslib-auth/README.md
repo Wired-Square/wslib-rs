@@ -38,7 +38,8 @@ session.reauthenticated_within(REAUTHENTICATION_WINDOW, wslib_auth::now());
 // with a Proof begun before the password is checked again:
 sessions.reauthenticated(&token, proof).await?;
 
-// Sign-out, and a password change (which also moves sessions_valid_from):
+// Sign-out, and a password change, which then moves sessions_valid_from to
+// wslib_auth::now() taken after the new password is committed:
 sessions.end(&token).await?;            // with cookie.clear() in Set-Cookie
 sessions.end_all(&user_id).await?;
 ```
@@ -49,7 +50,9 @@ the change. `proved_since` compares the instant the check began, not when the
 session was issued, so that sign-in is refused; in a two-step sign-in, begin
 the `Proof` at the step that re-reads the account. Where the request itself
 moves the cutoff (a password change, a first account), begin it after that
-write, or the new session is refused at once.
+write, or the new session is refused at once. Stamp the cutoff itself after
+the new credential is committed: a check that begins between an earlier stamp
+and the commit still reads the old one.
 
 ## What's here
 
@@ -62,7 +65,8 @@ write, or the new session is refused at once.
   absolute; `with_lifetime` to change it.
 - **`Session`**: `user_id`, `created_at`, `expires_at`, `proved_at` and
   `reauthenticated_at`, as `chrono::DateTime<Utc>` at microsecond precision
-  (`wslib_auth::now()`). `proved_since(cutoff)` for the app's invalidation
+  (`wslib_auth::now()`; `stamp`/`parse_stamp` give the stores' text form, with
+  no feature needed). `proved_since(cutoff)` for the app's invalidation
   check.
 - **`Proof`**: `Proof::begin()` before any credential check (password,
   passkey, code); `Copy`, so a pending second step can hold one.

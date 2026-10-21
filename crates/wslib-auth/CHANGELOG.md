@@ -9,8 +9,8 @@
   a session; `Session::proved_at` and `proved_since`, so a sign-in that raced
   a password change is refused.
 - `SqliteSessionStore` and `PgSessionStore` behind `sqlite` and `postgres`,
-  in a table the caller names with a `TableName` checked at compile time;
-  `stamp` and `parse_stamp` for the stored time format.
+  in a table the caller names with a `TableName` checked at compile time.
+- `stamp` and `parse_stamp` for the stores' time format, with no feature.
 - `SessionCookie`: `Set-Cookie` values to set and clear, and the token read
   from the request's `Cookie` headers, the last of its name winning.
 - `Session::reauthenticated_within` and `REAUTHENTICATION_WINDOW` (5 minutes).

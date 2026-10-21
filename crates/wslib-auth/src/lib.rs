@@ -30,12 +30,12 @@ pub use attempts::{Attempt, Attempts, TooManyAttempts};
 pub use cookie::{SameSite, SessionCookie};
 pub use session::{
     Proof, REAUTHENTICATION_WINDOW, SESSION_LIFETIME, Session, SessionError, SessionStore,
-    Sessions, now,
+    Sessions, now, parse_stamp, stamp,
 };
 #[cfg(feature = "postgres")]
 pub use sql::PgSessionStore;
 #[cfg(feature = "sqlite")]
 pub use sql::SqliteSessionStore;
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
-pub use sql::{InvalidTableName, SqlSessionStore, TableName, parse_stamp, stamp};
+pub use sql::{InvalidTableName, SqlSessionStore, TableName};
 pub use token::{SessionToken, TokenHash};

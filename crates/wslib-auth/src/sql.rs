@@ -3,10 +3,10 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::str::FromStr;
 
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, Utc};
 use sqlx::{Database, Pool, Row};
 
-use crate::session::{Session, SessionStore};
+use crate::session::{Session, SessionStore, parse_stamp, stamp};
 use crate::token::TokenHash;
 
 /// A [`SessionStore`] in a table of the caller's, on a sqlx pool; the README carries its DDL.
@@ -158,17 +158,6 @@ impl Queries {
             table,
         }
     }
-}
-
-/// An instant as the sqlx stores keep it: fixed-width RFC 3339, UTC, six
-/// subsecond digits, so stamps compare as text in time order.
-pub fn stamp(at: DateTime<Utc>) -> String {
-    at.to_rfc3339_opts(SecondsFormat::Micros, true)
-}
-
-/// A [`stamp`] read back.
-pub fn parse_stamp(stamp: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
-    DateTime::parse_from_rfc3339(stamp).map(|at| at.with_timezone(&Utc))
 }
 
 fn session_from<R, U>(row: &R, table: &TableName) -> Result<Session<U>, sqlx::Error>

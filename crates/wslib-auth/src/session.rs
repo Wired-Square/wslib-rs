@@ -1,7 +1,7 @@
 use std::fmt;
 use std::future::Future;
 
-use chrono::{DateTime, SubsecRound, TimeDelta, Utc};
+use chrono::{DateTime, SecondsFormat, SubsecRound, TimeDelta, Utc};
 
 use crate::token::{SessionToken, TokenHash};
 
@@ -24,7 +24,9 @@ pub struct Session<U> {
 
 impl<U> Session<U> {
     /// Whether the sign-in's credentials were proved at or after `cutoff`, as
-    /// the instant the account's sessions were last invalidated.
+    /// the instant the account's sessions were last invalidated. Stamp that
+    /// cutoff after the new credential is committed, not before the write: a
+    /// check that begins in between reads the old one. Equal instants pass.
     pub fn proved_since(&self, cutoff: DateTime<Utc>) -> bool {
         self.proved_at >= cutoff
     }
@@ -103,6 +105,17 @@ impl Proof {
 pub struct Sessions<S> {
     store: S,
     lifetime: TimeDelta,
+}
+
+/// An instant as the sqlx stores keep it, for a store or schema of your own: fixed-width RFC 3339, UTC, six
+/// subsecond digits, so stamps compare as text in time order.
+pub fn stamp(at: DateTime<Utc>) -> String {
+    at.to_rfc3339_opts(SecondsFormat::Micros, true)
+}
+
+/// A [`stamp`] read back.
+pub fn parse_stamp(stamp: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
+    DateTime::parse_from_rfc3339(stamp).map(|at| at.with_timezone(&Utc))
 }
 
 /// The current instant at the microsecond precision a store keeps.

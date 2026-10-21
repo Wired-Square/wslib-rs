@@ -1,7 +1,7 @@
 [package]
 name = "wslib-auth-totp"
-version = "0.1.0"
-description = "TOTP (RFC 6238) for an authenticator app: keys, the otpauth URI, the code check and the clock-skew check."
+version = "0.1.1"
+description = "TOTP (RFC 6238) for an authenticator app: keys, the otpauth URI, the code and clock-skew checks, and recovery codes."
 readme = "README.md"
 edition.workspace = true
 rust-version.workspace = true
@@ -13,7 +13,7 @@ publish = ["wired-square"]
 [features]
 default = ["codes"]
 # Keys and the code check. Off, only `ClockSkew` and `check_clocks` are left.
-codes = ["dep:getrandom", "dep:hmac", "dep:sha1", "dep:subtle", "dep:wslib-secret"]
+codes = ["dep:getrandom", "dep:hmac", "dep:sha1", "dep:sha2", "dep:subtle", "dep:wslib-secret"]
 serde = ["dep:serde"]
 ts = ["serde", "dep:ts-rs"]
 
@@ -22,6 +22,7 @@ getrandom = { version = "0.3", features = ["std"], optional = true }
 hmac = { version = "0.12.1", optional = true }
 serde = { version = "1.0.225", features = ["derive"], optional = true }
 sha1 = { version = "0.10.6", optional = true }
+sha2 = { version = "0.10.9", optional = true }
 subtle = { version = "2.5", default-features = false, optional = true }
 ts-rs = { version = "11.1", optional = true }
 wslib-secret = { path = "../wslib-secret", version = "0.1.1", registry = "wired-square", optional = true }

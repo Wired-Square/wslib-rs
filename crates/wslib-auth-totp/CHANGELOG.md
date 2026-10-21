@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+- Recovery codes: `generate_recovery_codes` makes ten of 80 bits, shown as four
+  groups of four base32 characters, with the hash to keep of each;
+  `recovery_code_hash` hashes a typed code the same way (case, separators and
+  the digits 0, 1 and 8 normalised). Moved from the chassis, hashes unchanged.
+
 ## 0.1.0
 
 - `Key`: a 160-bit TOTP key, generated, read from and written to unpadded

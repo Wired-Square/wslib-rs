@@ -115,7 +115,7 @@ fn percent_encode(text: &str) -> String {
     out
 }
 
-fn base32(bytes: &[u8]) -> String {
+pub(crate) fn base32(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len().div_ceil(5) * 8);
     let (mut buffer, mut bits) = (0u32, 0u32);
     for &byte in bytes {

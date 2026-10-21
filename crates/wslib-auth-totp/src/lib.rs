@@ -10,6 +10,9 @@
 //! than codes can bridge, [`check_clocks`] answers the [`ClockSkew`]: before a
 //! first code is checked, and in place of "wrong code" when a code misses.
 //!
+//! [`generate_recovery_codes`] makes the codes that sign in once each in place
+//! of a TOTP code.
+//!
 //! Without the default `codes` feature only [`ClockSkew`] and
 //! [`check_clocks`] are left, for a crate that carries the types alone.
 
@@ -18,9 +21,13 @@ use std::time::{Duration, SystemTime};
 
 #[cfg(feature = "codes")]
 pub use key::Key;
+#[cfg(feature = "codes")]
+pub use recovery::{generate_recovery_codes, recovery_code_hash};
 
 #[cfg(feature = "codes")]
 mod key;
+#[cfg(feature = "codes")]
+mod recovery;
 
 const STEP_SECONDS: u64 = 30;
 const CLOCK_TOLERANCE: Duration = Duration::from_secs(2 * STEP_SECONDS);

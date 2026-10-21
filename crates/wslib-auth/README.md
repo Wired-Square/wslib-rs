@@ -83,9 +83,10 @@ and the commit still reads the old one.
 - **`SessionCookie`**: name, path (`/`), `SameSite` (`Strict`) and `Secure`
   (on) are yours; `HttpOnly` always; `max_age` for a cookie that outlives the
   browser session. `set(token)` and `clear()` give `Set-Cookie` values;
-  `token_in(headers)` reads the last non-empty value across every `Cookie`
-  header, since browsers send longer paths first and a cookie a script
-  planted at a deeper path must not shadow the session.
+  `token_in(headers)` reads the value across every `Cookie` header, and
+  refuses two different values under the name: browsers order same-name
+  cookies by path, so either pick could be a cookie a script planted. Apps
+  sharing an origin give their cookies distinct names.
 - **`Session::reauthenticated_within(window, now)`**: re-authenticated no
   longer ago than `window` and not in the future. `REAUTHENTICATION_WINDOW`
   is 5 minutes.

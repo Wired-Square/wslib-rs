@@ -114,20 +114,26 @@ impl SessionCookie {
             .expect("a validated name and path, and a token a header can carry")
     }
 
-    /// The last non-empty value of this cookie across every `Cookie` header.
+    /// This cookie's value, or `None` when the request carries two different
+    /// non-empty values under its name.
     ///
-    /// Browsers send longer paths first, so a same-name cookie a script planted
-    /// at a deeper path comes before this one and cannot shadow it.
+    /// Browsers order same-name cookies by path, so whichever one is taken, a
+    /// script on the origin could plant another at a path that wins. Refusing
+    /// both fails closed; apps sharing an origin give their cookies distinct names.
     pub fn token_in(&self, headers: &HeaderMap) -> Option<SessionToken> {
-        headers
+        let mut values = headers
             .get_all(COOKIE)
             .iter()
             .filter_map(|header| header.to_str().ok())
             .flat_map(|header| header.split(';'))
             .filter_map(|pair| pair.trim().split_once('='))
-            .map(|(name, value)| (name, value.trim_matches('"')))
-            .rfind(|(name, value)| *name == self.name && !value.is_empty())
-            .map(|(_, value)| SessionToken::from_presented(value))
+            .filter(|(name, _)| *name == self.name)
+            .map(|(_, value)| value.trim_matches('"'))
+            .filter(|value| !value.is_empty());
+        let value = values.next()?;
+        values
+            .all(|other| other == value)
+            .then(|| SessionToken::from_presented(value))
     }
 }
 
@@ -234,10 +240,11 @@ mod tests {
         );
         assert_eq!(
             found(&["s=planted; s=abc"]),
-            Some("abc".into()),
-            "a deeper path's cookie comes first and is passed over"
+            None,
+            "two values under the name, in either order, are refused"
         );
-        assert_eq!(found(&["s=planted", "s=abc"]), Some("abc".into()));
+        assert_eq!(found(&["s=abc", "s=planted"]), None);
+        assert_eq!(found(&["s=abc", "s=abc"]), Some("abc".into()));
         assert_eq!(
             found(&["s=abc", "s="]),
             Some("abc".into()),

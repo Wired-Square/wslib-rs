@@ -12,7 +12,7 @@
   in a table the caller names with a `TableName` checked at compile time.
 - `stamp` and `parse_stamp` for the stores' time format, with no feature.
 - `SessionCookie`, constructible in a `const`: `Set-Cookie` values to set and clear, and the token read
-  from the request's `Cookie` headers, the last of its name winning.
+  from the request's `Cookie` headers, refused when two values share its name.
 - `Session::reauthenticated_within` and `REAUTHENTICATION_WINDOW` (5 minutes).
 - `Attempts`: an in-memory limit on wrong attempts per key per window,
   shared by its clones; an `Attempt` can move into a task.

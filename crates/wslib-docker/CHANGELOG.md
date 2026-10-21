@@ -11,9 +11,11 @@
 - `DockerError` keeps `Unreachable`, `Http`, `Timeout`, `Refused`, `Json`
   and `Name` apart; names that would change a request's path are refused
   before sending.
-- `exchange`: one HTTP/1.1 request over a Unix socket with a deadline.
+- `exchange`: one HTTP/1.1 request over a Unix socket with a deadline;
+  hyper's `Request`, `Method`, `StatusCode` and `header` re-exported for it.
 - `ImageReference` and `Pin`: references as `docker pull` takes them, with
-  `registry()`.
+  `registry()`. Always present; everything else is behind the default
+  `client` feature.
 - `trust::RegistryTrust`: extra authorities in `certs.d/<registry>/`.
 - `testing::FakeEngine` behind the `testing` feature: recorded requests,
   answers by method and path, and held requests.

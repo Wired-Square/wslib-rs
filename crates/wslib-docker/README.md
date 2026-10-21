@@ -39,12 +39,16 @@ docker.start("hello").await?;
   `DockerError::Name` and nothing is sent.
 - **`exchange`**: one HTTP/1.1 request to whatever serves a Unix socket,
   with a deadline, for the other daemons an app talks to that way.
+  `Request`, `Method`, `StatusCode` and `header` are re-exported from
+  hyper, so a caller needn't match its major version.
 - **`ImageReference`**: `repository`, `repository:tag` or
   `repository@sha256:…`, with no tag read as `latest`. The repository is
   checked by the engine's rules (lowercase path components, a host with an
   optional port, 255 bytes at most), the tag by its 128-byte rule; sha256
   digests only, and a tag together with a digest is refused. `registry()`
-  is Docker Hub unless the first part names a host.
+  is Docker Hub unless the first part names a host. With
+  `default-features = false`, this is all the crate has, and it has no
+  dependencies: for a types crate that names images.
 - **`trust::RegistryTrust`**: extra authorities for the engine. The engine
   reads a registry's authorities from `certs.d/<registry>/*.crt` alone, so
   `set_authorities` writes the bundle into every registry added, and

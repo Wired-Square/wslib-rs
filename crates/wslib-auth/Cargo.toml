@@ -1,0 +1,28 @@
+[package]
+name = "wslib-auth"
+version = "0.1.0"
+description = "Table-backed browser sessions: opaque tokens hashed at rest, the session cookie, the re-authentication window and an attempt limiter."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+# A `SessionStore` on a sqlx pool, for each backend.
+sqlite = ["dep:sqlx", "sqlx/sqlite"]
+postgres = ["dep:sqlx", "sqlx/postgres"]
+
+[dependencies]
+base64 = { version = "0.22", default-features = false, features = ["alloc"] }
+chrono = { version = "0.4.38", default-features = false, features = ["clock", "std"] }
+getrandom = { version = "0.3", features = ["std"] }
+http = "1.1"
+sha2 = "0.10.9"
+subtle = { version = "2.5", default-features = false }
+sqlx = { version = "0.8.5", default-features = false, features = ["runtime-tokio"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1.47", features = ["macros", "rt"] }

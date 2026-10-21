@@ -980,6 +980,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb"
 dependencies = [
  "const-oid 0.9.6",
+ "der_derive",
+ "flagset",
  "pem-rfc7468",
  "zeroize",
 ]
@@ -996,6 +998,17 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "rusticata-macros",
+]
+
+[[package]]
+name = "der_derive"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8034092389675178f570469e6c3b0465d3d30b4505c294a6550db47f3c17ad18"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -1394,6 +1407,12 @@ name = "find-msvc-tools"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
+
+[[package]]
+name = "flagset"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7ac824320a75a52197e8f2d787f6a38b6718bb6897a35142d749af3c0e8f4fe"
 
 [[package]]
 name = "flate2"
@@ -3868,6 +3887,7 @@ version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
+ "aws-lc-rs",
  "once_cell",
  "ring",
  "rustls-pki-types",
@@ -3930,6 +3950,7 @@ version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
+ "aws-lc-rs",
  "ring",
  "rustls-pki-types",
  "untrusted 0.9.0",
@@ -6513,6 +6534,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-crypto"
+version = "0.1.0"
+dependencies = [
+ "p256",
+ "p384",
+ "pkcs8",
+ "rand_core 0.6.4",
+ "rcgen",
+ "rsa",
+ "rustls",
+ "rustls-pki-types",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "wslib-crypto-x509"
+version = "0.1.0"
+dependencies = [
+ "const-oid 0.9.6",
+ "pem 4.0.0",
+ "rcgen",
+ "rustls",
+ "rustls-pki-types",
+ "rustls-webpki",
+ "wslib-crypto",
+ "x509-cert",
+ "x509-parser",
+]
+
+[[package]]
 name = "wslib-dns"
 version = "0.2.0"
 dependencies = [
@@ -6526,7 +6577,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-dns-mail"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "flate2",
  "quick-xml 0.38.4",
@@ -6534,13 +6585,13 @@ dependencies = [
  "reqwest",
  "rustls",
  "rustls-pki-types",
- "rustls-webpki",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "tokio",
  "url",
  "usvg",
+ "wslib-crypto-x509",
  "wslib-dns",
  "x509-parser",
 ]
@@ -6678,6 +6729,17 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ts-rs",
+]
+
+[[package]]
+name = "x509-cert"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1301e935010a701ae5f8655edc0ad17c44bad3ac5ce8c39185f75453b720ae94"
+dependencies = [
+ "const-oid 0.9.6",
+ "der",
+ "spki",
 ]
 
 [[package]]

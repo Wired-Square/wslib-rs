@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1
+
+- The mark certificate's chain is checked through wslib-crypto-x509's
+  `chain::verify`, which replaces the direct rustls-webpki dependency. What
+  `verify_vmc` and `VmcTrustAnchors` report is unchanged.
+
 ## 0.5.0
 
 - `bimi::measure_logo` (feature `render`, over usvg without fonts) measures

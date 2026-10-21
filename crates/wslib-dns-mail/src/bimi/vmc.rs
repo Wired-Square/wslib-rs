@@ -6,8 +6,9 @@
 use std::time::SystemTime;
 
 use rustls_pki_types::pem::PemObject;
-use rustls_pki_types::{CertificateDer, SignatureVerificationAlgorithm, TrustAnchor, UnixTime};
+use rustls_pki_types::{CertificateDer, SignatureVerificationAlgorithm, TrustAnchor};
 use sha2::{Digest, Sha256};
+use wslib_crypto_x509::chain::{self, ChainError, Purpose};
 use x509_parser::certificate::X509Certificate;
 use x509_parser::extensions::{GeneralName, ParsedExtension};
 use x509_parser::prelude::FromDer;
@@ -34,9 +35,7 @@ impl VmcTrustAnchors {
         let mut anchors = Vec::new();
         for der in CertificateDer::pem_slice_iter(pem) {
             let der = der.map_err(|error| error.to_string())?;
-            let anchor =
-                webpki::anchor_from_trusted_cert(&der).map_err(|error| error.to_string())?;
-            anchors.push(anchor.to_owned());
+            anchors.push(chain::trust_anchor(&der).map_err(|error| error.to_string())?);
         }
         if anchors.is_empty() {
             return Err("no certificates in the bundle".into());
@@ -264,36 +263,23 @@ pub fn verify_vmc(
 
     embedded_logo(&certificate, logo, &mut verification);
 
-    let anchors = &options.trust_anchors.0;
-    let chained = webpki::EndEntityCert::try_from(end_entity).and_then(|certificate| {
-        certificate
-            .verify_for_usage(
-                options.algorithms,
-                anchors,
-                intermediates,
-                UnixTime::since_unix_epoch(
-                    now.duration_since(SystemTime::UNIX_EPOCH)
-                        .unwrap_or_default(),
-                ),
-                webpki::KeyUsage::required(BIMI_EKU),
-                None,
-                None,
-            )
-            .map(drop)
-    });
+    let chained = chain::verify(
+        end_entity,
+        intermediates,
+        &options.trust_anchors.0,
+        Purpose::required(BIMI_EKU),
+        now,
+        options.algorithms,
+    );
     if let Err(error) = chained {
-        #[allow(deprecated)]
-        let problem = match error {
-            webpki::Error::CertExpired { .. } => VmcProblem::Expired,
-            webpki::Error::CertNotValidYet { .. } => VmcProblem::NotYetValid,
-            webpki::Error::RequiredEkuNotFound | webpki::Error::RequiredEkuNotFoundContext(_) => {
-                VmcProblem::WrongEku
-            }
+        verification.problem(match error {
+            ChainError::Expired => VmcProblem::Expired,
+            ChainError::NotYetValid => VmcProblem::NotYetValid,
+            ChainError::WrongPurpose => VmcProblem::WrongEku,
             error => VmcProblem::Chain {
-                message: format!("{error:?}"),
+                message: error.to_string(),
             },
-        };
-        verification.problem(problem);
+        });
     }
     verification
 }

@@ -33,6 +33,11 @@ match key.accepted_step(&code, SystemTime::now()) {
   time. **A code is good once:** keep the last step spent and refuse a step no
   later than it.
 - **`Key::code_at(time)`**: the code an app shows, for tests.
+- **Recovery codes**: `generate_recovery_codes()` gives ten codes of 80 bits,
+  as `XXXX-XXXX-XXXX-XXXX` in base32, to show once, and the hash to keep of
+  each. `recovery_code_hash(typed)` is how to find the one typed: case,
+  separators and whitespace are ignored, and 0, 1 and 8 read as O, I and B.
+  Spend a code by deleting its hash.
 - **`check_clocks(browser, now)`**: `Err(ClockSkew)` when the browser's clock
   and the server's are more than two steps apart, in signed minutes. The
   browser's clock stands in for the phone's beside it: check it before a first
@@ -43,5 +48,5 @@ match key.accepted_step(&code, SystemTime::now()) {
 
 ## What isn't
 
-Storage, attempt limits, recovery codes and sessions: the app's. HOTP
+Storage, attempt limits and sessions: the app's. HOTP
 counters, SHA-256 or SHA-512 keys, and codes other than six digits.

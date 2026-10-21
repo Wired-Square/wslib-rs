@@ -6040,6 +6040,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-docker"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "wslib-file-atomic",
+]
+
+[[package]]
 name = "wslib-file-atomic"
 version = "0.1.2"
 dependencies = [

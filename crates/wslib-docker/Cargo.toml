@@ -1,0 +1,32 @@
+[package]
+name = "wslib-docker"
+version = "0.1.0"
+description = "A Docker Engine client over its Unix socket, image references as `docker pull` takes them, registry trust in certs.d, and a fake engine for tests."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+testing = ["hyper/server", "tokio/sync"]
+
+[dependencies]
+bytes = "1.2"
+futures-util = { version = "0.3.17", default-features = false }
+http-body-util = "0.1"
+hyper = { version = "1.4", features = ["client", "http1"] }
+hyper-util = { version = "0.1.6", features = ["tokio"] }
+serde_json = "1.0.85"
+tokio = { version = "1.37", default-features = false, features = ["net", "rt", "time"] }
+tokio-util = { version = "0.7.8", features = ["io"] }
+wslib-file-atomic = { path = "../wslib-file-atomic", version = "0.1", registry = "wired-square" }
+
+[dev-dependencies]
+tokio = { version = "1.37", features = ["macros", "rt"] }
+
+[[test]]
+name = "engine"
+required-features = ["testing"]

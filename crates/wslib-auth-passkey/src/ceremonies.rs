@@ -448,6 +448,15 @@ pub enum Refused {
     StoredKey(&'static str),
 }
 
+impl Refused {
+    /// The check that failed, for the log.
+    pub fn reason(&self) -> &'static str {
+        match self {
+            Self::Response(why) | Self::StoredKey(why) => why,
+        }
+    }
+}
+
 impl fmt::Display for Refused {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

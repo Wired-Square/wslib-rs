@@ -50,14 +50,15 @@ if !sign_count_moved(stored.sign_count, count) { /* refuse: possibly cloned */ }
   `toJSON()` gives back, with every byte string base64url. A credential's
   `Debug` prints only its type. The `ts` feature derives ts-rs 11.
 - **`Refused`**: `Response` (the answer failed a check) or `StoredKey` (the
-  kept public key is unreadable). Each names the check for the log; show
+  kept public key is unreadable). `reason()` names the check for the log; show
   users a fixed message. Nothing is logged.
 - **`claimed_user_id`**: an answer's unverified user handle, for an audit log.
 - **The `ceremonies` feature**, on by default, is everything but the JSON
   types; with `default-features = false` the crate is those types on serde
   alone, for a types crate.
 - **The `testing` feature**: `SoftPasskey`, an ES256 passkey that answers
-  options as a browser would.
+  options as a browser would; `SoftPasskey::counterless()` signs every answer
+  with a count of zero.
 
 ## What isn't
 

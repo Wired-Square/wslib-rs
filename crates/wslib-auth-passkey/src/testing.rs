@@ -11,12 +11,14 @@ use crate::{
     RegistrationCredential, RequestOptions,
 };
 
-/// An ES256 passkey that verifies its user, keeping a count.
+/// An ES256 passkey that verifies its user, keeping a count unless it is
+/// [`Self::counterless`].
 pub struct SoftPasskey {
     key: SigningKey,
     credential_id: Vec<u8>,
     user_handle: Option<String>,
     count: u32,
+    counts: bool,
 }
 
 impl Default for SoftPasskey {
@@ -41,6 +43,16 @@ impl SoftPasskey {
             credential_id,
             user_handle: None,
             count: 0,
+            counts: true,
+        }
+    }
+
+    /// One that signs every answer with a count of zero, as many synced
+    /// passkeys do.
+    pub fn counterless() -> Self {
+        Self {
+            counts: false,
+            ..Self::new()
         }
     }
 
@@ -86,9 +98,12 @@ impl SoftPasskey {
         }
     }
 
-    /// Answer `options` as a page at `origin` asked, a step further on the count.
+    /// Answer `options` as a page at `origin` asked, a step further on the
+    /// count if it keeps one.
     pub fn answer(&mut self, options: &RequestOptions, origin: &str) -> AssertionCredential {
-        self.count += 1;
+        if self.counts {
+            self.count += 1;
+        }
         let auth_data = self.header(&options.rp_id, 0x05);
         let client = client_data("webauthn.get", &options.challenge, origin);
         let signed = [auth_data.as_slice(), &sha256(&client)].concat();

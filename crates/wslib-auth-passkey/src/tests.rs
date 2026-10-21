@@ -864,6 +864,32 @@ fn a_soft_passkey_registers_and_signs_in() {
 }
 
 #[test]
+fn a_counterless_soft_passkey_signs_every_answer_zero() {
+    let ours = Server::default();
+    let mut passkey = testing::SoftPasskey::counterless();
+    let options = ours.begin_registration(ADMIN);
+    let registered = ours
+        .ceremonies
+        .finish_registration(&rp(), ADMIN, &passkey.register(&options, ORIGIN))
+        .expect("registered");
+    ours.keep(ADMIN, "box.local", registered);
+    for _ in 0..2 {
+        let options = ours.ceremonies.begin_sign_in(&rp()).unwrap();
+        let answer = passkey.answer(&options, ORIGIN);
+        assert_eq!(
+            ours.verify(ours.ceremonies.read_sign_in(&rp(), &answer)),
+            Ok(0)
+        );
+    }
+}
+
+#[test]
+fn a_refusal_names_its_check_whichever_kind() {
+    assert_eq!(Refused::Response("a").reason(), "a");
+    assert_eq!(Refused::StoredKey("b").reason(), "b");
+}
+
+#[test]
 fn an_ip_address_is_refused_and_a_name_becomes_its_origin() {
     for ip in [
         "192.168.1.20",

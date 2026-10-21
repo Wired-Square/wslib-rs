@@ -6732,6 +6732,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-tls"
+version = "0.1.0"
+dependencies = [
+ "http",
+ "rcgen",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pki-types",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+ "wslib-crypto",
+ "wslib-crypto-x509",
+]
+
+[[package]]
 name = "x509-cert"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

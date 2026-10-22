@@ -47,6 +47,12 @@ signature::verify(&inspect(&leaf)?.spki, &algorithm_identifier, message, signed,
   the key (`RSA 2048`, `ECDSA P-256`), SHA-256 fingerprint, the
   SubjectPublicKeyInfo for `wslib_crypto::key_matches`, and the CA flag, key
   usages and extended key usages.
+- **`rfc_4514(name)`**: any DER Name in that same form, such as a CRL's
+  issuer.
+- **`name_attributes(name)`**: a DER Name's attributes in the order the DER
+  has them, RDN by RDN, each a dotted OID with its value as text (UTF8,
+  Printable, IA5, Numeric, BMP or Universal string) or, for any other type,
+  as the value's DER. For an application's own one-line form.
 - **`examine(view, host, now)`**: a `Report` of warnings: expired, not yet
   valid, no host name (no DNS name or address among the subject alternative
   names), `host` not covered, an extended key

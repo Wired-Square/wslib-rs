@@ -6566,7 +6566,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-crypto-x509"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "const-oid 0.9.6",
  "pem 4.0.0",

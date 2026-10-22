@@ -32,6 +32,7 @@ appliance chassis and every app beside it.
 | `wslib-systemd-journal` | The journal through journalctl's JSON, bounded and parsed   |
 | `wslib-ssh-keys`        | authorized_keys lines as sshd reads them, and fingerprints  |
 | `wslib-networkmanager`  | NetworkManager over D-Bus: devices, Wi-Fi, checkpoints      |
+| `wslib-mdns`            | DNS-SD adverts and browsing, in process or through avahi    |
 
 † Not pure Rust: it carries TypeScript in `js/` that apps vendor into their
 frontend. Every crate that ships other languages is marked here, and says so

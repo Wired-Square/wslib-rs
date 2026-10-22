@@ -1,0 +1,23 @@
+[package]
+name = "wslib-crypto-ca"
+version = "0.1.0"
+description = "A certificate authority on wslib-crypto-x509: CSRs parsed, verified and built, certificates issued under a profile, and CRLs built and read, through the caller's rustls CryptoProvider."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[dependencies]
+const-oid = { version = "0.9.6", features = ["db"] }
+rcgen = { version = "0.14.10", default-features = false }
+rustls-pki-types = { version = "1.12", features = ["std"] }
+thiserror = "2"
+wslib-crypto = { version = "0.1", path = "../wslib-crypto", registry = "wired-square" }
+wslib-crypto-x509 = { version = "0.1", path = "../wslib-crypto-x509", registry = "wired-square" }
+x509-parser = { version = "0.18", default-features = false }
+
+[dev-dependencies]
+rustls = { version = "0.23.27", default-features = false, features = ["aws_lc_rs", "ring", "std"] }

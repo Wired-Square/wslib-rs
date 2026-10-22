@@ -1,5 +1,6 @@
 #![cfg(unix)]
 
+use std::io::ErrorKind;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -27,10 +28,15 @@ fn fake(name: &str) -> PathBuf {
             ),
             ("slow", "exec sleep 5".to_string()),
             ("fails", "exit 1".to_string()),
+            ("unrunnable", String::new()),
         ] {
             let path = dir.join(name);
             std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::set_permissions(
+                &path,
+                std::fs::Permissions::from_mode(if name == "unrunnable" { 0o644 } else { 0o755 }),
+            )
+            .unwrap();
         }
         dir
     });
@@ -113,4 +119,7 @@ async fn failures_are_kept_apart() {
     assert!(matches!(read(fake("slow")).await, Error::Timeout));
     assert!(matches!(read(fake("fails")).await, Error::Exited(s) if s.code() == Some(1)));
     assert!(matches!(read(fake("missing")).await, Error::NotInstalled));
+    let unrunnable = read(fake("unrunnable")).await;
+    assert!(matches!(&unrunnable, Error::Spawn(e) if e.kind() == ErrorKind::PermissionDenied));
+    assert!(std::error::Error::source(&unrunnable).is_some());
 }

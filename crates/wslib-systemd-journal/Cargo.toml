@@ -10,7 +10,11 @@ authors.workspace = true
 repository.workspace = true
 publish = ["wired-square"]
 
+[features]
+serde = ["dep:serde"]
+
 [dependencies]
+serde = { version = "1", optional = true }
 serde_json = "1"
 tokio = { version = "1", default-features = false, features = ["io-util", "process", "time"] }
 

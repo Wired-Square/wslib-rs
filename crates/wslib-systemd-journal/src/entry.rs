@@ -1,3 +1,5 @@
+use std::fmt;
+use std::str::FromStr;
 use std::time::{Duration, SystemTime};
 
 use serde_json::Value;
@@ -18,19 +20,73 @@ pub enum Priority {
 }
 
 impl Priority {
+    const ALL: [Self; 8] = [
+        Self::Emergency,
+        Self::Alert,
+        Self::Critical,
+        Self::Error,
+        Self::Warning,
+        Self::Notice,
+        Self::Info,
+        Self::Debug,
+    ];
+
     /// The priority with syslog's number, or `None` above 7.
     pub fn from_number(number: u8) -> Option<Self> {
-        use Priority::*;
-        [
-            Emergency, Alert, Critical, Error, Warning, Notice, Info, Debug,
-        ]
-        .get(usize::from(number))
-        .copied()
+        Self::ALL.get(usize::from(number)).copied()
     }
 
     /// syslog's number for it.
     pub fn number(self) -> u8 {
         self as u8
+    }
+
+    /// journalctl's short name for it: `emerg`, `alert`, `crit`, `err`,
+    /// `warning`, `notice`, `info` or `debug`.
+    pub fn name(self) -> &'static str {
+        [
+            "emerg", "alert", "crit", "err", "warning", "notice", "info", "debug",
+        ][self as usize]
+    }
+}
+
+impl FromStr for Priority {
+    type Err = UnknownPriority;
+
+    /// Reads [`Priority::name`]'s names, and nothing else.
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|p| p.name() == name)
+            .ok_or_else(|| UnknownPriority(name.to_owned()))
+    }
+}
+
+/// A name [`Priority`]'s `FromStr` refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownPriority(pub String);
+
+impl fmt::Display for UnknownPriority {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?} is not a journal priority", self.0)
+    }
+}
+
+impl std::error::Error for UnknownPriority {}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for Priority {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.name())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Priority {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
     }
 }
 
@@ -144,5 +200,31 @@ not json
         }
         assert_eq!(Priority::from_number(8), None);
         assert!(Priority::Error < Priority::Warning);
+    }
+
+    #[test]
+    fn priorities_are_read_by_journalctls_short_names_only() {
+        for priority in Priority::ALL {
+            assert_eq!(priority.name().parse(), Ok(priority));
+        }
+        assert_eq!(Priority::Critical.name(), "crit");
+        for bad in ["3", "error", "ERR", ""] {
+            assert_eq!(bad.parse::<Priority>(), Err(UnknownPriority(bad.into())));
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_uses_the_short_names() {
+        assert_eq!(
+            serde_json::to_string(&Priority::Warning).unwrap(),
+            r#""warning""#
+        );
+        assert_eq!(
+            serde_json::from_str::<Priority>(r#""emerg""#).unwrap(),
+            Priority::Emergency
+        );
+        assert!(serde_json::from_str::<Priority>("3").is_err());
+        assert!(serde_json::from_str::<Priority>(r#""warn""#).is_err());
     }
 }

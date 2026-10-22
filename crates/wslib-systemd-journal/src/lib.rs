@@ -32,7 +32,7 @@ use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
-pub use entry::{Entry, Priority};
+pub use entry::{Entry, Priority, UnknownPriority};
 
 /// Whose entries a query reads.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -58,7 +58,7 @@ pub enum Since {
 
 /// A bounded read of the journal; the defaults are this boot, every priority,
 /// 200 entries, 10 s and 8 MiB of output.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Query {
     program: PathBuf,
     source: Source,
@@ -154,7 +154,7 @@ impl Query {
             .spawn()
             .map_err(|e| match e.kind() {
                 io::ErrorKind::NotFound => Error::NotInstalled,
-                _ => Error::Io(e),
+                _ => Error::Spawn(e),
             })?;
         let stdout = child.stdout.take().expect("piped");
         let mut out = Vec::new();
@@ -235,6 +235,8 @@ fn is_unit_pattern(unit: &str) -> bool {
 pub enum Error {
     /// Nothing at the program's path.
     NotInstalled,
+    Spawn(io::Error),
+    /// Reading journalctl's output failed.
     Io(io::Error),
     Exited(ExitStatus),
     Timeout,
@@ -248,7 +250,8 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotInstalled => f.write_str("journalctl is not installed"),
-            Self::Io(e) => write!(f, "could not run journalctl: {e}"),
+            Self::Spawn(e) => write!(f, "could not run journalctl: {e}"),
+            Self::Io(e) => write!(f, "could not read journalctl's output: {e}"),
             Self::Exited(status) => write!(f, "journalctl failed: {status}"),
             Self::Timeout => f.write_str("journalctl did not answer in time"),
             Self::Lines => f.write_str("a query must allow at least one line"),
@@ -260,7 +263,7 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Io(e) => Some(e),
+            Self::Spawn(e) | Self::Io(e) => Some(e),
             _ => None,
         }
     }
@@ -307,6 +310,17 @@ mod tests {
         assert!(!has(&args, "--boot"));
         let kernel = Query::default().with_source(Source::Kernel).args().unwrap();
         assert!(has(&kernel, "--dmesg"));
+    }
+
+    #[test]
+    fn queries_built_alike_compare_equal() {
+        let query = || {
+            Query::default()
+                .with_priority(Priority::Error)
+                .with_lines(5)
+        };
+        assert_eq!(query(), query());
+        assert_ne!(query(), query().with_lines(6));
     }
 
     #[test]

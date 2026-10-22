@@ -24,7 +24,12 @@ let excerpt = Query::default()
   systemd's unit name characters before anything runs. `Priority` and more
   urgent; `Since::Boot` or `Since::Ago(span)`. Bounds: 200 entries, 10 s,
   8 MiB of output and 4 KiB of each message, all settable. journalctl is
-  killed at the timeout or the output bound.
+  killed at the timeout or the output bound. Queries built alike compare
+  equal, so a wrapper can test what it builds.
+- **`Priority`**: syslog's eight, ordered, with `number`/`from_number` and
+  journalctl's short names (`emerg` … `debug`) through `name` and `FromStr`.
+  With the `serde` feature it serialises and deserialises as those names, and
+  nothing else.
 - **`Excerpt`**: the `Entry`s, newest first, and `truncated`, set when the
   journal held more than the line bound (one extra line is asked for to tell)
   or the output bound was reached.
@@ -34,7 +39,8 @@ let excerpt = Query::default()
   journald writes as an array of bytes (not UTF-8) is read lossily; a field
   repeated in one entry keeps its first value. A line that isn't JSON, or an
   entry without `__REALTIME_TIMESTAMP`, is dropped.
-- **`Error`** keeps `NotInstalled`, `Io`, `Exited` (journalctl's status),
+- **`Error`** keeps `NotInstalled`, `Spawn` (any other failure to start it),
+  `Io` (reading its output), `Exited` (journalctl's status),
   `Timeout`, `Lines` (a bound of 0) and `Unit` (a name refused) apart.
   Nothing is logged.
 

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 
-use zbus::zvariant::Value;
+use zbus::zvariant::{OwnedObjectPath, Value};
 
 use crate::props::{addresses, owned, prop, text};
 use crate::{Address, Group, Settings};
@@ -133,6 +133,38 @@ impl ProfileIpv4 {
 /// `connection.type`: `802-3-ethernet`, `802-11-wireless`, …
 pub fn connection_type(settings: &Settings) -> Option<String> {
     text(settings.get("connection")?, "type")
+}
+
+pub(crate) fn ssid(settings: &Settings) -> Option<Vec<u8>> {
+    prop(settings.get("802-11-wireless")?, "ssid")
+}
+
+/// A profile NetworkManager holds, as [`Client::saved`](crate::Client::saved) lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Profile {
+    pub path: OwnedObjectPath,
+    /// Kept when a checkpoint's rollback adds the profile back at a new path.
+    pub uuid: String,
+    pub id: String,
+    /// `connection.type`.
+    pub kind: String,
+    /// Wi-Fi profiles only.
+    pub ssid: Option<Vec<u8>>,
+}
+
+impl Profile {
+    /// `None` without the `uuid`, `id` and `type` NetworkManager gives every profile.
+    pub fn read(path: OwnedObjectPath, settings: &Settings) -> Option<Self> {
+        let connection = settings.get("connection")?;
+        Some(Self {
+            path,
+            uuid: text(connection, "uuid")?,
+            id: text(connection, "id")?,
+            kind: text(connection, "type")?,
+            ssid: ssid(settings),
+        })
+    }
 }
 
 #[cfg(test)]

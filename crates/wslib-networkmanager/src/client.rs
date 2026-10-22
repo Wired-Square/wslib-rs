@@ -9,7 +9,7 @@ use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 use crate::proxy::{
     DeviceProxy, NetworkManagerProxy, NmObjectsProxy, NmSettingsProxy, ProfileProxy, WirelessProxy,
 };
-use crate::{AccessPoint, Device, Objects, Settings};
+use crate::{AccessPoint, Device, Objects, Profile, Settings};
 
 /// `CheckpointCreate`'s flags.
 pub mod checkpoint {
@@ -214,6 +214,16 @@ impl Client {
             .await?
             .list_connections()
             .await
+    }
+
+    /// Every profile NetworkManager holds, read one round trip each.
+    pub async fn saved(&self) -> zbus::Result<Vec<Profile>> {
+        let mut saved = Vec::new();
+        for path in self.profiles().await? {
+            let settings = self.settings(&path).await?;
+            saved.extend(Profile::read(path, &settings));
+        }
+        Ok(saved)
     }
 
     /// A profile's settings, without its secrets.

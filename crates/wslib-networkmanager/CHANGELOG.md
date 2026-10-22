@@ -9,6 +9,16 @@
   `disconnect`; `apply` falls back to it.
 - The fake leaves a failed join's device with no active connection, so its
   `profile` is `None`, as NetworkManager does.
+- `Profile` reads a profile's path, `uuid`, `id`, type and SSID, and `saved`
+  lists every profile as one.
+- `Device::last_scan`, the Wi-Fi `LastScan` as time since boot, `None` before
+  the first scan. The fake moves it per device on `RequestScan`.
+- The fake fills in `connection.uuid` and `connection.id` on a profile that
+  lacks them, and keeps them over an `Update2` without them.
+- The fake's rollback follows NetworkManager's: each device's profile at the
+  checkpoint is updated, or added back at a new path with its UUID, and run
+  again; other deleted profiles stay deleted, and changes to profiles no
+  device ran are kept.
 
 ## 0.1.0
 

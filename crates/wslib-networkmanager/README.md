@@ -57,7 +57,9 @@ nm.destroy_checkpoint(&undo).await?;
 - **Checkpoints**: `create_checkpoint` over devices with a timeout and the
   `checkpoint` flags, `destroy_checkpoint` to keep what changed,
   `roll_back` to undo it now (each device's `RollbackResult`), and
-  `checkpoints` for those NetworkManager still holds. The timer runs inside
+  `checkpoints` for those NetworkManager still holds. A rollback brings back
+  only the profile each device was running, at a new path with its UUID, so
+  key a saved network by `uuid`. The timer runs inside
   NetworkManager, so it outlives the process that set it; neither a reboot
   nor a NetworkManager restart rolls one back, they just lose it.
 - **`disconnect`** drops a device's active connection, a Wi-Fi network say,
@@ -65,6 +67,8 @@ nm.destroy_checkpoint(&undo).await?;
   and NetworkManager does not autoconnect it until something activates it.
 - **`activate`** starts a saved profile on a device, answering the active
   connection: reconnecting after `disconnect` without adding a profile again.
+- **`saved`** reads each profile into a `Profile`: path, UUID, name, type
+  and, for Wi-Fi, the SSID; `Profile::read` does the same for one.
 - **Profiles**: `profiles`, `settings` (secrets left out), `update_profile`
   (written to disk), `delete_profile`, and `apply`: `Reapply` in place, or
   activation when NetworkManager cannot change it in place.
@@ -83,8 +87,9 @@ nm.destroy_checkpoint(&undo).await?;
 - **`testing::FakeNetworkManager`** (feature `testing`, Unix only): wired,
   Wi-Fi and any other type of device, with addresses, profiles and access points, served in-process
   over a socket pair. A join succeeds with the access point's passphrase and
-  otherwise leaves the device `Failed`; checkpoints snapshot and restore, and
-  `expire_checkpoints` plays the timer. It answers `GetNameOwner`, and
+  otherwise leaves the device `Failed`; checkpoints roll back as NetworkManager's do, and
+  `expire_checkpoints` plays the timer. Profiles get a `connection.uuid` and
+  `connection.id` where they lack one, and a scan moves the device's `LastScan`. It answers `GetNameOwner`, and
   `restart` gives it a new owner and drops its checkpoints. It records each call that changes
   something and can be told to refuse a method.
 

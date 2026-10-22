@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
+use std::time::Duration;
 
 use zbus::zvariant::OwnedObjectPath;
 
@@ -43,6 +44,9 @@ pub struct Device {
     pub access_points: Vec<AccessPoint>,
     /// The one a Wi-Fi device is associated with.
     pub active_access_point: Option<AccessPoint>,
+    /// Wi-Fi devices only: when the last scan finished, as time since boot
+    /// (`CLOCK_BOOTTIME`); `None` before the first.
+    pub last_scan: Option<Duration>,
 }
 
 /// `NMDeviceType`, as far as this crate tells types apart.
@@ -265,6 +269,10 @@ impl Device {
                     active_access_point: wireless
                         .and_then(|w| prop::<OwnedObjectPath>(w, "ActiveAccessPoint"))
                         .and_then(|ap| access_point(objects, &ap)),
+                    last_scan: wireless
+                        .and_then(|w| prop::<i64>(w, "LastScan"))
+                        .and_then(|ms| u64::try_from(ms).ok())
+                        .map(Duration::from_millis),
                 })
             })
             .collect();

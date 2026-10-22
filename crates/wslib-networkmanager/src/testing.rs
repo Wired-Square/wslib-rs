@@ -31,7 +31,7 @@ use crate::client::NM;
 use crate::interface::{
     ACCESS_POINT, ACTIVE_CONNECTION, DEVICE, IP4_CONFIG, IP6_CONFIG, WIRED, WIRELESS,
 };
-use crate::props::{group, owned, prop, text};
+use crate::props::{group, owned, text};
 use crate::{
     Address, DeviceState, Group, Objects, Security, Settings, WifiRadio, checkpoint, reason,
 };
@@ -100,6 +100,7 @@ struct Dev {
     profile: Option<usize>,
     access_points: Vec<FakeAccessPoint>,
     associated: Option<usize>,
+    last_scan: i64,
 }
 
 impl FakeDevice {
@@ -120,6 +121,7 @@ impl FakeDevice {
                 profile: None,
                 access_points: Vec::new(),
                 associated: None,
+                last_scan: -1,
             },
             active: None,
         }
@@ -209,8 +211,8 @@ fn code(state: DeviceState) -> u32 {
 #[derive(Debug, Clone)]
 struct Snapshot {
     devices: Vec<Dev>,
-    profiles: Vec<Option<Settings>>,
-    delete_new: bool,
+    active: Vec<Option<Settings>>,
+    uuids: Option<Vec<String>>,
 }
 
 #[derive(Debug)]
@@ -221,7 +223,7 @@ struct State {
     made_checkpoints: usize,
     instance: u32,
     radio: WifiRadio,
-    last_scan: i64,
+    unserved: Vec<usize>,
     refusing: Vec<String>,
     heard: Vec<String>,
 }
@@ -285,14 +287,83 @@ impl State {
         }
     }
 
+    /// Adds a profile with the `connection.uuid` and `connection.id` NetworkManager fills in.
+    fn hold(&mut self, mut settings: Settings) -> usize {
+        let at = self.profiles.len();
+        let ssid = ssid_of(&settings);
+        let id = if ssid.is_empty() {
+            format!("Connection {}", at + 1)
+        } else {
+            String::from_utf8_lossy(&ssid).into_owned()
+        };
+        let filled = group([
+            (
+                "uuid",
+                Value::from(format!("00000000-0000-4000-8000-{at:012x}")),
+            ),
+            ("id", Value::from(id)),
+        ]);
+        complete(&mut settings, &filled);
+        self.profiles.push(Some(settings));
+        self.unserved.push(at);
+        at
+    }
+
+    fn delete(&mut self, profile: usize) {
+        self.profiles[profile] = None;
+        for dev in self
+            .devices
+            .iter_mut()
+            .filter(|d| d.profile == Some(profile))
+        {
+            (dev.profile, dev.state, dev.associated) = (None, None, None);
+        }
+    }
+
+    fn held_uuids(&self) -> impl Iterator<Item = (usize, String)> + '_ {
+        self.profiles
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| Some((i, uuid_of(p.as_ref()?)?)))
+    }
+
+    /// As `nm_checkpoint_rollback`: each device's profile then is updated, or
+    /// added back at a new path, and run again; no other profile comes back.
     fn roll_back(&mut self, at: usize) -> HashMap<String, u32> {
         let (_, snapshot) = self.checkpoints.remove(at);
-        let mut profiles = snapshot.profiles;
-        for added in self.profiles.drain(..).skip(profiles.len()) {
-            profiles.push(added.filter(|_| !snapshot.delete_new));
+        for (i, (mut dev, active)) in snapshot
+            .devices
+            .into_iter()
+            .zip(snapshot.active)
+            .enumerate()
+        {
+            dev.last_scan = self.devices[i].last_scan;
+            dev.profile = active.map(|settings| {
+                let uuid = uuid_of(&settings);
+                let held = self
+                    .held_uuids()
+                    .find(|(_, held)| Some(held) == uuid.as_ref())
+                    .map(|(at, _)| at);
+                match held {
+                    Some(at) => {
+                        self.profiles[at] = Some(settings);
+                        at
+                    }
+                    None => self.hold(settings),
+                }
+            });
+            self.devices[i] = dev;
         }
-        self.profiles = profiles;
-        self.devices = snapshot.devices;
+        if let Some(kept) = snapshot.uuids {
+            let new: Vec<_> = self
+                .held_uuids()
+                .filter(|(_, uuid)| !kept.contains(uuid))
+                .map(|(i, _)| i)
+                .collect();
+            for profile in new {
+                self.delete(profile);
+            }
+        }
         (0..self.devices.len())
             .map(|i| (device_path(i).to_string(), 0))
             .collect()
@@ -361,7 +432,7 @@ impl State {
                             "ActiveAccessPoint",
                             Value::from(dev.associated.map_or(none.clone(), ap_path)),
                         ),
-                        ("LastScan", Value::from(self.last_scan)),
+                        ("LastScan", Value::from(dev.last_scan)),
                     ]),
                 );
                 for (j, ap) in dev.access_points.iter().enumerate() {
@@ -459,10 +530,21 @@ fn profile_path(i: usize) -> OwnedObjectPath {
 }
 
 fn ssid_of(settings: &Settings) -> Vec<u8> {
-    settings
-        .get("802-11-wireless")
-        .and_then(|w| prop(w, "ssid"))
-        .unwrap_or_default()
+    crate::profile::ssid(settings).unwrap_or_default()
+}
+
+fn uuid_of(settings: &Settings) -> Option<String> {
+    text(settings.get("connection")?, "uuid")
+}
+
+/// Fills in each of `fallback`'s `connection` keys that `settings` lacks.
+fn complete(settings: &mut Settings, fallback: &Group) {
+    let connection = settings.entry("connection".into()).or_default();
+    for (key, value) in fallback {
+        connection
+            .entry(key.clone())
+            .or_insert_with(|| value.clone());
+    }
 }
 
 /// A fake NetworkManager; clones share its state.
@@ -497,7 +579,7 @@ impl FakeNetworkManager {
                     hardware_enabled: Some(true),
                 },
                 instance: 1,
-                last_scan: -1,
+                unserved: Vec::new(),
                 refusing: Vec::new(),
                 heard: Vec::new(),
             })),
@@ -511,10 +593,7 @@ impl FakeNetworkManager {
     pub fn with(self, device: FakeDevice) -> Self {
         let FakeDevice { mut dev, active } = device;
         let mut state = self.state();
-        if let Some(profile) = active {
-            state.profiles.push(Some(profile));
-            dev.profile = Some(state.profiles.len() - 1);
-        }
+        dev.profile = active.map(|profile| state.hold(profile));
         state.devices.push(dev);
         drop(state);
         self
@@ -522,7 +601,7 @@ impl FakeNetworkManager {
 
     /// A saved profile no device is running.
     pub fn saved(self, profile: Settings) -> Self {
-        self.state().profiles.push(Some(profile));
+        self.state().hold(profile);
         self
     }
 
@@ -583,15 +662,28 @@ impl FakeNetworkManager {
         for (i, dev) in devices.iter().enumerate() {
             served = served.serve_at(device_path(i), DeviceObject(self.clone(), i))?;
             if dev.wifi() {
-                served = served.serve_at(device_path(i), WirelessObject(self.clone()))?;
+                served = served.serve_at(device_path(i), WirelessObject(self.clone(), i))?;
             }
         }
         for i in 0..profiles {
             served = served.serve_at(profile_path(i), ProfileObject(self.clone(), i))?;
         }
+        self.state().unserved.clear();
         let client = Builder::unix_stream(ours).p2p().build();
         let (served, client) = tokio::try_join!(served.build(), client)?;
         Ok((client, served))
+    }
+
+    /// Serves the profiles added since; a client learns a new path only from
+    /// a call that runs this first.
+    async fn serve_new_profiles(&self, server: &ObjectServer) -> zbus::Result<()> {
+        let new = std::mem::take(&mut self.state().unserved);
+        for i in new {
+            server
+                .at(profile_path(i), ProfileObject(self.clone(), i))
+                .await?;
+        }
+        Ok(())
     }
 }
 
@@ -631,17 +723,11 @@ impl Root {
                 ),
             )?;
             let device = state.device(&device)?;
-            state.profiles.push(Some(connection));
-            let profile = state.profiles.len() - 1;
+            let profile = state.hold(connection);
             state.activate(device, profile);
             (profile, device)
         };
-        server
-            .at(
-                profile_path(profile),
-                ProfileObject(self.0.clone(), profile),
-            )
-            .await?;
+        self.0.serve_new_profiles(server).await?;
         Ok((
             profile_path(profile),
             path(&format!("{ROOT}/ActiveConnection/{device}")),
@@ -671,8 +757,13 @@ impl Root {
         let made = path(&format!("{ROOT}/Checkpoint/{}", state.made_checkpoints));
         let snapshot = Snapshot {
             devices: state.devices.clone(),
-            profiles: state.profiles.clone(),
-            delete_new: flags & checkpoint::DELETE_NEW_CONNECTIONS != 0,
+            active: state
+                .devices
+                .iter()
+                .map(|d| state.profiles[d.profile?].clone())
+                .collect(),
+            uuids: (flags & checkpoint::DELETE_NEW_CONNECTIONS != 0)
+                .then(|| state.held_uuids().map(|(_, uuid)| uuid).collect()),
         };
         state.checkpoints.push((made.clone(), snapshot));
         Ok(made)
@@ -688,11 +779,19 @@ impl Root {
     }
 
     #[zbus(name = "CheckpointRollback")]
-    fn checkpoint_rollback(&self, checkpoint: ObjectPath<'_>) -> fdo::Result<HashMap<String, u32>> {
-        let mut state = self.0.state();
-        state.hear("CheckpointRollback", checkpoint.to_string())?;
-        let at = checkpoint_at(&state, &checkpoint)?;
-        Ok(state.roll_back(at))
+    async fn checkpoint_rollback(
+        &self,
+        checkpoint: ObjectPath<'_>,
+        #[zbus(object_server)] server: &ObjectServer,
+    ) -> fdo::Result<HashMap<String, u32>> {
+        let results = {
+            let mut state = self.0.state();
+            state.hear("CheckpointRollback", checkpoint.to_string())?;
+            let at = checkpoint_at(&state, &checkpoint)?;
+            state.roll_back(at)
+        };
+        self.0.serve_new_profiles(server).await?;
+        Ok(results)
     }
 
     #[zbus(property, name = "Checkpoints")]
@@ -754,8 +853,12 @@ struct Tree(FakeNetworkManager);
 #[zbus::interface(name = "org.freedesktop.DBus.ObjectManager")]
 impl Tree {
     #[zbus(name = "GetManagedObjects")]
-    fn get_managed_objects(&self) -> Objects {
-        self.0.state().tree()
+    async fn get_managed_objects(
+        &self,
+        #[zbus(object_server)] server: &ObjectServer,
+    ) -> fdo::Result<Objects> {
+        self.0.serve_new_profiles(server).await?;
+        Ok(self.0.state().tree())
     }
 }
 
@@ -764,12 +867,16 @@ struct Profiles(FakeNetworkManager);
 #[zbus::interface(name = "org.freedesktop.NetworkManager.Settings")]
 impl Profiles {
     #[zbus(name = "ListConnections")]
-    fn list_connections(&self) -> Vec<OwnedObjectPath> {
+    async fn list_connections(
+        &self,
+        #[zbus(object_server)] server: &ObjectServer,
+    ) -> fdo::Result<Vec<OwnedObjectPath>> {
+        self.0.serve_new_profiles(server).await?;
         let state = self.0.state();
-        (0..state.profiles.len())
+        Ok((0..state.profiles.len())
             .filter(|&i| state.profiles[i].is_some())
             .map(profile_path)
-            .collect()
+            .collect())
     }
 }
 
@@ -815,7 +922,7 @@ enum DeviceError {
     NotActive(String),
 }
 
-struct WirelessObject(FakeNetworkManager);
+struct WirelessObject(FakeNetworkManager, usize);
 
 #[zbus::interface(name = "org.freedesktop.NetworkManager.Device.Wireless")]
 impl WirelessObject {
@@ -823,13 +930,14 @@ impl WirelessObject {
     fn request_scan(&self, _options: HashMap<String, OwnedValue>) -> fdo::Result<()> {
         let mut state = self.0.state();
         state.hear("RequestScan", String::new())?;
-        state.last_scan = state.last_scan.max(0) + 1_000;
+        let dev = &mut state.devices[self.1];
+        dev.last_scan = dev.last_scan.max(0) + 1_000;
         Ok(())
     }
 
     #[zbus(property, name = "LastScan")]
     fn last_scan(&self) -> i64 {
-        self.0.state().last_scan
+        self.0.state().devices[self.1].last_scan
     }
 }
 
@@ -857,13 +965,19 @@ impl ProfileObject {
     #[zbus(name = "Update2")]
     fn update2(
         &self,
-        settings: Settings,
+        mut settings: Settings,
         flags: u32,
         _args: HashMap<String, OwnedValue>,
     ) -> fdo::Result<HashMap<String, OwnedValue>> {
         let mut state = self.0.state();
         self.held(&state)?;
         state.hear("Update2", format!("{} {flags:#x}", profile_path(self.1)))?;
+        if let Some(old) = state.profiles[self.1]
+            .as_ref()
+            .and_then(|p| p.get("connection"))
+        {
+            complete(&mut settings, old);
+        }
         state.profiles[self.1] = Some(settings);
         Ok(HashMap::new())
     }
@@ -873,14 +987,7 @@ impl ProfileObject {
         let mut state = self.0.state();
         self.held(&state)?;
         state.hear("Delete", profile_path(self.1).to_string())?;
-        state.profiles[self.1] = None;
-        for dev in state
-            .devices
-            .iter_mut()
-            .filter(|d| d.profile == Some(self.1))
-        {
-            (dev.profile, dev.state, dev.associated) = (None, None, None);
-        }
+        state.delete(self.1);
         Ok(())
     }
 }

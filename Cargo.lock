@@ -6711,6 +6711,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-ssh-keys"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "chrono",
+ "sha2 0.10.9",
+ "wslib-file-atomic",
+]
+
+[[package]]
 name = "wslib-systemd"
 version = "0.1.0"
 dependencies = [

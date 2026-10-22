@@ -7,7 +7,7 @@ a `wslib_crypto::Signer` and signature checks through the caller's
 algorithms, so no crypto provider is enabled here.
 
 ```rust
-use wslib_crypto_ca::{Authority, Csr, KeyIdentifierMethod, Profile, Serial, Subject, Validity, build_csr};
+use wslib_crypto_ca::{Authority, CrlView, Csr, KeyIdentifierMethod, Profile, Revocation, Serial, Subject, Validity, build_csr};
 
 // A request of our own, for an external CA:
 let subject = Subject { country: Some("AU".into()), ..Subject::new("www.example.com") };
@@ -20,6 +20,10 @@ let csr = Csr::from_pem(&pasted, provider.signature_verification_algorithms.all)
 let ca = Authority::new(ca_certificate, ca_signer, KeyIdentifierMethod::Sha1)?;
 let validity = Validity { not_before: now, not_after: now + Duration::from_secs(397 * 86_400) };
 let leaf = ca.issue(&csr, &web_server_profile, &Serial::try_from(next_serial)?, validity)?;
+
+// Revoked, and read back:
+let crl = ca.revocation_list(crl_number, now, now + week, &[Revocation::new(revoked_serial, revoked_at)])?;
+CrlView::from_der(&crl)?.verify(ca.certificate(), provider.signature_verification_algorithms.all)?;
 ```
 
 ## What's here
@@ -66,8 +70,20 @@ let leaf = ca.issue(&csr, &web_server_profile, &Serial::try_from(next_serial)?, 
   `Serial::random` from the provider (16 bytes, as `wslib-crypto` makes
   them). The caller keeps any counter.
 
+- **`Authority::revocation_list(number, this_update, next_update, revoked)`**:
+  a v2 CRL whose issuer is the CA's subject byte for byte, with its CRL
+  number and an authority key identifier (the CA's own), and its entries in
+  serial order. A `Revocation` may carry a `Reason` (none means
+  unspecified) and the date the key became invalid. No issuing distribution
+  point and no deltas.
+- **`CrlView`**: what a CRL says, read without trusting it: issuer (DER),
+  number, this and next update, authority key identifier and entries.
+  `verify(issuer, algorithms)` checks that the certificate's subject is the
+  CRL's issuer, byte for byte, and that its key signed it.
+
 ## What isn't
 
 Policy: which profile a kind of certificate gets, validity caps, serial
 and CRL number counters, renewal, and when CRLs are made and published are
-the application's.
+the application's. OCSP, delta CRLs, name constraints and policy
+extensions are not here.

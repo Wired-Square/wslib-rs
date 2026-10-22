@@ -20,3 +20,10 @@
   request's subject and key are copied byte for byte. `KeyIdentifierMethod`
   `Sha1` (OpenSSL's) or `Sha256` (`wslib-crypto`'s); the authority key
   identifier is the CA certificate's own.
+- `Authority::revocation_list`: a v2 CRL with its number, this and next
+  update, the authority key identifier from the CA's own, and entries in
+  serial order, each with an optional `Reason` and invalidity date; the
+  issuer name byte for byte.
+- `CrlView`: a CRL read back (issuer, number, dates, authority key
+  identifier, entries), and `verify` against an issuer certificate over the
+  caller's algorithms.

@@ -5,11 +5,13 @@
 //! through the caller's rustls provider, so no crypto provider is enabled here.
 
 mod authority;
+mod crl;
 mod csr;
 mod der;
 mod profile;
 
 pub use authority::{Authority, KeyIdentifierMethod, Serial, Validity};
+pub use crl::{CrlView, Reason, Revocation, X509_CRL};
 pub use csr::{CERTIFICATE_REQUEST, Csr, Subject, build_csr};
 pub use profile::{BasicConstraints, Extension, Profile, SanPolicy};
 
@@ -38,4 +40,6 @@ pub enum Error {
     Serial,
     #[error("an empty {0} extension")]
     EmptyExtension(&'static str),
+    #[error("the CRL's issuer is not the certificate's subject")]
+    IssuerMismatch,
 }

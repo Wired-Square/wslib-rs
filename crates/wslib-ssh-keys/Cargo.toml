@@ -1,0 +1,17 @@
+[package]
+name = "wslib-ssh-keys"
+version = "0.1.0"
+description = "OpenSSH authorized_keys: key lines checked as sshd reads them, SHA256 fingerprints as ssh-keygen prints them, who added each key, and a whole-file rewrite."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[dependencies]
+base64 = { version = "0.23", default-features = false, features = ["alloc"] }
+chrono = { version = "0.4.20", default-features = false, features = ["alloc"] }
+sha2 = "0.10.1"
+wslib-file-atomic = { path = "../wslib-file-atomic", version = "0.1", registry = "wired-square" }

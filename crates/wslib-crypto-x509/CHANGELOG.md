@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.1 (unreleased)
+## 0.1.1
 
 - `rfc_4514`: a DER Name in the RFC 4514 form `CertificateView` gives
   subject and issuer, public for names outside certificates, such as a

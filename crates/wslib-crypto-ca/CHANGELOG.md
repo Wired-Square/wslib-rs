@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.0
 
 - `Csr`: a certificate signing request parsed and its signature verified
   over the caller's algorithms; its subject (DER, byte for byte), common

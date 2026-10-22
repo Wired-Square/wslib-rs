@@ -1,0 +1,25 @@
+[package]
+name = "wslib-networkmanager"
+version = "0.1.0"
+description = "NetworkManager over D-Bus, typed: devices and their addresses, Wi-Fi scan and join, checkpoints, profile updates and the Wi-Fi radio, and a fake NetworkManager for tests."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+testing = ["zbus/p2p", "tokio/macros", "tokio/net"]
+
+[dependencies]
+tokio = { version = "1.37", default-features = false, features = ["time"] }
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+
+[dev-dependencies]
+tokio = { version = "1.37", features = ["macros", "rt"] }
+
+[[test]]
+name = "client"
+required-features = ["testing"]

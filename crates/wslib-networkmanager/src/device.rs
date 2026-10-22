@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::net::{IpAddr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::str::FromStr;
 
 use zbus::zvariant::OwnedObjectPath;
 
@@ -29,8 +30,8 @@ pub struct Device {
     pub hw_address: Option<String>,
     /// Wired devices only.
     pub carrier: Option<bool>,
-    pub ip4: Option<IpConfig>,
-    pub ip6: Option<IpConfig>,
+    pub ip4: Option<IpConfig<Ipv4Addr>>,
+    pub ip6: Option<IpConfig<Ipv6Addr>>,
     /// The profile behind the device's active connection.
     pub profile: Option<OwnedObjectPath>,
     /// Wi-Fi devices only, leaving out hidden networks' nameless ones.
@@ -117,22 +118,31 @@ pub mod reason {
 }
 
 /// What an interface has now, as distinct from how its profile configures it.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct IpConfig {
-    pub addresses: Vec<Address>,
-    pub gateway: Option<IpAddr>,
-    pub dns: Vec<IpAddr>,
+pub struct IpConfig<A> {
+    pub addresses: Vec<Address<A>>,
+    pub gateway: Option<A>,
+    pub dns: Vec<A>,
 }
 
 /// An address and its prefix length, shown as `10.0.50.12/24`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Address {
-    pub address: IpAddr,
+pub struct Address<A = IpAddr> {
+    pub address: A,
     pub prefix: u8,
 }
 
-impl fmt::Display for Address {
+impl<A: Into<IpAddr>> Address<A> {
+    pub fn widen(self) -> Address {
+        Address {
+            address: self.address.into(),
+            prefix: self.prefix,
+        }
+    }
+}
+
+impl<A: fmt::Display> fmt::Display for Address<A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}/{}", self.address, self.prefix)
     }
@@ -160,11 +170,18 @@ impl Device {
     }
 
     /// Both families' addresses, IPv4 first.
-    pub fn addresses(&self) -> impl Iterator<Item = &Address> {
-        [&self.ip4, &self.ip6]
-            .into_iter()
-            .flatten()
-            .flat_map(|config| &config.addresses)
+    pub fn addresses(&self) -> impl Iterator<Item = Address> {
+        let v4 = self
+            .ip4
+            .iter()
+            .flat_map(|c| &c.addresses)
+            .map(|a| a.widen());
+        let v6 = self
+            .ip6
+            .iter()
+            .flat_map(|c| &c.addresses)
+            .map(|a| a.widen());
+        v4.chain(v6)
     }
 
     /// One access point per SSID, the strongest, strongest first.
@@ -188,51 +205,65 @@ impl Device {
             .filter(|ap| ap.ssid == ssid)
             .max_by_key(|ap| ap.strength)
     }
-}
 
-/// Every device in `objects`, by interface name.
-pub(crate) fn devices(objects: &Objects) -> Vec<Device> {
-    let mut devices: Vec<Device> = objects
-        .iter()
-        .filter_map(|(path, interfaces)| {
-            let props = interfaces.get(DEVICE)?;
-            let linked = |key| linked(objects, props, key);
-            let wireless = interfaces.get(WIRELESS);
-            Some(Device {
-                path: path.clone(),
-                interface: text(props, "Interface").unwrap_or_default(),
-                kind: match number(props, "DeviceType").unwrap_or(0) {
-                    1 => DeviceKind::Ethernet,
-                    2 => DeviceKind::Wifi,
-                    other => DeviceKind::Other(other),
-                },
-                state: number(props, "State").unwrap_or(0).into(),
-                reason: prop::<(u32, u32)>(props, "StateReason").map_or(0, |(_, why)| why),
-                managed: prop(props, "Managed").unwrap_or(false),
-                hw_address: text(props, "HwAddress").filter(|a| !a.is_empty()),
-                carrier: interfaces.get(WIRED).and_then(|w| prop(w, "Carrier")),
-                ip4: linked("Ip4Config")
-                    .and_then(|o| o.get(IP4_CONFIG))
-                    .map(|g| ip_config(g, false)),
-                ip6: linked("Ip6Config")
-                    .and_then(|o| o.get(IP6_CONFIG))
-                    .map(|g| ip_config(g, true)),
-                profile: linked("ActiveConnection")
-                    .and_then(|o| prop(o.get(ACTIVE)?, "Connection")),
-                access_points: wireless
-                    .and_then(|w| prop::<Vec<OwnedObjectPath>>(w, "AccessPoints"))
-                    .unwrap_or_default()
-                    .iter()
-                    .filter_map(|ap| access_point(objects, ap))
-                    .collect(),
-                active_access_point: wireless
-                    .and_then(|w| prop::<OwnedObjectPath>(w, "ActiveAccessPoint"))
-                    .and_then(|ap| access_point(objects, &ap)),
+    /// Every device in an object tree as `GetManagedObjects` answers it, by
+    /// interface name; [`Client::devices`](crate::Client::devices) reads one off the bus.
+    pub fn from_objects(objects: &Objects) -> Vec<Device> {
+        let mut devices: Vec<Device> = objects
+            .iter()
+            .filter_map(|(path, interfaces)| {
+                let props = interfaces.get(DEVICE)?;
+                let linked = |key| linked(objects, props, key);
+                let wireless = interfaces.get(WIRELESS);
+                Some(Device {
+                    path: path.clone(),
+                    interface: text(props, "Interface").unwrap_or_default(),
+                    kind: match number(props, "DeviceType").unwrap_or(0) {
+                        1 => DeviceKind::Ethernet,
+                        2 => DeviceKind::Wifi,
+                        other => DeviceKind::Other(other),
+                    },
+                    state: number(props, "State").unwrap_or(0).into(),
+                    reason: prop::<(u32, u32)>(props, "StateReason").map_or(0, |(_, why)| why),
+                    managed: prop(props, "Managed").unwrap_or(false),
+                    hw_address: text(props, "HwAddress").filter(|a| !a.is_empty()),
+                    carrier: interfaces.get(WIRED).and_then(|w| prop(w, "Carrier")),
+                    ip4: linked("Ip4Config")
+                        .and_then(|o| o.get(IP4_CONFIG))
+                        .map(|g| {
+                            let dns = entries(g, "NameserverData")
+                                .iter()
+                                .filter_map(|entry| text(entry, "address")?.parse().ok())
+                                .collect();
+                            ip_config(g, dns)
+                        }),
+                    ip6: linked("Ip6Config")
+                        .and_then(|o| o.get(IP6_CONFIG))
+                        .map(|g| {
+                            let dns = prop::<Vec<Vec<u8>>>(g, "Nameservers")
+                                .unwrap_or_default()
+                                .into_iter()
+                                .filter_map(|bytes| Some(<[u8; 16]>::try_from(bytes).ok()?.into()))
+                                .collect();
+                            ip_config(g, dns)
+                        }),
+                    profile: linked("ActiveConnection")
+                        .and_then(|o| prop(o.get(ACTIVE)?, "Connection")),
+                    access_points: wireless
+                        .and_then(|w| prop::<Vec<OwnedObjectPath>>(w, "AccessPoints"))
+                        .unwrap_or_default()
+                        .iter()
+                        .filter_map(|ap| access_point(objects, ap))
+                        .collect(),
+                    active_access_point: wireless
+                        .and_then(|w| prop::<OwnedObjectPath>(w, "ActiveAccessPoint"))
+                        .and_then(|ap| access_point(objects, &ap)),
+                })
             })
-        })
-        .collect();
-    devices.sort_by(|a, b| a.interface.cmp(&b.interface));
-    devices
+            .collect();
+        devices.sort_by(|a, b| a.interface.cmp(&b.interface));
+        devices
+    }
 }
 
 /// The object a path-valued property names; NetworkManager says none with `/`.
@@ -244,19 +275,7 @@ fn linked<'a>(
     objects.get(&prop::<OwnedObjectPath>(props, key)?)
 }
 
-fn ip_config(config: &Group, v6: bool) -> IpConfig {
-    let dns = if v6 {
-        prop::<Vec<Vec<u8>>>(config, "Nameservers")
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|bytes| Some(Ipv6Addr::from(<[u8; 16]>::try_from(bytes).ok()?).into()))
-            .collect()
-    } else {
-        entries(config, "NameserverData")
-            .iter()
-            .filter_map(|entry| text(entry, "address")?.parse().ok())
-            .collect()
-    };
+fn ip_config<A: FromStr>(config: &Group, dns: Vec<A>) -> IpConfig<A> {
     IpConfig {
         addresses: addresses(config, "AddressData"),
         gateway: text(config, "Gateway").and_then(|g| g.parse().ok()),

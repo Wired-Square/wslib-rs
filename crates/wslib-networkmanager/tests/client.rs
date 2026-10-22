@@ -1,23 +1,17 @@
 #![cfg(unix)]
 
-use std::net::{IpAddr, Ipv4Addr};
+use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use wslib_networkmanager::testing::{FakeAccessPoint, FakeDevice, FakeNetworkManager};
 use wslib_networkmanager::{
-    Address, Client, Device, DeviceKind, DeviceState, Ipv4, ProfileIpv4, RollbackResult, Security,
-    Settings, WifiRadio, checkpoint, connection_type, reason, set_ipv4,
+    Client, Device, DeviceKind, DeviceState, Ipv4, Ipv4Method, Objects, ProfileIpv4,
+    RollbackResult, Security, Settings, WifiRadio, checkpoint, connection_type, reason, set_ipv4,
 };
-use zbus::zvariant::{OwnedValue, Value};
+use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
 fn ip(a: &str) -> IpAddr {
     a.parse().unwrap()
-}
-
-fn address(a: &str, prefix: u8) -> Address {
-    Address {
-        address: ip(a),
-        prefix,
-    }
 }
 
 fn wired_profile() -> Settings {
@@ -60,19 +54,20 @@ async fn devices_are_read_off_the_tree_by_name() {
         .with(
             FakeDevice::ethernet("eth0")
                 .hw_address("B8:27:EB:00:00:01")
-                .address(address("10.0.50.12", 24))
-                .address(address("fe80::1", 64))
+                .address(ip("10.0.50.12"), 24)
+                .address(ip("fe80::1"), 64)
                 .gateway(ip("10.0.50.1"))
                 .dns(ip("10.0.50.1"))
                 .dns(ip("2001:db8::53"))
                 .active(wired_profile()),
         )
-        .with(FakeDevice::ethernet("eth1").unplugged());
+        .with(FakeDevice::ethernet("eth1").unplugged())
+        .with(FakeDevice::other("lo", 32));
     let (nm, _served) = serve(&fake).await;
 
     let devices = nm.devices().await.unwrap();
     let names: Vec<_> = devices.iter().map(|d| d.interface.as_str()).collect();
-    assert_eq!(names, ["eth0", "eth1", "wlan0"]);
+    assert_eq!(names, ["eth0", "eth1", "lo", "wlan0"]);
 
     let eth0 = &devices[0];
     assert_eq!(eth0.kind, DeviceKind::Ethernet);
@@ -81,10 +76,15 @@ async fn devices_are_read_off_the_tree_by_name() {
     assert_eq!(eth0.hw_address.as_deref(), Some("B8:27:EB:00:00:01"));
     assert_eq!(eth0.carrier, Some(true));
     let ip4 = eth0.ip4.as_ref().unwrap();
-    assert_eq!(ip4.gateway, Some(ip("10.0.50.1")));
-    assert_eq!(ip4.dns, [ip("10.0.50.1")]);
-    assert_eq!(eth0.ip6.as_ref().unwrap().dns, [ip("2001:db8::53")]);
-    let all: Vec<_> = eth0.addresses().map(ToString::to_string).collect();
+    let gateway = Ipv4Addr::new(10, 0, 50, 1);
+    assert_eq!(ip4.addresses[0].address, Ipv4Addr::new(10, 0, 50, 12));
+    assert_eq!(
+        (ip4.gateway, ip4.dns.as_slice()),
+        (Some(gateway), &[gateway][..])
+    );
+    let resolver: Ipv6Addr = "2001:db8::53".parse().unwrap();
+    assert_eq!(eth0.ip6.as_ref().unwrap().dns, [resolver]);
+    let all: Vec<_> = eth0.addresses().map(|a| a.to_string()).collect();
     assert_eq!(all, ["10.0.50.12/24", "fe80::1/64"]);
     let profile = eth0
         .profile
@@ -103,7 +103,10 @@ async fn devices_are_read_off_the_tree_by_name() {
     );
     assert_eq!((eth1.ip4.as_ref(), eth1.profile.as_ref()), (None, None));
 
-    let wlan0 = &devices[2];
+    assert_eq!(devices[2].kind, DeviceKind::Other(32));
+    assert_eq!(devices[2].carrier, None);
+
+    let wlan0 = &devices[3];
     assert_eq!(wlan0.kind, DeviceKind::Wifi);
     assert!(!wlan0.managed);
     assert_eq!(wlan0.state, DeviceState::Unmanaged);
@@ -284,7 +287,7 @@ async fn an_address_change_is_written_to_disk_then_reapplied_or_else_activated()
         .await
         .unwrap();
     let back = ProfileIpv4::read(&nm.settings(&profile).await.unwrap()).unwrap();
-    assert_eq!(back.method, "manual");
+    assert_eq!(back.method, Some(Ipv4Method::Manual));
     assert_eq!(back.dns, [Ipv4Addr::new(10, 0, 50, 1)]);
 
     fake.refuse("Reapply");
@@ -335,15 +338,89 @@ async fn the_wifi_radio_reads_both_switches_and_turns() {
     let (nm, _served) = serve(&fake).await;
     let on = WifiRadio {
         enabled: true,
-        hardware_enabled: true,
+        hardware_enabled: Some(true),
     };
     assert_eq!(nm.wifi_radio().await.unwrap(), on);
     nm.set_wifi_enabled(false).await.unwrap();
     assert!(!fake.radio().enabled);
 
-    fake.set_radio(WifiRadio {
-        enabled: true,
-        hardware_enabled: false,
-    });
-    assert!(!nm.wifi_radio().await.unwrap().hardware_enabled);
+    for hardware_enabled in [Some(false), None] {
+        fake.set_radio(WifiRadio {
+            enabled: true,
+            hardware_enabled,
+        });
+        assert_eq!(
+            nm.wifi_radio().await.unwrap().hardware_enabled,
+            hardware_enabled,
+            "an unreadable kill switch is None, not an error"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_owner_changes_when_networkmanager_restarts_and_takes_its_checkpoints() {
+    let fake = FakeNetworkManager::new().with(FakeDevice::ethernet("eth0"));
+    let (nm, _served) = serve(&fake).await;
+    let eth0 = device(&nm, "eth0").await;
+    let before = nm
+        .owner()
+        .await
+        .unwrap()
+        .expect("NetworkManager is running");
+    assert!(before.starts_with(':'));
+    nm.create_checkpoint(&[&eth0.path], 180, checkpoint::DESTROY_ALL)
+        .await
+        .unwrap();
+
+    fake.restart();
+    let after = nm.owner().await.unwrap().unwrap();
+    assert_ne!(before, after);
+    assert!(nm.checkpoints().await.unwrap().is_empty());
+}
+
+#[test]
+fn a_hand_built_tree_reads_as_devices() {
+    let path = |p: &str| OwnedObjectPath::try_from(p).unwrap();
+    let props = |pairs: Vec<(&str, Value<'_>)>| -> HashMap<String, OwnedValue> {
+        pairs
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), OwnedValue::try_from(v).unwrap()))
+            .collect()
+    };
+    let device = |name: &str, kind: u32| {
+        HashMap::from([(
+            "org.freedesktop.NetworkManager.Device".to_string(),
+            props(vec![
+                ("Interface", Value::from(name)),
+                ("DeviceType", Value::from(kind)),
+                ("State", Value::from(100u32)),
+                ("Ip4Config", Value::from(path("/"))),
+            ]),
+        )])
+    };
+    let objects = Objects::from([
+        (
+            path("/org/freedesktop/NetworkManager/Devices/1"),
+            device("lo", 32),
+        ),
+        (
+            path("/org/freedesktop/NetworkManager/Devices/2"),
+            device("eth0", 1),
+        ),
+    ]);
+
+    let devices = Device::from_objects(&objects);
+    let read: Vec<_> = devices
+        .iter()
+        .map(|d| (d.interface.as_str(), d.kind))
+        .collect();
+    assert_eq!(
+        read,
+        [
+            ("eth0", DeviceKind::Ethernet),
+            ("lo", DeviceKind::Other(32))
+        ]
+    );
+    assert_eq!(devices[0].state, DeviceState::Activated);
+    assert_eq!(devices[0].ip4, None, "`/` links to nothing");
 }

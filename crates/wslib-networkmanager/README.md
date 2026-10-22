@@ -31,11 +31,16 @@ nm.destroy_checkpoint(&undo).await?;
 - **`devices`**: every device off one `GetManagedObjects`, by interface name,
   each a `Device`: kind, `DeviceState` and its reason (the ones worth acting
   on named in `reason`), managed or not, MAC, carrier, the live IPv4 and IPv6
-  `IpConfig` (addresses, gateway, resolvers), the profile behind the active
+  `IpConfig` (addresses, gateway, resolvers, typed `Ipv4Addr` or
+  `Ipv6Addr`), the profile behind the active
   connection, and for Wi-Fi the access points and the one it is associated
   with. `unplugged()` reads `Carrier`, since NetworkManager does not reliably
   leave `CARRIER` as the reason; `networks()` is one access point per SSID,
-  the strongest.
+  the strongest. `Device::from_objects` reads a tree built by hand, so a
+  filter over devices can be tested without a bus.
+- **`owner`** is the unique name of the NetworkManager running now, `None`
+  when none is: a checkpoint dies with the instance that made it, so a
+  stored one is only worth acting on while that instance runs.
 - **`scan`** asks for a scan and waits up to 7.5 s for `LastScan` to move,
   then answers the device's networks. NetworkManager refuses a scan while one
   runs or just after, and the list it holds is answered all the same.
@@ -60,19 +65,21 @@ nm.destroy_checkpoint(&undo).await?;
 - **`Ipv4`** writes a whole `ipv4` group, `set_ipv4` puts it in a profile's
   settings. No gateway is an absent key, never `""`, which NetworkManager
   refuses; resolvers are packed in host byte order with `ignore-auto-dns`;
-  DHCP writes an empty `address-data`. **`ProfileIpv4`** reads one back, and
+  DHCP writes an empty `address-data`. **`ProfileIpv4`** reads one back
+  (its `method` is `None` when the profile does not say), and
   `connection_type` a profile's type.
 - **`wifi_radio`** reads `WirelessEnabled` and the kill switch,
-  `WirelessHardwareEnabled`; `set_wifi_enabled` turns the first, which
+  `WirelessHardwareEnabled`, `None` when it can't be read; `set_wifi_enabled` turns the first, which
   NetworkManager persists, and which does nothing under the second.
 - **Proxies** for the root object, the object tree, `Settings`, a device, a
   Wi-Fi device and a profile, declaring only the members used; `manager()`
   gives the root's for anything the client does not wrap.
-- **`testing::FakeNetworkManager`** (feature `testing`, Unix only): wired and
-  Wi-Fi devices with addresses, profiles and access points, served in-process
+- **`testing::FakeNetworkManager`** (feature `testing`, Unix only): wired,
+  Wi-Fi and any other type of device, with addresses, profiles and access points, served in-process
   over a socket pair. A join succeeds with the access point's passphrase and
   otherwise leaves the device `Failed`; checkpoints snapshot and restore, and
-  `expire_checkpoints` plays the timer. It records each call that changes
+  `expire_checkpoints` plays the timer. It answers `GetNameOwner`, and
+  `restart` gives it a new owner and drops its checkpoints. It records each call that changes
   something and can be told to refuse a method.
 
 ## What isn't

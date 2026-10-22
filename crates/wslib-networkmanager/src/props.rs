@@ -1,4 +1,4 @@
-use std::net::IpAddr;
+use std::str::FromStr;
 
 use zbus::zvariant::{OwnedValue, Value};
 
@@ -33,12 +33,12 @@ pub(crate) fn group<'a>(pairs: impl IntoIterator<Item = (&'a str, Value<'a>)>) -
 }
 
 /// The `address`/`prefix` pairs of an `AddressData` or `address-data` list.
-pub(crate) fn addresses(group: &Group, key: &str) -> Vec<crate::Address> {
+pub(crate) fn addresses<A: FromStr>(group: &Group, key: &str) -> Vec<crate::Address<A>> {
     entries(group, key)
         .iter()
         .filter_map(|entry| {
             Some(crate::Address {
-                address: text(entry, "address")?.parse::<IpAddr>().ok()?,
+                address: text(entry, "address")?.parse().ok()?,
                 prefix: u8::try_from(number(entry, "prefix")?).ok()?,
             })
         })

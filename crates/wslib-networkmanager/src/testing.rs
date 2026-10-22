@@ -27,12 +27,15 @@ use zbus::object_server::ObjectServer;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 use zbus::{Connection, Guid, fdo};
 
+use crate::client::NM;
 use crate::device::{ACCESS_POINT, ACTIVE, DEVICE, IP4_CONFIG, IP6_CONFIG, WIRED, WIRELESS};
 use crate::props::{group, owned, prop, text};
 use crate::{
     Address, DeviceState, Group, Objects, Security, Settings, WifiRadio, checkpoint, reason,
 };
 
+const ETHERNET: u32 = 1;
+const WIFI: u32 = 2;
 const ROOT: &str = "/org/freedesktop/NetworkManager";
 
 /// An access point a [`FakeDevice`] sees.
@@ -83,7 +86,7 @@ pub struct FakeDevice {
 #[derive(Debug, Clone)]
 struct Dev {
     interface: String,
-    wifi: bool,
+    device_type: u32,
     state: Option<u32>,
     reason: u32,
     managed: bool,
@@ -98,16 +101,17 @@ struct Dev {
 }
 
 impl FakeDevice {
-    fn new(interface: &str, wifi: bool) -> Self {
+    /// A device of any `NMDeviceType`: loopback (32), TUN (16), Wi-Fi P2P (30), …
+    pub fn other(interface: &str, device_type: u32) -> Self {
         Self {
             dev: Dev {
                 interface: interface.into(),
-                wifi,
+                device_type,
                 state: None,
                 reason: 0,
                 managed: true,
                 hw_address: None,
-                carrier: (!wifi).then_some(true),
+                carrier: (device_type == ETHERNET).then_some(true),
                 addresses: Vec::new(),
                 gateways: Vec::new(),
                 dns: Vec::new(),
@@ -120,11 +124,11 @@ impl FakeDevice {
     }
 
     pub fn ethernet(interface: &str) -> Self {
-        Self::new(interface, false)
+        Self::other(interface, ETHERNET)
     }
 
     pub fn wifi(interface: &str) -> Self {
-        Self::new(interface, true)
+        Self::other(interface, WIFI)
     }
 
     /// The state and its `NMDeviceStateReason`; `Activated` with an
@@ -152,8 +156,11 @@ impl FakeDevice {
     }
 
     /// An address it has now, in its family's IP configuration.
-    pub fn address(mut self, address: Address) -> Self {
-        self.dev.addresses.push(address);
+    pub fn address(mut self, address: impl Into<IpAddr>, prefix: u8) -> Self {
+        self.dev.addresses.push(Address {
+            address: address.into(),
+            prefix,
+        });
         self
     }
 
@@ -210,10 +217,17 @@ struct State {
     profiles: Vec<Option<Settings>>,
     checkpoints: Vec<(OwnedObjectPath, Snapshot)>,
     made_checkpoints: usize,
+    instance: u32,
     radio: WifiRadio,
     last_scan: i64,
     refusing: Vec<String>,
     heard: Vec<String>,
+}
+
+impl Dev {
+    fn wifi(&self) -> bool {
+        self.device_type == WIFI
+    }
 }
 
 impl State {
@@ -243,7 +257,7 @@ impl State {
         let dev = &mut self.devices[device];
         dev.profile = Some(profile);
         (dev.state, dev.reason, dev.associated) = (Some(code(DeviceState::Activated)), 0, None);
-        if !dev.wifi {
+        if !dev.wifi() {
             return;
         }
         let ssid = ssid_of(&settings);
@@ -303,7 +317,7 @@ impl State {
                 DEVICE.to_string(),
                 group([
                     ("Interface", Value::from(dev.interface.clone())),
-                    ("DeviceType", Value::from(if dev.wifi { 2u32 } else { 1 })),
+                    ("DeviceType", Value::from(dev.device_type)),
                     ("State", Value::from(state)),
                     ("StateReason", Value::from((state, dev.reason))),
                     ("Managed", Value::from(dev.managed)),
@@ -325,7 +339,7 @@ impl State {
                     group([("Carrier", Value::from(carrier))]),
                 );
             }
-            if dev.wifi {
+            if dev.wifi() {
                 let ap_path = |j: usize| path(&format!("{ROOT}/AccessPoint/{}", i * 1000 + j));
                 interfaces.insert(
                     WIRELESS.to_string(),
@@ -475,8 +489,9 @@ impl FakeNetworkManager {
                 made_checkpoints: 0,
                 radio: WifiRadio {
                     enabled: true,
-                    hardware_enabled: true,
+                    hardware_enabled: Some(true),
                 },
+                instance: 1,
                 last_scan: -1,
                 refusing: Vec::new(),
                 heard: Vec::new(),
@@ -529,6 +544,14 @@ impl FakeNetworkManager {
         self.state().profiles.iter().flatten().cloned().collect()
     }
 
+    /// Restarts NetworkManager: a new [`owner`](crate::Client::owner), and
+    /// every checkpoint gone without a rollback.
+    pub fn restart(&self) {
+        let mut state = self.state();
+        state.instance += 1;
+        state.checkpoints.clear();
+    }
+
     /// Rolls every checkpoint back, as NetworkManager does when one's timer runs out.
     pub fn expire_checkpoints(&self) {
         let mut state = self.state();
@@ -546,14 +569,15 @@ impl FakeNetworkManager {
             .p2p()
             .serve_at(ROOT, Root(self.clone()))?
             .serve_at("/org/freedesktop", Tree(self.clone()))?
-            .serve_at(format!("{ROOT}/Settings"), Profiles(self.clone()))?;
+            .serve_at(format!("{ROOT}/Settings"), Profiles(self.clone()))?
+            .serve_at("/org/freedesktop/DBus", Bus(self.clone()))?;
         let (devices, profiles) = {
             let state = self.state();
             (state.devices.clone(), state.profiles.len())
         };
         for (i, dev) in devices.iter().enumerate() {
             served = served.serve_at(device_path(i), DeviceObject(self.clone(), i))?;
-            if dev.wifi {
+            if dev.wifi() {
                 served = served.serve_at(device_path(i), WirelessObject(self.clone()))?;
             }
         }
@@ -690,8 +714,12 @@ impl Root {
     }
 
     #[zbus(property, name = "WirelessHardwareEnabled")]
-    fn wireless_hardware_enabled(&self) -> bool {
-        self.0.state().radio.hardware_enabled
+    fn wireless_hardware_enabled(&self) -> fdo::Result<bool> {
+        self.0
+            .state()
+            .radio
+            .hardware_enabled
+            .ok_or_else(|| fdo::Error::Failed("unreadable".into()))
     }
 }
 
@@ -701,6 +729,19 @@ fn checkpoint_at(state: &State, checkpoint: &ObjectPath<'_>) -> fdo::Result<usiz
         .iter()
         .position(|(p, _)| p.as_ref() == *checkpoint)
         .ok_or_else(|| fdo::Error::InvalidArgs(format!("no checkpoint {checkpoint}")))
+}
+
+struct Bus(FakeNetworkManager);
+
+#[zbus::interface(name = "org.freedesktop.DBus")]
+impl Bus {
+    #[zbus(name = "GetNameOwner")]
+    fn get_name_owner(&self, name: String) -> fdo::Result<String> {
+        if name != NM {
+            return Err(fdo::Error::NameHasNoOwner(format!("nobody owns {name}")));
+        }
+        Ok(format!(":1.{}", self.0.state().instance))
+    }
 }
 
 struct Tree(FakeNetworkManager);

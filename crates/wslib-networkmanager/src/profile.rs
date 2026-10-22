@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::Ipv4Addr;
 
 use zbus::zvariant::Value;
 
@@ -72,12 +72,36 @@ pub fn set_ipv4(settings: &mut Settings, ipv4: &Ipv4) {
 }
 
 /// A profile's `ipv4` group as it reads.
+/// `ipv4.method`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ipv4Method {
+    Auto,
+    Manual,
+    LinkLocal,
+    Shared,
+    Disabled,
+    Other(String),
+}
+
+impl From<String> for Ipv4Method {
+    fn from(method: String) -> Self {
+        match method.as_str() {
+            "auto" => Self::Auto,
+            "manual" => Self::Manual,
+            "link-local" => Self::LinkLocal,
+            "shared" => Self::Shared,
+            "disabled" => Self::Disabled,
+            _ => Self::Other(method),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ProfileIpv4 {
-    /// `auto` when the group does not say.
-    pub method: String,
-    pub addresses: Vec<Address>,
+    /// `None` when the group does not say, which NetworkManager takes as `Auto`.
+    pub method: Option<Ipv4Method>,
+    pub addresses: Vec<Address<Ipv4Addr>>,
     pub gateway: Option<Ipv4Addr>,
     pub dns: Vec<Ipv4Addr>,
 }
@@ -87,11 +111,8 @@ impl ProfileIpv4 {
     pub fn read(settings: &Settings) -> Option<Self> {
         let ipv4 = settings.get("ipv4")?;
         Some(Self {
-            method: text(ipv4, "method").unwrap_or_else(|| "auto".to_string()),
-            addresses: addresses(ipv4, "address-data")
-                .into_iter()
-                .filter(|a| matches!(a.address, IpAddr::V4(_)))
-                .collect(),
+            method: text(ipv4, "method").map(Ipv4Method::from),
+            addresses: addresses(ipv4, "address-data"),
             gateway: text(ipv4, "gateway").and_then(|g| g.parse().ok()),
             dns: prop::<Vec<u32>>(ipv4, "dns")
                 .unwrap_or_default()
@@ -103,7 +124,9 @@ impl ProfileIpv4 {
 
     /// DHCP with nothing set beside it.
     pub fn is_plain_auto(&self) -> bool {
-        self.method == "auto" && self.addresses.is_empty() && self.dns.is_empty()
+        matches!(self.method, None | Some(Ipv4Method::Auto))
+            && self.addresses.is_empty()
+            && self.dns.is_empty()
     }
 }
 
@@ -146,11 +169,11 @@ mod tests {
         let auto = Ipv4::Auto { dns: vec![] };
         assert!(auto.group().contains_key("address-data"));
         let back = read(&auto);
-        assert_eq!(back.method, "auto");
+        assert_eq!(back.method, Some(Ipv4Method::Auto));
         assert!(back.is_plain_auto());
 
         let back = read(&manual(None));
-        assert_eq!(back.method, "manual");
+        assert_eq!(back.method, Some(Ipv4Method::Manual));
         assert_eq!(
             back.addresses
                 .iter()
@@ -160,6 +183,25 @@ mod tests {
         );
         assert!(!back.is_plain_auto());
         assert!(ProfileIpv4::read(&Settings::new()).is_none());
+    }
+
+    #[test]
+    fn a_missing_method_reads_as_none_and_an_unknown_one_is_kept() {
+        let with =
+            |ipv4: Group| ProfileIpv4::read(&Settings::from([("ipv4".to_string(), ipv4)])).unwrap();
+        let unsaid = with(Group::new());
+        assert_eq!(unsaid.method, None);
+        assert!(unsaid.is_plain_auto());
+        for (word, method) in [
+            ("link-local", Ipv4Method::LinkLocal),
+            ("shared", Ipv4Method::Shared),
+            ("disabled", Ipv4Method::Disabled),
+            ("carrier-pigeon", Ipv4Method::Other("carrier-pigeon".into())),
+        ] {
+            let read = with(crate::props::group([("method", Value::from(word))]));
+            assert_eq!(read.method, Some(method));
+            assert!(!read.is_plain_auto());
+        }
     }
 
     #[test]

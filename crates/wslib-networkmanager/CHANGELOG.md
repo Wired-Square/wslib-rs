@@ -24,3 +24,11 @@
 - Proxies: `NetworkManagerProxy`, `NmObjectsProxy`, `NmSettingsProxy`,
   `DeviceProxy`, `WirelessProxy` and `ProfileProxy`.
 - `testing::FakeNetworkManager` behind the `testing` feature, on Unix.
+- `Device::from_objects` reads a tree built by hand, for testing a filter
+  without a bus. `IpConfig` and `Address` take the family's address type, so
+  `ip4` and `ProfileIpv4` hold `Ipv4Addr`s. `ProfileIpv4::method` is an
+  `Option<Ipv4Method>`, `None` when the profile does not say.
+  `WifiRadio::hardware_enabled` is `None` when it can't be read.
+  `Client::owner` names the NetworkManager running now, `None` when none is.
+- The fake takes any device type (`FakeDevice::other`), answers
+  `GetNameOwner`, and `restart`s with a new owner and no checkpoints.

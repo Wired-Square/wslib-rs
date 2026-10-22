@@ -1,13 +1,15 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use zbus::fdo;
+use zbus::names::OwnedUniqueName;
 use zbus::proxy::{Builder, CacheProperties, Defaults};
 use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 
 use crate::proxy::{
     DeviceProxy, NetworkManagerProxy, NmObjectsProxy, NmSettingsProxy, ProfileProxy, WirelessProxy,
 };
-use crate::{AccessPoint, Device, Objects, Settings, device};
+use crate::{AccessPoint, Device, Objects, Settings};
 
 /// `CheckpointCreate`'s flags.
 pub mod checkpoint {
@@ -21,6 +23,7 @@ pub mod checkpoint {
 
 /// `Update2`'s flag to write the profile to disk, so it survives a reboot.
 const TO_DISK: u32 = 0x1;
+pub(crate) const NM: &str = "org.freedesktop.NetworkManager";
 const SCAN_POLL: Duration = Duration::from_millis(250);
 const SCAN_POLLS: u32 = 30;
 
@@ -49,7 +52,8 @@ impl From<u32> for RollbackResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WifiRadio {
     pub enabled: bool,
-    pub hardware_enabled: bool,
+    /// `None` when NetworkManager would not say.
+    pub hardware_enabled: Option<bool>,
 }
 
 /// A profile added and the active connection it started.
@@ -90,6 +94,17 @@ impl Client {
             .await
     }
 
+    /// The unique name of the NetworkManager running now, `None` when none
+    /// is. A checkpoint lives no longer than the instance that made it.
+    pub async fn owner(&self) -> zbus::Result<Option<OwnedUniqueName>> {
+        let bus: fdo::DBusProxy<'_> = self.proxy().await?;
+        match bus.get_name_owner(NM.try_into()?).await {
+            Ok(owner) => Ok(Some(owner)),
+            Err(fdo::Error::NameHasNoOwner(_)) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     /// The root object's proxy, for what the client does not wrap.
     pub async fn manager(&self) -> zbus::Result<NetworkManagerProxy<'static>> {
         self.proxy().await
@@ -106,7 +121,7 @@ impl Client {
 
     /// Every device, by interface name, read in one round trip.
     pub async fn devices(&self) -> zbus::Result<Vec<Device>> {
-        Ok(device::devices(&self.objects().await?))
+        Ok(Device::from_objects(&self.objects().await?))
     }
 
     /// The networks `device` sees, after a scan if NetworkManager takes one:
@@ -259,7 +274,7 @@ impl Client {
         let manager = self.manager().await?;
         Ok(WifiRadio {
             enabled: manager.wireless_enabled().await?,
-            hardware_enabled: manager.wireless_hardware_enabled().await?,
+            hardware_enabled: manager.wireless_hardware_enabled().await.ok(),
         })
     }
 

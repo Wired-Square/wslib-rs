@@ -6729,6 +6729,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-systemd-journal"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "wslib-systemd-notify"
 version = "0.1.0"
 dependencies = [

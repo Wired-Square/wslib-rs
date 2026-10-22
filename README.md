@@ -3,33 +3,34 @@
 Shared Rust crates for Wired Square projects: the building blocks under the
 appliance chassis and every app beside it.
 
-| Crate                  | What it does                                                |
-| ---------------------- | ----------------------------------------------------------- |
-| `wslib-build-id`       | Stamps the commit an artefact was built from into it        |
-| `wslib-secret`         | A credential that never prints, loaded from env or file     |
-| `wslib-backoff`        | Capped exponential backoff, reset on success                |
-| `wslib-telemetry`      | One tracing setup, and an in-memory ring of a service's log |
-| `wslib-mcp` †          | Hosting layer for tools-only MCP servers over rmcp          |
-| `wslib-dns`            | DNS lookups that keep NXDOMAIN, NODATA and failures apart   |
-| `wslib-dns-mail`       | SPF, DMARC, DKIM, BIMI, MTA-STS and TLS-RPT records in DNS  |
-| `wslib-cli`            | Tables or JSON, exit codes, config lookup and `op://`       |
-| `wslib-http-error`     | One HTTP error body, the axum error and extractors for it   |
-| `wslib-http-scaffold`  | SPA fallback, health and version routes, standard layers    |
-| `wslib-http-server`    | HTTP, TLS and a redirect listener, bounded and drained      |
-| `wslib-systemd-notify` | Ready, status and watchdog pings to systemd, no libsystemd  |
-| `wslib-tailscale`      | tailscaled's LocalAPI: status, logout, and a fake for tests |
-| `wslib-file-atomic`    | Crash-safe whole-file writes, readers set from creation     |
-| `wslib-systemd`        | systemd, hostnamed, timedated and logind over D-Bus, typed  |
-| `wslib-auth-oidc`      | OIDC ID-token checks against a cached, rotation-aware JWKS  |
-| `wslib-auth-totp`      | TOTP keys, the otpauth URI, code and clock-skew checks      |
-| `wslib-auth-passkey`   | WebAuthn passkey ceremonies, none attestation, ES256/EdDSA  |
-| `wslib-auth-password`  | Argon2id password hashes, a dummy verify, rehash, policy    |
-| `wslib-auth`           | Server-side sessions and their cookie, re-auth, attempts    |
-| `wslib-crypto`         | Keys via a rustls provider: generate, sign, fingerprint     |
-| `wslib-crypto-x509`    | Certificates read, examined, chain-checked and self-signed  |
-| `wslib-tls`            | Outbound trust, live and typed; the serving pair kept       |
-| `wslib-crypto-ca`      | A CA: requests, issuing under a profile, revocation lists   |
-| `wslib-ssh-keys`       | authorized_keys lines as sshd reads them, and fingerprints  |
+| Crate                   | What it does                                                |
+| ----------------------- | ----------------------------------------------------------- |
+| `wslib-build-id`        | Stamps the commit an artefact was built from into it        |
+| `wslib-secret`          | A credential that never prints, loaded from env or file     |
+| `wslib-backoff`         | Capped exponential backoff, reset on success                |
+| `wslib-telemetry`       | One tracing setup, and an in-memory ring of a service's log |
+| `wslib-mcp` †           | Hosting layer for tools-only MCP servers over rmcp          |
+| `wslib-dns`             | DNS lookups that keep NXDOMAIN, NODATA and failures apart   |
+| `wslib-dns-mail`        | SPF, DMARC, DKIM, BIMI, MTA-STS and TLS-RPT records in DNS  |
+| `wslib-cli`             | Tables or JSON, exit codes, config lookup and `op://`       |
+| `wslib-http-error`      | One HTTP error body, the axum error and extractors for it   |
+| `wslib-http-scaffold`   | SPA fallback, health and version routes, standard layers    |
+| `wslib-http-server`     | HTTP, TLS and a redirect listener, bounded and drained      |
+| `wslib-systemd-notify`  | Ready, status and watchdog pings to systemd, no libsystemd  |
+| `wslib-tailscale`       | tailscaled's LocalAPI: status, logout, and a fake for tests |
+| `wslib-file-atomic`     | Crash-safe whole-file writes, readers set from creation     |
+| `wslib-systemd`         | systemd, hostnamed, timedated and logind over D-Bus, typed  |
+| `wslib-auth-oidc`       | OIDC ID-token checks against a cached, rotation-aware JWKS  |
+| `wslib-auth-totp`       | TOTP keys, the otpauth URI, code and clock-skew checks      |
+| `wslib-auth-passkey`    | WebAuthn passkey ceremonies, none attestation, ES256/EdDSA  |
+| `wslib-auth-password`   | Argon2id password hashes, a dummy verify, rehash, policy    |
+| `wslib-auth`            | Server-side sessions and their cookie, re-auth, attempts    |
+| `wslib-crypto`          | Keys via a rustls provider: generate, sign, fingerprint     |
+| `wslib-crypto-x509`     | Certificates read, examined, chain-checked and self-signed  |
+| `wslib-tls`             | Outbound trust, live and typed; the serving pair kept       |
+| `wslib-crypto-ca`       | A CA: requests, issuing under a profile, revocation lists   |
+| `wslib-systemd-journal` | The journal through journalctl's JSON, bounded and parsed   |
+| `wslib-ssh-keys`        | authorized_keys lines as sshd reads them, and fingerprints  |
 
 † Not pure Rust: it carries TypeScript in `js/` that apps vendor into their
 frontend. Every crate that ships other languages is marked here, and says so

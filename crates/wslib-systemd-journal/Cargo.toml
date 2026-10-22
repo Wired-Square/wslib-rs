@@ -1,0 +1,22 @@
+[package]
+name = "wslib-systemd-journal"
+version = "0.1.0"
+description = "Reads the systemd journal through journalctl's JSON output: a bounded query, parsed entries, and whether the journal held more."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { version = "1", optional = true }
+serde_json = "1"
+tokio = { version = "1", default-features = false, features = ["io-util", "process", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

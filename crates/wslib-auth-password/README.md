@@ -34,7 +34,8 @@ if verified && stored.is_some_and(needs_rehash) {
   name no account has, so it answers no faster than a wrong password. Its
   hash is made once, by the same hasher.
 - **`needs_rehash(stored)`**: true when the string was made with another
-  algorithm, version or parameters, or cannot be read.
+  algorithm or version, with any parameter below the pin, or cannot be read.
+  A hash made at stronger parameters is kept, not re-hashed down.
 - **`rehash(password)`**: a hash at today's parameters for a password that
   has just verified. It enforces `MAX_BYTES` but not the policy's minimum, so
   a password set under an older, shorter minimum still upgrades; never use it

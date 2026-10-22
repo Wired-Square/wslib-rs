@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- `needs_rehash` is true only when a parameter is below the pin; a hash made
+  at stronger parameters is no longer re-hashed down.
+
 ## 0.1.0
 
 - `Policy`: the minimum length in characters (12 by default) and a 1024-byte

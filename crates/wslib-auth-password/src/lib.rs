@@ -1,8 +1,8 @@
 //! Argon2id password hashes, stored as PHC strings.
 //!
 //! Every hash is made at m=19456 KiB, t=2, p=1, pinned here so a dependency
-//! bump cannot move them. [`needs_rehash`] says when a stored hash was made
-//! otherwise, for [`rehash`] on the next sign-in that verifies.
+//! bump cannot move them. [`needs_rehash`] says when a stored hash is weaker,
+//! for [`rehash`] on the next sign-in that verifies.
 //!
 //! **Hashing and verifying block** for tens of milliseconds; on an async
 //! runtime use the [`tokio`] wrappers (feature `tokio`).
@@ -119,15 +119,21 @@ pub fn verify_absent(password: &str) -> bool {
     false
 }
 
-/// Whether `stored` was made other than as [`Policy::hash`] makes one now:
-/// another algorithm, version or parameters, or unreadable.
+/// Whether `stored` is weaker than [`Policy::hash`] makes one now: another
+/// algorithm or version, any parameter below the pin, or unreadable. A hash
+/// made stronger is kept.
 pub fn needs_rehash(stored: &str) -> bool {
     let Ok(hash) = PasswordHash::new(stored) else {
         return true;
     };
     hash.algorithm != argon2::ARGON2ID_IDENT
         || hash.version != Some(Version::V0x13.into())
-        || Params::try_from(&hash).ok() != Some(params())
+        || Params::try_from(&hash).map_or(true, |made| {
+            made.m_cost() < M_COST
+                || made.t_cost() < T_COST
+                || made.p_cost() < P_COST
+                || made.output_len().is_some_and(|len| len < OUTPUT_LEN)
+        })
 }
 
 /// Why a password was not hashed.
@@ -218,6 +224,22 @@ mod tests {
         assert!(needs_rehash(&argon2i));
 
         assert!(!needs_rehash(&Policy::default().hash(PASSWORD).unwrap()));
+    }
+
+    #[test]
+    fn only_a_weaker_parameter_needs_rehashing() {
+        let made_at = |m_cost, t_cost| {
+            Argon2::new(
+                Algorithm::Argon2id,
+                Version::V0x13,
+                Params::new(m_cost, t_cost, P_COST, Some(OUTPUT_LEN)).unwrap(),
+            )
+            .hash_password(PASSWORD.as_bytes())
+            .unwrap()
+            .to_string()
+        };
+        assert!(!needs_rehash(&made_at(M_COST * 2, T_COST + 1)));
+        assert!(needs_rehash(&made_at(M_COST * 2, T_COST - 1)));
     }
 
     #[test]

@@ -6549,8 +6549,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "wslib-crypto-x509"
+name = "wslib-crypto-ca"
 version = "0.1.0"
+dependencies = [
+ "const-oid 0.9.6",
+ "rcgen",
+ "rustls",
+ "rustls-pki-types",
+ "sha1",
+ "thiserror 2.0.21",
+ "time",
+ "wslib-crypto",
+ "wslib-crypto-x509",
+ "x509-parser",
+]
+
+[[package]]
+name = "wslib-crypto-x509"
+version = "0.1.1"
 dependencies = [
  "const-oid 0.9.6",
  "pem 4.0.0",

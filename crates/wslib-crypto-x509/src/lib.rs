@@ -23,7 +23,8 @@ mod testing;
 
 pub use examine::{Report, Warning, examine};
 pub use inspect::{
-    CertificateView, ExtendedKeyUsage, KeyDescription, KeyUsage, inspect, inspect_pem,
+    AttributeValue, CertificateView, ExtendedKeyUsage, KeyDescription, KeyUsage, NameAttribute,
+    inspect, inspect_pem, name_attributes, rfc_4514,
 };
 pub use mint::mint;
 pub use names::SubjectAltName;

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1 (unreleased)
+
+- `rfc_4514`: a DER Name in the RFC 4514 form `CertificateView` gives
+  subject and issuer, public for names outside certificates, such as a
+  CRL's issuer.
+- `name_attributes`: a DER Name's attributes in DER order, each a dotted
+  OID with its value as text, or as DER when it is no string type.
+
 ## 0.1.0
 
 - `pem`: read certificates, refusing a private key or any other section

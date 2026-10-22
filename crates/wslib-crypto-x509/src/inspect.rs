@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime};
 use const_oid::ObjectIdentifier;
 use const_oid::db::DB;
 use wslib_crypto::Fingerprint;
-use x509_parser::asn1_rs::ToDer;
+use x509_parser::asn1_rs::{Tag, ToDer};
 use x509_parser::certificate::X509Certificate;
 use x509_parser::error::X509Error;
 use x509_parser::extensions::GeneralName;
@@ -112,8 +112,8 @@ pub fn inspect(der: &[u8]) -> Result<CertificateView, Error> {
         }
         Err(e) => return Err(Error::Malformed(e.to_string())),
     };
-    let subject = rfc_4514(certificate.subject());
-    let issuer = rfc_4514(certificate.issuer());
+    let subject = rfc_4514_of(certificate.subject());
+    let issuer = rfc_4514_of(certificate.issuer());
     let validity = certificate.validity();
     Ok(CertificateView {
         self_signed: subject == issuer,
@@ -138,7 +138,69 @@ pub fn inspect_pem(pem: &str) -> Result<CertificateView, Error> {
     inspect(&leaf.ok_or_else(pem::none_decodes)?)
 }
 
-fn rfc_4514(name: &X509Name<'_>) -> String {
+/// A DER Name in RFC 4514 form, most specific first, as [`CertificateView`] spells subject and issuer.
+pub fn rfc_4514(name: &[u8]) -> Result<String, Error> {
+    parse_name(name).map(|name| rfc_4514_of(&name))
+}
+
+/// One attribute of a distinguished name: its type as a dotted OID, and its value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NameAttribute {
+    pub oid: String,
+    pub value: AttributeValue,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AttributeValue {
+    /// A UTF8, Printable, IA5, Numeric, BMP or Universal string.
+    Text(String),
+    /// Any other type, such as a TeletexString, as the value's whole DER.
+    Der(Vec<u8>),
+}
+
+/// A DER Name's attributes in DER order: by RDN, then within each RDN.
+pub fn name_attributes(name: &[u8]) -> Result<Vec<NameAttribute>, Error> {
+    Ok(parse_name(name)?
+        .iter_attributes()
+        .map(|attribute| NameAttribute {
+            oid: attribute.attr_type().to_id_string(),
+            value: match text(attribute) {
+                Some(text) => AttributeValue::Text(text),
+                None => {
+                    AttributeValue::Der(attribute.attr_value().to_der_vec().unwrap_or_default())
+                }
+            },
+        })
+        .collect())
+}
+
+fn text(attribute: &AttributeTypeAndValue<'_>) -> Option<String> {
+    let data = attribute.attr_value().data;
+    let units = |width: usize| data.len() % width == 0;
+    match attribute.attr_value().tag() {
+        Tag::BmpString if units(2) => char::decode_utf16(
+            data.chunks(2)
+                .map(|pair| u16::from_be_bytes([pair[0], pair[1]])),
+        )
+        .collect::<Result<_, _>>()
+        .ok(),
+        Tag::UniversalString if units(4) => data
+            .chunks(4)
+            .map(|quad| char::from_u32(u32::from_be_bytes([quad[0], quad[1], quad[2], quad[3]])))
+            .collect(),
+        _ => attribute.as_str().ok().map(str::to_string),
+    }
+}
+
+fn parse_name(name: &[u8]) -> Result<X509Name<'_>, Error> {
+    match X509Name::from_der(name) {
+        Ok(([], name)) => Ok(name),
+        Ok(_) => Err(Error::Malformed("trailing bytes after the name".into())),
+        Err(e) => Err(Error::Malformed(e.to_string())),
+    }
+}
+
+fn rfc_4514_of(name: &X509Name<'_>) -> String {
     let rdns: Vec<_> = name.iter_rdn().collect();
     rdns.iter()
         .rev()
@@ -382,9 +444,52 @@ mod tests {
             0x06, 0x0a, 0x09, 0x92, 0x26, 0x89, 0x93, 0xf2, 0x2c, 0x64, 0x01, 0x19, 0x16, 0x03,
             b'c', b'o', b'm',
         ];
-        let (_, name) = X509Name::from_der(&der).expect("parses");
-        assert_eq!(rfc_4514(&name), "DC=com,CN=a+O=b");
+        assert_eq!(rfc_4514(&der).unwrap(), "DC=com,CN=a+O=b");
+        assert!(rfc_4514(&der[..der.len() - 1]).is_err());
+        assert!(rfc_4514(&[der.as_slice(), &[0]].concat()).is_err());
         assert_eq!(escaped(" a\0 "), "\\ a\\00\\ ");
+    }
+
+    #[test]
+    fn name_attributes_come_in_der_order_with_strings_decoded() {
+        fn tlv(tag: u8, content: &[u8]) -> Vec<u8> {
+            [&[tag, content.len() as u8][..], content].concat()
+        }
+        let attribute =
+            |oid: &[u8], tag, value: &[u8]| tlv(0x30, &[tlv(0x06, oid), tlv(tag, value)].concat());
+        let der = tlv(
+            0x30,
+            &[
+                tlv(0x31, &attribute(&[0x55, 4, 3], 0x1e, &[0, b'O', 0, 0xe9])),
+                tlv(
+                    0x31,
+                    &[
+                        attribute(&[0x55, 4, 0x0b], 0x0c, b"Ops"),
+                        attribute(&[0x55, 4, 6], 0x13, b"AU"),
+                    ]
+                    .concat(),
+                ),
+                tlv(0x31, &attribute(&[0x55, 4, 0x0a], 0x14, b"Old")),
+            ]
+            .concat(),
+        );
+        let text = |oid: &str, value: &str| NameAttribute {
+            oid: oid.into(),
+            value: AttributeValue::Text(value.into()),
+        };
+        assert_eq!(
+            name_attributes(&der).unwrap(),
+            [
+                text("2.5.4.3", "Oé"),
+                text("2.5.4.11", "Ops"),
+                text("2.5.4.6", "AU"),
+                NameAttribute {
+                    oid: "2.5.4.10".into(),
+                    value: AttributeValue::Der(tlv(0x14, b"Old")),
+                },
+            ]
+        );
+        assert!(name_attributes(&der[..der.len() - 1]).is_err());
     }
 
     #[test]
@@ -433,8 +538,8 @@ mod tests {
         );
         let der = name.to_der().unwrap();
         let (_, parsed) = X509Name::from_der(&der).expect("parses");
-        assert_eq!(rfc_4514(&parsed), name.to_string());
-        assert!(rfc_4514(&parsed).contains("SERIALNUMBER=ABN 12 345,EMAIL=ops@widget.local,"));
+        assert_eq!(rfc_4514_of(&parsed), name.to_string());
+        assert!(rfc_4514_of(&parsed).contains("SERIALNUMBER=ABN 12 345,EMAIL=ops@widget.local,"));
     }
 
     #[test]

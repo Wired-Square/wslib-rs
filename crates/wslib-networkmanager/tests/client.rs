@@ -6,24 +6,23 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use wslib_networkmanager::testing::{FakeAccessPoint, FakeDevice, FakeNetworkManager};
 use wslib_networkmanager::{
     Client, Device, DeviceKind, DeviceState, Ipv4, Ipv4Method, Objects, ProfileIpv4,
-    RollbackResult, Security, Settings, WifiRadio, checkpoint, connection_type, reason, set_ipv4,
+    RollbackResult, Security, Settings, WifiRadio, checkpoint, connection_type, group, interface,
+    reason, set_ipv4,
 };
-use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
+use zbus::zvariant::{OwnedObjectPath, Value};
 
 fn ip(a: &str) -> IpAddr {
     a.parse().unwrap()
 }
 
 fn wired_profile() -> Settings {
-    let value = |v: Value<'_>| OwnedValue::try_from(v).unwrap();
     Settings::from([
         (
             "connection".to_string(),
-            [
-                ("id".to_string(), value("Wired".into())),
-                ("type".to_string(), value("802-3-ethernet".into())),
-            ]
-            .into(),
+            group([
+                ("id", Value::from("Wired")),
+                ("type", Value::from("802-3-ethernet")),
+            ]),
         ),
         ("ipv4".to_string(), Ipv4::Auto { dns: vec![] }.group()),
     ])
@@ -381,16 +380,10 @@ async fn the_owner_changes_when_networkmanager_restarts_and_takes_its_checkpoint
 #[test]
 fn a_hand_built_tree_reads_as_devices() {
     let path = |p: &str| OwnedObjectPath::try_from(p).unwrap();
-    let props = |pairs: Vec<(&str, Value<'_>)>| -> HashMap<String, OwnedValue> {
-        pairs
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), OwnedValue::try_from(v).unwrap()))
-            .collect()
-    };
     let device = |name: &str, kind: u32| {
         HashMap::from([(
-            "org.freedesktop.NetworkManager.Device".to_string(),
-            props(vec![
+            interface::DEVICE.to_string(),
+            group([
                 ("Interface", Value::from(name)),
                 ("DeviceType", Value::from(kind)),
                 ("State", Value::from(100u32)),

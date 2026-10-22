@@ -29,10 +29,13 @@ pub mod testing;
 mod wifi;
 
 pub use client::{Client, Joined, RollbackResult, WifiRadio, checkpoint};
-pub use device::{AccessPoint, Address, Device, DeviceKind, DeviceState, IpConfig, reason};
+pub use device::{
+    AccessPoint, Address, Device, DeviceKind, DeviceState, IpConfig, interface, reason,
+};
 pub use profile::{Ipv4, Ipv4Method, ProfileIpv4, connection_type, set_ipv4};
+pub use props::group;
 pub use proxy::{
     DeviceProxy, Group, NetworkManagerProxy, NmObjectsProxy, NmSettingsProxy, Objects,
     ProfileProxy, Settings, WirelessProxy,
 };
-pub use wifi::{JoinError, Security};
+pub use wifi::{JoinError, Security, Unsupported};

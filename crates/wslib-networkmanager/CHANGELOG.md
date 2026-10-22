@@ -32,3 +32,7 @@
   `Client::owner` names the NetworkManager running now, `None` when none is.
 - The fake takes any device type (`FakeDevice::other`), answers
   `GetNameOwner`, and `restart`s with a new owner and no checkpoints.
+- `interface` names the D-Bus interfaces in the tree and `group` builds one's
+  properties, for those hand-built trees. `JoinError::Unsupported` holds an
+  `Unsupported` (`Wep` or `Enterprise`), not a `Security`;
+  `Security::unsupported` says which networks it refuses before a join.

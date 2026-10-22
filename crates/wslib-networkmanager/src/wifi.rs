@@ -46,6 +46,15 @@ impl Security {
         }
     }
 
+    /// Why [`Device::wifi_profile`](crate::Device::wifi_profile) refuses this network, if it does.
+    pub fn unsupported(self) -> Option<Unsupported> {
+        match self {
+            Self::Wep => Some(Unsupported::Wep),
+            Self::Eap => Some(Unsupported::Enterprise),
+            _ => None,
+        }
+    }
+
     pub fn needs_passphrase(self) -> bool {
         matches!(self, Self::Wep | Self::WpaPsk | Self::Sae)
     }
@@ -66,21 +75,30 @@ impl Security {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JoinError {
     NeedsPassphrase,
-    /// WEP or 802.1X.
-    Unsupported(Security),
+    Unsupported(Unsupported),
 }
 
 impl fmt::Display for JoinError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NeedsPassphrase => f.write_str("the network needs a passphrase"),
-            Self::Unsupported(Security::Eap) => f.write_str("802.1X networks are not supported"),
-            Self::Unsupported(_) => f.write_str("WEP networks are not supported"),
+            Self::Unsupported(Unsupported::Wep) => f.write_str("WEP networks are not supported"),
+            Self::Unsupported(Unsupported::Enterprise) => {
+                f.write_str("802.1X networks are not supported")
+            }
         }
     }
 }
 
 impl std::error::Error for JoinError {}
+
+/// The security this crate builds no profile for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unsupported {
+    Wep,
+    /// 802.1X.
+    Enterprise,
+}
 
 impl Device {
     /// A profile joining `ssid`, secured as the strongest access point by that
@@ -109,8 +127,8 @@ fn wifi_profile(
     security: Security,
     passphrase: Option<&str>,
 ) -> Result<Settings, JoinError> {
-    if matches!(security, Security::Wep | Security::Eap) {
-        return Err(JoinError::Unsupported(security));
+    if let Some(refused) = security.unsupported() {
+        return Err(JoinError::Unsupported(refused));
     }
     let passphrase = match (security.needs_passphrase(), passphrase) {
         (true, None) => return Err(JoinError::NeedsPassphrase),
@@ -200,10 +218,14 @@ mod tests {
 
     #[test]
     fn wep_802_1x_and_a_missing_passphrase_build_nothing() {
-        for security in [Security::Wep, Security::Eap] {
+        for (security, refused) in [
+            (Security::Wep, Unsupported::Wep),
+            (Security::Eap, Unsupported::Enterprise),
+        ] {
+            assert_eq!(security.unsupported(), Some(refused));
             assert_eq!(
                 wifi_profile(b"Ops", security, Some("x")),
-                Err(JoinError::Unsupported(security))
+                Err(JoinError::Unsupported(refused))
             );
         }
         assert_eq!(

@@ -28,7 +28,9 @@ use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 use zbus::{Connection, Guid, fdo};
 
 use crate::client::NM;
-use crate::device::{ACCESS_POINT, ACTIVE, DEVICE, IP4_CONFIG, IP6_CONFIG, WIRED, WIRELESS};
+use crate::interface::{
+    ACCESS_POINT, ACTIVE_CONNECTION, DEVICE, IP4_CONFIG, IP6_CONFIG, WIRED, WIRELESS,
+};
 use crate::props::{group, owned, prop, text};
 use crate::{
     Address, DeviceState, Group, Objects, Security, Settings, WifiRadio, checkpoint, reason,
@@ -431,7 +433,7 @@ impl State {
                 objects.insert(
                     linked(true, "ActiveConnection"),
                     HashMap::from([(
-                        ACTIVE.to_string(),
+                        ACTIVE_CONNECTION.to_string(),
                         group([("Connection", Value::from(profile_path(profile)))]),
                     )]),
                 );

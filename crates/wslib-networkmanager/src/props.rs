@@ -25,7 +25,9 @@ pub(crate) fn owned(value: Value<'_>) -> OwnedValue {
     OwnedValue::try_from(value).expect("a value without file descriptors converts")
 }
 
-pub(crate) fn group<'a>(pairs: impl IntoIterator<Item = (&'a str, Value<'a>)>) -> Group {
+/// One interface's or setting group's properties from `(name, value)` pairs;
+/// panics on a file descriptor.
+pub fn group<'a>(pairs: impl IntoIterator<Item = (&'a str, Value<'a>)>) -> Group {
     pairs
         .into_iter()
         .map(|(key, value)| (key.to_string(), owned(value)))

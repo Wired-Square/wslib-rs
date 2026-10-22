@@ -8,13 +8,18 @@ use zbus::zvariant::OwnedObjectPath;
 use crate::props::{addresses, entries, number, prop, text};
 use crate::{Group, Objects, Security};
 
-pub(crate) const DEVICE: &str = "org.freedesktop.NetworkManager.Device";
-pub(crate) const WIRED: &str = "org.freedesktop.NetworkManager.Device.Wired";
-pub(crate) const WIRELESS: &str = "org.freedesktop.NetworkManager.Device.Wireless";
-pub(crate) const ACCESS_POINT: &str = "org.freedesktop.NetworkManager.AccessPoint";
-pub(crate) const ACTIVE: &str = "org.freedesktop.NetworkManager.Connection.Active";
-pub(crate) const IP4_CONFIG: &str = "org.freedesktop.NetworkManager.IP4Config";
-pub(crate) const IP6_CONFIG: &str = "org.freedesktop.NetworkManager.IP6Config";
+/// The interface names [`Device::from_objects`] reads in an object tree.
+pub mod interface {
+    pub const DEVICE: &str = "org.freedesktop.NetworkManager.Device";
+    pub const WIRED: &str = "org.freedesktop.NetworkManager.Device.Wired";
+    pub const WIRELESS: &str = "org.freedesktop.NetworkManager.Device.Wireless";
+    pub const ACCESS_POINT: &str = "org.freedesktop.NetworkManager.AccessPoint";
+    pub const ACTIVE_CONNECTION: &str = "org.freedesktop.NetworkManager.Connection.Active";
+    pub const IP4_CONFIG: &str = "org.freedesktop.NetworkManager.IP4Config";
+    pub const IP6_CONFIG: &str = "org.freedesktop.NetworkManager.IP6Config";
+}
+
+use interface::{ACCESS_POINT, ACTIVE_CONNECTION, DEVICE, IP4_CONFIG, IP6_CONFIG, WIRED, WIRELESS};
 
 /// One device as NetworkManager's object tree has it.
 #[derive(Debug, Clone, PartialEq)]
@@ -248,7 +253,7 @@ impl Device {
                             ip_config(g, dns)
                         }),
                     profile: linked("ActiveConnection")
-                        .and_then(|o| prop(o.get(ACTIVE)?, "Connection")),
+                        .and_then(|o| prop(o.get(ACTIVE_CONNECTION)?, "Connection")),
                     access_points: wireless
                         .and_then(|w| prop::<Vec<OwnedObjectPath>>(w, "AccessPoints"))
                         .unwrap_or_default()

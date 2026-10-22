@@ -37,7 +37,8 @@ nm.destroy_checkpoint(&undo).await?;
   with. `unplugged()` reads `Carrier`, since NetworkManager does not reliably
   leave `CARRIER` as the reason; `networks()` is one access point per SSID,
   the strongest. `Device::from_objects` reads a tree built by hand, so a
-  filter over devices can be tested without a bus.
+  filter over devices can be tested without a bus, with the names in
+  `interface` and `group` to build each interface's properties.
 - **`owner`** is the unique name of the NetworkManager running now, `None`
   when none is: a checkpoint dies with the instance that made it, so a
   stored one is only worth acting on while that instance runs.
@@ -49,9 +50,9 @@ nm.destroy_checkpoint(&undo).await?;
 - **`Device::wifi_profile`** builds a join's profile, secured as the
   strongest access point by that name asks: a WPA3-only network refuses
   `wpa-psk`. Out of range it is WPA-PSK with a passphrase and open without. A
-  passphrase for a network that takes none is not sent. WEP and 802.1X are a
-  `JoinError`, as is a missing passphrase. **`add_and_activate`** adds and
-  starts it; a wrong passphrase shows afterwards as the device `Failed` with
+  passphrase for a network that takes none is not sent. WEP and 802.1X are
+  `JoinError::Unsupported`, a missing passphrase `NeedsPassphrase`.
+  **`add_and_activate`** adds and starts it; a wrong passphrase shows afterwards as the device `Failed` with
   `NO_SECRETS`, not as the call's error.
 - **Checkpoints**: `create_checkpoint` over devices with a timeout and the
   `checkpoint` flags, `destroy_checkpoint` to keep what changed,

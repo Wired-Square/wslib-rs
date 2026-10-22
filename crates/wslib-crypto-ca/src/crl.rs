@@ -95,6 +95,7 @@ impl Revocation {
 
 /// TBSCertList positions: version, signature, issuer, thisUpdate, nextUpdate, revoked, extensions.
 const ISSUER: usize = 2;
+const NEXT_UPDATE: usize = 4;
 
 impl Authority {
     /// A v2 CRL with its number and authority key identifier, the entries in serial order.
@@ -105,14 +106,15 @@ impl Authority {
         next_update: SystemTime,
         revoked: &[Revocation],
     ) -> Result<CertificateRevocationListDer<'static>, Error> {
-        if next_update <= this_update {
-            return Err(Error::Validity);
+        if next_update < this_update {
+            return Err(Error::CrlValidity);
         }
         let mut revoked = revoked.to_vec();
         revoked.sort_by(|a, b| a.serial.cmp(&b.serial));
         let params = CertificateRevocationListParams {
             this_update: this_update.into(),
-            next_update: next_update.into(),
+            // rcgen refuses a nextUpdate equal to thisUpdate, which RFC 5280 allows; the real one is copied in.
+            next_update: (this_update + Duration::from_secs(1)).into(),
             crl_number: SerialNumber::from(number),
             issuing_distribution_point: None,
             revoked_certs: revoked
@@ -128,7 +130,12 @@ impl Authority {
         };
         let issuer = Issuer::new(CertificateParams::default(), Draft(&self.signer));
         let draft = params.signed_by(&issuer).map_err(der::encode)?;
-        der::signed(&self.signer, draft.der(), &[(ISSUER, &self.subject)]).map(Into::into)
+        der::signed(
+            &self.signer,
+            draft.der(),
+            &[(ISSUER, &self.subject), (NEXT_UPDATE, &time(next_update))],
+        )
+        .map(Into::into)
     }
 }
 
@@ -137,6 +144,8 @@ impl Authority {
 pub struct CrlView {
     /// The issuer's name, as DER.
     pub issuer: Vec<u8>,
+    /// The issuer's name in RFC 4514 form, as `wslib_crypto_x509::rfc_4514` writes it.
+    pub issuer_text: String,
     pub number: Option<u64>,
     pub this_update: SystemTime,
     pub next_update: Option<SystemTime>,
@@ -184,6 +193,8 @@ impl CrlView {
             .collect();
         Ok(Self {
             issuer: crl.issuer().as_raw().to_vec(),
+            issuer_text: wslib_crypto_x509::rfc_4514(crl.issuer().as_raw())
+                .map_err(|e| Error::Malformed(e.to_string()))?,
             number,
             this_update: instant(crl.last_update()),
             next_update: crl.next_update().map(instant),
@@ -222,6 +233,24 @@ impl CrlView {
         )?;
         Ok(())
     }
+}
+
+/// UTCTime from 1950 to 2049 and GeneralizedTime otherwise, to the second, as RFC 5280 5.1.2.4 has it.
+fn time(at: SystemTime) -> Vec<u8> {
+    let at = time::OffsetDateTime::from(at);
+    let (tag, year) = match at.year() {
+        year @ 1950..2050 => (0x17, format!("{:02}", year % 100)),
+        year => (0x18, format!("{year:04}")),
+    };
+    let text = format!(
+        "{year}{:02}{:02}{:02}{:02}{:02}Z",
+        u8::from(at.month()),
+        at.day(),
+        at.hour(),
+        at.minute(),
+        at.second()
+    );
+    der::tlv(tag, text.as_bytes())
 }
 
 fn instant(time: ASN1Time) -> SystemTime {

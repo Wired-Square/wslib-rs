@@ -544,3 +544,39 @@ fn a_serial_is_positive_and_fits_twenty_octets() {
     assert_eq!(random.as_bytes().len(), 16);
     assert!(serial(255) < serial(256));
 }
+
+#[test]
+fn a_serial_reads_and_writes_as_decimal() {
+    for decimal in ["1", "255", "256", "18446744073709551616"] {
+        assert_eq!(decimal.parse::<Serial>().unwrap().to_string(), decimal);
+    }
+    assert_eq!("00042".parse::<Serial>().unwrap(), serial(42));
+    assert_eq!("256".parse::<Serial>().unwrap().as_bytes(), [1, 0]);
+    let largest = [&[0x7f][..], &[0xff; 19]].concat();
+    let text = Serial::try_from(largest.as_slice()).unwrap().to_string();
+    assert_eq!(text.parse::<Serial>().unwrap().as_bytes(), largest);
+    assert_eq!(text, "730750818665451459101842416358141509827966271487");
+    assert!(matches!(
+        "730750818665451459101842416358141509827966271488".parse::<Serial>(),
+        Err(Error::Serial)
+    ));
+    for not_decimal in ["", "-1", "+1", "12a", " 1", "0x10"] {
+        assert!(
+            matches!(not_decimal.parse::<Serial>(), Err(Error::NotDecimal(s)) if s == not_decimal),
+            "{not_decimal:?}"
+        );
+    }
+    for out_of_range in ["0", &"9".repeat(60)] {
+        assert!(
+            matches!(out_of_range.parse::<Serial>(), Err(Error::Serial)),
+            "{out_of_range:?}"
+        );
+    }
+}
+
+#[test]
+fn a_serial_from_an_i64_is_positive() {
+    assert_eq!(Serial::try_from(5i64).unwrap(), serial(5));
+    assert!(matches!(Serial::try_from(-5i64), Err(Error::Serial)));
+    assert!(matches!(Serial::try_from(0i64), Err(Error::Serial)));
+}

@@ -197,16 +197,6 @@ fn ca_with_other_name(signer: Signer) -> Authority {
 }
 
 #[test]
-fn a_crl_must_end_after_it_begins() {
-    let (_, provider) = &providers()[0];
-    let ca = ca(signer(provider, KeyAlgorithm::EcP256));
-    assert!(matches!(
-        ca.revocation_list(1, at(1_810_000_000), at(1_810_000_000), &[]),
-        Err(Error::Validity)
-    ));
-}
-
-#[test]
 fn an_openssl_crl_reads_and_verifies() {
     let issuer = &pem::certificates(include_str!("data/openssl-ca.pem")).unwrap()[0];
     let view = CrlView::from_pem(include_str!("data/openssl.crl")).unwrap();
@@ -240,4 +230,48 @@ fn what_is_not_a_crl_is_malformed() {
         CrlView::from_pem(include_str!("data/openssl-ca.pem")),
         Err(Error::Malformed(_))
     ));
+}
+
+#[test]
+fn a_crl_may_end_as_it_begins_but_not_before() {
+    let (_, provider) = &providers()[0];
+    let ca = ca(signer(provider, KeyAlgorithm::EcP256));
+    let der = ca
+        .revocation_list(1, at(1_810_000_000), at(1_810_000_000), &entries())
+        .unwrap();
+    let view = CrlView::from_der(&der).unwrap();
+    view.verify(ca.certificate(), algorithms()).unwrap();
+    assert_eq!(view.next_update, Some(view.this_update));
+    assert!(matches!(
+        ca.revocation_list(1, at(1_810_000_000), at(1_809_999_999), &[]),
+        Err(Error::CrlValidity)
+    ));
+}
+
+#[test]
+fn a_next_update_from_2050_is_a_generalized_time() {
+    let (_, provider) = &providers()[0];
+    let ca = ca(signer(provider, KeyAlgorithm::EcP256));
+    let next = at(2_556_144_000);
+    let der = ca.revocation_list(1, at(1_810_000_000), next, &[]).unwrap();
+    assert!(
+        der.windows(17).any(|w| w == b"\x18\x0f20510101000000Z"),
+        "2051-01-01 as GeneralizedTime"
+    );
+    let view = CrlView::from_der(&der).unwrap();
+    assert_eq!(view.next_update, Some(next));
+    view.verify(ca.certificate(), algorithms()).unwrap();
+}
+
+#[test]
+fn the_issuer_reads_as_text() {
+    let (_, provider) = &providers()[0];
+    let ca = ca(signer(provider, KeyAlgorithm::EcP256));
+    let der = ca
+        .revocation_list(1, at(1_810_000_000), at(1_810_864_000), &[])
+        .unwrap();
+    assert_eq!(
+        CrlView::from_der(&der).unwrap().issuer_text,
+        "EMAIL=ops@example.com,OU=Ops,O=Wïdget Co,L=Melbourne,ST=Victoria,C=AU,CN=Spike Root CA"
+    );
 }

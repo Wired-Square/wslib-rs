@@ -34,7 +34,10 @@ CrlView::from_der(&crl)?.verify(ca.certificate(), provider.signature_verificatio
   first common name, the public key, and the DNS names, addresses, emails
   and URIs it asks for. Every other requested extension is dropped: the
   profile decides those. `has_rsa_key` tells a caller whether key
-  encipherment may be claimed.
+  encipherment may be claimed. `CsrView` reads one without checking the
+  signature, so a stored request needs no provider and a SHA-1-signed one
+  still reads; its `verify(algorithms)` gives the `Csr` that `issue`
+  takes, and a `Csr` has the view's accessors.
 - **`Subject`** and **`build_csr`**: a request signed by a `Signer`, its
   subject in the order CN, C, ST, L, O, OU, emailAddress and in OpenSSL's
   string types (PrintableString country, IA5String email, UTF8String for the
@@ -66,17 +69,19 @@ CrlView::from_der(&crl)?.verify(ca.certificate(), provider.signature_verificatio
   identifier of what the authority signs. The authority key identifier is
   always the CA certificate's own subject key identifier, or, when it has
   none, the method's.
-- **`Serial`**: positive and at most 20 octets, from a `u64` or bytes, or
+- **`Serial`**: positive and at most 20 octets, from a `u64`, an `i64`,
+  bytes or decimal text (and `Display`ed in decimal), or
   `Serial::random` from the provider (16 bytes, as `wslib-crypto` makes
   them). The caller keeps any counter.
 
 - **`Authority::revocation_list(number, this_update, next_update, revoked)`**:
   a v2 CRL whose issuer is the CA's subject byte for byte, with its CRL
   number and an authority key identifier (the CA's own), and its entries in
-  serial order. A `Revocation` may carry a `Reason` (none means
+  serial order. The next update may equal this update. A `Revocation` may carry a `Reason` (none means
   unspecified) and the date the key became invalid. No issuing distribution
   point and no deltas.
-- **`CrlView`**: what a CRL says, read without trusting it: issuer (DER),
+- **`CrlView`**: what a CRL says, read without trusting it: issuer (DER,
+  and `issuer_text` in RFC 4514 form),
   number, this and next update, authority key identifier and entries.
   `verify(issuer, algorithms)` checks that the certificate's subject is the
   CRL's issuer, byte for byte, and that its key signed it.

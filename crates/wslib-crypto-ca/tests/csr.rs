@@ -2,7 +2,7 @@ mod common;
 
 use common::{OPENSSL_P256_CSR, OPENSSL_RSA3072_CSR, algorithms, names, providers, signer};
 use wslib_crypto::KeyAlgorithm;
-use wslib_crypto_ca::{CERTIFICATE_REQUEST, Csr, Error, Subject, build_csr};
+use wslib_crypto_ca::{CERTIFICATE_REQUEST, Csr, CsrView, Error, Subject, build_csr};
 use wslib_crypto_x509::pem;
 use wslib_crypto_x509::signature::SignatureError;
 
@@ -148,5 +148,27 @@ fn a_non_ascii_name_cannot_be_requested() {
             &[name]
         ),
         Err(Error::Name { .. })
+    ));
+}
+
+#[test]
+fn a_stored_request_reads_without_a_provider_and_verifies_into_a_csr() {
+    let view = CsrView::from_pem(OPENSSL_P256_CSR).unwrap();
+    assert_eq!(view.common_name(), Some("host.example.com"));
+    assert_eq!(view.names().len(), 6);
+    let csr = view.verify(algorithms()).unwrap();
+    assert_eq!(*csr, view);
+    assert_eq!(csr, Csr::from_pem(OPENSSL_P256_CSR, algorithms()).unwrap());
+}
+
+#[test]
+fn a_sha1_request_reads_but_does_not_verify_without_a_sha1_algorithm() {
+    let view = CsrView::from_pem(include_str!("data/openssl-sha1.csr")).unwrap();
+    assert_eq!(view.common_name(), Some("legacy.example.com"));
+    assert_eq!(view.names(), names(&["legacy.example.com"]));
+    assert!(view.has_rsa_key());
+    assert!(matches!(
+        view.verify(algorithms()),
+        Err(Error::Signature(SignatureError::NoAlgorithm))
     ));
 }

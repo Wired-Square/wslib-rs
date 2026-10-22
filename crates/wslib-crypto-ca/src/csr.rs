@@ -19,18 +19,25 @@ pub const CERTIFICATE_REQUEST: &str = "CERTIFICATE REQUEST";
 
 const RSA_ENCRYPTION: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1");
 
-/// A certificate signing request whose self-signature has been verified.
+/// A certificate signing request as read, its self-signature not yet checked.
 ///
 /// Only its subject, public key and requested subject alternative names are
 /// kept: every other requested extension is the profile's to decide.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Csr {
+pub struct CsrView {
     der: Vec<u8>,
     subject: Vec<u8>,
     common_name: Option<String>,
     spki: Vec<u8>,
     names: Vec<SubjectAltName>,
+    signed: Vec<u8>,
+    signature_algorithm: Vec<u8>,
+    signature: Vec<u8>,
 }
+
+/// A request whose self-signature has been verified: what [`Authority::issue`](crate::Authority::issue) takes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Csr(CsrView);
 
 impl Csr {
     /// Parses a DER request and verifies its signature with those of `algorithms` that fit.
@@ -38,25 +45,7 @@ impl Csr {
         der: &[u8],
         algorithms: &[&dyn SignatureVerificationAlgorithm],
     ) -> Result<Self, Error> {
-        let request = der::whole(X509CertificationRequest::from_der(der))?;
-        let [signed, algorithm, _] = der::elements(der)?[..] else {
-            return Err(Error::Malformed("not a certificate signing request".into()));
-        };
-        let info = &request.certification_request_info;
-        signature::verify(
-            info.subject_pki.raw,
-            algorithm,
-            signed,
-            &request.signature_value.data,
-            algorithms,
-        )?;
-        Ok(Self {
-            der: der.to_vec(),
-            subject: info.subject.as_raw().to_vec(),
-            common_name: common_name(&info.subject),
-            spki: info.subject_pki.raw.to_vec(),
-            names: requested_names(&request),
-        })
+        CsrView::from_der(der)?.verify(algorithms)
     }
 
     /// The one `CERTIFICATE REQUEST` section of `pem`, as [`Csr::from_der`] reads it.
@@ -64,13 +53,59 @@ impl Csr {
         pem: &str,
         algorithms: &[&dyn SignatureVerificationAlgorithm],
     ) -> Result<Self, Error> {
+        CsrView::from_pem(pem)?.verify(algorithms)
+    }
+}
+
+impl std::ops::Deref for Csr {
+    type Target = CsrView;
+
+    fn deref(&self) -> &CsrView {
+        &self.0
+    }
+}
+
+impl CsrView {
+    /// Parses a DER request without checking its signature, so that a stored one reads with no provider.
+    pub fn from_der(der: &[u8]) -> Result<Self, Error> {
+        let request = der::whole(X509CertificationRequest::from_der(der))?;
+        let [signed, signature_algorithm, _] = der::elements(der)?[..] else {
+            return Err(Error::Malformed("not a certificate signing request".into()));
+        };
+        let info = &request.certification_request_info;
+        Ok(Self {
+            der: der.to_vec(),
+            subject: info.subject.as_raw().to_vec(),
+            common_name: common_name(&info.subject),
+            spki: info.subject_pki.raw.to_vec(),
+            names: requested_names(&request),
+            signed: signed.to_vec(),
+            signature_algorithm: signature_algorithm.to_vec(),
+            signature: request.signature_value.data.to_vec(),
+        })
+    }
+
+    /// The one `CERTIFICATE REQUEST` section of `pem`.
+    pub fn from_pem(pem: &str) -> Result<Self, Error> {
         let limit = wslib_crypto_x509::pem::MAX_LEN;
         if pem.len() > limit {
             return Err(Error::Malformed(format!("PEM over {limit} bytes")));
         }
         let der = CertificateSigningRequestDer::from_pem_slice(pem.as_bytes())
             .map_err(|e| Error::Malformed(e.to_string()))?;
-        Self::from_der(&der, algorithms)
+        Self::from_der(&der)
+    }
+
+    /// Verifies the self-signature with those of `algorithms` that fit.
+    pub fn verify(&self, algorithms: &[&dyn SignatureVerificationAlgorithm]) -> Result<Csr, Error> {
+        signature::verify(
+            &self.spki,
+            &self.signature_algorithm,
+            &self.signed,
+            &self.signature,
+            algorithms,
+        )?;
+        Ok(Csr(self.clone()))
     }
 
     pub fn der(&self) -> &[u8] {

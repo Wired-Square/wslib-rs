@@ -27,3 +27,9 @@
 - `CrlView`: a CRL read back (issuer, number, dates, authority key
   identifier, entries), and `verify` against an issuer certificate over the
   caller's algorithms.
+- `CsrView`: a request read without a provider, a SHA-1-signed one
+  included, with `Csr`'s accessors; `verify` makes the `Csr` that `issue`
+  takes. `Serial` reads and writes decimal (`Error::NotDecimal` for other
+  text) and converts from `i64`. A CRL's next update may equal its this
+  update (`Error::CrlValidity` when before it). `CrlView::issuer_text` in
+  RFC 4514 form.

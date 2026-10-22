@@ -12,7 +12,7 @@ mod profile;
 
 pub use authority::{Authority, KeyIdentifierMethod, Serial, Validity};
 pub use crl::{CrlView, Reason, Revocation, X509_CRL};
-pub use csr::{CERTIFICATE_REQUEST, Csr, Subject, build_csr};
+pub use csr::{CERTIFICATE_REQUEST, Csr, CsrView, Subject, build_csr};
 pub use profile::{BasicConstraints, Extension, Profile, SanPolicy};
 
 #[derive(Debug, thiserror::Error)]
@@ -38,8 +38,12 @@ pub enum Error {
     Validity,
     #[error("a serial number is positive and at most 20 octets")]
     Serial,
+    #[error("{0:?} is not a decimal number")]
+    NotDecimal(String),
     #[error("an empty {0} extension")]
     EmptyExtension(&'static str),
+    #[error("a CRL's next update cannot come before its this update")]
+    CrlValidity,
     #[error("the CRL's issuer is not the certificate's subject")]
     IssuerMismatch,
 }

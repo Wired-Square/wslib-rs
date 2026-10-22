@@ -1,4 +1,6 @@
 use std::cmp::Ordering;
+use std::fmt;
+use std::str::FromStr;
 use std::time::SystemTime;
 
 use rcgen::{CertificateParams, Issuer, SerialNumber};
@@ -77,6 +79,62 @@ impl TryFrom<u64> for Serial {
 
     fn try_from(value: u64) -> Result<Self, Error> {
         Self::try_from(&value.to_be_bytes()[..])
+    }
+}
+
+impl TryFrom<i64> for Serial {
+    type Error = Error;
+
+    fn try_from(value: i64) -> Result<Self, Error> {
+        u64::try_from(value).map_err(|_| Error::Serial)?.try_into()
+    }
+}
+
+/// Decimal digits, as serials are often stored.
+impl FromStr for Serial {
+    type Err = Error;
+
+    fn from_str(decimal: &str) -> Result<Self, Error> {
+        if decimal.is_empty() || !decimal.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(Error::NotDecimal(decimal.to_string()));
+        }
+        let mut magnitude: Vec<u8> = Vec::new();
+        for digit in decimal.bytes().map(|b| b - b'0') {
+            let mut carry = u16::from(digit);
+            for byte in magnitude.iter_mut().rev() {
+                let value = u16::from(*byte) * 10 + carry;
+                *byte = value as u8;
+                carry = value >> 8;
+            }
+            if carry > 0 {
+                magnitude.insert(0, carry as u8);
+            }
+            if magnitude.len() > 21 {
+                return Err(Error::Serial);
+            }
+        }
+        Self::try_from(magnitude.as_slice())
+    }
+}
+
+/// Decimal, as [`FromStr`] reads it.
+impl fmt::Display for Serial {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut magnitude = self.0.clone();
+        let mut digits = Vec::new();
+        while magnitude.iter().any(|&b| b != 0) {
+            let mut remainder = 0u16;
+            for byte in &mut magnitude {
+                let value = remainder << 8 | u16::from(*byte);
+                *byte = (value / 10) as u8;
+                remainder = value % 10;
+            }
+            digits.push(char::from(b'0' + remainder as u8));
+        }
+        if digits.is_empty() {
+            digits.push('0');
+        }
+        f.write_str(&digits.iter().rev().collect::<String>())
     }
 }
 

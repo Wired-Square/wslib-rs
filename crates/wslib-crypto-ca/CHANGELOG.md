@@ -9,3 +9,14 @@
 - `Subject` and `build_csr`: a request with CN, C, ST, L, O, OU and
   emailAddress in that order, in OpenSSL's string types, and its names in
   an extension request.
+- `Profile`: basic constraints with an optional path length, key usage and
+  extended key usage each with their criticality, a `SanPolicy` (none, the
+  request's, or the common name then the request's), CRL distribution point
+  and CA issuers URLs. Extensions are written in OpenSSL's order.
+- `Authority`: an existing CA certificate (an OpenSSL-made one included)
+  and its `Signer`, or a new self-signed one; `issue` from a `Csr` with the
+  caller's `Serial` and `Validity`; `re_sign` a self-signed certificate
+  keeping its subject, key and key identifier. Issuer names and the
+  request's subject and key are copied byte for byte. `KeyIdentifierMethod`
+  `Sha1` (OpenSSL's) or `Sha256` (`wslib-crypto`'s); the authority key
+  identifier is the CA certificate's own.

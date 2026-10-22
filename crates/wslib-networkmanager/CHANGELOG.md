@@ -11,6 +11,8 @@
   `profile` is `None`, as NetworkManager does.
 - `Profile` reads a profile's path, `uuid`, `id`, type and SSID, and `saved`
   lists every profile as one.
+- `saved` leaves out a profile deleted between listing and reading it, which
+  the fake's `vanish_after_listing` plays; `refuse` now covers `GetSettings`.
 - `Device::last_scan`, the Wi-Fi `LastScan` as time since boot, `None` before
   the first scan. The fake moves it per device on `RequestScan`.
 - The fake fills in `connection.uuid` and `connection.id` on a profile that

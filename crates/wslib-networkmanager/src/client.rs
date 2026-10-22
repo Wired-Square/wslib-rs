@@ -216,12 +216,16 @@ impl Client {
             .await
     }
 
-    /// Every profile NetworkManager holds, read one round trip each.
+    /// Every profile NetworkManager holds, read one round trip each, leaving
+    /// out one deleted before it is read.
     pub async fn saved(&self) -> zbus::Result<Vec<Profile>> {
         let mut saved = Vec::new();
         for path in self.profiles().await? {
-            let settings = self.settings(&path).await?;
-            saved.extend(Profile::read(path, &settings));
+            match self.settings(&path).await {
+                Ok(settings) => saved.extend(Profile::read(path, &settings)),
+                Err(e) if gone(&e) => {}
+                Err(e) => return Err(e),
+            }
         }
         Ok(saved)
     }
@@ -311,4 +315,16 @@ impl Client {
     pub async fn set_wifi_enabled(&self, enabled: bool) -> zbus::Result<()> {
         self.manager().await?.set_wireless_enabled(enabled).await
     }
+}
+
+/// What a call to an object removed from the bus answers: `UnknownObject`
+/// from zbus, and by GLib version `UnknownMethod`, `UnknownObject` or
+/// `UnknownInterface` from NetworkManager.
+fn gone(e: &zbus::Error) -> bool {
+    matches!(e, zbus::Error::MethodError(name, ..) if matches!(
+        name.as_str(),
+        "org.freedesktop.DBus.Error.UnknownObject"
+            | "org.freedesktop.DBus.Error.UnknownInterface"
+            | "org.freedesktop.DBus.Error.UnknownMethod"
+    ))
 }

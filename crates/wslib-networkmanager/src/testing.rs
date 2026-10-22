@@ -224,6 +224,7 @@ struct State {
     instance: u32,
     radio: WifiRadio,
     unserved: Vec<usize>,
+    vanishing: Vec<OwnedObjectPath>,
     refusing: Vec<String>,
     heard: Vec<String>,
 }
@@ -238,6 +239,10 @@ impl State {
     fn hear(&mut self, method: &str, what: String) -> fdo::Result<()> {
         self.heard
             .push(format!("{method} {what}").trim_end().to_string());
+        self.refused(method)
+    }
+
+    fn refused(&self, method: &str) -> fdo::Result<()> {
         if self.refusing.iter().any(|m| m == method) {
             return Err(fdo::Error::Failed(format!("{method} refused")));
         }
@@ -580,6 +585,7 @@ impl FakeNetworkManager {
                 },
                 instance: 1,
                 unserved: Vec::new(),
+                vanishing: Vec::new(),
                 refusing: Vec::new(),
                 heard: Vec::new(),
             })),
@@ -616,6 +622,12 @@ impl FakeNetworkManager {
     /// Makes every later call to `method`, by its D-Bus member name, fail.
     pub fn refuse(&self, method: &str) {
         self.state().refusing.push(method.into());
+    }
+
+    /// Deletes `profile` just after the next `ListConnections` lists it, as a
+    /// deletion racing a listing does.
+    pub fn vanish_after_listing(&self, profile: &ObjectPath<'_>) {
+        self.state().vanishing.push(profile.to_owned().into());
     }
 
     /// Each call that changes something, as its member name and arguments.
@@ -872,11 +884,17 @@ impl Profiles {
         #[zbus(object_server)] server: &ObjectServer,
     ) -> fdo::Result<Vec<OwnedObjectPath>> {
         self.0.serve_new_profiles(server).await?;
-        let state = self.0.state();
-        Ok((0..state.profiles.len())
+        let mut state = self.0.state();
+        let listed = (0..state.profiles.len())
             .filter(|&i| state.profiles[i].is_some())
             .map(profile_path)
-            .collect())
+            .collect();
+        for profile in std::mem::take(&mut state.vanishing) {
+            if let Ok(i) = state.profile(&profile) {
+                state.delete(i);
+            }
+        }
+        Ok(listed)
     }
 }
 
@@ -955,6 +973,7 @@ impl ProfileObject {
     fn get_settings(&self) -> fdo::Result<Settings> {
         let state = self.0.state();
         self.held(&state)?;
+        state.refused("GetSettings")?;
         let mut settings = state.profiles[self.1].clone().unwrap_or_default();
         if let Some(secured) = settings.get_mut("802-11-wireless-security") {
             secured.remove("psk");

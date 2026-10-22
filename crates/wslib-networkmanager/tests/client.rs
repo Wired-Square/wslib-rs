@@ -507,6 +507,31 @@ async fn a_refused_disconnect_leaves_the_connection_up() {
 }
 
 #[tokio::test]
+async fn a_profile_deleted_while_listing_is_left_out_of_saved() {
+    let fake = FakeNetworkManager::new()
+        .saved(wired_profile())
+        .saved(wired_profile());
+    let (nm, _served) = serve(&fake).await;
+    let profiles = nm.profiles().await.unwrap();
+
+    fake.vanish_after_listing(&profiles[0]);
+    let left: Vec<_> = nm
+        .saved()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|p| p.path)
+        .collect();
+    assert_eq!(left, profiles[1..]);
+
+    fake.refuse("GetSettings");
+    assert!(
+        nm.saved().await.is_err(),
+        "any other error still fails the call"
+    );
+}
+
+#[tokio::test]
 async fn the_wifi_radio_reads_both_switches_and_turns() {
     let fake = FakeNetworkManager::new();
     let (nm, _served) = serve(&fake).await;

@@ -68,7 +68,8 @@ nm.destroy_checkpoint(&undo).await?;
 - **`activate`** starts a saved profile on a device, answering the active
   connection: reconnecting after `disconnect` without adding a profile again.
 - **`saved`** reads each profile into a `Profile`: path, UUID, name, type
-  and, for Wi-Fi, the SSID; `Profile::read` does the same for one.
+  and, for Wi-Fi, the SSID, skipping one deleted mid-read; `Profile::read`
+  does the same for one.
 - **Profiles**: `profiles`, `settings` (secrets left out), `update_profile`
   (written to disk), `delete_profile`, and `apply`: `Reapply` in place, or
   activation when NetworkManager cannot change it in place.

@@ -181,12 +181,31 @@ impl Client {
             .reapply(settings, 0, 0)
             .await;
         if reapplied.is_err() {
-            self.manager()
-                .await?
-                .activate_connection(profile, device, &ObjectPath::from_static_str_unchecked("/"))
-                .await?;
+            self.activate(profile, device).await?;
         }
         Ok(())
+    }
+
+    /// Starts a saved `profile` on `device`, answering the active connection;
+    /// as with [`add_and_activate`](Self::add_and_activate), a failure shows later.
+    pub async fn activate(
+        &self,
+        profile: &ObjectPath<'_>,
+        device: &ObjectPath<'_>,
+    ) -> zbus::Result<OwnedObjectPath> {
+        self.manager()
+            .await?
+            .activate_connection(profile, device, &ObjectPath::from_static_str_unchecked("/"))
+            .await
+    }
+
+    /// Drops `device`'s active connection and keeps its profile, which
+    /// NetworkManager then does not autoconnect on `device` until it is activated.
+    pub async fn disconnect(&self, device: &ObjectPath<'_>) -> zbus::Result<()> {
+        self.proxy_at::<DeviceProxy<'_>>(device)
+            .await?
+            .disconnect()
+            .await
     }
 
     /// Every profile NetworkManager holds, saved or generated.

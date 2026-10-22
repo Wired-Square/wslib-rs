@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.1
+
+- `disconnect` drops a device's active connection and keeps its profile,
+  leaving the device `Disconnected` with the new `reason::USER_REQUESTED`.
+  The fake answers it, with `NotActive` for a device with no connection.
+- `activate` starts a saved profile on a device, for reconnecting after a
+  `disconnect`; `apply` falls back to it.
+- The fake leaves a failed join's device with no active connection, so its
+  `profile` is `None`, as NetworkManager does.
+
 ## 0.1.0
 
 - `Client` over a zbus 5 connection, tokio only, properties uncached.

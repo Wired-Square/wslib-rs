@@ -116,6 +116,8 @@ pub mod reason {
     pub const SUPPLICANT_DISCONNECT: u32 = 8;
     pub const SUPPLICANT_FAILED: u32 = 10;
     pub const SUPPLICANT_TIMEOUT: u32 = 11;
+    /// Left by [`Client::disconnect`](crate::Client::disconnect).
+    pub const USER_REQUESTED: u32 = 39;
     /// Not reliably left on an unplugged device; see [`Device::unplugged`](crate::Device::unplugged).
     pub const CARRIER: u32 = 40;
     pub const SSID_NOT_FOUND: u32 = 53;

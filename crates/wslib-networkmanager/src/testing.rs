@@ -280,6 +280,9 @@ impl State {
                 _ => (Some(code(DeviceState::Activated)), 0, Some(ap)),
             },
         };
+        if dev.associated.is_none() {
+            dev.profile = None;
+        }
     }
 
     fn roll_back(&mut self, at: usize) -> HashMap<String, u32> {
@@ -784,6 +787,32 @@ impl DeviceObject {
         let heard = format!("{} {method}", state.devices[self.1].interface);
         state.hear("Reapply", heard)
     }
+
+    #[zbus(name = "Disconnect")]
+    fn disconnect(&self) -> Result<(), DeviceError> {
+        let mut state = self.0.state();
+        let interface = state.devices[self.1].interface.clone();
+        state
+            .hear("Disconnect", interface)
+            .map_err(|e| DeviceError::Failed(e.to_string()))?;
+        let dev = &mut state.devices[self.1];
+        if dev.profile.is_none() {
+            return Err(DeviceError::NotActive("This device is not active".into()));
+        }
+        (dev.profile, dev.associated) = (None, None);
+        (dev.state, dev.reason) = (
+            Some(code(DeviceState::Disconnected)),
+            reason::USER_REQUESTED,
+        );
+        Ok(())
+    }
+}
+
+#[derive(Debug, zbus::DBusError)]
+#[zbus(prefix = "org.freedesktop.NetworkManager.Device")]
+enum DeviceError {
+    Failed(String),
+    NotActive(String),
 }
 
 struct WirelessObject(FakeNetworkManager);

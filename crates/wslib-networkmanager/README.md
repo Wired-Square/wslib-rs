@@ -60,6 +60,11 @@ nm.destroy_checkpoint(&undo).await?;
   `checkpoints` for those NetworkManager still holds. The timer runs inside
   NetworkManager, so it outlives the process that set it; neither a reboot
   nor a NetworkManager restart rolls one back, they just lose it.
+- **`disconnect`** drops a device's active connection, a Wi-Fi network say,
+  and keeps the profile; the device is `Disconnected` with `USER_REQUESTED`,
+  and NetworkManager does not autoconnect it until something activates it.
+- **`activate`** starts a saved profile on a device, answering the active
+  connection: reconnecting after `disconnect` without adding a profile again.
 - **Profiles**: `profiles`, `settings` (secrets left out), `update_profile`
   (written to disk), `delete_profile`, and `apply`: `Reapply` in place, or
   activation when NetworkManager cannot change it in place.

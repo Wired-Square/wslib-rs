@@ -331,6 +331,98 @@ async fn saved_profiles_are_listed_and_deleted() {
     assert!(nm.settings(&joined.profile).await.is_err());
 }
 
+fn method_error(e: zbus::Error) -> String {
+    match e {
+        zbus::Error::MethodError(name, _, _) => name.to_string(),
+        other => panic!("not a method error: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_disconnect_drops_the_network_and_keeps_its_profile() {
+    let fake = FakeNetworkManager::new().with(FakeDevice::wifi("wlan0").access_point(ops(70)));
+    let (nm, _served) = serve(&fake).await;
+    let wlan0 = device(&nm, "wlan0").await;
+    let joined = nm
+        .add_and_activate(
+            wlan0.wifi_profile(b"Ops", Some("correct horse")).unwrap(),
+            &wlan0.path,
+        )
+        .await
+        .unwrap();
+
+    nm.disconnect(&wlan0.path).await.unwrap();
+    let wlan0 = device(&nm, "wlan0").await;
+    assert_eq!(
+        (wlan0.state, wlan0.reason),
+        (DeviceState::Disconnected, reason::USER_REQUESTED)
+    );
+    assert_eq!((wlan0.profile, wlan0.active_access_point), (None, None));
+    assert_eq!(
+        nm.profiles().await.unwrap(),
+        std::slice::from_ref(&joined.profile)
+    );
+
+    nm.activate(&joined.profile, &wlan0.path).await.unwrap();
+    let wlan0 = device(&nm, "wlan0").await;
+    assert_eq!(wlan0.state, DeviceState::Activated);
+    assert_eq!(wlan0.profile, Some(joined.profile));
+    assert_eq!(wlan0.active_access_point.unwrap().ssid, b"Ops");
+    assert_eq!(fake.heard()[1], "Disconnect wlan0");
+}
+
+#[tokio::test]
+async fn disconnecting_a_disconnected_device_is_not_active() {
+    let fake = FakeNetworkManager::new().with(FakeDevice::ethernet("eth0"));
+    let (nm, _served) = serve(&fake).await;
+    let eth0 = device(&nm, "eth0").await;
+    let refused = nm.disconnect(&eth0.path).await.unwrap_err();
+    assert_eq!(
+        method_error(refused),
+        "org.freedesktop.NetworkManager.Device.NotActive"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_join_leaves_no_connection_to_disconnect() {
+    let fake = FakeNetworkManager::new().with(FakeDevice::wifi("wlan0").access_point(ops(70)));
+    let (nm, _served) = serve(&fake).await;
+    let wlan0 = device(&nm, "wlan0").await;
+    for (ssid, passphrase) in [(&b"Ops"[..], "battery staple"), (b"Elsewhere", "anything")] {
+        let profile = wlan0.wifi_profile(ssid, Some(passphrase)).unwrap();
+        nm.add_and_activate(profile, &wlan0.path).await.unwrap();
+        let failed = device(&nm, "wlan0").await;
+        assert_eq!(
+            (failed.state, failed.profile, failed.active_access_point),
+            (DeviceState::Failed, None, None)
+        );
+        let refused = nm.disconnect(&wlan0.path).await.unwrap_err();
+        assert_eq!(
+            method_error(refused),
+            "org.freedesktop.NetworkManager.Device.NotActive"
+        );
+    }
+    assert_eq!(
+        nm.profiles().await.unwrap().len(),
+        2,
+        "a failed join keeps its profile"
+    );
+}
+
+#[tokio::test]
+async fn a_refused_disconnect_leaves_the_connection_up() {
+    let fake = FakeNetworkManager::new().with(FakeDevice::ethernet("eth0").active(wired_profile()));
+    let (nm, _served) = serve(&fake).await;
+    let eth0 = device(&nm, "eth0").await;
+    fake.refuse("Disconnect");
+    let refused = nm.disconnect(&eth0.path).await.unwrap_err();
+    assert_eq!(
+        method_error(refused),
+        "org.freedesktop.NetworkManager.Device.Failed"
+    );
+    assert_eq!(device(&nm, "eth0").await.state, DeviceState::Activated);
+}
+
 #[tokio::test]
 async fn the_wifi_radio_reads_both_switches_and_turns() {
     let fake = FakeNetworkManager::new();

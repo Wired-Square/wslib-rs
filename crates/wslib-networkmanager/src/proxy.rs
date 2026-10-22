@@ -88,6 +88,8 @@ pub trait Device {
     /// Applies a changed profile without deactivating; `version_id` 0 is
     /// whatever is current.
     fn reapply(&self, connection: Settings, version_id: u64, flags: u32) -> zbus::Result<()>;
+
+    fn disconnect(&self) -> zbus::Result<()>;
 }
 
 /// A Wi-Fi device, at its path in the tree.

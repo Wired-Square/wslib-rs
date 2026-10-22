@@ -1,6 +1,6 @@
 [package]
 name = "wslib-networkmanager"
-version = "0.1.0"
+version = "0.1.1"
 description = "NetworkManager over D-Bus, typed: devices and their addresses, Wi-Fi scan and join, checkpoints, profile updates and the Wi-Fi radio, and a fake NetworkManager for tests."
 readme = "README.md"
 edition.workspace = true

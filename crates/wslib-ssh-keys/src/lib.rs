@@ -31,6 +31,7 @@ pub enum Error {
     Empty,
     PrivateKey,
     MultipleLines,
+    Dsa,
     UnsupportedType(String),
     BadOptions(String),
     MissingBlob(KeyType),
@@ -52,9 +53,10 @@ impl fmt::Display for Error {
             Self::MultipleLines => {
                 f.write_str("a public key is a single line; this has more than one")
             }
-            Self::UnsupportedType(name) if name == "ssh-dss" => {
-                f.write_str("ssh-dss keys are DSA, which OpenSSH has refused by default since 7.0")
-            }
+            Self::Dsa => f.write_str(
+                "ssh-dss keys are DSA, which OpenSSH no longer accepts: storing one would look \
+                 like it worked and never let you in",
+            ),
             Self::UnsupportedType(name) => {
                 write!(f, "`{name}` is not a supported key type; supported: ")?;
                 let names: Vec<_> = KeyType::ALL.iter().map(|t| t.name()).collect();

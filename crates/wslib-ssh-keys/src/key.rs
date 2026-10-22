@@ -73,7 +73,14 @@ impl FromStr for KeyType {
         Self::ALL
             .into_iter()
             .find(|t| t.name() == name)
-            .ok_or_else(|| Error::UnsupportedType(name.to_string()))
+            .ok_or_else(|| unsupported(name))
+    }
+}
+
+fn unsupported(name: &str) -> Error {
+    match name {
+        "ssh-dss" => Error::Dsa,
+        _ => Error::UnsupportedType(name.to_string()),
     }
 }
 
@@ -196,7 +203,7 @@ fn split_options(line: &str) -> Result<(Vec<KeyOption>, &str), Error> {
     let first = field(line).0;
     let looks_like_a_type = !first.starts_with("no-") && !first.contains(['=', ',', '"']);
     if looks_like_a_type && option_takes_value(first).is_none() {
-        return Err(Error::UnsupportedType(first.to_string()));
+        return Err(unsupported(first));
     }
     let mut quoted = false;
     let mut escaped = false;
@@ -304,6 +311,9 @@ fn option_takes_value(name: &str) -> Option<bool> {
 fn check_blob(key_type: KeyType, blob: &[u8]) -> Result<u32, Error> {
     let mut wire = Wire(blob);
     let named = wire.string().ok_or(Error::Malformed)?;
+    if named == b"ssh-dss" {
+        return Err(Error::Dsa);
+    }
     if named != key_type.name().as_bytes() {
         return Err(Error::TypeMismatch {
             line: key_type,

@@ -158,10 +158,12 @@ impl AuthorisedKeys {
     }
 
     pub fn remove(&mut self, fingerprint: &Fingerprint) -> Option<Entry> {
-        let at = self
-            .entries
-            .iter()
-            .position(|e| e.key.fingerprint() == *fingerprint)?;
+        self.remove_where(|e| e.key.fingerprint() == *fingerprint)
+    }
+
+    /// Remove the first entry that matches.
+    pub fn remove_where(&mut self, matches: impl FnMut(&Entry) -> bool) -> Option<Entry> {
+        let at = self.entries.iter().position(matches)?;
         Some(self.entries.remove(at))
     }
 }

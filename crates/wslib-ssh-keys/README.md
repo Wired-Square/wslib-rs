@@ -31,9 +31,9 @@ file.write(path)?;
   `blob()` the decoded wire form, `bits()` what `ssh-keygen -l` prints.
 - **`KeyType`**: `ssh-ed25519`, `ecdsa-sha2-nistp256`, `-nistp384`,
   `-nistp521`, `ssh-rsa`, `sk-ssh-ed25519@openssh.com` and
-  `sk-ecdsa-sha2-nistp256@openssh.com`. Not `ssh-dss`: OpenSSH has refused
-  DSA by default since 7.0, so storing one would look like it worked and let
-  nobody in.
+  `sk-ecdsa-sha2-nistp256@openssh.com`. Not `ssh-dss`: OpenSSH no longer
+  accepts DSA, so storing one would look like it worked and let nobody in. A
+  line or blob naming it is `Error::Dsa`.
 - **`Fingerprint`**: SHA-256 of the wire blob as `SHA256:` and unpadded
   base64, byte for byte what `ssh-keygen -l` prints. It is not
   `wslib-crypto`'s fingerprint, which is colon hex over a DER public key.
@@ -45,7 +45,10 @@ file.write(path)?;
   `unparsed()`: lines that are not keys this crate accepts, kept verbatim
   because sshd may still honour them. Other comments are dropped; the header
   set by `with_header` is written first, each line prefixed `# `. `add`
-  refuses a key whose fingerprint is already there, whatever its options.
+  refuses a key whose fingerprint is already there, whatever its options:
+  sshd acts on the first matching line, so a later one would be dead.
+  `remove` takes the first entry with a fingerprint, `remove_where` the first
+  that matches a test, such as the copy without options.
   A control character in a provenance name is written as a space, so a name
   can't add a line of its own.
 - **`read`** takes a missing file as an empty one. **`write`** replaces the

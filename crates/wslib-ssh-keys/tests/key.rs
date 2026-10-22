@@ -149,11 +149,6 @@ fn the_refusals_say_what_is_wrong() {
         "{private}"
     );
     assert!(
-        refused("ssh-dss AAAAB3NzaC1kc3MAAACBAJ x")
-            .to_string()
-            .contains("DSA")
-    );
-    assert!(
         refused("ssh-quantum AAAA")
             .to_string()
             .contains("ssh-ed25519")
@@ -231,5 +226,23 @@ fn the_blob_must_be_one_sshd_would_load() {
     assert_eq!(
         refused(&format!("sk-ssh-ed25519@openssh.com {no_application}")),
         Error::Malformed
+    );
+}
+
+#[test]
+fn dsa_is_refused_by_name_whether_the_line_or_the_blob_says_it() {
+    assert_eq!(refused("ssh-dss AAAAB3NzaC1kc3MAAACBAJ x"), Error::Dsa);
+    assert_eq!(
+        refused(&format!("ssh-rsa {}", wire(&[b"ssh-dss"]))),
+        Error::Dsa
+    );
+    assert_eq!(
+        refused(&format!("restrict ssh-dss {}", wire(&[b"ssh-dss"]))),
+        Error::Dsa
+    );
+    let why = Error::Dsa.to_string();
+    assert!(
+        why.contains("DSA") && why.contains("never let you in"),
+        "{why}"
     );
 }

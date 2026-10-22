@@ -13,9 +13,11 @@
 - `Fingerprint`: OpenSSH's `SHA256:` form over the wire blob, as
   `ssh-keygen -l` prints it, parsed back with `FromStr`.
 - `Error` says what is wrong in words for whoever pasted the line: a private
-  key, a DSA key, a type mismatch from a spliced or truncated paste.
+  key, a DSA key (`Dsa`, whether the line or the blob names it), a type
+  mismatch from a spliced or truncated paste.
 - `AuthorisedKeys`: a file's keys, each with an optional `Provenance` read
   from a `# added by <who> on <RFC 3339>` comment above it, and the lines it
   can't read kept verbatim. `add` refuses a fingerprint already there,
-  `remove` and `get` take one. `read` takes a missing file as empty; `write`
+  `remove` and `get` take one, and `remove_where` takes the first entry a
+  test matches. `read` takes a missing file as empty; `write`
   replaces the file whole, `0644`, under a `with_header` comment.

@@ -145,3 +145,22 @@ fn a_file_written_is_the_file_read_and_a_missing_one_is_empty() {
     }
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn remove_where_takes_the_first_match_only() {
+    let mut file = AuthorisedKeys::parse(&format!("restrict {ED25519}\n{ED25519}\n{ECDSA}\n"));
+    let bare = file.remove_where(|e| {
+        e.key.fingerprint() == fingerprint(ED25519) && e.key.options().is_empty()
+    });
+    assert_eq!(bare.expect("removed").key.line(), ED25519);
+    assert!(
+        file.remove_where(|e| e.key.comment() == Some("nobody"))
+            .is_none()
+    );
+    let left: Vec<_> = file
+        .entries()
+        .iter()
+        .map(|e| e.key.line().to_string())
+        .collect();
+    assert_eq!(left, [format!("restrict {ED25519}"), ECDSA.to_string()]);
+}

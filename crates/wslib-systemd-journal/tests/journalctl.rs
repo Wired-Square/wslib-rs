@@ -108,18 +108,19 @@ async fn output_past_its_bound_is_cut_and_journalctl_killed() {
 
 #[tokio::test]
 async fn failures_are_kept_apart() {
-    let read = |program: PathBuf| async move {
-        Query::default()
-            .with_program(program)
-            .with_timeout(Duration::from_millis(200))
-            .read()
-            .await
-            .unwrap_err()
-    };
-    assert!(matches!(read(fake("slow")).await, Error::Timeout));
-    assert!(matches!(read(fake("fails")).await, Error::Exited(s) if s.code() == Some(1)));
-    assert!(matches!(read(fake("missing")).await, Error::NotInstalled));
-    let unrunnable = read(fake("unrunnable")).await;
+    let read = |query: Query| async move { query.read().await.unwrap_err() };
+    let slow = Query::default()
+        .with_program(fake("slow"))
+        .with_timeout(Duration::from_secs(1));
+    assert!(matches!(read(slow).await, Error::Timeout));
+    assert!(
+        matches!(read(Query::default().with_program(fake("fails"))).await, Error::Exited(s) if s.code() == Some(1))
+    );
+    assert!(matches!(
+        read(Query::default().with_program(fake("missing"))).await,
+        Error::NotInstalled
+    ));
+    let unrunnable = read(Query::default().with_program(fake("unrunnable"))).await;
     assert!(matches!(&unrunnable, Error::Spawn(e) if e.kind() == ErrorKind::PermissionDenied));
     assert!(std::error::Error::source(&unrunnable).is_some());
 }

@@ -1,0 +1,27 @@
+[package]
+name = "wslib-host"
+version = "0.1.0"
+description = "What a host says about itself: name, uptime, boot id, kernel, OS and an app-specific machine id."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[dependencies]
+# Pure Rust rather than ring: CI keeps ring out of the default graph.
+hmac = "0.12.1"
+sha2 = "0.10.1"
+uuid = { version = "1.1", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2.172"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+] }

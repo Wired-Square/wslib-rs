@@ -532,18 +532,123 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) 
         .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()))
 }
 
+/// Into the first free `.unusable`, `.unusable.1`, …, so an earlier incident's file is kept.
 fn displace(path: &Path) -> Result<(), ServingError> {
-    let aside = wslib_file_atomic::beside(path, DISPLACED);
-    match fs::rename(path, &aside) {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(ServingError::Displace {
-            path: path.to_path_buf(),
-            source,
-        }),
-        Ok(()) => {
-            tracing::warn!(from = %path.display(), to = %aside.display(), "kept the unusable file");
-            Ok(())
+    for n in 0u32.. {
+        let suffix = match n {
+            0 => DISPLACED.to_string(),
+            n => format!("{DISPLACED}.{n}"),
+        };
+        let aside = wslib_file_atomic::beside(path, &suffix);
+        match rename_no_replace(path, &aside) {
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(source) => {
+                return Err(ServingError::Displace {
+                    path: path.to_path_buf(),
+                    source,
+                });
+            }
+            Ok(()) => {
+                tracing::warn!(from = %path.display(), to = %aside.display(), "kept the unusable file");
+                return Ok(());
+            }
         }
+    }
+    unreachable!("a free name among four billion")
+}
+
+#[cfg(unix)]
+fn c_path(path: &Path) -> io::Result<std::ffi::CString> {
+    use std::os::unix::ffi::OsStrExt;
+    std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(io::Error::other)
+}
+
+#[cfg(unix)]
+fn os_result(status: libc::c_int) -> io::Result<()> {
+    match status {
+        0 => Ok(()),
+        _ => Err(io::Error::last_os_error()),
+    }
+}
+
+#[cfg(unix)]
+fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    let renamed = if tests::NO_REPLACE_UNSUPPORTED.get() {
+        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+    } else {
+        rename_exclusive(from, to)
+    };
+    #[cfg(not(test))]
+    let renamed = rename_exclusive(from, to);
+    // ENOTSUP is EOPNOTSUPP on Linux and its own code on macOS.
+    let unsupported = [libc::EINVAL, libc::ENOSYS, libc::EOPNOTSUPP, libc::ENOTSUP];
+    match renamed {
+        Err(e)
+            if e.raw_os_error()
+                .is_some_and(|code| unsupported.contains(&code)) =>
+        {
+            rename_without_the_flag(from, to)
+        }
+        renamed => renamed,
+    }
+}
+
+/// A link refuses an existing name. A directory cannot be linked, so it is
+/// renamed only to a name found free, which loses at most an empty directory
+/// made there in between.
+#[cfg(unix)]
+fn rename_without_the_flag(from: &Path, to: &Path) -> io::Result<()> {
+    if !fs::symlink_metadata(from)?.is_dir() {
+        fs::hard_link(from, to)?;
+        return fs::remove_file(from);
+    }
+    match fs::symlink_metadata(to) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => fs::rename(from, to),
+        Err(e) => Err(e),
+        Ok(_) => Err(io::ErrorKind::AlreadyExists.into()),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn rename_exclusive(from: &Path, to: &Path) -> io::Result<()> {
+    let (from, to) = (c_path(from)?, c_path(to)?);
+    // SAFETY: both paths are NUL-terminated and outlive the call.
+    os_result(unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    })
+}
+
+#[cfg(target_vendor = "apple")]
+fn rename_exclusive(from: &Path, to: &Path) -> io::Result<()> {
+    let (from, to) = (c_path(from)?, c_path(to)?);
+    // SAFETY: both paths are NUL-terminated and outlive the call.
+    os_result(unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) })
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_vendor = "apple"))))]
+fn rename_exclusive(_: &Path, _: &Path) -> io::Result<()> {
+    Err(io::Error::from_raw_os_error(libc::ENOSYS))
+}
+
+#[cfg(windows)]
+fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
+    let wide = |path: &Path| -> Vec<u16> { path.as_os_str().encode_wide().chain([0]).collect() };
+    let (from, to) = (wide(from), wide(to));
+    // SAFETY: both paths are NUL-terminated and outlive the call; no
+    // `MOVEFILE_REPLACE_EXISTING`, so an existing name is refused.
+    match unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), 0) } {
+        0 => Err(io::Error::last_os_error()),
+        _ => Ok(()),
     }
 }
 
@@ -1173,6 +1278,59 @@ mod tests {
         let e = start(provider, dir.named()).expect_err("a named pair is the operator's");
         assert!(matches!(e, ServingError::Recover(_)), "{e}");
         assert_eq!(dir.listing(), before);
+    }
+
+    #[test]
+    fn displacing_never_replaces_an_earlier_unusable_file_or_directory() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("displace-twice");
+        write(&dir.join("cert.pem"), "not PEM");
+        write(&dir.join("key.pem"), "not PEM either");
+        write(&dir.join("cert.pem.unusable"), "an earlier incident");
+        occupy(&dir.join("key.pem.unusable"));
+
+        start(provider, dir.managed()).unwrap();
+        let read = |name: &str| fs::read_to_string(dir.join(name)).unwrap();
+        assert_eq!(read("cert.pem.unusable"), "an earlier incident");
+        assert_eq!(read("cert.pem.unusable.1"), "not PEM");
+        assert!(dir.join("key.pem.unusable/inside").exists());
+        assert_eq!(read("key.pem.unusable.1"), "not PEM either");
+    }
+
+    #[cfg(unix)]
+    thread_local! {
+        pub(super) static NO_REPLACE_UNSUPPORTED: std::cell::Cell<bool> =
+            const { std::cell::Cell::new(false) };
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn without_a_no_replace_rename_a_file_is_linked_aside_and_a_directory_moved_to_a_free_name() {
+        let dir = Scratch::new("displace-unsupported");
+        write(&dir.join("key.pem"), "a key");
+        write(&dir.join("key.pem.unusable"), "an earlier key");
+        occupy(&dir.join("cert.pem"));
+        occupy(&dir.join("cert.pem.unusable"));
+
+        NO_REPLACE_UNSUPPORTED.set(true);
+        let displaced =
+            displace(&dir.join("key.pem")).and_then(|()| displace(&dir.join("cert.pem")));
+        NO_REPLACE_UNSUPPORTED.set(false);
+        displaced.unwrap();
+        let read = |name: &str| fs::read_to_string(dir.join(name)).unwrap();
+        assert_eq!(read("key.pem.unusable"), "an earlier key");
+        assert_eq!(read("key.pem.unusable.1"), "a key");
+        assert!(dir.join("cert.pem.unusable/inside").exists());
+        assert!(dir.join("cert.pem.unusable.1/inside").exists());
+        assert_eq!(
+            dir.listing(),
+            [
+                "cert.pem.unusable",
+                "cert.pem.unusable.1",
+                "key.pem.unusable",
+                "key.pem.unusable.1"
+            ]
+        );
     }
 
     #[cfg(unix)]

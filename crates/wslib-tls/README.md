@@ -104,7 +104,8 @@ for warning in &installed.report.warnings { /* expired, host not covered, ... */
 - **`Serving::load_or_mint`**: both files there and loadable, they are
   served; neither, a self-signed pair is minted with `wslib_crypto_x509::mint`
   for the caller's names; one half, or a pair that will not read, parse,
-  match or load, is moved aside to `<file>.unusable` and replaced at a
+  match or load, is moved aside to the first free `<file>.unusable`,
+  `.unusable.1`, … and replaced at a
   `Location::managed` location, and refused with `ServingError::Named` at a
   `Location::named` one. A path that cannot even be looked at is refused at
   either. An interrupted write that cannot be finished, or whose record is

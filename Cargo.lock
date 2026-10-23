@@ -7499,6 +7499,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tracing",
+ "windows-sys 0.61.2",
  "wslib-crypto",
  "wslib-crypto-x509",
  "wslib-file-atomic",

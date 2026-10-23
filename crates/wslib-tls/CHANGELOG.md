@@ -15,6 +15,8 @@
   finish, or whose record is refused, aside as `.unusable`, record and
   staged files, with a warning, and goes on to load or mint; at a named
   location it is still `ServingError::Recover`.
+- An unusable file is moved aside to the first free `<file>.unusable`,
+  `.unusable.1`, …, never over an earlier one or a directory there.
 
 ## 0.1.0
 

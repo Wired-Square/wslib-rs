@@ -33,6 +33,9 @@ wslib-secret = { version = "0.1", path = "../wslib-secret", registry = "wired-sq
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.174"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
 rcgen = { version = "0.14.10", default-features = false }
 rustls = { version = "0.23.27", default-features = false, features = ["aws_lc_rs", "ring", "std", "tls12"] }

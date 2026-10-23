@@ -117,18 +117,18 @@ impl Telemetry {
         self
     }
 
-    /// Installs the subscriber as the global default.
+    /// Installs the subscriber as the global default, and the `log` bridge.
     ///
     /// # Panics
     ///
-    /// If a global subscriber is already installed.
+    /// If a global subscriber or a `log` logger is already installed.
     pub fn init(self) {
         self.try_init()
-            .expect("a global subscriber is already installed");
+            .expect("a global subscriber or log logger is already installed");
     }
 
     /// [`init`](Self::init), failing rather than panicking when a global
-    /// subscriber is already installed.
+    /// subscriber or a `log` logger is already installed.
     pub fn try_init(self) -> Result<(), TryInitError> {
         let (subscriber, rejected) = self.subscriber();
         subscriber.try_init()?;

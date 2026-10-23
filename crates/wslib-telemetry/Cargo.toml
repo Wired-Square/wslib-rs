@@ -12,7 +12,7 @@ publish = ["wired-square"]
 [features]
 default = ["setup", "ansi"]
 # `Telemetry` filtering by target and level alone, without env-filter's regex.
-setup-core = ["dep:tracing", "dep:tracing-subscriber", "tracing-subscriber/fmt"]
+setup-core = ["dep:tracing", "dep:tracing-subscriber", "tracing-subscriber/fmt", "tracing-subscriber/tracing-log"]
 setup = ["setup-core", "tracing-subscriber/env-filter"]
 ansi = ["setup", "tracing-subscriber/ansi"]
 json = ["setup", "tracing-subscriber/json"]
@@ -35,5 +35,6 @@ serde = { version = "1.0.225", features = ["derive", "rc"], optional = true }
 ts-rs = { version = "11.1", features = ["chrono-impl"], optional = true }
 
 [dev-dependencies]
+log = "0.4.17"
 serde_json = "1.0.85"
 tokio = { version = "1.47", default-features = false, features = ["macros", "rt", "sync"] }

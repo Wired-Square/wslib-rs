@@ -30,6 +30,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, SubsecRound, Utc};
 use tokio::sync::{broadcast, mpsc};
 use tracing::field::{Field, Visit};
+use tracing_log::NormalizeEvent;
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::{Layer, filter};
@@ -290,8 +291,9 @@ struct CaptureLayer(Logs);
 
 impl<S: tracing::Subscriber> Layer<S> for CaptureLayer {
     fn on_event(&self, event: &tracing::Event<'_>, _: Context<'_, S>) {
-        let meta = event.metadata();
-        let mut visitor = Capture::new(&self.0.0);
+        let normalised = event.normalized_metadata();
+        let meta = normalised.as_ref().unwrap_or_else(|| event.metadata());
+        let mut visitor = Capture::new(&self.0.0, normalised.is_some());
         event.record(&mut visitor);
 
         let record = LogRecord {
@@ -325,15 +327,17 @@ struct Capture<'a> {
     message: String,
     fields: Vec<(String, String)>,
     spent: usize,
+    from_log: bool,
 }
 
 impl<'a> Capture<'a> {
-    fn new(logs: &'a Inner) -> Self {
+    fn new(logs: &'a Inner, from_log: bool) -> Self {
         Self {
             logs,
             message: String::new(),
             fields: Vec::new(),
             spent: 0,
+            from_log,
         }
     }
 
@@ -348,6 +352,9 @@ impl<'a> Capture<'a> {
     /// forge a line wherever the ring is rendered as text.
     fn record(&mut self, field: &Field, value: impl FnOnce() -> String) {
         let name = field.name();
+        if self.from_log && name.starts_with("log.") {
+            return;
+        }
         let is_message = name == "message" && self.message.is_empty();
         let own_budget = is_message || self.logs.own_budget.iter().any(|f| f == name);
         let budget = if own_budget {

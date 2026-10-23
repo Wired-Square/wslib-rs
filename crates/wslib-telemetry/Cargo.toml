@@ -19,7 +19,7 @@ json = ["setup", "tracing-subscriber/json"]
 journald = ["setup"]
 # Serde, chrono and nothing else, for a crate that only carries the records.
 types = ["dep:serde", "dep:chrono"]
-ring = ["types", "dep:tracing", "dep:tracing-subscriber", "tracing-subscriber/registry", "dep:tokio", "chrono/now"]
+ring = ["types", "dep:tracing", "dep:tracing-subscriber", "tracing-subscriber/registry", "dep:tracing-log", "dep:tokio", "chrono/now"]
 # 11, not 12: the chassis derives with 11, and a field's `TS` must come from the
 # same ts-rs as its container's.
 ts = ["types", "dep:ts-rs"]
@@ -29,6 +29,7 @@ test-support = ["ring"]
 tracing = { version = "0.1.41", optional = true }
 # 0.3.20: RUSTSEC-2025-0055, ANSI escapes logged unescaped.
 tracing-subscriber = { version = "0.3.20", default-features = false, features = ["std"], optional = true }
+tracing-log = { version = "0.2.0", default-features = false, optional = true }
 tokio = { version = "1.47", default-features = false, features = ["sync"], optional = true }
 chrono = { version = "0.4.39", default-features = false, features = ["serde"], optional = true }
 serde = { version = "1.0.225", features = ["derive", "rc"], optional = true }

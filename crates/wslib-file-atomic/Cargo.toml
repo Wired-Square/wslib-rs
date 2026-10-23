@@ -22,7 +22,7 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [target.'cfg(unix)'.dev-dependencies]
-libc = "0.2.172"
+libc = "0.2.174"
 
 [[test]]
 name = "readers"

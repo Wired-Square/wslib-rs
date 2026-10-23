@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.7
+
+- `init` installs the `log` bridge under every feature with `Telemetry`:
+  records from `log`-based crates were dropped unless something else turned on
+  tracing-subscriber's `tracing-log`. They pass the same filter as tracing's
+  events. `init` fails if a `log` logger is already installed; `set_default`
+  still leaves the bridge alone.
+- The ring keeps a bridged `log` record under its own target, where it took
+  `log` and the record's `log.target`, `log.module_path`, `log.file` and
+  `log.line` fields.
+
 ## 0.1.6
 
 - `foreign_error(&dyn Display)` renders another library's error for a log

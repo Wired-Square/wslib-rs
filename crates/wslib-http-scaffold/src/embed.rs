@@ -94,7 +94,8 @@ fn if_none_match(headers: &HeaderMap, tag: &HeaderValue) -> bool {
 mod tests {
     use super::*;
     use crate::spa::tests::{
-        a_stored_copy_passes_the_cap, get_from, rules_hold, the_base_is_the_hooks,
+        a_bundle_without_its_page_is_a_server_error, a_stored_copy_passes_the_cap, get_from,
+        rules_hold, the_base_is_the_hooks,
     };
 
     #[derive(rust_embed::Embed)]
@@ -104,6 +105,15 @@ mod tests {
     #[tokio::test]
     async fn an_embedded_bundle_keeps_every_rule() {
         rules_hold(Spa::embedded::<Bundle>()).await;
+    }
+
+    #[derive(rust_embed::Embed)]
+    #[folder = "tests/spa/assets"]
+    struct Pageless;
+
+    #[tokio::test]
+    async fn an_embedded_bundle_without_its_page_is_a_server_error() {
+        a_bundle_without_its_page_is_a_server_error(Spa::embedded::<Pageless>()).await;
     }
 
     #[tokio::test]

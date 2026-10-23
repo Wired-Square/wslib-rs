@@ -6,7 +6,10 @@
   with or without its end slashes, moved unchanged from the chassis.
 - `Spa::base_from(hook)`: `index.html` served with a `<base href>` for the
   base `hook` names for the request, made per request; a refusal from `hook`
-  answers the page and no file. Without a hook nothing changes.
+  answers the page and no file. A `<base>` already in the page's head has its
+  `href` rewritten, its other attributes kept. Without a hook nothing changes.
+- A bundle with no `index.html`, from disk or embedded, answers the page with
+  a 500 error body, logging the missing file, where it was a 404.
 - `EncoderCap`: at most a set number of live gzip encoders (64 by default); a
   request past it is served uncompressed rather than delayed. `standard_layers`
   applies it. A `.gz` the `Spa` sends needs no encoder and holds none, so it

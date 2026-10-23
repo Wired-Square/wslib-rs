@@ -159,7 +159,7 @@ impl Spa {
             Some(hook) => hook(&parts)?,
             None => None,
         };
-        Ok(match (&*self.files, base) {
+        let served = match (&*self.files, base) {
             (Files::Disk { page, .. }, None) => ServeFile::new(page)
                 .precompressed_gzip()
                 .oneshot(Request::from_parts(parts, Body::empty()))
@@ -176,7 +176,14 @@ impl Spa {
                 Some(page) => based(&page.data, &base),
                 None => StatusCode::NOT_FOUND.into_response(),
             },
-        })
+        };
+        match served.status() {
+            StatusCode::NOT_FOUND => Err(ApiError::internal(
+                "serve the page",
+                format!("the bundle has no {INDEX}"),
+            )),
+            _ => Ok(served),
+        }
     }
 }
 
@@ -188,27 +195,73 @@ fn based(page: &[u8], base: &BasePath) -> Response {
         .into_response()
 }
 
-/// `page` with `<base href="{base_path}">` as the first thing in its `<head>`,
-/// else after its doctype, else first. `base_path` needs no escaping: see
-/// `BasePath`.
+/// `page` with its `<base>` in the head pointing at `base_path`, else with
+/// `<base href="{base_path}">` first in its `<head>`, else after its doctype,
+/// else first. `base_path` needs no escaping: see `BasePath`.
 fn with_base(page: &[u8], base_path: &str) -> Bytes {
-    let at = after_tag(page, b"<head")
-        .or_else(|| after_tag(page, b"<!doctype"))
-        .unwrap_or(0);
-    let tag = format!("<base href=\"{base_path}\">");
-    [&page[..at], tag.as_bytes(), &page[at..]].concat().into()
+    let href = format!("\"{base_path}\"");
+    let head_ends = tag(page, b"</head").map_or(page.len(), |(at, _)| at);
+    let (from, to, text) = match tag(page, b"<base").filter(|&(at, _)| at < head_ends) {
+        Some((at, end)) => match href_value(&page[at..end]) {
+            Some((from, to)) => (at + from, at + to, href),
+            None => (at + 5, at + 5, format!(" href={href}")),
+        },
+        None => {
+            let at = tag(page, b"<head")
+                .or_else(|| tag(page, b"<!doctype"))
+                .map_or(0, |(_, end)| end);
+            (at, at, format!("<base href={href}>"))
+        }
+    };
+    [&page[..from], text.as_bytes(), &page[to..]]
+        .concat()
+        .into()
 }
 
-/// Where the first tag named `open`, any case, ends.
-fn after_tag(page: &[u8], open: &[u8]) -> Option<usize> {
+/// Where the first tag named `open`, any case, starts and ends.
+fn tag(page: &[u8], open: &[u8]) -> Option<(usize, usize)> {
     (0..page.len()).find_map(|i| {
         let rest = &page[i..];
         let named = rest.len() > open.len()
             && rest[..open.len()].eq_ignore_ascii_case(open)
             && (rest[open.len()] == b'>' || rest[open.len()].is_ascii_whitespace());
         named
-            .then(|| rest.iter().position(|&b| b == b'>').map(|end| i + end + 1))
+            .then(|| {
+                rest.iter()
+                    .position(|&b| b == b'>')
+                    .map(|end| (i, i + end + 1))
+            })
             .flatten()
+    })
+}
+
+/// The span of the `href` attribute's value in `tag`, quotes included.
+fn href_value(tag: &[u8]) -> Option<(usize, usize)> {
+    let space = |from: usize| {
+        from + tag[from..]
+            .iter()
+            .take_while(|b| b.is_ascii_whitespace())
+            .count()
+    };
+    (1..tag.len()).find_map(|i| {
+        let named = tag[i - 1].is_ascii_whitespace()
+            && tag.len() > i + 4
+            && tag[i..i + 4].eq_ignore_ascii_case(b"href");
+        if !named {
+            return None;
+        }
+        let equals = space(i + 4);
+        if tag.get(equals) != Some(&b'=') {
+            return None;
+        }
+        let start = space(equals + 1);
+        let len = match tag.get(start)? {
+            &quote @ (b'"' | b'\'') => tag[start + 1..].iter().position(|&b| b == quote)? + 2,
+            _ => tag[start..]
+                .iter()
+                .position(|&b| b.is_ascii_whitespace() || b == b'>')?,
+        };
+        Some((start, start + len))
     })
 }
 
@@ -516,13 +569,25 @@ pub(crate) mod tests {
         the_base_is_the_hooks(Spa::from_dir(BUNDLE)).await;
     }
 
+    pub(crate) async fn a_bundle_without_its_page_is_a_server_error(spa: Spa) {
+        for spa in [spa.clone(), based_on_header(spa)] {
+            for path in ["/", "/settings"] {
+                let (response, body) = get_from(spa.clone(), path, &[("x-base", "/x/")]).await;
+                assert_eq!(
+                    response.status(),
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "{path}"
+                );
+                let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(body["error"], "could not serve the page");
+            }
+        }
+    }
+
     #[tokio::test]
-    async fn a_missing_page_under_a_base_is_the_error_body() {
-        let spa = based_on_header(Spa::from_dir(format!("{BUNDLE}/assets")));
-        let (response, body) = get_from(spa, "/settings", &[("x-base", "/x/")]).await;
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(body["error"], "no such file: /settings");
+    async fn a_bundle_on_disk_without_its_page_is_a_server_error() {
+        a_bundle_without_its_page_is_a_server_error(Spa::from_dir(format!("{BUNDLE}/assets")))
+            .await;
     }
 
     /// Every encoder held by a route, then every stored copy out at once.
@@ -594,6 +659,33 @@ pub(crate) mod tests {
         assert_eq!(based("<p>bare</p>"), "<base href=\"/apps/x/\"><p>bare</p>");
     }
 
+    #[test]
+    fn a_base_already_in_the_head_is_pointed_at_the_path_keeping_its_other_attributes() {
+        let based = |page: &str| {
+            String::from_utf8(with_base(page.as_bytes(), "/apps/x/").to_vec()).unwrap()
+        };
+        assert_eq!(
+            based("<head><base href=\"/\"><title>t</title></head>"),
+            "<head><base href=\"/apps/x/\"><title>t</title></head>"
+        );
+        assert_eq!(
+            based("<head><BASE target=\"_top\" HREF = './' /></head>"),
+            "<head><BASE target=\"_top\" HREF = \"/apps/x/\" /></head>"
+        );
+        assert_eq!(
+            based("<head><base href=/ui/></head>"),
+            "<head><base href=\"/apps/x/\"></head>"
+        );
+        assert_eq!(
+            based("<head><base target=\"_top\"></head>"),
+            "<head><base href=\"/apps/x/\" target=\"_top\"></head>"
+        );
+        assert_eq!(
+            based("<head></head><body><base href=\"/\"></body>"),
+            "<head><base href=\"/apps/x/\"></head><body><base href=\"/\"></body>"
+        );
+    }
+
     #[tokio::test]
     async fn a_hashed_asset_answered_304_keeps_its_cache_control() {
         let spa = Spa::from_dir(BUNDLE);
@@ -643,15 +735,6 @@ pub(crate) mod tests {
             get_from(spa, "/api/x", &[]).await.0.status(),
             StatusCode::OK
         );
-    }
-
-    #[tokio::test]
-    async fn a_missing_page_is_the_error_body_not_an_empty_404() {
-        let (response, body) =
-            get_from(Spa::from_dir(format!("{BUNDLE}/assets")), "/settings", &[]).await;
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(body["error"], "no such file: /settings");
     }
 
     #[test]

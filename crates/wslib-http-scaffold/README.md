@@ -26,9 +26,11 @@ let app = standard_layers(app);
   `/ui/../api/x` are refused too. `assets/` is `public, max-age=31536000,
   immutable` and a missing asset there is a 404, never the page; everything
   else is `no-store`. A `.gz` beside a file is sent to a client taking gzip.
+  A bundle with no `index.html` answers the page with a 500.
 - **`Spa::base_from(hook)`**: `hook` names a `BasePath` per request (or none),
   and `index.html` is then served with `<base href="{base}">` first in its
-  `<head>`, so a bundle with page-relative asset links runs under any prefix.
+  `<head>` (or the page's own `<base>` rewritten to it), so a bundle with
+  page-relative asset links runs under any prefix.
   Assets and other files are untouched; an error from `hook` answers the
   page's requests and no file's.
 - **`BasePath`**: `/` or `/`-separated segments of letters, digits, `-`, `.`,

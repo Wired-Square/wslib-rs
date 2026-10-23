@@ -6,7 +6,7 @@
   line: URL userinfo stripped, as `strip_userinfo` does, and cut to 512 bytes.
   It is not a general filter; a secret outside a URL passes through.
 - `foreign_error`, `strip_userinfo` and `truncate` need no feature, where the
-  last two needed `ring`.
+  last two needed the `ring` feature (the log ring).
 
 ## 0.1.5
 

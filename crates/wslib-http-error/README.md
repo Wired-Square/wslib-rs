@@ -44,7 +44,9 @@ let app = Router::new()
 - **`extract`** (feature `axum`, on by default): `Json`, `Query` and `Path`
   whose rejections are `ApiError`s at axum's status (400, 413, 415 or 422),
   and `method_not_allowed` for `Router::method_not_allowed_fallback`.
-  `ApiError` is an axum `IntoResponse` under the same feature.
+  `ApiError` is an axum `IntoResponse` under the same feature; its response
+  carries a clone of the `ApiErrorBody` in its extensions, for an outer layer
+  to recognise and re-render it, as an HTML page for a browser, say.
 
 Without `axum`, the crate is the body and the error alone, for a types crate
 that generates the frontend's TypeScript.

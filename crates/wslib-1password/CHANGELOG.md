@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- A 409 is recognised only by op's `(409) (Conflict)`, so a title or label
+  mentioning "(conflict)" is no longer a retryable `WriteConflict`.
+
 ## 0.1.0
 
 - `Op` for one account, `--account` on every call, `Op::unscoped` to leave

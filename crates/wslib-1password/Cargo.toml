@@ -1,6 +1,6 @@
 [package]
 name = "wslib-1password"
-version = "0.1.0"
+version = "0.1.1"
 description = "The 1Password CLI, typed: sign-in, accounts, vaults, items and documents byte for byte, op:// references and inject, with op's failures as errors and a fake op for tests."
 readme = "README.md"
 edition.workspace = true

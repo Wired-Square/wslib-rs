@@ -140,7 +140,7 @@ pub fn map_cli_error(out: &Output) -> Error {
 
     if has("more than one item matches") {
         ambiguous(&message)
-    } else if has("(409)") || has("(conflict)") {
+    } else if has("(409) (conflict)") {
         Error::WriteConflict(message)
     } else if has("no accounts configured") {
         Error::NoAccountsConfigured(message)
@@ -292,6 +292,12 @@ mod tests {
         );
         assert!(matches!(e, Error::WriteConflict(_)), "{e:?}");
         assert!(e.is_retryable());
+    }
+
+    #[test]
+    fn a_title_mentioning_a_conflict_is_not_a_409() {
+        let e = mapped(r#"[ERROR] "Merge (conflict) notes" isn't an item"#);
+        assert!(matches!(e, Error::ItemNotFound(_)), "{e:?}");
     }
 
     #[test]

@@ -53,7 +53,9 @@ nm.destroy_checkpoint(&undo).await?;
   passphrase for a network that takes none is not sent. WEP and 802.1X are
   `JoinError::Unsupported`, a missing passphrase `NeedsPassphrase`.
   **`add_and_activate`** adds and starts it; a wrong passphrase shows afterwards as the device `Failed` with
-  `NO_SECRETS`, not as the call's error.
+  `NO_SECRETS`, not as the call's error. Real NetworkManager moves on to
+  `Disconnected` (reason none) within a second, so read the reason promptly.
+  A profile kept with a wrong passphrase still autoconnects at boot and fails.
 - **Checkpoints**: `create_checkpoint` over devices with a timeout and the
   `checkpoint` flags, `destroy_checkpoint` to keep what changed,
   `roll_back` to undo it now (each device's `RollbackResult`), and

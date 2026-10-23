@@ -7,6 +7,8 @@
 //! ```
 //!
 //! A `RUST_LOG` that parses replaces the default filter rather than adding to it.
+//! Records from `log` are bridged and filtered alike, so `RUST_LOG=rustls=debug`
+//! alone silences the app's own lines; `RUST_LOG=info,rustls=debug` keeps them.
 //!
 //! Features: `setup` (the default, with `ansi`) is [`Telemetry`]; `json` and
 //! `journald` add its other outputs. `setup-core` is [`Telemetry`] filtering by

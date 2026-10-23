@@ -26,11 +26,16 @@ let app = standard_layers(app);
   `/ui/../api/x` are refused too. `assets/` is `public, max-age=31536000,
   immutable` and a missing asset there is a 404, never the page; everything
   else is `no-store`. A `.gz` beside a file is sent to a client taking gzip.
-  A bundle with no `index.html` answers the page with a 500.
+  `index.html` is read once, when the `Spa` is built, and served from memory
+  with a gzip made then; a bundle without one answers the page with a 500.
+  `first_segment_is(path, "api")` is the reserved-prefix rule on its own.
+- **`Spa::base(base)`**: the page rendered once with `<base href="{base}">`,
+  its gzip stored, so it passes the encoder cap.
 - **`Spa::base_from(hook)`**: `hook` names a `BasePath` per request (or none),
   and `index.html` is then served with `<base href="{base}">` first in its
   `<head>` (or the page's own `<base>` rewritten to it), so a bundle with
-  page-relative asset links runs under any prefix.
+  page-relative asset links runs under any prefix. That page is made per
+  request; when `hook` names none, the page is `base`'s or the plain one.
   Assets and other files are untouched; an error from `hook` answers the
   page's requests and no file's.
 - **`BasePath`**: `/` or `/`-separated segments of letters, digits, `-`, `.`,
@@ -46,3 +51,8 @@ let app = standard_layers(app);
   `standard_layers` already. A request that finds none free is served
   uncompressed, not queued. A hand-built stack puts `EncoderCap::new(n)`
   outside `CompressionLayer`; the other way round compiles and caps nothing.
+  A handler serving a body stored compressed calls `restore_accept_encoding`
+  first and returns through `mark_stored`, so it passes the cap with no
+  permit.
+- **`BasePath` alone**: `default-features = false` drops the `server`
+  feature and with it every HTTP dependency.

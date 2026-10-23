@@ -1,17 +1,20 @@
+use axum::body::Bytes;
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use rust_embed::{EmbeddedFile, RustEmbed};
 
 use crate::Spa;
-use crate::spa::Files;
+use crate::compress::{accepts_gzip, listed};
+use crate::spa::{Files, INDEX};
 
 pub(crate) type Lookup = fn(&str) -> Option<EmbeddedFile>;
 
 impl Spa {
     /// The bundle compiled in by `#[derive(rust_embed::Embed)]`, under the same rules.
     pub fn embedded<E: RustEmbed>() -> Self {
-        Self::of(Files::Embedded(E::get))
+        let page = E::get(INDEX).map(|page| Bytes::from(page.data.into_owned()));
+        Self::of(Files::Embedded(E::get), page)
     }
 }
 
@@ -61,29 +64,6 @@ fn etag(file: &EmbeddedFile) -> HeaderValue {
     HeaderValue::from_str(&format!("\"{hex}\"")).expect("hex is a valid header value")
 }
 
-fn listed(headers: &HeaderMap, name: header::HeaderName) -> impl Iterator<Item = &str> {
-    headers
-        .get_all(name)
-        .into_iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(','))
-        .map(str::trim)
-}
-
-fn accepts_gzip(headers: &HeaderMap) -> bool {
-    listed(headers, header::ACCEPT_ENCODING).any(|coding| {
-        let mut parts = coding.split(';');
-        parts
-            .next()
-            .is_some_and(|name| name.trim().eq_ignore_ascii_case("gzip"))
-            && !parts.any(|parameter| {
-                parameter.split_once('=').is_some_and(|(name, value)| {
-                    name.trim().eq_ignore_ascii_case("q") && value.trim().parse::<f32>() == Ok(0.0)
-                })
-            })
-    })
-}
-
 fn if_none_match(headers: &HeaderMap, tag: &HeaderValue) -> bool {
     let tag = tag.to_str().unwrap_or_default();
     listed(headers, header::IF_NONE_MATCH)
@@ -95,7 +75,7 @@ mod tests {
     use super::*;
     use crate::spa::tests::{
         a_bundle_without_its_page_is_a_server_error, a_stored_copy_passes_the_cap, get_from,
-        rules_hold, the_base_is_the_hooks,
+        rules_hold, the_base_is_the_hooks, the_static_base_is_made_once_and_the_hook_overrides_it,
     };
 
     #[derive(rust_embed::Embed)]
@@ -119,6 +99,11 @@ mod tests {
     #[tokio::test]
     async fn an_embedded_bundle_serves_its_page_under_the_hooks_base() {
         the_base_is_the_hooks(Spa::embedded::<Bundle>()).await;
+    }
+
+    #[tokio::test]
+    async fn an_embedded_bundle_makes_its_static_base_once_under_the_hook() {
+        the_static_base_is_made_once_and_the_hook_overrides_it(Spa::embedded::<Bundle>()).await;
     }
 
     #[tokio::test]

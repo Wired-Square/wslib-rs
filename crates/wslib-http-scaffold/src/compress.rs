@@ -18,8 +18,9 @@
 //! request before that layer reads it, and it holds its permit against the body
 //! that layer produced.
 //!
-//! **A body stored compressed is sent past the cap and holds no permit.** `Spa`
-//! restores `Accept-Encoding` before it chooses a `.gz` and marks the response;
+//! **A body stored compressed is sent past the cap and holds no permit.** Its
+//! handler calls [`restore_accept_encoding`] before it chooses and passes its
+//! response through [`mark_stored`], as `Spa` does;
 //! `CompressionLayer` has chosen its encoding before a handler runs, so the
 //! restored header reaches only the handler.
 
@@ -29,7 +30,7 @@ use std::task::{Context, Poll};
 
 use axum::body::{Body, Bytes};
 use axum::extract::Request;
-use axum::http::{HeaderValue, header};
+use axum::http::{HeaderMap, HeaderValue, header};
 use axum::response::Response;
 use http_body::{Frame, SizeHint};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -122,9 +123,9 @@ where
 #[derive(Clone)]
 struct Declined(Vec<HeaderValue>);
 
-/// Puts back the `Accept-Encoding` the cap set aside, for a handler about to
-/// choose a stored copy, which needs no encoder.
-pub(crate) fn restore_accept_encoding(request: &mut Request) {
+/// Puts back the `Accept-Encoding` [`EncoderCap`] set aside, for a handler about
+/// to choose a body stored compressed, which needs no encoder.
+pub fn restore_accept_encoding(request: &mut Request) {
     if let Some(Declined(values)) = request.extensions_mut().remove() {
         for value in values {
             request.headers_mut().append(header::ACCEPT_ENCODING, value);
@@ -136,10 +137,36 @@ pub(crate) fn restore_accept_encoding(request: &mut Request) {
 #[derive(Clone)]
 struct Stored;
 
-pub(crate) fn mark_stored(response: &mut Response) {
+/// Marks `response`, if it has a `Content-Encoding`, as stored compressed, so
+/// [`EncoderCap`] lets it past with no permit.
+pub fn mark_stored(mut response: Response) -> Response {
     if response.headers().contains_key(header::CONTENT_ENCODING) {
         response.extensions_mut().insert(Stored);
     }
+    response
+}
+
+pub(crate) fn listed(headers: &HeaderMap, name: header::HeaderName) -> impl Iterator<Item = &str> {
+    headers
+        .get_all(name)
+        .into_iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+}
+
+pub(crate) fn accepts_gzip(headers: &HeaderMap) -> bool {
+    listed(headers, header::ACCEPT_ENCODING).any(|coding| {
+        let mut parts = coding.split(';');
+        parts
+            .next()
+            .is_some_and(|name| name.trim().eq_ignore_ascii_case("gzip"))
+            && !parts.any(|parameter| {
+                parameter.split_once('=').is_some_and(|(name, value)| {
+                    name.trim().eq_ignore_ascii_case("q") && value.trim().parse::<f32>() == Ok(0.0)
+                })
+            })
+    })
 }
 
 /// A body that gives its permit back when it is dropped.

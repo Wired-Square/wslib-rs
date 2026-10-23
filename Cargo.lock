@@ -6785,12 +6785,14 @@ name = "wslib-http-scaffold"
 version = "0.1.1"
 dependencies = [
  "axum",
+ "flate2",
  "http-body",
  "http-body-util",
  "percent-encoding",
  "rust-embed",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tower",
  "tower-http",

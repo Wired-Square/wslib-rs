@@ -2,7 +2,8 @@
 //! no path under a reserved prefix ever is.
 
 use std::convert::Infallible;
-use std::path::{Path, PathBuf};
+use std::io::Write;
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -10,11 +11,13 @@ use std::task::{Context, Poll};
 use axum::body::{Body, Bytes};
 use axum::extract::Request;
 use axum::http::request::Parts;
-use axum::http::{HeaderValue, Method, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use flate2::Compression;
+use flate2::write::GzEncoder;
 use percent_encoding::percent_decode_str;
 use tower::{Service, ServiceExt};
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeDir;
 use wslib_http_error::ApiError;
 
 use crate::BasePath;
@@ -33,41 +36,77 @@ type BaseHook = dyn Fn(&Parts) -> Result<Option<BasePath>, ApiError> + Send + Sy
 /// `assets/` is cached for ever and a missing name there is a 404; everything
 /// else is `no-store`, and a missing name is the page. A path under a reserved
 /// prefix (`api` unless [`reserving`](Self::reserving) says otherwise) is a 404,
-/// judged on the path after percent-decoding and dot segments.
+/// judged by [`first_segment_is`].
+///
+/// `index.html` is read once, as the `Spa` is built, and served from memory
+/// with a gzip made then.
 #[derive(Clone)]
 pub struct Spa {
     files: Arc<Files>,
     reserved: Arc<[String]>,
-    base: Option<Arc<BaseHook>>,
+    page: Option<Page>,
+    base_from: Option<Arc<BaseHook>>,
 }
 
-#[allow(clippy::large_enum_variant, reason = "built once, behind an Arc")]
 pub(crate) enum Files {
-    Disk {
-        files: ServeDir,
-        page: PathBuf,
-    },
+    Disk(ServeDir),
     #[cfg(feature = "embed")]
     Embedded(crate::embed::Lookup),
+}
+
+/// `index.html` as read, and as served without a per-request base.
+#[derive(Clone)]
+struct Page {
+    read: Bytes,
+    plain: Bytes,
+    gzip: Bytes,
+}
+
+impl Page {
+    fn new(read: Bytes, base: Option<&BasePath>) -> Self {
+        let plain = match base {
+            Some(base) => with_base(&read, base.as_str()),
+            None => read.clone(),
+        };
+        let mut gzip = GzEncoder::new(Vec::new(), Compression::best());
+        gzip.write_all(&plain).expect("writing to memory");
+        let gzip = gzip.finish().expect("writing to memory").into();
+        Self { read, plain, gzip }
+    }
+
+    fn respond(&self, asked: &HeaderMap) -> Response {
+        if compress::accepts_gzip(asked) {
+            let headers = [
+                (header::CONTENT_TYPE, HTML),
+                (header::CONTENT_ENCODING, "gzip"),
+            ];
+            (headers, self.gzip.clone()).into_response()
+        } else {
+            ([(header::CONTENT_TYPE, HTML)], self.plain.clone()).into_response()
+        }
+    }
 }
 
 impl Spa {
     /// The bundle in `dir`, with a `.gz` beside a file sent to a client taking gzip.
     pub fn from_dir(dir: impl AsRef<Path>) -> Self {
         let dir = dir.as_ref();
-        Self::of(Files::Disk {
-            files: ServeDir::new(dir)
-                .precompressed_gzip()
-                .append_index_html_on_directories(false),
-            page: dir.join(INDEX),
-        })
+        Self::of(
+            Files::Disk(
+                ServeDir::new(dir)
+                    .precompressed_gzip()
+                    .append_index_html_on_directories(false),
+            ),
+            std::fs::read(dir.join(INDEX)).ok().map(Bytes::from),
+        )
     }
 
-    pub(crate) fn of(files: Files) -> Self {
+    pub(crate) fn of(files: Files, page: Option<Bytes>) -> Self {
         Self {
             files: Arc::new(files),
             reserved: Arc::new(["api".to_owned()]),
-            base: None,
+            page: page.map(|page| Page::new(page, None)),
+            base_from: None,
         }
     }
 
@@ -78,14 +117,20 @@ impl Spa {
         self
     }
 
+    /// Serve `index.html` with `<base href>` naming `base`, made once here.
+    pub fn base(mut self, base: BasePath) -> Self {
+        self.page = self.page.map(|page| Page::new(page.read, Some(&base)));
+        self
+    }
+
     /// Serve `index.html` with a `<base href>` for the base `hook` names for
-    /// the request, made per request; a refusal from `hook` answers the page's
-    /// requests and no file's.
+    /// the request, made per request, else as [`base`](Self::base) left it; a
+    /// refusal from `hook` answers the page's requests and no file's.
     pub fn base_from(
         mut self,
         hook: impl Fn(&Parts) -> Result<Option<BasePath>, ApiError> + Send + Sync + 'static,
     ) -> Self {
-        self.base = Some(Arc::new(hook));
+        self.base_from = Some(Arc::new(hook));
         self
     }
 
@@ -112,15 +157,15 @@ impl Spa {
         }
         let (parts, _) = request.into_parts();
         let served = if page {
-            self.page(parts).await
+            self.page(&parts)
         } else {
             let served = self.file(parts.clone()).await;
             match served.status() {
-                StatusCode::NOT_FOUND if !assets => self.page(parts).await,
+                StatusCode::NOT_FOUND if !assets => self.page(&parts),
                 _ => Ok(served),
             }
         };
-        let mut served = match served {
+        let served = match served {
             Ok(served) => served,
             Err(refused) => return no_store(refused.into_response()),
         };
@@ -128,7 +173,7 @@ impl Spa {
         if status.is_client_error() || status.is_server_error() {
             return no_store(refusal(served, &method, &path));
         }
-        compress::mark_stored(&mut served);
+        let mut served = compress::mark_stored(served);
         let headers = served.headers_mut();
         headers.insert(
             header::CACHE_CONTROL,
@@ -140,7 +185,7 @@ impl Spa {
 
     async fn file(&self, parts: Parts) -> Response {
         match &*self.files {
-            Files::Disk { files, .. } => files
+            Files::Disk(files) => files
                 .clone()
                 .oneshot(Request::from_parts(parts, Body::empty()))
                 .await
@@ -154,37 +199,28 @@ impl Spa {
     }
 
     #[expect(clippy::result_large_err, reason = "the hook's own error type")]
-    async fn page(&self, parts: Parts) -> Result<Response, ApiError> {
-        let base = match &self.base {
-            Some(hook) => hook(&parts)?,
-            None => None,
-        };
-        let served = match (&*self.files, base) {
-            (Files::Disk { page, .. }, None) => ServeFile::new(page)
-                .precompressed_gzip()
-                .oneshot(Request::from_parts(parts, Body::empty()))
-                .await
-                .into_response(),
-            (Files::Disk { page, .. }, Some(base)) => match tokio::fs::read(page).await {
-                Ok(page) => based(&page, &base),
-                Err(_) => StatusCode::NOT_FOUND.into_response(),
-            },
-            #[cfg(feature = "embed")]
-            (Files::Embedded(lookup), None) => crate::embed::serve(*lookup, INDEX, &parts),
-            #[cfg(feature = "embed")]
-            (Files::Embedded(lookup), Some(base)) => match lookup(INDEX) {
-                Some(page) => based(&page.data, &base),
-                None => StatusCode::NOT_FOUND.into_response(),
-            },
-        };
-        match served.status() {
-            StatusCode::NOT_FOUND => Err(ApiError::internal(
+    fn page(&self, parts: &Parts) -> Result<Response, ApiError> {
+        let Some(page) = &self.page else {
+            return Err(ApiError::internal(
                 "serve the page",
                 format!("the bundle has no {INDEX}"),
-            )),
-            _ => Ok(served),
-        }
+            ));
+        };
+        let named = match &self.base_from {
+            Some(hook) => hook(parts)?,
+            None => None,
+        };
+        Ok(match named {
+            Some(base) => based(&page.read, &base),
+            None => page.respond(&parts.headers),
+        })
     }
+}
+
+/// Whether `path`, percent-decoded once and with `.` and `..` resolved, has
+/// `segment` as its first segment: the rule [`Spa`] refuses a reserved prefix by.
+pub fn first_segment_is(path: &str, segment: &str) -> bool {
+    first_segment(&percent_decode_str(path).decode_utf8_lossy()) == Some(segment)
 }
 
 fn based(page: &[u8], base: &BasePath) -> Response {
@@ -561,6 +597,86 @@ pub(crate) mod tests {
                 );
                 assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
             }
+        }
+    }
+
+    fn gunzip(body: &[u8]) -> String {
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut flate2::read::GzDecoder::new(body), &mut text).unwrap();
+        text
+    }
+
+    /// A static base, its stored gzip past the encoder cap, and a hook over it.
+    pub(crate) async fn the_static_base_is_made_once_and_the_hook_overrides_it(spa: Spa) {
+        let read =
+            String::from_utf8(std::fs::read(format!("{BUNDLE}/index.html")).unwrap()).unwrap();
+        let under = |base: &str| read.replace("<head>", &format!("<head><base href=\"{base}\">"));
+        let spa = spa.base("/static/".parse().unwrap());
+
+        let (response, body) = get_from(spa.clone(), "/settings", &[]).await;
+        assert_eq!(String::from_utf8(body).unwrap(), under("/static/"));
+        assert!(!response.headers().contains_key(header::CONTENT_ENCODING));
+
+        let app = crate::standard_layers(
+            Router::new()
+                .route("/big", get(async || "x".repeat(4096)))
+                .fallback_service(spa.clone()),
+        );
+        let gzipped = |path: &str| {
+            app.clone().oneshot(
+                Request::get(path)
+                    .header(header::ACCEPT_ENCODING, "gzip")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+        };
+        let mut held = Vec::new();
+        for _ in 0..crate::EncoderCap::DEFAULT {
+            held.push(gzipped("/big").await.unwrap());
+        }
+        for path in ["/", "/settings"] {
+            let page = gzipped(path).await.unwrap();
+            assert_eq!(page.headers()[header::CONTENT_ENCODING], "gzip", "{path}");
+            let body = page.into_body().collect().await.unwrap().to_bytes();
+            assert_eq!(gunzip(&body), under("/static/"), "{path}");
+        }
+
+        let hooked = based_on_header(spa);
+        let (response, body) = get_from(
+            hooked.clone(),
+            "/settings",
+            &[("x-base", "/named/"), ("accept-encoding", "gzip")],
+        )
+        .await;
+        assert!(!response.headers().contains_key(header::CONTENT_ENCODING));
+        assert_eq!(String::from_utf8(body).unwrap(), under("/named/"));
+        let (_, body) = get_from(hooked, "/settings", &[]).await;
+        assert_eq!(String::from_utf8(body).unwrap(), under("/static/"));
+    }
+
+    #[tokio::test]
+    async fn a_bundle_on_disk_makes_its_static_base_once_under_the_hook() {
+        the_static_base_is_made_once_and_the_hook_overrides_it(Spa::from_dir(BUNDLE)).await;
+    }
+
+    #[tokio::test]
+    async fn a_bundle_on_disk_serves_the_page_it_read_when_built() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(INDEX), "<head></head>").unwrap();
+        let spa = Spa::from_dir(dir.path());
+        std::fs::write(dir.path().join(INDEX), "<head>changed</head>").unwrap();
+        assert_eq!(get_from(spa.clone(), "/", &[]).await.1, b"<head></head>");
+        std::fs::remove_file(dir.path().join(INDEX)).unwrap();
+        assert_eq!(get_from(spa, "/x", &[]).await.1, b"<head></head>");
+    }
+
+    #[test]
+    fn the_reserved_rule_judges_the_resolved_first_segment() {
+        for path in API_SHAPES {
+            assert!(first_segment_is(path, "api"), "{path}");
+        }
+        for path in ["/", "/apiary", "/API/x", "/x/api", "/assets/api"] {
+            assert!(!first_segment_is(path, "api"), "{path}");
         }
     }
 

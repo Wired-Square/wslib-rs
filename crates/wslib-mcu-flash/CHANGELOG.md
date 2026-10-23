@@ -18,3 +18,5 @@
   - `esp::read_flash` and `stm32_uart::read_flash` write beside the output
     file and rename it into place on success, so a failed or cancelled read
     leaves an existing file as it was. The file is created `0644`.
+  - `EsptoolFlasher` runs esptool with `TERM=dumb` and `NO_COLOR=1`, so
+    progress arrives as plain lines without cursor or colour codes.

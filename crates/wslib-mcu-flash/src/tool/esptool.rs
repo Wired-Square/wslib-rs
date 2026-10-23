@@ -75,7 +75,10 @@ impl EsptoolFlasher {
             .arg("--before")
             .arg("default-reset")
             .arg("--after")
-            .arg("hard-reset");
+            .arg("hard-reset")
+            // The output is relayed, never a TTY, but esptool styles it whenever TERM is set.
+            .env("TERM", "dumb")
+            .env("NO_COLOR", "1");
         cmd
     }
 }
@@ -195,5 +198,21 @@ mod tests {
             flasher.esptool().as_std().get_program().to_str(),
             Some("esptool.py")
         );
+    }
+
+    #[test]
+    fn esptool_runs_without_terminal_styling() {
+        let flasher = EsptoolFlasher::new(
+            "esp32".into(),
+            "/dev/ttyACM2".into(),
+            115_200,
+            vec![artefact("application", Some(0x20000), "/tmp/app")],
+            false,
+        )
+        .unwrap();
+        let cmd = flasher.esptool();
+        let envs: Vec<_> = cmd.as_std().get_envs().collect();
+        assert!(envs.contains(&("TERM".as_ref(), Some("dumb".as_ref()))));
+        assert!(envs.contains(&("NO_COLOR".as_ref(), Some("1".as_ref()))));
     }
 }

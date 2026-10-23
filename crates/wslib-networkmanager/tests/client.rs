@@ -2,10 +2,11 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::time::Duration;
 
 use wslib_networkmanager::testing::{FakeAccessPoint, FakeDevice, FakeNetworkManager};
 use wslib_networkmanager::{
-    Client, Device, DeviceKind, DeviceState, Ipv4, Ipv4Method, Objects, ProfileIpv4,
+    Client, Device, DeviceKind, DeviceState, Ipv4, Ipv4Method, Objects, Profile, ProfileIpv4,
     RollbackResult, Security, Settings, WifiRadio, checkpoint, connection_type, group, interface,
     reason, set_ipv4,
 };
@@ -128,6 +129,7 @@ async fn a_scan_answers_one_access_point_per_network_strongest_first() {
         3,
         "a hidden network's nameless one is left out"
     );
+    assert_eq!(wlan0.last_scan, None, "never scanned");
 
     let seen = |networks: Vec<wslib_networkmanager::AccessPoint>| {
         networks
@@ -147,6 +149,10 @@ async fn a_scan_answers_one_access_point_per_network_strongest_first() {
     ];
     assert_eq!(seen(nm.scan(&wlan0.path).await.unwrap()), expected);
     assert_eq!(fake.heard(), ["RequestScan"]);
+    assert_eq!(
+        device(&nm, "wlan0").await.last_scan,
+        Some(Duration::from_secs(1))
+    );
 
     fake.refuse("RequestScan");
     assert_eq!(
@@ -260,7 +266,48 @@ async fn a_checkpoint_rolls_back_a_join_and_a_destroyed_one_keeps_it() {
         DeviceState::Activated,
         "the timer put the deleted profile back"
     );
+    assert!(
+        nm.settings(&device(&nm, "wlan0").await.profile.unwrap())
+            .await
+            .is_ok()
+    );
     assert_eq!(nm.profiles().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_rollback_brings_back_only_the_profile_a_device_ran() {
+    let fake = FakeNetworkManager::new()
+        .with(FakeDevice::wifi("wlan0").access_point(ops(70)))
+        .saved(wired_profile());
+    let (nm, _served) = serve(&fake).await;
+    let wlan0 = device(&nm, "wlan0").await;
+    let join = || wlan0.wifi_profile(b"Ops", Some("correct horse")).unwrap();
+    let ran = nm.add_and_activate(join(), &wlan0.path).await.unwrap();
+    let uuid = |profiles: Vec<Profile>| profiles.into_iter().map(|p| p.uuid).collect::<Vec<_>>();
+    let ran_uuid = uuid(nm.saved().await.unwrap()).pop().unwrap();
+    let flags = checkpoint::DESTROY_ALL | checkpoint::DELETE_NEW_CONNECTIONS;
+    let made = nm
+        .create_checkpoint(&[&wlan0.path], 180, flags)
+        .await
+        .unwrap();
+
+    for profile in nm.profiles().await.unwrap() {
+        nm.delete_profile(&profile).await.unwrap();
+    }
+    nm.add_and_activate(join(), &wlan0.path).await.unwrap();
+    nm.roll_back(&made).await.unwrap();
+
+    let back = nm.saved().await.unwrap();
+    assert_eq!(
+        uuid(back.clone()),
+        [ran_uuid],
+        "the deleted saved profile and the new one stay gone"
+    );
+    assert_ne!(back[0].path, ran.profile, "added back at a new path");
+    assert!(nm.settings(&ran.profile).await.is_err());
+    let wlan0 = device(&nm, "wlan0").await;
+    assert_eq!(wlan0.profile, Some(back[0].path.clone()));
+    assert_eq!(wlan0.active_access_point.unwrap().ssid, b"Ops");
 }
 
 #[tokio::test]
@@ -325,10 +372,163 @@ async fn saved_profiles_are_listed_and_deleted() {
     }
     assert_eq!(kinds, ["802-3-ethernet", "802-11-wireless"]);
 
+    let saved: Vec<_> = nm
+        .saved()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|p| (p.path, p.id, p.kind, p.ssid))
+        .collect();
+    assert_eq!(
+        saved,
+        [
+            (
+                profiles[0].clone(),
+                "Wired".into(),
+                "802-3-ethernet".into(),
+                None
+            ),
+            (
+                joined.profile.clone(),
+                "Ops".into(),
+                "802-11-wireless".into(),
+                Some(b"Ops".to_vec())
+            ),
+        ]
+    );
+    let uuids: Vec<_> = nm
+        .saved()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|p| p.uuid)
+        .collect();
+    assert!(
+        uuids[0] != uuids[1] && uuids.iter().all(|u| u.len() == 36),
+        "{uuids:?}"
+    );
+
     nm.delete_profile(&joined.profile).await.unwrap();
     assert_eq!(nm.profiles().await.unwrap(), [profiles[0].clone()]);
     assert_eq!(device(&nm, "wlan0").await.profile, None);
     assert!(nm.settings(&joined.profile).await.is_err());
+}
+
+fn method_error(e: zbus::Error) -> String {
+    match e {
+        zbus::Error::MethodError(name, _, _) => name.to_string(),
+        other => panic!("not a method error: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_disconnect_drops_the_network_and_keeps_its_profile() {
+    let fake = FakeNetworkManager::new().with(FakeDevice::wifi("wlan0").access_point(ops(70)));
+    let (nm, _served) = serve(&fake).await;
+    let wlan0 = device(&nm, "wlan0").await;
+    let joined = nm
+        .add_and_activate(
+            wlan0.wifi_profile(b"Ops", Some("correct horse")).unwrap(),
+            &wlan0.path,
+        )
+        .await
+        .unwrap();
+
+    nm.disconnect(&wlan0.path).await.unwrap();
+    let wlan0 = device(&nm, "wlan0").await;
+    assert_eq!(
+        (wlan0.state, wlan0.reason),
+        (DeviceState::Disconnected, reason::USER_REQUESTED)
+    );
+    assert_eq!((wlan0.profile, wlan0.active_access_point), (None, None));
+    assert_eq!(
+        nm.profiles().await.unwrap(),
+        std::slice::from_ref(&joined.profile)
+    );
+
+    nm.activate(&joined.profile, &wlan0.path).await.unwrap();
+    let wlan0 = device(&nm, "wlan0").await;
+    assert_eq!(wlan0.state, DeviceState::Activated);
+    assert_eq!(wlan0.profile, Some(joined.profile));
+    assert_eq!(wlan0.active_access_point.unwrap().ssid, b"Ops");
+    assert_eq!(fake.heard()[1], "Disconnect wlan0");
+}
+
+#[tokio::test]
+async fn disconnecting_a_disconnected_device_is_not_active() {
+    let fake = FakeNetworkManager::new().with(FakeDevice::ethernet("eth0"));
+    let (nm, _served) = serve(&fake).await;
+    let eth0 = device(&nm, "eth0").await;
+    let refused = nm.disconnect(&eth0.path).await.unwrap_err();
+    assert_eq!(
+        method_error(refused),
+        "org.freedesktop.NetworkManager.Device.NotActive"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_join_leaves_no_connection_to_disconnect() {
+    let fake = FakeNetworkManager::new().with(FakeDevice::wifi("wlan0").access_point(ops(70)));
+    let (nm, _served) = serve(&fake).await;
+    let wlan0 = device(&nm, "wlan0").await;
+    for (ssid, passphrase) in [(&b"Ops"[..], "battery staple"), (b"Elsewhere", "anything")] {
+        let profile = wlan0.wifi_profile(ssid, Some(passphrase)).unwrap();
+        nm.add_and_activate(profile, &wlan0.path).await.unwrap();
+        let failed = device(&nm, "wlan0").await;
+        assert_eq!(
+            (failed.state, failed.profile, failed.active_access_point),
+            (DeviceState::Failed, None, None)
+        );
+        let refused = nm.disconnect(&wlan0.path).await.unwrap_err();
+        assert_eq!(
+            method_error(refused),
+            "org.freedesktop.NetworkManager.Device.NotActive"
+        );
+    }
+    assert_eq!(
+        nm.profiles().await.unwrap().len(),
+        2,
+        "a failed join keeps its profile"
+    );
+}
+
+#[tokio::test]
+async fn a_refused_disconnect_leaves_the_connection_up() {
+    let fake = FakeNetworkManager::new().with(FakeDevice::ethernet("eth0").active(wired_profile()));
+    let (nm, _served) = serve(&fake).await;
+    let eth0 = device(&nm, "eth0").await;
+    fake.refuse("Disconnect");
+    let refused = nm.disconnect(&eth0.path).await.unwrap_err();
+    assert_eq!(
+        method_error(refused),
+        "org.freedesktop.NetworkManager.Device.Failed"
+    );
+    assert_eq!(device(&nm, "eth0").await.state, DeviceState::Activated);
+}
+
+#[tokio::test]
+async fn a_profile_deleted_while_listing_is_left_out_of_saved() {
+    let fake = FakeNetworkManager::new()
+        .saved(wired_profile())
+        .saved(wired_profile());
+    let (nm, _served) = serve(&fake).await;
+    let profiles = nm.profiles().await.unwrap();
+
+    fake.vanish_after_listing(&profiles[0]);
+    let left: Vec<_> = nm
+        .saved()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|p| p.path)
+        .collect();
+    assert_eq!(left, profiles[1..]);
+
+    fake.refuse("GetSettings");
+    assert!(
+        nm.saved().await.is_err(),
+        "any other error still fails the call"
+    );
 }
 
 #[tokio::test]

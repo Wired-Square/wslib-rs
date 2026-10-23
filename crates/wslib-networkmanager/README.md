@@ -53,13 +53,25 @@ nm.destroy_checkpoint(&undo).await?;
   passphrase for a network that takes none is not sent. WEP and 802.1X are
   `JoinError::Unsupported`, a missing passphrase `NeedsPassphrase`.
   **`add_and_activate`** adds and starts it; a wrong passphrase shows afterwards as the device `Failed` with
-  `NO_SECRETS`, not as the call's error.
+  `NO_SECRETS`, not as the call's error. Real NetworkManager moves on to
+  `Disconnected` (reason none) within a second, so read the reason promptly.
+  A profile kept with a wrong passphrase still autoconnects at boot and fails.
 - **Checkpoints**: `create_checkpoint` over devices with a timeout and the
   `checkpoint` flags, `destroy_checkpoint` to keep what changed,
   `roll_back` to undo it now (each device's `RollbackResult`), and
-  `checkpoints` for those NetworkManager still holds. The timer runs inside
+  `checkpoints` for those NetworkManager still holds. A rollback brings back
+  only the profile each device was running, at a new path with its UUID, so
+  key a saved network by `uuid`. The timer runs inside
   NetworkManager, so it outlives the process that set it; neither a reboot
   nor a NetworkManager restart rolls one back, they just lose it.
+- **`disconnect`** drops a device's active connection, a Wi-Fi network say,
+  and keeps the profile; the device is `Disconnected` with `USER_REQUESTED`,
+  and NetworkManager does not autoconnect it until something activates it.
+- **`activate`** starts a saved profile on a device, answering the active
+  connection: reconnecting after `disconnect` without adding a profile again.
+- **`saved`** reads each profile into a `Profile`: path, UUID, name, type
+  and, for Wi-Fi, the SSID, skipping one deleted mid-read; `Profile::read`
+  does the same for one.
 - **Profiles**: `profiles`, `settings` (secrets left out), `update_profile`
   (written to disk), `delete_profile`, and `apply`: `Reapply` in place, or
   activation when NetworkManager cannot change it in place.
@@ -78,8 +90,9 @@ nm.destroy_checkpoint(&undo).await?;
 - **`testing::FakeNetworkManager`** (feature `testing`, Unix only): wired,
   Wi-Fi and any other type of device, with addresses, profiles and access points, served in-process
   over a socket pair. A join succeeds with the access point's passphrase and
-  otherwise leaves the device `Failed`; checkpoints snapshot and restore, and
-  `expire_checkpoints` plays the timer. It answers `GetNameOwner`, and
+  otherwise leaves the device `Failed`; checkpoints roll back as NetworkManager's do, and
+  `expire_checkpoints` plays the timer. Profiles get a `connection.uuid` and
+  `connection.id` where they lack one, and a scan moves the device's `LastScan`. It answers `GetNameOwner`, and
   `restart` gives it a new owner and drops its checkpoints. It records each call that changes
   something and can be told to refuse a method.
 

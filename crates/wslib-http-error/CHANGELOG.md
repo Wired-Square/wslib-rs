@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.1
+
+- `internal` and `unavailable` log their cause through
+  `wslib_telemetry::foreign_error`: a URL's userinfo is stripped and the cause
+  cut to 512 bytes.
+- An `ApiError` response carries a clone of its `ApiErrorBody` in its
+  extensions, so an outer layer can recognise it and re-render it, as an HTML
+  page for a browser, say.
+- `ApiError` is boxed inside, one pointer wide, so `Result<_, ApiError>` no
+  longer trips clippy's `result_large_err`.
+
 ## 0.1.0
 
 - `ApiErrorBody`: `{"error": <sentence>, "code"?: <snake_case>}` with the

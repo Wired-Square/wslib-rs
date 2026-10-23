@@ -3,7 +3,10 @@
 //! text, so the name is all it has, and the guarantee stays a type that will
 //! not print itself.
 
+use std::fmt;
+
 /// Field names whose values are never captured.
+#[cfg(feature = "ring")]
 const SECRET_NAMES: &[&str] = &[
     "password",
     "passphrase",
@@ -20,6 +23,7 @@ const SECRET_NAMES: &[&str] = &[
 /// Matched as suffixes too, so `operator_password` is caught without listing
 /// every compound anybody might write. Not bare `key`: that is a settings
 /// table's column, used innocently all over a store.
+#[cfg(feature = "ring")]
 const SECRET_SUFFIXES: &[&str] = &[
     "_password",
     "_passphrase",
@@ -29,6 +33,7 @@ const SECRET_SUFFIXES: &[&str] = &[
     "_community",
 ];
 
+#[cfg(feature = "ring")]
 pub(crate) fn is_secret(name: &str) -> bool {
     SECRET_NAMES.contains(&name) || SECRET_SUFFIXES.iter().any(|s| name.ends_with(s))
 }
@@ -48,6 +53,12 @@ pub fn truncate(mut text: String, max: usize, marker: &str) -> String {
         text.push_str(marker);
     }
     text
+}
+
+/// Renders somebody else's error for a log line: URL credentials stripped and
+/// the length capped, which is not a filter that makes arbitrary text safe.
+pub fn foreign_error(error: &dyn fmt::Display) -> String {
+    truncate(strip_userinfo(&error.to_string()), 512, "…")
 }
 
 /// Replaces `scheme://user:password@host` with `scheme://redacted@host`.
@@ -86,6 +97,7 @@ pub fn strip_userinfo(text: &str) -> String {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "ring")]
     #[test]
     fn the_denylist_catches_compounds_without_catching_settings_keys() {
         for name in [
@@ -152,5 +164,21 @@ mod tests {
             strip_userinfo("https://user@example.invalid/x"),
             "https://redacted@example.invalid/x"
         );
+    }
+
+    #[test]
+    fn a_foreign_error_loses_its_url_credentials_and_keeps_the_host() {
+        let rendered = foreign_error(
+            &"error sending request for url (https://hook:s3cr3t@example.invalid/notify)",
+        );
+        assert!(!rendered.contains("s3cr3t"), "{rendered}");
+        assert!(rendered.contains("example.invalid"), "{rendered}");
+    }
+
+    #[test]
+    fn a_foreign_error_carrying_a_response_body_is_capped() {
+        let rendered = foreign_error(&format!("upstream said: {}", "é".repeat(4096)));
+        assert!(rendered.len() <= 512 + '…'.len_utf8(), "{}", rendered.len());
+        assert!(rendered.ends_with('…'));
     }
 }

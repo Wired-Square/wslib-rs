@@ -13,13 +13,13 @@
 //! target and level only, without `tracing-subscriber`'s regex engine. `types`
 //! is the ring's records alone, with serde and chrono and no `tracing`; `ring`
 //! adds the ring itself, `ts` their TypeScript, and `test-support` a subscriber
-//! of nothing but a ring.
+//! of nothing but a ring. [`foreign_error`], [`strip_userinfo`] and [`truncate`]
+//! need no feature.
 
 #[cfg(feature = "journald")]
 mod journald;
 #[cfg(feature = "types")]
 pub mod log;
-#[cfg(feature = "ring")]
 mod redact;
 #[cfg(feature = "ring")]
 mod ring;
@@ -28,8 +28,7 @@ mod setup;
 
 #[cfg(feature = "types")]
 pub use log::{LogLevel, LogRecord, LogSnapshot};
-#[cfg(feature = "ring")]
-pub use redact::{strip_userinfo, truncate};
+pub use redact::{foreign_error, strip_userinfo, truncate};
 #[cfg(feature = "ring")]
 pub use ring::{Logs, LogsBuilder, Tap};
 #[cfg(feature = "setup-core")]

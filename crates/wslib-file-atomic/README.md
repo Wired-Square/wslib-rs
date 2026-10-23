@@ -64,7 +64,12 @@ hidden.discard_staged(path)?;
   the window in which a power cut leaves a key and its certificate
   mismatched; it doesn't make the pair atomic: `Transaction` does.
 - **`owner_only`** restricts an existing file the same way, for files
-  something else created.
+  something else created. On Windows, **`administrators_read_and_delete`**
+  does too and lets Administrators read and delete it; a file Administrators
+  own stays theirs in full.
+- **Feature `testing`**: `testing::assert_owner_only(path)` checks `0600`, or
+  on Windows reads the DACL back, for a consumer's own tests;
+  `testing::assert_administrators_read_and_delete` is its Windows companion.
 
 ## Several files together: `Transaction`
 

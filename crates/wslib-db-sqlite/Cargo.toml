@@ -1,0 +1,27 @@
+[package]
+name = "wslib-db-sqlite"
+version = "0.1.0"
+description = "One SQLite database for an app: WAL and owner-only on open, write transactions that lock up front, migration chains applied in one transaction, and a settings table with secrets and local state kept out of exports."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[dependencies]
+chrono = { version = "0.4.38", default-features = false, features = ["clock", "std"] }
+serde = "1.0.225"
+serde_json = "1.0.85"
+sqlx = { version = "0.8.5", default-features = false, features = ["migrate", "runtime-tokio", "sqlite"] }
+thiserror = "2"
+tokio = { version = "1.47", default-features = false, features = ["sync", "time"] }
+tracing = "0.1.41"
+wslib-file-atomic = { path = "../wslib-file-atomic", version = "0.1", registry = "wired-square" }
+wslib-secret = { path = "../wslib-secret", version = "0.1.1", registry = "wired-square" }
+
+[dev-dependencies]
+serde = { version = "1.0.225", features = ["derive"] }
+tempfile = "3.10.1"
+tokio = { version = "1.47", features = ["macros", "rt"] }

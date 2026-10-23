@@ -9,7 +9,10 @@ use crate::ApiErrorBody;
 /// A refused request: its status, its [`ApiErrorBody`] and any headers it
 /// answers with.
 #[derive(Debug, Clone)]
-pub struct ApiError {
+pub struct ApiError(Box<Parts>);
+
+#[derive(Debug, Clone)]
+struct Parts {
     status: StatusCode,
     body: ApiErrorBody,
     headers: HeaderMap,
@@ -17,11 +20,11 @@ pub struct ApiError {
 
 impl ApiError {
     pub fn new(status: StatusCode, sentence: impl Into<String>) -> Self {
-        Self {
+        Self(Box::new(Parts {
             status,
             body: ApiErrorBody::new(sentence),
             headers: HeaderMap::new(),
-        }
+        }))
     }
 
     pub fn bad_request(sentence: impl Into<String>) -> Self {
@@ -67,7 +70,8 @@ impl ApiError {
             .with_header(header::RETRY_AFTER, HeaderValue::from(seconds))
     }
 
-    /// A 500 answering "could not {what}"; `cause` goes to the log, never the client.
+    /// A 500 answering "could not {what}"; `cause` goes to the log, with URL
+    /// credentials stripped, never to the client.
     pub fn internal(what: &'static str, cause: impl fmt::Display) -> Self {
         Self::failed(StatusCode::INTERNAL_SERVER_ERROR, what, cause)
     }
@@ -78,52 +82,62 @@ impl ApiError {
     }
 
     fn failed(status: StatusCode, what: &'static str, cause: impl fmt::Display) -> Self {
-        tracing::error!(status = status.as_u16(), what, cause = %cause, "request failed");
+        let cause = wslib_telemetry::foreign_error(&cause);
+        tracing::error!(status = status.as_u16(), what, %cause, "request failed");
         Self::new(status, format!("could not {what}"))
     }
 
     /// The app's own `snake_case` code for this refusal.
     pub fn with_code(mut self, code: impl Into<String>) -> Self {
-        self.body.code = Some(code.into());
+        self.0.body.code = Some(code.into());
         self
     }
 
     /// A field of the app's own, beside `error` and `code` in the body.
     pub fn with_field(mut self, name: impl Into<String>, value: impl Into<Value>) -> Self {
-        self.body.extra.insert(name.into(), value.into());
+        self.0.body.extra.insert(name.into(), value.into());
         self
     }
 
     pub fn with_header(mut self, name: HeaderName, value: HeaderValue) -> Self {
-        self.headers.insert(name, value);
+        self.0.headers.insert(name, value);
         self
     }
 
     pub fn status(&self) -> StatusCode {
-        self.status
+        self.0.status
     }
 
     pub fn body(&self) -> &ApiErrorBody {
-        &self.body
+        &self.0.body
     }
 
     pub fn headers(&self) -> &HeaderMap {
-        &self.headers
+        &self.0.headers
     }
 }
 
 impl fmt::Display for ApiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.body.error)
+        f.write_str(&self.0.body.error)
     }
 }
 
 impl std::error::Error for ApiError {}
 
+/// The response carries a clone of its [`ApiErrorBody`] in its extensions, so an
+/// outer layer can recognise an `ApiError` answer and re-render it.
 #[cfg(feature = "axum")]
 impl axum::response::IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
-        (self.status, self.headers, axum::Json(self.body)).into_response()
+        let Parts {
+            status,
+            body,
+            headers,
+        } = *self.0;
+        let mut response = (status, headers, axum::Json(body.clone())).into_response();
+        response.extensions_mut().insert(body);
+        response
     }
 }
 
@@ -183,6 +197,46 @@ mod tests {
     fn retry_after_rounds_up_to_whole_seconds() {
         let error = ApiError::too_many_requests("wait", Duration::from_millis(89_001));
         assert_eq!(error.headers()[header::RETRY_AFTER], "90");
+    }
+
+    #[test]
+    fn an_error_is_small_enough_to_return_by_value() {
+        assert!(size_of::<ApiError>() <= 2 * size_of::<usize>());
+    }
+
+    #[cfg(feature = "axum")]
+    #[tokio::test]
+    async fn a_layer_finds_the_body_on_the_response_and_re_renders_it() {
+        use axum::Router;
+        use axum::response::{Html, IntoResponse, Response};
+        use axum::routing::get;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        let as_page = |response: Response| match response.extensions().get::<ApiErrorBody>() {
+            Some(body) => {
+                let page = Html(format!("<p>{}</p>", body.error));
+                (response.status(), page).into_response()
+            }
+            None => response,
+        };
+        let app = Router::new()
+            .route("/", get(async || ApiError::conflict("taken")))
+            .route("/fine", get(async || "fine"))
+            .layer(tower::util::MapResponseLayer::new(as_page));
+
+        let request = |uri| {
+            http::Request::get(uri)
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+        let response = app.clone().oneshot(request("/")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(bytes, "<p>taken</p>");
+        let response = app.oneshot(request("/fine")).await.unwrap();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(bytes, "fine");
     }
 
     #[cfg(feature = "axum")]

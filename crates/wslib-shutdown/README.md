@@ -19,8 +19,8 @@ let which = wslib_shutdown::stop_signal().await;
 - **`stop_signal()`** resolves with the `Signal` that asked the process to
   stop. `SIGTERM` is what systemd and launchd send: a service that only
   handles `SIGINT` is killed rather than stopped. `Signal` displays as
-  `SIGTERM`, `SIGINT` or `Ctrl-C`, and `as_str()` gives the same for a log
-  field.
+  `SIGTERM`, `SIGINT` or `Ctrl-C`; log it as `signal = signal.as_str()`,
+  which records a string field (`%signal` records it unquoted).
 - **`cancel_on_stop(token)`** waits for the same, logs which at `info`, and
   cancels the token.
 - **Both register their handlers at the call.** A signal that arrives after

@@ -19,6 +19,7 @@ use serialport::UsbPortInfo;
 
 use crate::chip::ESPTOOL_DEFAULT_BAUD;
 use crate::error::{FlashError, Result};
+use crate::output;
 use crate::ports;
 use crate::progress::{FlashProgress, FlashStage, check_cancel};
 
@@ -98,7 +99,6 @@ pub fn flash(
         .write_bin_to_flash(address, &buffer, &mut callbacks)
         .map_err(|e| FlashError::Message(format!("Flash write failed: {e}")))?;
 
-    check_cancel(progress)?;
     progress.on_stage(FlashStage::Resetting, "Flash complete; chip will reset");
     Ok(())
 }
@@ -138,37 +138,35 @@ pub fn read_flash(
         ),
     );
 
-    let mut file = std::fs::File::create(output_path).map_err(|e| {
-        FlashError::Message(format!("Failed to open {}: {e}", output_path.display()))
+    output::replace_with(output_path, |file| {
+        let mut bytes_done: u64 = 0;
+        let mut current_offset = offset;
+        let mut remaining = resolved_size;
+
+        while remaining > 0 {
+            check_cancel(progress)?;
+
+            let chunk_size = remaining.min(READ_CHUNK_SIZE);
+            let chunk = read_chunk(
+                flasher.connection(),
+                current_offset,
+                chunk_size,
+                READ_BLOCK_SIZE.min(chunk_size),
+                READ_MAX_IN_FLIGHT,
+            )?;
+
+            file.write_all(&chunk).map_err(|e| {
+                FlashError::Message(format!("Failed to write {}: {e}", output_path.display()))
+            })?;
+
+            bytes_done += chunk.len() as u64;
+            current_offset = current_offset.saturating_add(chunk.len() as u32);
+            remaining = remaining.saturating_sub(chunk.len() as u32);
+            progress.on_bytes(bytes_done, total);
+        }
+        Ok(())
     })?;
 
-    let mut bytes_done: u64 = 0;
-    let mut current_offset = offset;
-    let mut remaining = resolved_size;
-
-    while remaining > 0 {
-        check_cancel(progress)?;
-
-        let chunk_size = remaining.min(READ_CHUNK_SIZE);
-        let chunk = read_chunk(
-            flasher.connection(),
-            current_offset,
-            chunk_size,
-            READ_BLOCK_SIZE.min(chunk_size),
-            READ_MAX_IN_FLIGHT,
-        )?;
-
-        file.write_all(&chunk).map_err(|e| {
-            FlashError::Message(format!("Failed to write {}: {e}", output_path.display()))
-        })?;
-
-        bytes_done += chunk.len() as u64;
-        current_offset = current_offset.saturating_add(chunk.len() as u32);
-        remaining = remaining.saturating_sub(chunk.len() as u32);
-        progress.on_bytes(bytes_done, total);
-    }
-
-    file.sync_all().ok();
     progress.on_progress(&format!("Saved {total} bytes to {}", output_path.display()));
     Ok(())
 }

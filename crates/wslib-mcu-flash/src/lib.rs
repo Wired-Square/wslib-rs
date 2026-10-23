@@ -27,6 +27,9 @@ pub mod dfu;
 #[cfg(feature = "stm32-uart")]
 pub mod stm32_uart;
 
+#[cfg(any(feature = "espflash", feature = "stm32-uart"))]
+mod output;
+
 #[cfg(all(feature = "espflash", feature = "stm32-uart"))]
 pub mod detect;
 

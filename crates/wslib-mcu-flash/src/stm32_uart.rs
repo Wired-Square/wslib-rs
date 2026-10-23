@@ -15,6 +15,7 @@ use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
 use crate::chip::lookup_stm32_pid;
 use crate::error::{FlashError, Result};
 use crate::image::{self, pad_word_with_ff};
+use crate::output;
 use crate::progress::{FlashProgress, FlashStage, check_cancel};
 
 const SYNC_BYTE: u8 = 0x7F;
@@ -195,30 +196,44 @@ pub fn read_flash(
         ),
     );
 
-    let mut file = std::fs::File::create(output_path).map_err(|e| {
-        FlashError::Message(format!("Failed to open {}: {e}", output_path.display()))
+    read_memory_to(
+        session.port.as_mut(),
+        output_path,
+        offset,
+        resolved_size,
+        progress,
+    )
+}
+
+fn read_memory_to(
+    p: &mut dyn SerialPort,
+    output_path: &Path,
+    offset: u32,
+    resolved_size: u32,
+    progress: &mut dyn FlashProgress,
+) -> Result<()> {
+    let total = resolved_size as u64;
+    output::replace_with(output_path, |file| {
+        let mut bytes_done: u64 = 0;
+        let mut current_offset = offset;
+        let mut remaining = resolved_size;
+
+        while remaining > 0 {
+            check_cancel(progress)?;
+            let chunk_len = remaining.min(CHUNK as u32) as usize;
+            let chunk = cmd_read_memory(p, current_offset, chunk_len)?;
+            file.write_all(&chunk).map_err(|e| {
+                FlashError::Message(format!("Failed to write {}: {e}", output_path.display()))
+            })?;
+            let n = chunk.len() as u32;
+            bytes_done += n as u64;
+            current_offset = current_offset.saturating_add(n);
+            remaining = remaining.saturating_sub(n);
+            progress.on_bytes(bytes_done, total);
+        }
+        Ok(())
     })?;
 
-    let p = session.port.as_mut();
-    let mut bytes_done: u64 = 0;
-    let mut current_offset = offset;
-    let mut remaining = resolved_size;
-
-    while remaining > 0 {
-        check_cancel(progress)?;
-        let chunk_len = remaining.min(CHUNK as u32) as u8;
-        let chunk = cmd_read_memory(p, current_offset, chunk_len)?;
-        file.write_all(&chunk).map_err(|e| {
-            FlashError::Message(format!("Failed to write {}: {e}", output_path.display()))
-        })?;
-        let n = chunk.len() as u32;
-        bytes_done += n as u64;
-        current_offset = current_offset.saturating_add(n);
-        remaining = remaining.saturating_sub(n);
-        progress.on_bytes(bytes_done, total);
-    }
-
-    file.sync_all().ok();
     progress.on_progress(&format!("Saved {total} bytes to {}", output_path.display()));
     Ok(())
 }
@@ -421,16 +436,18 @@ fn read_counted(p: &mut dyn SerialPort) -> Result<Vec<u8>> {
     Ok(payload)
 }
 
-fn cmd_read_memory(p: &mut dyn SerialPort, addr: u32, len: u8) -> Result<Vec<u8>> {
-    if len == 0 {
-        return Err("cmd_read_memory: len must be >= 1".into());
+fn cmd_read_memory(p: &mut dyn SerialPort, addr: u32, len: usize) -> Result<Vec<u8>> {
+    if !(1..=CHUNK).contains(&len) {
+        return Err(FlashError::Message(format!(
+            "cmd_read_memory: invalid length {len}"
+        )));
     }
     send_command(p, CMD_READ_MEMORY).map_err(rdp_hint_on_nack)?;
     send_address(p, addr).map_err(rdp_hint_on_nack)?;
-    let n = len - 1;
+    let n = (len - 1) as u8;
     write_all(p, &[n, n ^ 0xFF])?;
     wait_ack(p).map_err(rdp_hint_on_nack)?;
-    let mut buf = vec![0u8; len as usize];
+    let mut buf = vec![0u8; len];
     read_exact(p, &mut buf)?;
     Ok(buf)
 }
@@ -472,6 +489,7 @@ fn with_timeout<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::progress::LogProgress;
 
     #[test]
     fn parse_pin_round_trip() {
@@ -499,5 +517,200 @@ mod tests {
         assert!(hinted.contains("RDP"), "{hinted}");
         let other = rdp_hint_on_nack("Serial read: timeout".into()).to_string();
         assert_eq!(other, "Serial read: timeout");
+    }
+
+    struct FakePort {
+        replies: std::collections::VecDeque<u8>,
+        written: Vec<u8>,
+    }
+
+    impl FakePort {
+        fn acking_reads_then_nack(chunks: &[usize]) -> Self {
+            let mut replies = std::collections::VecDeque::new();
+            for &len in chunks {
+                replies.extend([ACK, ACK, ACK]);
+                replies.extend(std::iter::repeat_n(0xA5, len));
+            }
+            replies.push_back(NACK);
+            Self {
+                replies,
+                written: Vec::new(),
+            }
+        }
+    }
+
+    impl std::io::Read for FakePort {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = buf.len().min(self.replies.len());
+            for slot in &mut buf[..n] {
+                *slot = self.replies.pop_front().unwrap();
+            }
+            Ok(n)
+        }
+    }
+
+    impl std::io::Write for FakePort {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.written.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl SerialPort for FakePort {
+        fn name(&self) -> Option<String> {
+            None
+        }
+        fn baud_rate(&self) -> serialport::Result<u32> {
+            Ok(DEFAULT_BAUD)
+        }
+        fn data_bits(&self) -> serialport::Result<DataBits> {
+            Ok(DataBits::Eight)
+        }
+        fn flow_control(&self) -> serialport::Result<FlowControl> {
+            Ok(FlowControl::None)
+        }
+        fn parity(&self) -> serialport::Result<Parity> {
+            Ok(Parity::Even)
+        }
+        fn stop_bits(&self) -> serialport::Result<StopBits> {
+            Ok(StopBits::One)
+        }
+        fn timeout(&self) -> Duration {
+            ACK_TIMEOUT
+        }
+        fn set_baud_rate(&mut self, _: u32) -> serialport::Result<()> {
+            Ok(())
+        }
+        fn set_data_bits(&mut self, _: DataBits) -> serialport::Result<()> {
+            Ok(())
+        }
+        fn set_flow_control(&mut self, _: FlowControl) -> serialport::Result<()> {
+            Ok(())
+        }
+        fn set_parity(&mut self, _: Parity) -> serialport::Result<()> {
+            Ok(())
+        }
+        fn set_stop_bits(&mut self, _: StopBits) -> serialport::Result<()> {
+            Ok(())
+        }
+        fn set_timeout(&mut self, _: Duration) -> serialport::Result<()> {
+            Ok(())
+        }
+        fn write_request_to_send(&mut self, _: bool) -> serialport::Result<()> {
+            Ok(())
+        }
+        fn write_data_terminal_ready(&mut self, _: bool) -> serialport::Result<()> {
+            Ok(())
+        }
+        fn read_clear_to_send(&mut self) -> serialport::Result<bool> {
+            Ok(false)
+        }
+        fn read_data_set_ready(&mut self) -> serialport::Result<bool> {
+            Ok(false)
+        }
+        fn read_ring_indicator(&mut self) -> serialport::Result<bool> {
+            Ok(false)
+        }
+        fn read_carrier_detect(&mut self) -> serialport::Result<bool> {
+            Ok(false)
+        }
+        fn bytes_to_read(&self) -> serialport::Result<u32> {
+            Ok(self.replies.len() as u32)
+        }
+        fn bytes_to_write(&self) -> serialport::Result<u32> {
+            Ok(0)
+        }
+        fn clear(&self, _: serialport::ClearBuffer) -> serialport::Result<()> {
+            Ok(())
+        }
+        fn try_clone(&self) -> serialport::Result<Box<dyn SerialPort>> {
+            Err(serialport::Error::new(
+                serialport::ErrorKind::Unknown,
+                "not cloneable",
+            ))
+        }
+        fn set_break(&self) -> serialport::Result<()> {
+            Ok(())
+        }
+        fn clear_break(&self) -> serialport::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct Cancelled;
+
+    impl FlashProgress for Cancelled {
+        fn on_progress(&mut self, _: &str) {}
+
+        fn cancelled(&self) -> bool {
+            true
+        }
+    }
+
+    fn existing_output(dir: &Path) -> std::path::PathBuf {
+        let path = dir.join("backup.bin");
+        std::fs::write(&path, b"earlier backup").unwrap();
+        path
+    }
+
+    fn scratch_dir(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("wslib-mcu-flash-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_full_chunk_is_read_as_256_bytes() {
+        let dir = scratch_dir("full-chunk");
+        let path = dir.join("backup.bin");
+        let mut port = FakePort::acking_reads_then_nack(&[256, 44]);
+        read_memory_to(
+            &mut port,
+            &path,
+            DEFAULT_FLASH_BASE,
+            300,
+            &mut LogProgress::default(),
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), vec![0xA5; 300]);
+        let len_frames: Vec<_> = port.written.chunks(9).map(|f| [f[7], f[8]]).collect();
+        assert_eq!(len_frames, [[0xFF, 0x00], [43, !43]]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_read_leaves_the_existing_output() {
+        let dir = scratch_dir("failed-read");
+        let path = existing_output(&dir);
+        let mut port = FakePort::acking_reads_then_nack(&[256]);
+        let err = read_memory_to(
+            &mut port,
+            &path,
+            DEFAULT_FLASH_BASE,
+            512,
+            &mut LogProgress::default(),
+        );
+        assert!(err.is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"earlier backup");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_cancelled_read_leaves_the_existing_output() {
+        let dir = scratch_dir("cancelled-read");
+        let path = existing_output(&dir);
+        let mut port = FakePort::acking_reads_then_nack(&[]);
+        let result = read_memory_to(&mut port, &path, DEFAULT_FLASH_BASE, 256, &mut Cancelled);
+        assert_eq!(result, Err(FlashError::Cancelled));
+        assert_eq!(std::fs::read(&path).unwrap(), b"earlier backup");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

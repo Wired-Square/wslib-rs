@@ -22,6 +22,7 @@ nusb = { version = "0.1.10", optional = true }
 serde = { version = "1.0.219", features = ["derive"], optional = true }
 serialport = { version = "4.7.2", features = ["usbportinfo-interface"], optional = true }
 tokio = { version = "1.15", features = ["io-util", "process", "rt", "sync", "time"], optional = true }
+wslib-file-atomic = { path = "../wslib-file-atomic", version = "0.1", registry = "wired-square", optional = true }
 
 [features]
 default = []
@@ -29,9 +30,9 @@ serde = ["dep:serde"]
 ports = ["dep:serialport"]
 esptool = ["dep:async-trait", "dep:tokio"]
 dfu-util = ["dep:async-trait", "dep:tokio"]
-espflash = ["dep:espflash", "ports"]
+espflash = ["dep:espflash", "dep:wslib-file-atomic", "ports"]
 dfu = ["dep:dfu-nusb", "dep:nusb"]
-stm32-uart = ["ports"]
+stm32-uart = ["dep:wslib-file-atomic", "ports"]
 
 [dev-dependencies]
 tokio = { version = "1.15", features = ["macros", "rt-multi-thread", "time"] }

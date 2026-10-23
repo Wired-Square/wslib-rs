@@ -1,0 +1,25 @@
+[package]
+name = "wslib-homeassistant"
+version = "0.1.0"
+description = "An app as a Home Assistant add-on: the ingress proxy's peer check, the caller it names and the base path it serves the app under."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+testing = []
+
+[dependencies]
+axum = { version = "0.8", default-features = false, features = ["tokio"] }
+wslib-http-error = { path = "../wslib-http-error", version = "0.1", registry = "wired-square" }
+wslib-http-scaffold = { path = "../wslib-http-scaffold", version = "0.1.1", registry = "wired-square" }
+
+[dev-dependencies]
+http-body-util = "0.1"
+serde_json = "1.0.85"
+tokio = { version = "1.47", features = ["macros", "rt"] }
+tower = { version = "0.5.2", features = ["util"] }

@@ -35,6 +35,7 @@ appliance chassis and every app beside it.
 | `wslib-mdns`            | DNS-SD adverts and browsing, in process or through avahi    |
 | `wslib-1password`       | The `op` CLI typed: vaults, items, documents, `op://` reads |
 | `wslib-db-sqlite`       | One SQLite database: WAL, migration chains, settings        |
+| `wslib-homeassistant`   | Home Assistant Ingress: peer check, caller and base path    |
 
 † Not pure Rust: it carries TypeScript in `js/` that apps vendor into their
 frontend. Every crate that ships other languages is marked here, and says so

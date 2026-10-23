@@ -57,21 +57,31 @@ state.wait_for(|s| !matches!(s, AdvertState::Registering)).await?;
   `advertise` puts the service, its subtypes and TXT in an entry group on
   every interface and both protocols, under avahi's host name. avahi does not
   rename a D-Bus client's record, so a collision stays `Collided`. Another
-  client here holding the name is `Error::Collision`.
+  client here holding the name is `Error::Collision`, and nobody owning
+  `org.freedesktop.Avahi` is `Error::NotRunning`, each with the bus's error.
+  A publish is `Send`, and the group is owned from the moment avahi makes
+  it, so a publish that fails or is dropped part way frees it.
 - **`avahi::AddressGroup`**: A and AAAA records for one name on each
   `(interface index, address)`, with no reverse record, reporting collision.
+  **`own_addresses`** picks from an interface's addresses the ones avahi
+  publishes for its own name: the global ones per interface and family, or
+  the link-local ones where there is none.
 - **`avahi::is_running`**, **`host_name`**, **`set_host_name`** (root or
-  `netdev`), **`restarts`** (`NameOwnerChanged`, `true` when an avahi takes
-  the name) and **`server_states`**. **`renamed_by_avahi(label, called)`**:
-  whether avahi's collision rename turns `label` into `called`.
+  `netdev`; avahi's own name already is no change), **`restarts`**
+  (`NameOwnerChanged`, `true` when an avahi takes the name) and
+  **`server_states`**. **`renamed_by_avahi(label, called)`**: whether
+  avahi's collision rename turns `label` into `called`.
 - **`Responder`** (both features): avahi when anything owns
   `org.freedesktop.Avahi` on the system bus, otherwise in process.
 - **`testing::FakeAvahi`** (feature `testing`, Unix only): served in-process
   over a socket pair. It records each call, holds the host name, collides a
   name on commit (`colliding`), refuses one as held locally (`taken`) or a
-  method as not permitted (`refusing`), and from the test collides an
+  method as not permitted (`refusing`, or the next few with `refuse_next`),
+  and `forgive` drops all of those. `hold` keeps a method's calls open until
+  released, for a publish cut short. From the test it collides an
   established group, renames its host, sends a server state, restarts or
-  stops.
+  stops; stopped, every call fails as
+  `org.freedesktop.DBus.Error.ServiceUnknown`.
 
 ## What isn't
 

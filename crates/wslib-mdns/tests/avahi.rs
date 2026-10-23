@@ -1,11 +1,29 @@
 #![cfg(unix)]
 
+use std::net::IpAddr;
 use std::time::Duration;
 
 use futures_util::StreamExt;
 use wslib_mdns::avahi::{self, AddressGroup, Avahi, ServerState};
 use wslib_mdns::testing::FakeAvahi;
 use wslib_mdns::{AdvertState, Error, Service};
+
+fn error_name(e: &zbus::Error) -> Option<&str> {
+    match e {
+        zbus::Error::MethodError(name, ..) => Some(name.as_str()),
+        _ => None,
+    }
+}
+
+async fn eventually(fake: &FakeAvahi, call: &str) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !fake.heard().iter().any(|c| c == call) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("{call} never came: {:?}", fake.heard()));
+}
 
 fn service() -> Service {
     let mut service = Service::new(
@@ -54,13 +72,44 @@ async fn a_dropped_advert_is_withdrawn() {
     let fake = FakeAvahi::new();
     let (bus, _served) = fake.connect().await.unwrap();
     drop(Avahi::new(&bus).advertise(&service()).await.unwrap());
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while fake.heard().last().map(String::as_str) != Some("Free 1") {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+    eventually(&fake, "Free 1").await;
+}
+
+#[tokio::test]
+async fn both_publishes_can_run_in_a_spawned_task() {
+    let fake = FakeAvahi::new();
+    let (bus, _served) = fake.connect().await.unwrap();
+    let advertising = bus.clone();
+    let advert = tokio::spawn(async move { Avahi::new(&advertising).advertise(&service()).await });
+    let addresses = [(2, "192.168.1.10".parse::<IpAddr>().unwrap())];
+    let group = tokio::spawn(async move {
+        AddressGroup::publish(&bus, &"widget".parse().unwrap(), addresses).await
+    });
+    advert.await.unwrap().unwrap();
+    group.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn a_publish_cut_short_while_filling_or_committing_frees_its_group() {
+    let fake = FakeAvahi::new();
+    let (bus, _served) = fake.connect().await.unwrap();
+    for (method, group) in [("AddServiceSubtype", 1), ("Commit", 2)] {
+        let hold = fake.hold(method);
+        let avahi = Avahi::new(&bus);
+        let service = service();
+        let publish = avahi.advertise(&service);
+        tokio::select! {
+            outcome = publish => panic!("{method} answered while held: {outcome:?}"),
+            () = hold.entered() => {}
         }
-    })
-    .await
-    .expect("freed");
+        eventually(&fake, &format!("Free {group}")).await;
+        hold.release();
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        fake.established().is_empty(),
+        "a cut-short commit stayed published"
+    );
 }
 
 #[tokio::test]
@@ -96,8 +145,28 @@ async fn a_name_another_client_holds_is_a_collision_error_and_its_group_is_freed
     let fake = FakeAvahi::new().taken("Widget");
     let (bus, _served) = fake.connect().await.unwrap();
     let refused = Avahi::new(&bus).advertise(&service()).await;
-    assert!(matches!(refused, Err(Error::Collision)), "{refused:?}");
+    assert!(
+        matches!(&refused, Err(Error::Collision(e)) if error_name(e) == Some("org.freedesktop.Avahi.CollisionError")),
+        "{refused:?}"
+    );
     assert_eq!(fake.heard().last().unwrap(), "Free 1");
+
+    fake.forgive();
+    let advert = Avahi::new(&bus).advertise(&service()).await.unwrap();
+    settles(&mut advert.state(), AdvertState::Established).await;
+}
+
+#[tokio::test]
+async fn a_counted_refusal_refuses_only_that_many_calls() {
+    let fake = FakeAvahi::new();
+    let (bus, _served) = fake.connect().await.unwrap();
+    fake.refuse_next("EntryGroupNew", 1);
+    let refused = Avahi::new(&bus).advertise(&service()).await;
+    assert!(
+        matches!(&refused, Err(Error::Bus(e)) if error_name(e) == Some("org.freedesktop.Avahi.NotPermittedError")),
+        "{refused:?}"
+    );
+    Avahi::new(&bus).advertise(&service()).await.unwrap();
 }
 
 #[tokio::test]
@@ -121,7 +190,7 @@ async fn an_address_group_publishes_each_address_without_a_reverse_record() {
         (2, "192.168.1.10".parse().unwrap()),
         (2, "fe80::1".parse().unwrap()),
     ];
-    let group = AddressGroup::publish(&bus, &"widget".parse().unwrap(), &addresses)
+    let group = AddressGroup::publish(&bus, &"widget".parse().unwrap(), addresses)
         .await
         .unwrap();
     settles(&mut group.state(), AdvertState::Established).await;
@@ -143,12 +212,12 @@ async fn an_address_group_reports_a_collision() {
     let fake = FakeAvahi::new().colliding("widget");
     let (bus, _served) = fake.connect().await.unwrap();
     let addresses = [(2, "192.168.1.10".parse().unwrap())];
-    let group = AddressGroup::publish(&bus, &"widget".parse().unwrap(), &addresses)
+    let group = AddressGroup::publish(&bus, &"widget".parse().unwrap(), addresses)
         .await
         .unwrap();
     settles(&mut group.state(), AdvertState::Collided).await;
 
-    let none = AddressGroup::publish(&bus, &"widget".parse().unwrap(), &[]).await;
+    let none = AddressGroup::publish(&bus, &"widget".parse().unwrap(), Vec::new()).await;
     assert!(matches!(none, Err(Error::Unsupported(_))), "{none:?}");
 }
 
@@ -175,16 +244,22 @@ async fn the_host_name_is_read_and_set_and_its_server_states_follow() {
     assert_eq!(states.next().await, Some(ServerState::Registering));
     assert_eq!(states.next().await, Some(ServerState::Running));
     assert_eq!(avahi::host_name(&bus).await.unwrap(), "widget-3");
+    assert!(fake.heard().iter().any(|c| c == "GetHostName"));
+
+    avahi::set_host_name(&bus, &"widget-3".parse().unwrap())
+        .await
+        .expect("avahi's own name already is no change");
+    assert_eq!(fake.heard().last().unwrap(), "SetHostName widget-3");
 }
 
 #[tokio::test]
 async fn a_refused_rename_is_the_buss_error() {
     let fake = FakeAvahi::new().refusing("SetHostName");
     let (bus, _served) = fake.connect().await.unwrap();
+    let refused = avahi::set_host_name(&bus, &"widget".parse().unwrap()).await;
     assert!(
-        avahi::set_host_name(&bus, &"widget".parse().unwrap())
-            .await
-            .is_err()
+        matches!(&refused, Err(Error::Bus(e)) if error_name(e) == Some("org.freedesktop.Avahi.NotPermittedError")),
+        "{refused:?}"
     );
     assert_eq!(fake.host_name(), "box");
 }
@@ -208,5 +283,24 @@ async fn restarts_and_stops_are_watched_and_a_stopped_avahi_is_not_running() {
     fake.stop(&served).await.unwrap();
     assert_eq!(restarts.next().await, Some(false));
     assert!(!avahi::is_running(&bus).await.unwrap());
-    assert!(Avahi::new(&bus).advertise(&service()).await.is_err());
+    let unknown = Some("org.freedesktop.DBus.Error.ServiceUnknown");
+    let refused = Avahi::new(&bus).advertise(&service()).await;
+    assert!(
+        matches!(&refused, Err(Error::NotRunning(e)) if error_name(e) == unknown),
+        "{refused:?}"
+    );
+    let refused = avahi::host_name(&bus).await;
+    assert!(
+        matches!(&refused, Err(Error::NotRunning(e)) if error_name(e) == unknown),
+        "{refused:?}"
+    );
+    assert_eq!(fake.heard().last().unwrap(), "GetHostName");
+
+    fake.restart(&served).await.unwrap();
+    assert_eq!(restarts.next().await, Some(true));
+    assert_eq!(
+        avahi::host_name(&bus).await.unwrap(),
+        "box",
+        "avahi starts after the app"
+    );
 }

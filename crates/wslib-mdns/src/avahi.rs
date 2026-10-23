@@ -33,26 +33,25 @@ impl Avahi {
     /// Publishes `service` on every interface and both protocols, under
     /// avahi's host name.
     pub async fn advertise(&self, service: &Service) -> Result<Advert, Error> {
-        let subtypes = service.subtypes_of_its_kind()?;
-        let kind = service.kind.to_string();
-        let name = service.instance.as_str();
-        let txt = service
-            .txt
-            .iter()
-            .map(|t| t.to_string().into_bytes())
-            .collect();
-        let group = Group::publish(&self.connection, async |group| {
-            group
-                .add_service(-1, -1, 0, name, &kind, "", "", service.port, txt)
-                .await?;
-            for subtype in subtypes {
-                group
-                    .add_service_subtype(-1, -1, 0, name, &kind, "", &subtype.to_string())
-                    .await?;
-            }
-            Ok(())
-        })
-        .await?;
+        let (name, kind) = (service.instance.to_string(), service.kind.to_string());
+        let mut records = vec![Record::Service {
+            name: name.clone(),
+            kind: kind.clone(),
+            port: service.port,
+            txt: service
+                .txt
+                .iter()
+                .map(|t| t.to_string().into_bytes())
+                .collect(),
+        }];
+        for subtype in service.subtypes_of_its_kind()? {
+            records.push(Record::Subtype {
+                name: name.clone(),
+                kind: kind.clone(),
+                subtype: subtype.to_string(),
+            });
+        }
+        let group = Group::publish(&self.connection, records).await?;
         Ok(Advert {
             state: group.state.clone(),
             held: Held::Avahi(group),
@@ -72,25 +71,24 @@ impl AddressGroup {
     pub async fn publish(
         connection: &Connection,
         name: &HostName,
-        addresses: &[(u32, IpAddr)],
+        addresses: impl IntoIterator<Item = (u32, IpAddr)>,
     ) -> Result<Self, Error> {
-        if addresses.is_empty() {
+        let records = addresses
+            .into_iter()
+            .map(|(interface, ip)| {
+                Ok(Record::Address {
+                    interface: i32::try_from(interface)
+                        .map_err(|_| Error::Unsupported("an interface index past i32"))?,
+                    protocol: if ip.is_ipv4() { 0 } else { -1 },
+                    name: name.fqdn(),
+                    address: ip.to_string(),
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        if records.is_empty() {
             return Err(Error::Unsupported("an address group with no addresses"));
         }
-        let fqdn = name.fqdn();
-        let group = Group::publish(connection, async |group| {
-            for (interface, ip) in addresses {
-                let interface = i32::try_from(*interface)
-                    .map_err(|_| zbus::Error::Failure("interface index out of range".into()))?;
-                let protocol = if ip.is_ipv4() { 0 } else { -1 };
-                group
-                    .add_address(interface, protocol, NO_REVERSE, &fqdn, &ip.to_string())
-                    .await?;
-            }
-            Ok(())
-        })
-        .await?;
-        Ok(Self(group))
+        Group::publish(connection, records).await.map(Self)
     }
 
     pub fn state(&self) -> watch::Receiver<AdvertState> {
@@ -102,22 +100,101 @@ impl AddressGroup {
     }
 }
 
-/// An entry group this connection holds, and the watch on its state.
+/// Of `addresses` on each interface, the ones avahi publishes for its own
+/// host name: per interface and family the global ones, or the link-local
+/// ones where there is none. Sorted, without repeats.
+pub fn own_addresses(addresses: impl IntoIterator<Item = (u32, IpAddr)>) -> Vec<(u32, IpAddr)> {
+    let link_local = |ip: &IpAddr| match ip {
+        IpAddr::V4(ip) => ip.is_link_local(),
+        IpAddr::V6(ip) => ip.is_unicast_link_local(),
+    };
+    let all: Vec<_> = addresses.into_iter().collect();
+    let has_global = |interface: u32, v4: bool| {
+        all.iter()
+            .any(|(i, ip)| *i == interface && ip.is_ipv4() == v4 && !link_local(ip))
+    };
+    let mut own: Vec<_> = all
+        .iter()
+        .filter(|(i, ip)| !link_local(ip) || !has_global(*i, ip.is_ipv4()))
+        .copied()
+        .collect();
+    own.sort();
+    own.dedup();
+    own
+}
+
+/// One record of an entry group, as avahi's calls take it.
+enum Record {
+    Service {
+        name: String,
+        kind: String,
+        port: u16,
+        txt: Vec<Vec<u8>>,
+    },
+    Subtype {
+        name: String,
+        kind: String,
+        subtype: String,
+    },
+    Address {
+        interface: i32,
+        protocol: i32,
+        name: String,
+        address: String,
+    },
+}
+
+impl Record {
+    async fn add(self, group: &entry_group::EntryGroupProxy<'_>) -> zbus::Result<()> {
+        match self {
+            Self::Service {
+                name,
+                kind,
+                port,
+                txt,
+            } => {
+                group
+                    .add_service(-1, -1, 0, &name, &kind, "", "", port, txt)
+                    .await
+            }
+            Self::Subtype {
+                name,
+                kind,
+                subtype,
+            } => {
+                group
+                    .add_service_subtype(-1, -1, 0, &name, &kind, "", &subtype)
+                    .await
+            }
+            Self::Address {
+                interface,
+                protocol,
+                name,
+                address,
+            } => {
+                group
+                    .add_address(interface, protocol, NO_REVERSE, &name, &address)
+                    .await
+            }
+        }
+    }
+}
+
+/// An entry group this connection holds, freed when dropped, and the watch
+/// on its state.
 #[derive(Debug)]
 pub(crate) struct Group {
     proxy: Option<entry_group::EntryGroupProxy<'static>>,
     state: watch::Receiver<AdvertState>,
-    watcher: AbortHandle,
+    watcher: Option<AbortHandle>,
 }
 
 impl Group {
-    /// A new group, filled by `fill`, watched before it is committed so no
-    /// state is missed; freed again if anything fails.
-    async fn publish(
-        connection: &Connection,
-        fill: impl AsyncFnOnce(&entry_group::EntryGroupProxy<'static>) -> zbus::Result<()>,
-    ) -> Result<Self, Error> {
-        let group = async {
+    /// A new group holding `records`, watched before it is committed so no
+    /// state is missed. The group is owned from the moment avahi answers, so
+    /// a publish failed or cut short frees it.
+    async fn publish(connection: &Connection, records: Vec<Record>) -> Result<Self, Error> {
+        let proxy = async {
             let path = server::AvahiProxy::new(connection)
                 .await?
                 .entry_group_new()
@@ -129,20 +206,27 @@ impl Group {
         }
         .await
         .map_err(bus_error)?;
+        let (states, state) = watch::channel(AdvertState::Registering);
+        let mut group = Self {
+            proxy: Some(proxy.clone()),
+            state,
+            watcher: None,
+        };
         let filled = async {
-            let changes = group.receive_state_changed().await?;
-            fill(&group).await?;
-            group.commit().await?;
+            let changes = proxy.receive_state_changed().await?;
+            for record in records {
+                record.add(&proxy).await?;
+            }
+            proxy.commit().await?;
             zbus::Result::Ok(changes)
         };
         let mut changes = match filled.await {
             Ok(changes) => changes,
             Err(e) => {
-                group.free().await.ok();
+                group.withdraw().await.ok();
                 return Err(bus_error(e));
             }
         };
-        let (states, state) = watch::channel(AdvertState::Registering);
         let watcher = tokio::spawn(async move {
             while let Some(changed) = changes.next().await {
                 if let Some(next) = changed.args().ok().and_then(|a| group_state(a.state)) {
@@ -150,11 +234,8 @@ impl Group {
                 }
             }
         });
-        Ok(Self {
-            proxy: Some(group),
-            state,
-            watcher: watcher.abort_handle(),
-        })
+        group.watcher = Some(watcher.abort_handle());
+        Ok(group)
     }
 
     pub(crate) async fn withdraw(mut self) -> Result<(), Error> {
@@ -167,7 +248,9 @@ impl Group {
 
 impl Drop for Group {
     fn drop(&mut self) {
-        self.watcher.abort();
+        if let Some(watcher) = self.watcher.take() {
+            watcher.abort();
+        }
         if let (Some(group), Ok(runtime)) =
             (self.proxy.take(), tokio::runtime::Handle::try_current())
         {
@@ -186,13 +269,22 @@ fn group_state(state: i32) -> Option<AdvertState> {
     })
 }
 
+const NOBODY_OWNS_AVAHI: [&str; 2] = [
+    "org.freedesktop.DBus.Error.ServiceUnknown",
+    "org.freedesktop.DBus.Error.NameHasNoOwner",
+];
+
+fn error_name(e: &zbus::Error) -> Option<&str> {
+    match e {
+        zbus::Error::MethodError(name, ..) => Some(name.as_str()),
+        _ => None,
+    }
+}
+
 fn bus_error(e: zbus::Error) -> Error {
-    match &e {
-        zbus::Error::MethodError(name, _, _)
-            if name.as_str() == "org.freedesktop.Avahi.CollisionError" =>
-        {
-            Error::Collision
-        }
+    match error_name(&e) {
+        Some("org.freedesktop.Avahi.CollisionError") => Error::Collision(e),
+        Some(name) if NOBODY_OWNS_AVAHI.contains(&name) => Error::NotRunning(e),
         _ => Error::Bus(e),
     }
 }
@@ -222,49 +314,69 @@ impl From<i32> for ServerState {
 }
 
 /// Whether anything owns avahi's name on the bus.
-pub async fn is_running(connection: &Connection) -> zbus::Result<bool> {
-    let bus = zbus::fdo::DBusProxy::new(connection).await?;
-    Ok(bus.name_has_owner(AVAHI.try_into()?).await?)
+pub async fn is_running(connection: &Connection) -> Result<bool, Error> {
+    async {
+        let bus = zbus::fdo::DBusProxy::new(connection).await?;
+        Ok(bus.name_has_owner(AVAHI.try_into()?).await?)
+    }
+    .await
+    .map_err(bus_error)
 }
 
 /// The label `.local` answers to now, avahi's rename of it after a collision included.
-pub async fn host_name(connection: &Connection) -> zbus::Result<String> {
-    server::AvahiProxy::new(connection)
-        .await?
-        .get_host_name()
-        .await
+pub async fn host_name(connection: &Connection) -> Result<String, Error> {
+    async {
+        server::AvahiProxy::new(connection)
+            .await?
+            .get_host_name()
+            .await
+    }
+    .await
+    .map_err(bus_error)
 }
 
 /// The label `.local` answers to from now on, until avahi restarts; avahi
-/// keeps this for root and the `netdev` group.
-pub async fn set_host_name(connection: &Connection, name: &HostName) -> zbus::Result<()> {
-    server::AvahiProxy::new(connection)
-        .await?
-        .set_host_name(name.as_str())
-        .await
+/// keeps this for root and the `netdev` group. Its own name already is no change.
+pub async fn set_host_name(connection: &Connection, name: &HostName) -> Result<(), Error> {
+    let set = async {
+        server::AvahiProxy::new(connection)
+            .await?
+            .set_host_name(name.as_str())
+            .await
+    };
+    match set.await {
+        Err(e) if error_name(&e) == Some("org.freedesktop.Avahi.NoChangeError") => Ok(()),
+        set => set.map_err(bus_error),
+    }
 }
 
 /// `true` each time an avahi takes the name, `false` each time one leaves
 /// it; a new avahi holds none of the old one's groups.
 pub async fn restarts(
     connection: &Connection,
-) -> zbus::Result<impl Stream<Item = bool> + Unpin + Send + 'static> {
-    let avahi = server::AvahiProxy::new(connection).await?;
-    Ok(avahi
-        .inner()
-        .receive_owner_changed()
-        .await?
-        .map(|owner| owner.is_some()))
+) -> Result<impl Stream<Item = bool> + Unpin + Send + 'static, Error> {
+    async {
+        let avahi = server::AvahiProxy::new(connection).await?;
+        avahi.inner().receive_owner_changed().await
+    }
+    .await
+    .map(|owners| owners.map(|owner| owner.is_some()))
+    .map_err(bus_error)
 }
 
 pub async fn server_states(
     connection: &Connection,
-) -> zbus::Result<impl Stream<Item = ServerState> + Unpin + Send + 'static> {
-    let avahi = server::AvahiProxy::new(connection).await?;
-    Ok(avahi
-        .receive_state_changed()
-        .await?
-        .filter_map(|changed| std::future::ready(changed.args().ok().map(|a| a.state.into()))))
+) -> Result<impl Stream<Item = ServerState> + Unpin + Send + 'static, Error> {
+    async {
+        let avahi = server::AvahiProxy::new(connection).await?;
+        avahi.receive_state_changed().await
+    }
+    .await
+    .map(|changes| {
+        changes
+            .filter_map(|changed| std::future::ready(changed.args().ok().map(|a| a.state.into())))
+    })
+    .map_err(bus_error)
 }
 
 /// Whether `called` is a name avahi's collision rename makes of `label`, once
@@ -384,6 +496,29 @@ mod tests {
         ] {
             assert!(!renamed_by_avahi(label, called), "{label} → {called}");
         }
+    }
+
+    #[test]
+    fn own_addresses_are_global_or_link_local_where_a_family_has_no_global_one() {
+        let at = |i: u32, ip: &str| (i, ip.parse::<IpAddr>().unwrap());
+        let own = own_addresses([
+            at(2, "192.168.1.10"),
+            at(2, "169.254.3.4"),
+            at(2, "fe80::1"),
+            at(3, "169.254.7.8"),
+            at(3, "fe80::2"),
+            at(3, "fd00::2"),
+            at(2, "192.168.1.10"),
+        ]);
+        assert_eq!(
+            own,
+            [
+                at(2, "192.168.1.10"),
+                at(2, "fe80::1"),
+                at(3, "169.254.7.8"),
+                at(3, "fd00::2"),
+            ]
+        );
     }
 
     #[test]

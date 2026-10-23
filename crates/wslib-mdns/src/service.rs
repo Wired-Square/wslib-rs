@@ -111,9 +111,13 @@ impl Advert {
 pub enum Error {
     /// What this responder cannot publish, or a second browse of one type.
     Unsupported(&'static str),
-    /// Another avahi client on this machine already holds the name.
-    Collision,
     Invalid(Invalid),
+    /// Another avahi client on this machine already holds the name.
+    #[cfg(feature = "avahi")]
+    Collision(zbus::Error),
+    /// Nothing owns `org.freedesktop.Avahi` on the bus.
+    #[cfg(feature = "avahi")]
+    NotRunning(zbus::Error),
     #[cfg(feature = "avahi")]
     Bus(zbus::Error),
     /// The in-process responder refused, in its own words.
@@ -125,8 +129,11 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Unsupported(what) => write!(f, "unsupported: {what}"),
-            Self::Collision => f.write_str("another client of avahi already holds the name"),
             Self::Invalid(e) => e.fmt(f),
+            #[cfg(feature = "avahi")]
+            Self::Collision(_) => f.write_str("another client of avahi already holds the name"),
+            #[cfg(feature = "avahi")]
+            Self::NotRunning(_) => f.write_str("avahi is not running"),
             #[cfg(feature = "avahi")]
             Self::Bus(e) => write!(f, "avahi: {e}"),
             #[cfg(feature = "in-process")]
@@ -139,7 +146,7 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             #[cfg(feature = "avahi")]
-            Self::Bus(e) => Some(e),
+            Self::Bus(e) | Self::Collision(e) | Self::NotRunning(e) => Some(e),
             Self::Invalid(e) => Some(e),
             _ => None,
         }

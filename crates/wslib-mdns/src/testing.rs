@@ -16,13 +16,17 @@
 //! # }
 //! ```
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use tokio::sync::{Notify, watch};
 use zbus::connection::Builder;
+use zbus::message::{Header, Message};
+use zbus::names::ErrorName;
 use zbus::object_server::{ObjectServer, SignalEmitter};
 use zbus::zvariant::OwnedObjectPath;
-use zbus::{Connection, Guid, fdo};
+use zbus::{Connection, Guid};
 
 use crate::avahi::{AVAHI, ServerState};
 
@@ -42,7 +46,9 @@ struct State {
     groups: BTreeMap<u32, Group>,
     colliding: BTreeSet<String>,
     taken: BTreeSet<String>,
-    refusing: Vec<String>,
+    refusing: BTreeSet<String>,
+    refuse_next: HashMap<String, usize>,
+    holds: HashMap<String, Hold>,
     heard: Vec<String>,
 }
 
@@ -53,24 +59,20 @@ struct Group {
 }
 
 impl State {
-    fn hear(&mut self, method: &str, what: String) -> Result<(), AvahiError> {
-        self.heard
-            .push(format!("{method} {what}").trim_end().to_string());
-        if self.refusing.iter().any(|m| m == method) {
-            return Err(AvahiError::NotPermittedError(format!("{method} refused")));
-        }
-        Ok(())
+    fn refuses(&mut self, method: &str) -> bool {
+        let counted = self.refuse_next.get_mut(method).filter(|n| **n > 0);
+        counted.map(|n| *n -= 1).is_some() || self.refusing.contains(method)
     }
 
-    fn group(&mut self, n: u32) -> Result<&mut Group, AvahiError> {
+    fn group(&mut self, n: u32) -> Result<&mut Group, Refusal> {
         self.groups
             .get_mut(&n)
-            .ok_or_else(|| AvahiError::BadStateError(format!("group {n} is freed")))
+            .ok_or_else(|| Refusal::new(BAD_STATE, format!("group {n} is freed")))
     }
 
-    fn add(&mut self, n: u32, name: &str) -> Result<(), AvahiError> {
+    fn add(&mut self, n: u32, name: &str) -> Result<(), Refusal> {
         if self.taken.contains(name) {
-            return Err(AvahiError::CollisionError(format!("{name} is taken")));
+            return Err(Refusal::new(COLLISION_ERROR, format!("{name} is taken")));
         }
         self.group(n)?.names.insert(name.to_string());
         Ok(())
@@ -94,7 +96,9 @@ impl FakeAvahi {
             groups: BTreeMap::new(),
             colliding: BTreeSet::new(),
             taken: BTreeSet::new(),
-            refusing: Vec::new(),
+            refusing: BTreeSet::new(),
+            refuse_next: HashMap::new(),
+            holds: HashMap::new(),
             heard: Vec::new(),
         })))
     }
@@ -118,12 +122,62 @@ impl FakeAvahi {
 
     /// Refuses every call of `method`, such as `SetHostName`, as not permitted.
     pub fn refusing(self, method: &str) -> Self {
-        self.state().refusing.push(method.to_string());
+        self.state().refusing.insert(method.to_string());
         self
+    }
+
+    /// Refuses the next `n` calls of `method` as not permitted.
+    pub fn refuse_next(&self, method: &str, n: usize) {
+        self.state().refuse_next.insert(method.to_string(), n);
+    }
+
+    /// Drops every scripted collision and refusal, so what failed now succeeds.
+    pub fn forgive(&self) {
+        let mut state = self.state();
+        state.colliding.clear();
+        state.taken.clear();
+        state.refusing.clear();
+        state.refuse_next.clear();
+    }
+
+    /// Holds each call of `method` open, after it is heard, until released.
+    pub fn hold(&self, method: &str) -> Hold {
+        let hold = Hold {
+            entered: Arc::new(Notify::new()),
+            released: Arc::new(watch::channel(false).0),
+        };
+        self.state().holds.insert(method.to_string(), hold.clone());
+        hold
     }
 
     fn state(&self) -> MutexGuard<'_, State> {
         self.0.lock().unwrap()
+    }
+
+    /// Hears `method`, waits while it is held, then refuses it if avahi is
+    /// stopped or it is scripted to.
+    async fn call(&self, method: &str, what: String) -> Result<(), Refusal> {
+        let hold = {
+            let mut state = self.state();
+            state
+                .heard
+                .push(format!("{method} {what}").trim_end().to_string());
+            state.holds.get(method).cloned()
+        };
+        if let Some(hold) = hold {
+            hold.wait().await;
+        }
+        let mut state = self.state();
+        if !state.running {
+            return Err(Refusal::new(
+                SERVICE_UNKNOWN,
+                format!("nobody owns {AVAHI}"),
+            ));
+        }
+        if state.refuses(method) {
+            return Err(Refusal::new(NOT_PERMITTED, format!("{method} refused")));
+        }
+        Ok(())
     }
 
     /// Each call, in order, such as `AddService 1 -1 -1 0 Widget _http._tcp 8080 product=widget`.
@@ -209,7 +263,8 @@ impl FakeAvahi {
         self.owner_changed(served, true).await
     }
 
-    /// avahi stops: nothing owns its name, and a new group is refused.
+    /// avahi stops: nothing owns its name, and every call fails as
+    /// `org.freedesktop.DBus.Error.ServiceUnknown`.
     pub async fn stop(&self, served: &Connection) -> zbus::Result<()> {
         self.owner_changed(served, false).await
     }
@@ -234,15 +289,76 @@ impl FakeAvahi {
     }
 }
 
-#[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop.Avahi")]
-enum AvahiError {
-    #[zbus(error)]
-    ZBus(zbus::Error),
-    CollisionError(String),
-    IsEmptyError(String),
-    NotPermittedError(String),
-    BadStateError(String),
+/// A call held open by [`FakeAvahi::hold`].
+#[derive(Debug, Clone)]
+pub struct Hold {
+    entered: Arc<Notify>,
+    released: Arc<watch::Sender<bool>>,
+}
+
+impl Hold {
+    /// Waits until a held call has arrived.
+    pub async fn entered(&self) {
+        self.entered.notified().await;
+    }
+
+    /// Lets each held call go on, and every later one through.
+    pub fn release(&self) {
+        self.released.send_replace(true);
+    }
+
+    async fn wait(&self) {
+        self.entered.notify_one();
+        self.released.subscribe().wait_for(|r| *r).await.ok();
+    }
+}
+
+const SERVICE_UNKNOWN: &str = "org.freedesktop.DBus.Error.ServiceUnknown";
+const COLLISION_ERROR: &str = "org.freedesktop.Avahi.CollisionError";
+const NOT_PERMITTED: &str = "org.freedesktop.Avahi.NotPermittedError";
+const BAD_STATE: &str = "org.freedesktop.Avahi.BadStateError";
+const IS_EMPTY: &str = "org.freedesktop.Avahi.IsEmptyError";
+const NO_CHANGE: &str = "org.freedesktop.Avahi.NoChangeError";
+
+/// An error reply under its full D-Bus name, which zbus's derive would prefix.
+#[derive(Debug)]
+struct Refusal {
+    name: &'static str,
+    message: String,
+}
+
+impl Refusal {
+    fn new(name: &'static str, message: String) -> Self {
+        Self { name, message }
+    }
+}
+
+impl From<zbus::Error> for Refusal {
+    fn from(e: zbus::Error) -> Self {
+        Self::new("org.freedesktop.zbus.Error", e.to_string())
+    }
+}
+
+impl fmt::Display for Refusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.name, self.message)
+    }
+}
+
+impl std::error::Error for Refusal {}
+
+impl zbus::DBusError for Refusal {
+    fn create_reply(&self, call: &Header<'_>) -> zbus::Result<Message> {
+        Message::error(call, self.name())?.build(&(self.message.as_str(),))
+    }
+
+    fn name(&self) -> ErrorName<'_> {
+        ErrorName::from_static_str_unchecked(self.name)
+    }
+
+    fn description(&self) -> Option<&str> {
+        Some(&self.message)
+    }
 }
 
 fn group_path(n: u32) -> OwnedObjectPath {
@@ -257,20 +373,14 @@ impl Server {
     async fn entry_group_new(
         &self,
         #[zbus(object_server)] server: &ObjectServer,
-    ) -> Result<OwnedObjectPath, AvahiError> {
+    ) -> Result<OwnedObjectPath, Refusal> {
         let n = {
             let mut state = self.0.state();
-            if !state.running {
-                return Err(AvahiError::ZBus(
-                    fdo::Error::ServiceUnknown(format!("nobody owns {AVAHI}")).into(),
-                ));
-            }
             state.made += 1;
-            let n = state.made;
-            state.hear("EntryGroupNew", n.to_string())?;
-            state.groups.insert(n, Group::default());
-            n
+            state.made
         };
+        self.0.call("EntryGroupNew", n.to_string()).await?;
+        self.0.state().groups.insert(n, Group::default());
         server
             .at(group_path(n), GroupObject(self.0.clone(), n))
             .await?;
@@ -278,8 +388,9 @@ impl Server {
     }
 
     #[zbus(name = "GetHostName")]
-    fn get_host_name(&self) -> String {
-        self.0.state().host_name.clone()
+    async fn get_host_name(&self) -> Result<String, Refusal> {
+        self.0.call("GetHostName", String::new()).await?;
+        Ok(self.0.state().host_name.clone())
     }
 
     #[zbus(name = "SetHostName")]
@@ -287,11 +398,14 @@ impl Server {
         &self,
         name: String,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
-    ) -> Result<(), AvahiError> {
-        {
-            let mut state = self.0.state();
-            state.hear("SetHostName", name.clone())?;
-            state.host_name = name;
+    ) -> Result<(), Refusal> {
+        self.0.call("SetHostName", name.clone()).await?;
+        let unchanged = std::mem::replace(&mut self.0.state().host_name, name.clone()) == name;
+        if unchanged {
+            return Err(Refusal::new(
+                NO_CHANGE,
+                "the name is already the host's".into(),
+            ));
         }
         Self::state_changed(&emitter, 1, "").await?;
         Self::state_changed(&emitter, 2, "").await?;
@@ -312,7 +426,7 @@ struct GroupObject(FakeAvahi, u32);
 impl GroupObject {
     #[allow(clippy::too_many_arguments)]
     #[zbus(name = "AddService")]
-    fn add_service(
+    async fn add_service(
         &self,
         interface: i32,
         protocol: i32,
@@ -323,23 +437,20 @@ impl GroupObject {
         _host: String,
         port: u16,
         txt: Vec<Vec<u8>>,
-    ) -> Result<(), AvahiError> {
+    ) -> Result<(), Refusal> {
         let txt: Vec<_> = txt.iter().map(|t| String::from_utf8_lossy(t)).collect();
-        let mut state = self.0.state();
-        state.hear(
-            "AddService",
-            format!(
-                "{} {interface} {protocol} {flags} {name} {kind} {port} {}",
-                self.1,
-                txt.join(" ")
-            ),
-        )?;
-        state.add(self.1, &name)
+        let n = self.1;
+        let what = format!(
+            "{n} {interface} {protocol} {flags} {name} {kind} {port} {}",
+            txt.join(" ")
+        );
+        self.0.call("AddService", what).await?;
+        self.0.state().add(n, &name)
     }
 
     #[allow(clippy::too_many_arguments)]
     #[zbus(name = "AddServiceSubtype")]
-    fn add_service_subtype(
+    async fn add_service_subtype(
         &self,
         _interface: i32,
         _protocol: i32,
@@ -348,41 +459,38 @@ impl GroupObject {
         _kind: String,
         _domain: String,
         subtype: String,
-    ) -> Result<(), AvahiError> {
-        let mut state = self.0.state();
-        state.hear("AddServiceSubtype", format!("{} {name} {subtype}", self.1))?;
-        state.group(self.1).map(drop)
+    ) -> Result<(), Refusal> {
+        let what = format!("{} {name} {subtype}", self.1);
+        self.0.call("AddServiceSubtype", what).await?;
+        self.0.state().group(self.1).map(drop)
     }
 
     #[zbus(name = "AddAddress")]
-    fn add_address(
+    async fn add_address(
         &self,
         interface: i32,
         protocol: i32,
         flags: u32,
         name: String,
         address: String,
-    ) -> Result<(), AvahiError> {
-        let mut state = self.0.state();
-        state.hear(
-            "AddAddress",
-            format!("{} {interface} {protocol} {flags} {name} {address}", self.1),
-        )?;
-        state.add(self.1, &name)
+    ) -> Result<(), Refusal> {
+        let what = format!("{} {interface} {protocol} {flags} {name} {address}", self.1);
+        self.0.call("AddAddress", what).await?;
+        self.0.state().add(self.1, &name)
     }
 
     #[zbus(name = "Commit")]
     async fn commit(
         &self,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
-    ) -> Result<(), AvahiError> {
+    ) -> Result<(), Refusal> {
+        self.0.call("Commit", self.1.to_string()).await?;
         let settled = {
             let mut state = self.0.state();
-            state.hear("Commit", self.1.to_string())?;
             let colliding = state.colliding.clone();
             let group = state.group(self.1)?;
             if group.names.is_empty() {
-                return Err(AvahiError::IsEmptyError("nothing to commit".into()));
+                return Err(Refusal::new(IS_EMPTY, "nothing to commit".into()));
             }
             let collides = group
                 .names
@@ -397,10 +505,9 @@ impl GroupObject {
     }
 
     #[zbus(name = "Free")]
-    fn free(&self) -> Result<(), AvahiError> {
-        let mut state = self.0.state();
-        state.hear("Free", self.1.to_string())?;
-        state.groups.remove(&self.1);
+    async fn free(&self) -> Result<(), Refusal> {
+        self.0.call("Free", self.1.to_string()).await?;
+        self.0.state().groups.remove(&self.1);
         Ok(())
     }
 

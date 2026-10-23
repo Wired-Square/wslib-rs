@@ -26,3 +26,15 @@
   caller's runtime, and `advertise` no longer needs a tokio runtime.
 - In-process instance names with a dot or backslash read the same in
   `Resolved`, `Removed` and `Renamed`.
+- avahi publishes are `Send` and own their group before filling it, so a
+  publish dropped while filling or committing frees the group.
+- `Error::NotRunning` when nothing owns `org.freedesktop.Avahi`;
+  `Error::Collision` keeps the bus's error. The avahi functions answer
+  `Error` rather than `zbus::Error`.
+- `set_host_name` takes avahi's `NoChangeError` as done.
+- `AddressGroup::publish` takes any iterator of `(interface, address)`;
+  `avahi::own_addresses` picks them as avahi does for its own name.
+- `FakeAvahi`: real error names (`ServiceUnknown` while stopped, for every
+  call including `GetHostName`), `GetHostName` and refused calls recorded,
+  `refuse_next`, `forgive`, `hold`, and `NoChangeError` for a rename to the
+  same name.

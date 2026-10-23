@@ -10,6 +10,8 @@
   checks each staged file a committed record renames the same way.
   `recover_expecting(dir, name, targets)` also refuses a record naming a
   file outside `targets`.
+- A create-new write whose directory sync fails removes the file it made, so
+  a retry is not refused with `AlreadyExists`.
 
 ## 0.1.3
 

@@ -81,6 +81,10 @@ fn remove_if_there(path: &Path) -> io::Result<()> {
 /// Sync `dir` so the renames into it survive a power cut; a caller renaming
 /// several files with [`Staged::promote_unsynced`] syncs once, after the last.
 pub fn sync_dir(dir: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    if tests::SYNC_FAILS.get() {
+        return Err(io::Error::other("the directory sync failed"));
+    }
     #[cfg(unix)]
     {
         match File::open(dir) {
@@ -227,7 +231,9 @@ impl Options {
         if self.create_new {
             self.make_parents(path)?;
             create(path, self.readers, write)?;
-            return sync_parent(path);
+            return sync_parent(path).inspect_err(|_| {
+                let _ = fs::remove_file(path);
+            });
         }
         self.stage_with(path, write)?
             .promote()
@@ -434,5 +440,33 @@ fn restrict(_: &File, path: &Path, readers: Readers) -> io::Result<()> {
     match readers {
         Readers::Private => windows::owner_only(path),
         Readers::Readable => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::*;
+
+    thread_local! {
+        pub(super) static SYNC_FAILS: Cell<bool> = const { Cell::new(false) };
+    }
+
+    #[test]
+    fn a_create_new_write_whose_directory_sync_fails_leaves_nothing_to_refuse_a_retry() {
+        let dir =
+            std::env::temp_dir().join(format!("wslib-file-atomic-sync-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("app.key");
+
+        SYNC_FAILS.set(true);
+        let failed = write_private(&path, b"first");
+        SYNC_FAILS.set(false);
+        assert_eq!(failed.unwrap_err().to_string(), "the directory sync failed");
+        write_private(&path, b"retried").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"retried");
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

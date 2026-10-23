@@ -48,7 +48,8 @@ hidden.discard_staged(path)?;
   can mean the new file is in place. A staged file an earlier run
   left is cleared first rather than reused, so its mode never carries over.
 - **`write_private`** (or `Options::create_new`) writes at the path itself and
-  refuses one that exists; a failed write removes what it made.
+  refuses one that exists; a failed write, its directory sync included,
+  removes what it made, so a retry is not refused.
 - **`stage`** returns a `Staged` you `promote()` or `discard()`;
   `Staged::path()` is where it is and `Staged::target()` what it replaces,
   and `Options::staged_path` names where it goes. Dropping it leaves the

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.1
+
+- `BasePath`: `/` or slash-separated URL-safe segments ending in `/`, parsed
+  with or without its end slashes, moved unchanged from the chassis.
+- `Spa::base_from(hook)`: `index.html` served with a `<base href>` for the
+  base `hook` names for the request, made per request; a refusal from `hook`
+  answers the page and no file. Without a hook nothing changes.
+- `EncoderCap`: at most a set number of live gzip encoders (64 by default); a
+  request past it is served uncompressed rather than delayed. `standard_layers`
+  applies it. A `.gz` the `Spa` sends needs no encoder and holds none, so it
+  still goes out compressed past the cap.
+
 ## 0.1.0
 
 - `Spa`: a single-page bundle from disk, answering `index.html` for unmatched

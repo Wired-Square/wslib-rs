@@ -26,9 +26,21 @@ let app = standard_layers(app);
   `/ui/../api/x` are refused too. `assets/` is `public, max-age=31536000,
   immutable` and a missing asset there is a 404, never the page; everything
   else is `no-store`. A `.gz` beside a file is sent to a client taking gzip.
+- **`Spa::base_from(hook)`**: `hook` names a `BasePath` per request (or none),
+  and `index.html` is then served with `<base href="{base}">` first in its
+  `<head>`, so a bundle with page-relative asset links runs under any prefix.
+  Assets and other files are untouched; an error from `hook` answers the
+  page's requests and no file's.
+- **`BasePath`**: `/` or `/`-separated segments of letters, digits, `-`, `.`,
+  `_` and `~` ending in `/`, never `.` or `..`, so it needs no escaping in a
+  URL, a cookie or an attribute. Deserialises from a string.
 - **`health`** and **`health_with(ready)`**: `GET /healthz` answering
   `{"status":"ok"}`, or `ready`'s error while it fails.
 - **`version(version, build)`**: `GET /version` answering
   `{"version", "build"}`; `build` is wslib-build-id's `WSLIB_BUILD_ID`.
 - **`standard_layers`**: tracing, gzip compression, and a panic answered as a
   500 error body. Call it last; it wraps only what the router already holds.
+- **`EncoderCap`**: at most 64 gzip encoders (~235 KB each) live at once, in
+  `standard_layers` already. A request that finds none free is served
+  uncompressed, not queued. A hand-built stack puts `EncoderCap::new(n)`
+  outside `CompressionLayer`; the other way round compiles and caps nothing.

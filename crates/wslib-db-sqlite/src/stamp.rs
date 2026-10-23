@@ -25,11 +25,7 @@ pub fn now() -> DateTime<Utc> {
 pub fn parse(table: &'static str, what: &'static str, raw: &str) -> Result<DateTime<Utc>, Error> {
     DateTime::parse_from_rfc3339(raw)
         .map(|t| t.with_timezone(&Utc))
-        .map_err(|e| Error::Unreadable {
-            table,
-            what,
-            because: e.to_string(),
-        })
+        .map_err(|e| Error::unreadable(table, what, e))
 }
 
 /// [`parse()`] straight off a row, borrowing the column rather than allocating it.

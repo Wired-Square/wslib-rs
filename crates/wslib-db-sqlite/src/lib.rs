@@ -104,23 +104,33 @@ pub enum Error {
         other: String,
     },
 
-    /// A migration of an imported chain whose version `_sqlx_migrations`
-    /// already holds for `other`, or another chain is about to write.
+    /// A migration of a mirrored chain whose version `_sqlx_migrations` already
+    /// holds, for the chain `other` or none, or that `other` is about to write too.
     #[error(
-        "migration {version} of chain {chain} would be recorded in _sqlx_migrations, \
-         which already has it for {other}"
+        "migration {version} of chain {chain} cannot be recorded in _sqlx_migrations: {}",
+        held_by(.other)
     )]
     Collision {
         version: i64,
         chain: String,
-        other: String,
+        other: Option<String>,
     },
+
+    /// A chain registered in the database that the open was not given.
+    #[error("the database has migration chain {0:?}, which this build does not")]
+    UnknownChain(String),
+
+    /// A chain passed [`Chain::mirrored`] that is registered as not mirrored.
+    #[error(
+        "migration chain {0:?} asks to be mirrored, but it was registered without; mirroring \
+         can only be chosen when the chain is first created"
+    )]
+    MirroredTooLate(String),
 
     /// A settings key in the secret or local namespace, handed to a plain setting call.
     #[error(
-        "the settings key {0:?} is reserved: a secret goes through Settings::secret and \
-         set_secret, local state through Settings::local and set_local, each by its name \
-         without the prefix"
+        "the settings key {0:?} is in the reserved secret or local namespace: use the \
+         secret or local accessors, by the name without its prefix"
     )]
     Reserved(String),
 
@@ -134,6 +144,24 @@ pub enum Error {
         #[source]
         source: serde_json::Error,
     },
+}
+
+impl Error {
+    /// [`Error::Unreadable`], for a wrapper reading its own rows.
+    pub fn unreadable(table: &'static str, what: &'static str, because: impl ToString) -> Self {
+        Self::Unreadable {
+            table,
+            what,
+            because: because.to_string(),
+        }
+    }
+}
+
+fn held_by(other: &Option<String>) -> String {
+    match other {
+        Some(other) => format!("chain {other} has that version there too"),
+        None => "it is already recorded there".to_string(),
+    }
 }
 
 /// An app's database: a pool, and the migration chains it was opened with.
@@ -161,7 +189,8 @@ impl Database {
     ///
     /// No file is [`Error::NoDatabase`]. A chain not fully applied is
     /// [`Error::SchemaBehind`]; an applied migration a chain lacks or has
-    /// modified is [`Error::Migrate`]. Run it as the owner's account: the file is
+    /// modified is [`Error::Migrate`]; a registered chain not given is
+    /// [`Error::UnknownChain`]. Run it as the owner's account: the file is
     /// restricted to its owner.
     pub async fn open_existing(path: impl AsRef<Path>, chains: &[Chain]) -> Result<Self, Error> {
         let path = path.as_ref();

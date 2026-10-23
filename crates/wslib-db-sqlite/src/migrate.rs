@@ -3,7 +3,9 @@
 //! A [`Chain`] is a name and an sqlx `Migrator`, usually an app's own
 //! `sqlx::migrate!("./migrations")`, and each records what it has applied in
 //! its own table, `<name>_migrations`. Versions are the chain's own: two chains
-//! may both start at 1.
+//! may both start at 1. Every chain is registered in `_migration_chains` when
+//! its table is made, and an open that does not pass a registered chain is
+//! refused ([`Error::UnknownChain`]).
 //!
 //! [`Database::open`](crate::Database::open) applies every pending migration of
 //! every chain, in the order the chains are given and each chain's own order,
@@ -13,23 +15,26 @@
 //! applied version its chain no longer has. A migration added to an earlier
 //! chain after a later one applied simply applies at the next open.
 //!
-//! # Moving off sqlx's own runner
+//! # Builds on sqlx's own runner
 //!
-//! sqlx's runner records one chain in `_sqlx_migrations`. When that table
-//! exists and a chain's table does not, its rows are imported, inside the same
-//! transaction: each to the chain that has its version, with its checksum
-//! checked. A row no chain has ([`Error::Unclaimed`]) or two chains have
-//! ([`Error::Ambiguous`]) refuses the open.
+//! sqlx's runner records one chain in `_sqlx_migrations`. A *mirrored* chain
+//! also writes each migration it applies there, in sqlx's own columns, so a
+//! build on sqlx's runner over the same chains concatenated finds every version
+//! it knows and runs, and refuses a newer schema with `VersionMissing`. A chain
+//! is mirrored when it asks to be ([`Chain::mirrored`]) or when it is made by
+//! the import, and the registry keeps that from then on. A version
+//! `_sqlx_migrations` already holds, or that two mirrored chains would both
+//! write, refuses the open before anything applies ([`Error::Collision`]).
 //!
-//! Every chain whose table is made by the first import is *imported*, even
-//! one that took no row, and from then on each migration it applies is also written to `_sqlx_migrations` in sqlx's own
-//! columns, so an older build on sqlx's runner refuses the newer schema with
-//! `VersionMissing`. A version that table already holds for another chain, or
-//! that two imported chains would both write, refuses the open before anything
-//! applies ([`Error::Collision`]). A chain first seen after that is never
-//! imported, never touches `_sqlx_migrations`, and may number from anywhere.
+//! **The import** runs once, on the open that creates the registry, if
+//! `_sqlx_migrations` has rows then: each row goes to the chain that has its
+//! version, with its checksum checked, inside the same transaction. A row no
+//! chain has ([`Error::Unclaimed`]) or two chains have ([`Error::Ambiguous`])
+//! refuses the open. Before then,
+//! [`Database::open_existing`](crate::Database::open_existing) verifies against
+//! `_sqlx_migrations` by the same rules, and writes nothing.
 //!
-//! The tables this module keeps, `<name>_migrations`, `_imported_chains` and
+//! The tables this module keeps, `<name>_migrations`, `_migration_chains` and
 //! `_sqlx_migrations`, are not an app's to create, alter or drop.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -42,13 +47,14 @@ use sqlx::sqlite::SqlitePool;
 use crate::{Error, is_plain_name, stamp};
 
 const LEGACY: &str = "_sqlx_migrations";
-const IMPORTED: &str = "_imported_chains";
+const REGISTRY: &str = "_migration_chains";
 
 /// A named migration chain; the name is `[a-z][a-z0-9_]*`, checked at open.
 #[derive(Debug, Clone)]
 pub struct Chain {
     name: String,
     migrations: Vec<Migration>,
+    mirrored: bool,
 }
 
 impl Chain {
@@ -60,7 +66,19 @@ impl Chain {
                 .filter(|m| m.migration_type.is_up_migration())
                 .cloned()
                 .collect(),
+            mirrored: false,
         }
+    }
+
+    /// Also record this chain in `_sqlx_migrations` from its first migration,
+    /// for a database an older build on sqlx's runner may open.
+    ///
+    /// Chosen when the chain is first registered: asked for later it is refused
+    /// ([`Error::MirroredTooLate`]), and a chain registered as mirrored stays
+    /// mirrored whether or not it asks.
+    pub fn mirrored(mut self) -> Self {
+        self.mirrored = true;
+        self
     }
 
     pub fn name(&self) -> &str {
@@ -91,6 +109,14 @@ impl Chain {
 /// Applied versions and their hex checksums.
 type Applied = BTreeMap<i64, String>;
 
+/// A row of `_sqlx_migrations`.
+struct LegacyRow {
+    version: i64,
+    description: String,
+    installed_on: String,
+    checksum: Vec<u8>,
+}
+
 pub(crate) fn check_names(chains: &[Chain]) -> Result<(), Error> {
     for (i, chain) in chains.iter().enumerate() {
         if !is_plain_name(&chain.name) {
@@ -105,8 +131,25 @@ pub(crate) fn check_names(chains: &[Chain]) -> Result<(), Error> {
 
 pub(crate) async fn verify(pool: &SqlitePool, chains: &[Chain]) -> Result<(), Error> {
     let mut conn = pool.acquire().await?;
-    for chain in chains {
-        let applied = applied(&mut conn, chain).await?.unwrap_or_default();
+    let conn = &mut *conn;
+    let applied_by_chain = match registered(conn).await? {
+        Some(registered) => {
+            check_registered(&registered, chains)?;
+            let mut applied_by_chain = Vec::new();
+            for chain in chains {
+                applied_by_chain.push(applied(conn, chain).await?);
+            }
+            applied_by_chain
+        }
+        None => {
+            let mut applied_by_chain = vec![Applied::new(); chains.len()];
+            for (i, row) in claim(&legacy_rows(conn).await?, chains)? {
+                applied_by_chain[i].insert(row.version, hex(&row.checksum));
+            }
+            applied_by_chain
+        }
+    };
+    for (chain, applied) in chains.iter().zip(&applied_by_chain) {
         if let Some(behind) = chain
             .migrations
             .iter()
@@ -117,7 +160,7 @@ pub(crate) async fn verify(pool: &SqlitePool, chains: &[Chain]) -> Result<(), Er
                 version: behind.version,
             });
         }
-        check_applied(chain, &applied)?;
+        check_applied(chain, applied)?;
     }
     Ok(())
 }
@@ -126,34 +169,92 @@ pub(crate) async fn apply(pool: &SqlitePool, chains: &[Chain]) -> Result<(), Err
     let mut tx = crate::begin(pool).await?;
     let conn = &mut *tx;
 
-    let mut imported = imported_chains(conn).await?;
-    let mut fresh = Vec::new();
-    for chain in chains {
-        if !table_exists(conn, &chain.table()).await? {
+    let (mut registered, to_import) = match registered(conn).await? {
+        Some(registered) => {
+            check_registered(&registered, chains)?;
+            (registered, Vec::new())
+        }
+        None => {
             sqlx::query(&format!(
-                "CREATE TABLE {} (
-                    version      BIGINT PRIMARY KEY,
-                    description  TEXT NOT NULL,
-                    checksum     TEXT NOT NULL,
-                    installed_on TEXT NOT NULL
-                )",
-                chain.table()
+                "CREATE TABLE {REGISTRY} (
+                    name       TEXT PRIMARY KEY,
+                    mirrored   BOOLEAN NOT NULL,
+                    created_on TEXT NOT NULL
+                )"
             ))
             .execute(&mut *conn)
             .await?;
-            fresh.push(chain);
+            (BTreeMap::new(), legacy_rows(conn).await?)
         }
+    };
+    for chain in chains {
+        if registered.contains_key(&chain.name) {
+            continue;
+        }
+        let mirrored = chain.mirrored || !to_import.is_empty();
+        sqlx::query(&format!(
+            "CREATE TABLE {} (
+                version      BIGINT PRIMARY KEY,
+                description  TEXT NOT NULL,
+                checksum     TEXT NOT NULL,
+                installed_on TEXT NOT NULL
+            )",
+            chain.table()
+        ))
+        .execute(&mut *conn)
+        .await?;
+        sqlx::query(&format!(
+            "INSERT INTO {REGISTRY} (name, mirrored, created_on) VALUES (?, ?, ?)"
+        ))
+        .bind(&chain.name)
+        .bind(mirrored)
+        .bind(stamp::format(stamp::now()))
+        .execute(&mut *conn)
+        .await?;
+        registered.insert(chain.name.clone(), mirrored);
     }
-    if !fresh.is_empty() && table_exists(conn, LEGACY).await? {
-        import(conn, chains, &fresh, &mut imported).await?;
+    for (i, row) in claim(&to_import, chains)? {
+        let installed_on =
+            chrono::NaiveDateTime::parse_from_str(&row.installed_on, "%Y-%m-%d %H:%M:%S")
+                .map_err(|e| Error::unreadable(LEGACY, "installed_on", e))?;
+        record(
+            conn,
+            &chains[i],
+            row.version,
+            &row.description,
+            &hex(&row.checksum),
+            &stamp::format(installed_on.and_utc()),
+        )
+        .await?;
+    }
+
+    let mirrored: HashSet<&str> = chains
+        .iter()
+        .map(|c| c.name.as_str())
+        .filter(|name| registered[*name])
+        .collect();
+    if !mirrored.is_empty() && !table_exists(conn, LEGACY).await? {
+        // sqlx 0.8's own DDL, so its runner finds the table it would have made.
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS _sqlx_migrations (
+    version BIGINT PRIMARY KEY,
+    description TEXT NOT NULL,
+    installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    success BOOLEAN NOT NULL,
+    checksum BLOB NOT NULL,
+    execution_time BIGINT NOT NULL
+);",
+        )
+        .execute(&mut *conn)
+        .await?;
     }
 
     let mut owners = HashMap::new();
     let mut pending = Vec::new();
     for chain in chains {
-        let applied = applied(conn, chain).await?.unwrap_or_default();
+        let applied = applied(conn, chain).await?;
         check_applied(chain, &applied)?;
-        if imported.contains(&chain.name) {
+        if mirrored.contains(chain.name.as_str()) {
             owners.extend(applied.keys().map(|&v| (v, chain.name.as_str())));
         }
         for m in &chain.migrations {
@@ -169,8 +270,7 @@ pub(crate) async fn apply(pool: &SqlitePool, chains: &[Chain]) -> Result<(), Err
             pending.push((chain, m));
         }
     }
-
-    check_collisions(conn, &pending, &imported, &owners).await?;
+    check_collisions(conn, &pending, &mirrored, &owners).await?;
 
     for (chain, m) in pending {
         let started = Instant::now();
@@ -187,7 +287,7 @@ pub(crate) async fn apply(pool: &SqlitePool, chains: &[Chain]) -> Result<(), Err
             &stamp::format(stamp::now()),
         )
         .await?;
-        if imported.contains(&chain.name) {
+        if mirrored.contains(chain.name.as_str()) {
             // So an older build on sqlx's runner finds a version it lacks and
             // refuses, rather than running on a schema newer than it knows.
             sqlx::query(&format!(
@@ -206,92 +306,60 @@ pub(crate) async fn apply(pool: &SqlitePool, chains: &[Chain]) -> Result<(), Err
     Ok(())
 }
 
-/// Move `_sqlx_migrations`' rows into the `fresh` chains' tables, skipping
-/// those an imported chain already holds. On the first import every fresh
-/// chain becomes `imported`, so one with no rows yet still dual-writes later.
-async fn import(
-    conn: &mut SqliteConnection,
+/// Each `_sqlx_migrations` row with the index of the one chain that has its
+/// version, checksum checked.
+fn claim<'r>(
+    rows: &'r [LegacyRow],
     chains: &[Chain],
-    fresh: &[&Chain],
-    imported: &mut HashSet<String>,
-) -> Result<(), Error> {
-    let mut accounted = HashSet::new();
-    for chain in chains.iter().filter(|c| imported.contains(&c.name)) {
-        accounted.extend(applied(conn, chain).await?.unwrap_or_default().into_keys());
-    }
-    let rows: Vec<(i64, String, String, Vec<u8>)> = sqlx::query_as(&format!(
-        "SELECT version, description, CAST(installed_on AS TEXT), checksum \
-         FROM {LEGACY} ORDER BY version"
-    ))
-    .fetch_all(&mut *conn)
-    .await?;
-    for (version, description, installed_on, checksum) in rows {
-        if accounted.contains(&version) {
-            continue;
-        }
-        let mut claimants = fresh.iter().filter(|c| c.get(version).is_some());
-        let chain = claimants.next().ok_or(Error::Unclaimed { version })?;
-        if let Some(other) = claimants.next() {
+) -> Result<Vec<(usize, &'r LegacyRow)>, Error> {
+    let mut claimed = Vec::new();
+    for row in rows {
+        let version = row.version;
+        let mut claimants = chains
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.get(version).is_some());
+        let (i, chain) = claimants.next().ok_or(Error::Unclaimed { version })?;
+        if let Some((_, other)) = claimants.next() {
             return Err(Error::Ambiguous {
                 version,
                 chain: chain.name.clone(),
                 other: other.name.clone(),
             });
         }
-        if *chain.get(version).expect("claimed").checksum != *checksum {
+        if *chain.get(version).expect("claimed").checksum != *row.checksum {
             return Err(chain.error(MigrateError::VersionMismatch(version)));
         }
-        let installed_on =
-            chrono::NaiveDateTime::parse_from_str(&installed_on, "%Y-%m-%d %H:%M:%S").map_err(
-                |e| Error::Unreadable {
-                    table: LEGACY,
-                    what: "installed_on",
-                    because: e.to_string(),
-                },
-            )?;
-        record(
-            conn,
-            chain,
-            version,
-            &description,
-            &hex(&checksum),
-            &stamp::format(installed_on.and_utc()),
-        )
-        .await?;
+        claimed.push((i, row));
     }
-    if table_exists(conn, IMPORTED).await? {
-        return Ok(());
-    }
-    sqlx::query(&format!(
-        "CREATE TABLE {IMPORTED} (
-            name        TEXT PRIMARY KEY,
-            imported_on TEXT NOT NULL
-        )"
-    ))
-    .execute(&mut *conn)
-    .await?;
-    for name in fresh.iter().map(|c| c.name.clone()) {
-        sqlx::query(&format!(
-            "INSERT INTO {IMPORTED} (name, imported_on) VALUES (?, ?)"
-        ))
-        .bind(&name)
-        .bind(stamp::format(stamp::now()))
-        .execute(&mut *conn)
-        .await?;
-        imported.insert(name);
-    }
-    Ok(())
+    Ok(claimed)
 }
 
-/// Refuse a pending migration of an imported chain whose version
-/// `_sqlx_migrations` holds, or another imported chain will write.
+fn check_registered(registered: &BTreeMap<String, bool>, chains: &[Chain]) -> Result<(), Error> {
+    if let Some(name) = registered
+        .keys()
+        .find(|name| !chains.iter().any(|c| &c.name == *name))
+    {
+        return Err(Error::UnknownChain(name.clone()));
+    }
+    match chains
+        .iter()
+        .find(|c| c.mirrored && registered.get(&c.name) == Some(&false))
+    {
+        Some(chain) => Err(Error::MirroredTooLate(chain.name.clone())),
+        None => Ok(()),
+    }
+}
+
+/// Refuse a pending migration of a mirrored chain whose version
+/// `_sqlx_migrations` holds, or another mirrored chain will write.
 async fn check_collisions(
     conn: &mut SqliteConnection,
     pending: &[(&Chain, &Migration)],
-    imported: &HashSet<String>,
+    mirrored: &HashSet<&str>,
     owners: &HashMap<i64, &str>,
 ) -> Result<(), Error> {
-    if imported.is_empty() {
+    if mirrored.is_empty() {
         return Ok(());
     }
     let legacy: HashSet<i64> = sqlx::query_scalar(&format!("SELECT version FROM {LEGACY}"))
@@ -300,17 +368,22 @@ async fn check_collisions(
         .into_iter()
         .collect();
     let mut writing = HashMap::new();
-    for (chain, m) in pending.iter().filter(|(c, _)| imported.contains(&c.name)) {
+    for (chain, m) in pending
+        .iter()
+        .filter(|(c, _)| mirrored.contains(c.name.as_str()))
+    {
         let other = if legacy.contains(&m.version) {
-            Some(owners.get(&m.version).copied().unwrap_or("no chain"))
+            Some(owners.get(&m.version).map(|o| o.to_string()))
         } else {
-            writing.insert(m.version, chain.name.as_str())
+            writing
+                .insert(m.version, chain.name.as_str())
+                .map(|o| Some(o.to_string()))
         };
         if let Some(other) = other {
             return Err(Error::Collision {
                 version: m.version,
                 chain: chain.name.clone(),
-                other: other.to_string(),
+                other,
             });
         }
     }
@@ -350,26 +423,49 @@ fn check_applied(chain: &Chain, applied: &Applied) -> Result<(), Error> {
     Ok(())
 }
 
-/// `None` when the chain's table does not exist.
-async fn applied(conn: &mut SqliteConnection, chain: &Chain) -> Result<Option<Applied>, Error> {
+/// Empty when the chain's table does not exist.
+async fn applied(conn: &mut SqliteConnection, chain: &Chain) -> Result<Applied, Error> {
     if !table_exists(conn, &chain.table()).await? {
-        return Ok(None);
+        return Ok(Applied::new());
     }
     let rows: Vec<(i64, String)> =
         sqlx::query_as(&format!("SELECT version, checksum FROM {}", chain.table()))
             .fetch_all(conn)
             .await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// `None` before the registry exists.
+async fn registered(conn: &mut SqliteConnection) -> Result<Option<BTreeMap<String, bool>>, Error> {
+    if !table_exists(conn, REGISTRY).await? {
+        return Ok(None);
+    }
+    let rows: Vec<(String, bool)> =
+        sqlx::query_as(&format!("SELECT name, mirrored FROM {REGISTRY}"))
+            .fetch_all(conn)
+            .await?;
     Ok(Some(rows.into_iter().collect()))
 }
 
-async fn imported_chains(conn: &mut SqliteConnection) -> Result<HashSet<String>, Error> {
-    if !table_exists(conn, IMPORTED).await? {
-        return Ok(HashSet::new());
+async fn legacy_rows(conn: &mut SqliteConnection) -> Result<Vec<LegacyRow>, Error> {
+    if !table_exists(conn, LEGACY).await? {
+        return Ok(Vec::new());
     }
-    let names: Vec<String> = sqlx::query_scalar(&format!("SELECT name FROM {IMPORTED}"))
-        .fetch_all(conn)
-        .await?;
-    Ok(names.into_iter().collect())
+    let rows: Vec<(i64, String, String, Vec<u8>)> = sqlx::query_as(&format!(
+        "SELECT version, description, CAST(installed_on AS TEXT), checksum \
+         FROM {LEGACY} ORDER BY version"
+    ))
+    .fetch_all(conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(version, description, installed_on, checksum)| LegacyRow {
+            version,
+            description,
+            installed_on,
+            checksum,
+        })
+        .collect())
 }
 
 async fn table_exists(conn: &mut SqliteConnection, name: &str) -> Result<bool, Error> {

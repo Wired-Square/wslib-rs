@@ -9,7 +9,7 @@ use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 use crate::proxy::{
     DeviceProxy, NetworkManagerProxy, NmObjectsProxy, NmSettingsProxy, ProfileProxy, WirelessProxy,
 };
-use crate::{AccessPoint, Device, Objects, Settings};
+use crate::{AccessPoint, Device, Objects, Profile, Settings};
 
 /// `CheckpointCreate`'s flags.
 pub mod checkpoint {
@@ -181,12 +181,31 @@ impl Client {
             .reapply(settings, 0, 0)
             .await;
         if reapplied.is_err() {
-            self.manager()
-                .await?
-                .activate_connection(profile, device, &ObjectPath::from_static_str_unchecked("/"))
-                .await?;
+            self.activate(profile, device).await?;
         }
         Ok(())
+    }
+
+    /// Starts a saved `profile` on `device`, answering the active connection;
+    /// as with [`add_and_activate`](Self::add_and_activate), a failure shows later.
+    pub async fn activate(
+        &self,
+        profile: &ObjectPath<'_>,
+        device: &ObjectPath<'_>,
+    ) -> zbus::Result<OwnedObjectPath> {
+        self.manager()
+            .await?
+            .activate_connection(profile, device, &ObjectPath::from_static_str_unchecked("/"))
+            .await
+    }
+
+    /// Drops `device`'s active connection and keeps its profile, which
+    /// NetworkManager then does not autoconnect on `device` until it is activated.
+    pub async fn disconnect(&self, device: &ObjectPath<'_>) -> zbus::Result<()> {
+        self.proxy_at::<DeviceProxy<'_>>(device)
+            .await?
+            .disconnect()
+            .await
     }
 
     /// Every profile NetworkManager holds, saved or generated.
@@ -195,6 +214,20 @@ impl Client {
             .await?
             .list_connections()
             .await
+    }
+
+    /// Every profile NetworkManager holds, read one round trip each, leaving
+    /// out one deleted before it is read.
+    pub async fn saved(&self) -> zbus::Result<Vec<Profile>> {
+        let mut saved = Vec::new();
+        for path in self.profiles().await? {
+            match self.settings(&path).await {
+                Ok(settings) => saved.extend(Profile::read(path, &settings)),
+                Err(e) if gone(&e) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(saved)
     }
 
     /// A profile's settings, without its secrets.
@@ -282,4 +315,16 @@ impl Client {
     pub async fn set_wifi_enabled(&self, enabled: bool) -> zbus::Result<()> {
         self.manager().await?.set_wireless_enabled(enabled).await
     }
+}
+
+/// What a call to an object removed from the bus answers: `UnknownObject`
+/// from zbus, and by GLib version `UnknownMethod`, `UnknownObject` or
+/// `UnknownInterface` from NetworkManager.
+fn gone(e: &zbus::Error) -> bool {
+    matches!(e, zbus::Error::MethodError(name, ..) if matches!(
+        name.as_str(),
+        "org.freedesktop.DBus.Error.UnknownObject"
+            | "org.freedesktop.DBus.Error.UnknownInterface"
+            | "org.freedesktop.DBus.Error.UnknownMethod"
+    ))
 }

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
+use std::time::Duration;
 
 use zbus::zvariant::OwnedObjectPath;
 
@@ -43,6 +44,9 @@ pub struct Device {
     pub access_points: Vec<AccessPoint>,
     /// The one a Wi-Fi device is associated with.
     pub active_access_point: Option<AccessPoint>,
+    /// Wi-Fi devices only: when the last scan finished, as time since boot
+    /// (`CLOCK_BOOTTIME`); `None` before the first.
+    pub last_scan: Option<Duration>,
 }
 
 /// `NMDeviceType`, as far as this crate tells types apart.
@@ -116,6 +120,8 @@ pub mod reason {
     pub const SUPPLICANT_DISCONNECT: u32 = 8;
     pub const SUPPLICANT_FAILED: u32 = 10;
     pub const SUPPLICANT_TIMEOUT: u32 = 11;
+    /// Left by [`Client::disconnect`](crate::Client::disconnect).
+    pub const USER_REQUESTED: u32 = 39;
     /// Not reliably left on an unplugged device; see [`Device::unplugged`](crate::Device::unplugged).
     pub const CARRIER: u32 = 40;
     pub const SSID_NOT_FOUND: u32 = 53;
@@ -263,6 +269,10 @@ impl Device {
                     active_access_point: wireless
                         .and_then(|w| prop::<OwnedObjectPath>(w, "ActiveAccessPoint"))
                         .and_then(|ap| access_point(objects, &ap)),
+                    last_scan: wireless
+                        .and_then(|w| prop::<i64>(w, "LastScan"))
+                        .and_then(|ms| u64::try_from(ms).ok())
+                        .map(Duration::from_millis),
                 })
             })
             .collect();

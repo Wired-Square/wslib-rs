@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.1
+
+- `disconnect` drops a device's active connection and keeps its profile,
+  leaving the device `Disconnected` with the new `reason::USER_REQUESTED`.
+  The fake answers it, with `NotActive` for a device with no connection.
+- `activate` starts a saved profile on a device, for reconnecting after a
+  `disconnect`; `apply` falls back to it.
+- The fake leaves a failed join's device with no active connection, so its
+  `profile` is `None`, as NetworkManager does.
+- `Profile` reads a profile's path, `uuid`, `id`, type and SSID, and `saved`
+  lists every profile as one.
+- `saved` leaves out a profile deleted between listing and reading it, which
+  the fake's `vanish_after_listing` plays; `refuse` now covers `GetSettings`.
+- `Device::last_scan`, the Wi-Fi `LastScan` as time since boot, `None` before
+  the first scan. The fake moves it per device on `RequestScan`.
+- The fake fills in `connection.uuid` and `connection.id` on a profile that
+  lacks them, and keeps them over an `Update2` without them.
+- The fake's rollback follows NetworkManager's: each device's profile at the
+  checkpoint is updated, or added back at a new path with its UUID, and run
+  again; other deleted profiles stay deleted, and changes to profiles no
+  device ran are kept.
+
 ## 0.1.0
 
 - `Client` over a zbus 5 connection, tokio only, properties uncached.

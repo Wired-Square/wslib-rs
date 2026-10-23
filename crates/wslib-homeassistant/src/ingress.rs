@@ -159,7 +159,6 @@ impl<S: Send + Sync> OptionalFromRequestParts<S> for Caller {
 }
 
 /// [`Caller`] read from a request's head, for code that sees `&Parts`.
-#[expect(clippy::result_large_err, reason = "the extractor's rejection")]
 pub fn caller(parts: &Parts) -> Result<Option<Caller>, ApiError> {
     if !arrived(&parts.extensions) {
         return Ok(None);
@@ -193,7 +192,6 @@ impl<S: Send + Sync> FromRequestParts<S> for IngressBase {
 }
 
 /// [`IngressBase`] as a `Spa::base_from` hook.
-#[expect(clippy::result_large_err, reason = "the shape `Spa::base_from` takes")]
 pub fn spa_base(parts: &Parts) -> Result<Option<BasePath>, ApiError> {
     if !arrived(&parts.extensions) {
         return Ok(None);
@@ -207,7 +205,6 @@ pub fn spa_base(parts: &Parts) -> Result<Option<BasePath>, ApiError> {
 }
 
 /// `name`'s one value as UTF-8, or `None` when it is absent.
-#[expect(clippy::result_large_err, reason = "answered at once by every caller")]
 fn header<'a>(headers: &'a HeaderMap, name: &str) -> Result<Option<&'a str>, ApiError> {
     let mut values = headers.get_all(name).iter();
     let value = match (values.next(), values.next()) {

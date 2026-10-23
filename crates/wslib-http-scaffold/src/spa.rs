@@ -54,12 +54,13 @@ pub(crate) enum Files {
     Embedded(crate::embed::Lookup),
 }
 
-/// `index.html` as read, and as served without a per-request base.
+/// `index.html` as read, and as served without a per-request base: its gzip
+/// kept only when smaller.
 #[derive(Clone)]
 struct Page {
     read: Bytes,
     plain: Bytes,
-    gzip: Bytes,
+    gzip: Option<Bytes>,
 }
 
 impl Page {
@@ -70,19 +71,22 @@ impl Page {
         };
         let mut gzip = GzEncoder::new(Vec::new(), Compression::best());
         gzip.write_all(&plain).expect("writing to memory");
-        let gzip = gzip.finish().expect("writing to memory").into();
+        let gzip = Some(gzip.finish().expect("writing to memory"))
+            .filter(|gzip| gzip.len() < plain.len())
+            .map(Bytes::from);
         Self { read, plain, gzip }
     }
 
     fn respond(&self, asked: &HeaderMap) -> Response {
-        if compress::accepts_gzip(asked) {
-            let headers = [
-                (header::CONTENT_TYPE, HTML),
-                (header::CONTENT_ENCODING, "gzip"),
-            ];
-            (headers, self.gzip.clone()).into_response()
-        } else {
-            ([(header::CONTENT_TYPE, HTML)], self.plain.clone()).into_response()
+        match &self.gzip {
+            Some(gzip) if compress::accepts_gzip(asked) => {
+                let headers = [
+                    (header::CONTENT_TYPE, HTML),
+                    (header::CONTENT_ENCODING, "gzip"),
+                ];
+                (headers, gzip.clone()).into_response()
+            }
+            _ => ([(header::CONTENT_TYPE, HTML)], self.plain.clone()).into_response(),
         }
     }
 }
@@ -198,7 +202,6 @@ impl Spa {
         }
     }
 
-    #[expect(clippy::result_large_err, reason = "the hook's own error type")]
     fn page(&self, parts: &Parts) -> Result<Response, ApiError> {
         let Some(page) = &self.page else {
             return Err(ApiError::internal(
@@ -531,7 +534,6 @@ pub(crate) mod tests {
     }
 
     /// The base named in `x-base`, a 400 when it is not one.
-    #[expect(clippy::result_large_err, reason = "the hook's error type")]
     pub(crate) fn based_on_header(spa: Spa) -> Spa {
         spa.base_from(|parts| {
             parts
@@ -668,6 +670,19 @@ pub(crate) mod tests {
         assert_eq!(get_from(spa.clone(), "/", &[]).await.1, b"<head></head>");
         std::fs::remove_file(dir.path().join(INDEX)).unwrap();
         assert_eq!(get_from(spa, "/x", &[]).await.1, b"<head></head>");
+    }
+
+    #[tokio::test]
+    async fn a_page_its_gzip_would_not_shrink_is_sent_plain_for_the_compression_layer() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(INDEX), "<p>").unwrap();
+        for spa in [
+            Spa::from_dir(dir.path()),
+            Spa::from_dir(dir.path()).base("/x/".parse().unwrap()),
+        ] {
+            let (response, _) = get_from(spa, "/", &[("accept-encoding", "gzip")]).await;
+            assert!(!response.headers().contains_key(header::CONTENT_ENCODING));
+        }
     }
 
     #[test]

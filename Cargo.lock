@@ -6753,6 +6753,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-homeassistant"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "http-body-util",
+ "serde_json",
+ "tokio",
+ "tower",
+ "wslib-http-error",
+ "wslib-http-scaffold",
+]
+
+[[package]]
 name = "wslib-host"
 version = "0.1.0"
 dependencies = [
@@ -6781,13 +6794,17 @@ dependencies = [
 
 [[package]]
 name = "wslib-http-scaffold"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
+ "flate2",
+ "http-body",
  "http-body-util",
  "percent-encoding",
  "rust-embed",
+ "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tower",
  "tower-http",

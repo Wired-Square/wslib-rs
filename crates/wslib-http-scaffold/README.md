@@ -26,9 +26,33 @@ let app = standard_layers(app);
   `/ui/../api/x` are refused too. `assets/` is `public, max-age=31536000,
   immutable` and a missing asset there is a 404, never the page; everything
   else is `no-store`. A `.gz` beside a file is sent to a client taking gzip.
+  `index.html` is read once, when the `Spa` is built, and served from memory
+  with a gzip made then; a bundle without one answers the page with a 500.
+  `first_segment_is(path, "api")` is the reserved-prefix rule on its own.
+- **`Spa::base(base)`**: the page rendered once with `<base href="{base}">`,
+  its gzip stored, so it passes the encoder cap.
+- **`Spa::base_from(hook)`**: `hook` names a `BasePath` per request (or none),
+  and `index.html` is then served with `<base href="{base}">` first in its
+  `<head>` (or the page's own `<base>` rewritten to it), so a bundle with
+  page-relative asset links runs under any prefix. That page is made per
+  request; when `hook` names none, the page is `base`'s or the plain one.
+  Assets and other files are untouched; an error from `hook` answers the
+  page's requests and no file's.
+- **`BasePath`**: `/` or `/`-separated segments of letters, digits, `-`, `.`,
+  `_` and `~` ending in `/`, never `.` or `..`, so it needs no escaping in a
+  URL, a cookie or an attribute. Deserialises from a string.
 - **`health`** and **`health_with(ready)`**: `GET /healthz` answering
   `{"status":"ok"}`, or `ready`'s error while it fails.
 - **`version(version, build)`**: `GET /version` answering
   `{"version", "build"}`; `build` is wslib-build-id's `WSLIB_BUILD_ID`.
 - **`standard_layers`**: tracing, gzip compression, and a panic answered as a
   500 error body. Call it last; it wraps only what the router already holds.
+- **`EncoderCap`**: at most 64 gzip encoders (~235 KB each) live at once, in
+  `standard_layers` already. A request that finds none free is served
+  uncompressed, not queued. A hand-built stack puts `EncoderCap::new(n)`
+  outside `CompressionLayer`; the other way round compiles and caps nothing.
+  A handler serving a body stored compressed calls `restore_accept_encoding`
+  first and returns through `mark_stored`, so it passes the cap with no
+  permit.
+- **`BasePath` alone**: `default-features = false` drops the `server`
+  feature and with it every HTTP dependency.

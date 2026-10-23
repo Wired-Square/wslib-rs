@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.1.1
+
+- `BasePath`: `/` or slash-separated URL-safe segments ending in `/`, parsed
+  with or without its end slashes, moved unchanged from the chassis. Every
+  other item is behind the new default feature `server`, so
+  `default-features = false` is `BasePath` and serde alone.
+- `index.html` is read once, as the `Spa` is built, and served from memory
+  with a best-level gzip made then. `Spa::base(base)` renders it once with
+  that `<base href>`.
+- `Spa::base_from(hook)`: `index.html` served with a `<base href>` for the
+  base `hook` names for the request, made per request and left to the
+  compression layer; none falls back to `Spa::base`, else the plain page; a refusal from `hook`
+  answers the page and no file. A `<base>` already in the page's head has its
+  `href` rewritten, its other attributes kept. Without a hook nothing changes.
+- A bundle with no `index.html`, from disk or embedded, answers the page with
+  a 500 error body, logging the missing file, where it was a 404.
+- `EncoderCap`: at most a set number of live gzip encoders (64 by default); a
+  request past it is served uncompressed rather than delayed. `standard_layers`
+  applies it. A `.gz` the `Spa` sends needs no encoder and holds none, so it
+  still goes out compressed past the cap. `restore_accept_encoding` and
+  `mark_stored` do the same for an app's own handler serving a stored gzip.
+- `first_segment_is(path, segment)`: the rule a reserved prefix is judged
+  by, for an app with no bundle.
+
 ## 0.1.0
 
 - `Spa`: a single-page bundle from disk, answering `index.html` for unmatched

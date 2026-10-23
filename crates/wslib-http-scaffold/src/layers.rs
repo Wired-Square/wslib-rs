@@ -8,7 +8,10 @@ use tower_http::compression::CompressionLayer;
 use tower_http::trace::TraceLayer;
 use wslib_http_error::ApiError;
 
-/// `router` traced, gzipped, and answering a panic as a 500 error body.
+use crate::EncoderCap;
+
+/// `router` traced, gzipped with at most [`EncoderCap::DEFAULT`] encoders at
+/// once, and answering a panic as a 500 error body.
 ///
 /// Wraps only what `router` already holds, so call it after the last route
 /// and the fallback.
@@ -16,6 +19,7 @@ pub fn standard_layers<S: Clone + Send + Sync + 'static>(router: Router<S>) -> R
     router.layer(
         ServiceBuilder::new()
             .layer(TraceLayer::new_for_http())
+            .layer(EncoderCap::default())
             .layer(CompressionLayer::new())
             .layer(CatchPanicLayer::custom(panicked)),
     )
@@ -71,5 +75,31 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.headers()[header::CONTENT_ENCODING], "gzip");
+    }
+
+    #[tokio::test]
+    async fn the_encoder_cap_holds_on_the_standard_layers() {
+        let app = standard_layers(Router::new().route("/big", get(async || "x".repeat(4096))));
+        let gzipped = || {
+            app.clone().oneshot(
+                Request::get("/big")
+                    .header(header::ACCEPT_ENCODING, "gzip")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+        };
+
+        let mut held = Vec::new();
+        for _ in 0..EncoderCap::DEFAULT {
+            let gz = gzipped().await.unwrap();
+            assert_eq!(gz.headers()[header::CONTENT_ENCODING], "gzip");
+            held.push(gz);
+        }
+        let past = gzipped().await.unwrap();
+        assert!(past.headers().get(header::CONTENT_ENCODING).is_none());
+
+        drop(held);
+        let after = gzipped().await.unwrap();
+        assert_eq!(after.headers()[header::CONTENT_ENCODING], "gzip");
     }
 }

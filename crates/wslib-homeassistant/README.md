@@ -32,7 +32,9 @@ The router must be served with `ConnectInfo<SocketAddr>`, as
 
 Either way the proof is set only by these two, on a request whose
 connection's peer, canonicalised (`::ffff:172.30.32.2` is `172.30.32.2`), is
-trusted. `ingress::arrived(&extensions)` reads it.
+trusted. `ingress::arrived(&extensions)` reads it. The proof lives in that
+request's extensions alone, so a long-lived connection (a WebSocket) reads
+`Caller` and `IngressBase` before the upgrade and keeps them.
 
 ## What's here
 
@@ -46,7 +48,8 @@ trusted. `ingress::arrived(&extensions)` reads it.
   from `X-Remote-User-Id`, `-Name` and `-Display-Name`. None when the request
   did not arrive or the id is empty or absent; an empty or absent name is the
   id, an empty display name is none. A header sent twice, or not UTF-8, is a
-  400 naming it.
+  400 naming it. `ingress::caller(&parts)` reads the same for code that sees
+  only the request's head.
 - **`IngressBase(Option<BasePath>)`**: `X-Ingress-Path` on a request that
   arrived, for a link or a `Location`. One that is not a `BasePath` is a 400
   `x-ingress-path: <why>`.

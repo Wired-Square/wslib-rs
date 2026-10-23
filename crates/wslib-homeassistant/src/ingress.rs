@@ -137,23 +137,29 @@ impl<S: Send + Sync> OptionalFromRequestParts<S> for Caller {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Option<Self>, ApiError> {
-        if !arrived(&parts.extensions) {
-            return Ok(None);
-        }
-        let headers = &parts.headers;
-        let Some(id) = header(headers, USER_ID)?.filter(|id| !id.is_empty()) else {
-            return Ok(None);
-        };
-        let name = header(headers, USER_NAME)?
-            .filter(|name| !name.is_empty())
-            .unwrap_or(id);
-        let display_name = header(headers, DISPLAY_NAME)?.filter(|name| !name.is_empty());
-        Ok(Some(Self {
-            id: id.to_owned(),
-            name: name.to_owned(),
-            display_name: display_name.map(str::to_owned),
-        }))
+        caller(parts)
     }
+}
+
+/// [`Caller`] read from a request's head, for code that sees `&Parts`.
+#[expect(clippy::result_large_err, reason = "the extractor's rejection")]
+pub fn caller(parts: &Parts) -> Result<Option<Caller>, ApiError> {
+    if !arrived(&parts.extensions) {
+        return Ok(None);
+    }
+    let headers = &parts.headers;
+    let Some(id) = header(headers, USER_ID)?.filter(|id| !id.is_empty()) else {
+        return Ok(None);
+    };
+    let name = header(headers, USER_NAME)?
+        .filter(|name| !name.is_empty())
+        .unwrap_or(id);
+    let display_name = header(headers, DISPLAY_NAME)?.filter(|name| !name.is_empty());
+    Ok(Some(Caller {
+        id: id.to_owned(),
+        name: name.to_owned(),
+        display_name: display_name.map(str::to_owned),
+    }))
 }
 
 /// The base path the proxy serves the app under, from `X-Ingress-Path` on a

@@ -99,6 +99,12 @@ tls.commit()?;
   read, or one naming a relative path, is `InvalidData`, and nothing is touched:
   an operator moves `<name>.txn` (`Transaction::record`) aside after checking
   it. Never delete it automatically.
+- **A record is trusted only if this process could have written it**: a
+  regular file, opened without following a link, owned by the effective user
+  and writable by no one else (on Windows, owned by the process token's user
+  or default owner). Anything else is `PermissionDenied` naming the record,
+  and nothing is touched. `recover_expecting(dir, name, targets)` also
+  refuses a record naming a file outside `targets`.
 - **`begin` refuses while a record is there** (`AlreadyExists`): recover first.
 - **A failure before the commit point rolls back**, a failed `stage`
   included, and so does `abort` or dropping the transaction uncommitted.

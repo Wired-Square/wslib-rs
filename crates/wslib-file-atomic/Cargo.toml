@@ -13,6 +13,9 @@ publish = ["wired-square"]
 [features]
 testing = ["windows-sys/Win32_System_SystemServices"]
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.174"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
@@ -20,9 +23,6 @@ windows-sys = { version = "0.61", features = [
     "Win32_Security_Authorization",
     "Win32_Storage_FileSystem",
 ] }
-
-[target.'cfg(unix)'.dev-dependencies]
-libc = "0.2.174"
 
 [[test]]
 name = "readers"

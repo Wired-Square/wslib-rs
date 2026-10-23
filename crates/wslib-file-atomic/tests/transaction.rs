@@ -6,7 +6,8 @@ mod common;
 
 use common::{Scratch, read};
 use wslib_file_atomic::{
-    CommitError, Options, Readers, Recovered, Transaction, recover, replace_private,
+    CommitError, Options, Readers, Recovered, Transaction, recover, recover_expecting,
+    replace_private,
 };
 
 const KEY: &str = "app.key";
@@ -356,6 +357,85 @@ fn a_malformed_record_is_an_error_and_nothing_is_touched() {
         assert_old_pair(&dir);
         assert_only(&dir, &[KEY, CERT, STAGED_KEY, RECORD]);
     }
+}
+
+fn assert_refused_untouched(dir: &Scratch, refused: io::Error) {
+    assert_eq!(refused.kind(), io::ErrorKind::PermissionDenied, "{refused}");
+    assert!(refused.to_string().contains(RECORD), "{refused}");
+    assert_old_pair(dir);
+    assert_eq!(
+        read(&dir.join(STAGED_KEY)),
+        format!("new {STAGED_KEY}").as_bytes()
+    );
+}
+
+fn committed_and_staged(name: &str) -> Scratch {
+    let dir = pair(name);
+    write_record(&dir, "committed");
+    stage_by_hand(&dir, &[STAGED_KEY, STAGED_CERT]);
+    dir
+}
+
+#[cfg(unix)]
+#[test]
+fn a_record_others_may_write_is_refused() {
+    use std::os::unix::fs::PermissionsExt;
+    for mode in [0o620, 0o602] {
+        let dir = committed_and_staged(&format!("txn-writable-{mode:o}"));
+        fs::set_permissions(dir.join(RECORD), fs::Permissions::from_mode(mode)).unwrap();
+        assert_refused_untouched(&dir, recover(&dir.0, "tls").unwrap_err());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_record_is_refused() {
+    let dir = committed_and_staged("txn-symlinked");
+    let planted = dir.join("planted");
+    fs::rename(dir.join(RECORD), &planted).unwrap();
+    std::os::unix::fs::symlink(&planted, dir.join(RECORD)).unwrap();
+    assert_refused_untouched(&dir, recover(&dir.0, "tls").unwrap_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_record_that_is_not_a_regular_file_is_refused() {
+    let dir = committed_and_staged("txn-not-a-file");
+    fs::remove_file(dir.join(RECORD)).unwrap();
+    fs::create_dir(dir.join(RECORD)).unwrap();
+    assert_refused_untouched(&dir, recover(&dir.0, "tls").unwrap_err());
+
+    fs::remove_dir(dir.join(RECORD)).unwrap();
+    let fifo = std::ffi::CString::new(dir.join(RECORD).into_os_string().into_encoded_bytes());
+    // SAFETY: a NUL-terminated path.
+    assert_eq!(unsafe { libc::mkfifo(fifo.unwrap().as_ptr(), 0o600) }, 0);
+    assert_refused_untouched(&dir, recover(&dir.0, "tls").unwrap_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_record_owned_by_someone_else_is_refused() {
+    // SAFETY: a plain syscall with no arguments.
+    if unsafe { libc::geteuid() } != 0 {
+        eprintln!("skipped: only root can give a file away");
+        return;
+    }
+    let dir = committed_and_staged("txn-owned-by-another");
+    std::os::unix::fs::chown(dir.join(RECORD), Some(65534), None).unwrap();
+    assert_refused_untouched(&dir, recover(&dir.0, "tls").unwrap_err());
+}
+
+#[test]
+fn a_record_naming_a_target_outside_the_expected_set_is_refused() {
+    let dir = committed_and_staged("txn-unexpected-target");
+    let key = dir.join(KEY);
+    let refused = recover_expecting(&dir.0, "tls", &[&key]).unwrap_err();
+    assert_refused_untouched(&dir, refused);
+
+    let expected = [key.as_path(), &dir.join(CERT)];
+    let recovered = recover_expecting(&dir.0, "tls", &expected).unwrap();
+    assert_eq!(recovered, Recovered::RolledForward);
+    assert_only(&dir, &[KEY, CERT]);
 }
 
 fn occupy(path: &Path) {

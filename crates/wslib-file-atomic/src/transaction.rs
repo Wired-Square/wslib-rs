@@ -239,9 +239,23 @@ impl Drop for Transaction {
 
 /// Finish what a crash left of the transaction named `name` with its record in
 /// `dir`; call it before reading the files a transaction writes.
+///
+/// A record is refused, as `PermissionDenied`, unless it is a regular file,
+/// not a symbolic link, owned by this process's user and writable by no one
+/// else; on Windows, owned by this process's user or its default owner.
 pub fn recover(dir: &Path, name: &str) -> io::Result<Recovered> {
+    recover_checked(dir, name, None)
+}
+
+/// As [`recover`], also refusing a record that names a file outside `targets`.
+pub fn recover_expecting(dir: &Path, name: &str, targets: &[&Path]) -> io::Result<Recovered> {
+    let expected: Vec<_> = targets.iter().map(|target| as_recorded(target)).collect();
+    recover_checked(dir, name, Some(&expected))
+}
+
+fn recover_checked(dir: &Path, name: &str, expected: Option<&[PathBuf]>) -> io::Result<Recovered> {
     let record = record_path(dir, name)?;
-    let contents = match fs::read_to_string(&record) {
+    let contents = match read_record(&record) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Recovered::Nothing),
         read => read?,
     };
@@ -262,12 +276,93 @@ pub fn recover(dir: &Path, name: &str) -> io::Result<Recovered> {
                 .ok_or_else(malformed)
         })
         .collect::<io::Result<Vec<_>>>()?;
+    if let Some(unexpected) = targets
+        .iter()
+        .find(|target| expected.is_some_and(|expected| !expected.contains(target)))
+    {
+        return Err(refused(
+            &record,
+            &format!("it names {}, which is not expected", unexpected.display()),
+        ));
+    }
     let suffix = suffix(name);
     match state {
         PENDING => roll_back(&record, &suffix, &targets).map(|()| Recovered::RolledBack),
         COMMITTED => roll_forward(&record, &suffix, &targets).map(|()| Recovered::RolledForward),
         _ => Err(malformed()),
     }
+}
+
+/// As [`Transaction`] lists it: the parent canonical, so a link there names the same file.
+fn as_recorded(target: &Path) -> PathBuf {
+    let parent = target.parent().map_or(Path::new("."), or_here);
+    match (fs::canonicalize(parent), target.file_name()) {
+        (Ok(parent), Some(name)) => parent.join(name),
+        _ => target.to_path_buf(),
+    }
+}
+
+fn refused(record: &Path, why: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        format!("{} is refused: {why}", record.display()),
+    )
+}
+
+/// Read from the file that was checked, so nothing can be swapped in between.
+fn read_record(record: &Path) -> io::Result<String> {
+    let file = open_record(record)?;
+    if !file.metadata()?.is_file() {
+        return Err(refused(record, "not a regular file"));
+    }
+    if let Some(why) = untrusted(&file)? {
+        return Err(refused(record, why));
+    }
+    io::read_to_string(file)
+}
+
+/// Non-blocking, so a FIFO planted as the record is refused rather than waited on.
+#[cfg(unix)]
+fn open_record(record: &Path) -> io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    match fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(record)
+    {
+        Err(e) if e.raw_os_error() == Some(libc::ELOOP) => Err(refused(record, "a symbolic link")),
+        opened => opened,
+    }
+}
+
+#[cfg(unix)]
+fn untrusted(file: &File) -> io::Result<Option<&'static str>> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = file.metadata()?;
+    // SAFETY: a plain syscall with no arguments.
+    Ok(if metadata.uid() != unsafe { libc::geteuid() } {
+        Some("owned by another user")
+    } else if metadata.mode() & 0o022 != 0 {
+        Some("writable by others")
+    } else {
+        None
+    })
+}
+
+/// A link is opened as itself, which is then not a regular file.
+#[cfg(windows)]
+fn open_record(record: &Path) -> io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(record)
+}
+
+#[cfg(windows)]
+fn untrusted(file: &File) -> io::Result<Option<&'static str>> {
+    Ok((!crate::windows::owned_by_this_process(file)?).then_some("owned by another user"))
 }
 
 fn record_path(dir: &Path, name: &str) -> io::Result<PathBuf> {

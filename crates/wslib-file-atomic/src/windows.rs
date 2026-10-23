@@ -2,20 +2,23 @@
 //! directory's ACL, and a directory such as `%ProgramData%` grants every user
 //! read.
 
+use std::fs::File;
 use std::io;
 use std::os::windows::ffi::OsStrExt;
+use std::os::windows::io::AsRawHandle;
 use std::path::Path;
 use std::ptr;
 
-use windows_sys::Win32::Foundation::LocalFree;
+use windows_sys::Win32::Foundation::{HANDLE, LocalFree};
 use windows_sys::Win32::Security::Authorization::{
-    GetNamedSecurityInfoW, SE_FILE_OBJECT, SetNamedSecurityInfoW,
+    GetNamedSecurityInfoW, GetSecurityInfo, SE_FILE_OBJECT, SetNamedSecurityInfoW,
 };
 use windows_sys::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, AddAccessAllowedAce, CreateWellKnownSid,
-    DACL_SECURITY_INFORMATION, EqualSid, GetLengthSid, InitializeAcl, OWNER_SECURITY_INFORMATION,
-    PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_MAX_SID_SIZE,
-    WELL_KNOWN_SID_TYPE, WinBuiltinAdministratorsSid, WinLocalSystemSid,
+    DACL_SECURITY_INFORMATION, EqualSid, GetLengthSid, GetTokenInformation, InitializeAcl,
+    OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+    SECURITY_MAX_SID_SIZE, TOKEN_INFORMATION_CLASS, TokenOwner, TokenUser, WELL_KNOWN_SID_TYPE,
+    WinBuiltinAdministratorsSid, WinLocalSystemSid,
 };
 use windows_sys::Win32::Storage::FileSystem::{DELETE, FILE_ALL_ACCESS, FILE_GENERIC_READ};
 
@@ -122,6 +125,69 @@ impl Owner {
             )
         };
         win32(status).map(|()| owner)
+    }
+
+    fn of_file(file: &File) -> io::Result<Self> {
+        let mut owner = Self {
+            descriptor: ptr::null_mut(),
+            sid: ptr::null_mut(),
+        };
+        // SAFETY: the handle is open for the call; on success `descriptor`
+        // owns the memory `sid` points into, and `drop` frees it.
+        let status = unsafe {
+            GetSecurityInfo(
+                file.as_raw_handle(),
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION,
+                &mut owner.sid,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                &mut owner.descriptor,
+            )
+        };
+        win32(status).map(|()| owner)
+    }
+}
+
+/// An elevated process gives what it creates to Administrators, its token's
+/// default owner, rather than to its user.
+pub(crate) fn owned_by_this_process(file: &File) -> io::Result<bool> {
+    let owner = Owner::of_file(file)?;
+    let ours = [TokenSid::read(TokenUser)?, TokenSid::read(TokenOwner)?];
+    // SAFETY: both are valid SIDs for as long as `owner` and `ours` live.
+    Ok(ours
+        .iter()
+        .any(|sid| unsafe { EqualSid(owner.sid, sid.as_psid()) } != 0))
+}
+
+/// This process's `TOKEN_USER` or `TOKEN_OWNER`, each led by the SID.
+pub(crate) struct TokenSid([u64; 64]);
+
+impl TokenSid {
+    pub(crate) fn read(class: TOKEN_INFORMATION_CLASS) -> io::Result<Self> {
+        let mut info = Self([0; 64]);
+        let mut len = 0u32;
+        // SAFETY: the buffer is 512 bytes, aligned for either structure, whose
+        // SID points into it; -4 is `GetCurrentProcessToken`'s pseudo-handle.
+        let read = unsafe {
+            GetTokenInformation(
+                -4isize as HANDLE,
+                class,
+                info.0.as_mut_ptr().cast(),
+                512,
+                &mut len,
+            )
+        };
+        if read == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(info)
+    }
+
+    pub(crate) fn as_psid(&self) -> PSID {
+        // SAFETY: filled by `read`, which leads with the SID's pointer.
+        unsafe { *self.0.as_ptr().cast::<PSID>() }
     }
 }
 

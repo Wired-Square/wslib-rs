@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.4
+
+- `recover` refuses a record this process could not have written, as
+  `PermissionDenied` naming it: a symbolic link, anything but a regular file
+  (a FIFO is not waited on), or one owned by another user or writable by
+  group or others; on Windows one owned by neither the process token's user
+  nor its default owner. It reads the record from the file it checked.
+  `recover_expecting(dir, name, targets)` also refuses a record naming a
+  file outside `targets`.
+
 ## 0.1.3
 
 - `administrators_read_and_delete` (Windows): `owner_only`'s protected DACL,

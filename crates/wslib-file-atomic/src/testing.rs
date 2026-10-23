@@ -30,40 +30,26 @@ pub fn assert_administrators_read_and_delete(file: &Path) {
 fn assert_dacl(file: &Path, administrators: bool) {
     use std::os::windows::ffi::OsStrExt;
     use std::ptr::null_mut;
-    use windows_sys::Win32::Foundation::{HANDLE, LocalFree};
+    use windows_sys::Win32::Foundation::LocalFree;
     use windows_sys::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
     use windows_sys::Win32::Security::{
         ACCESS_ALLOWED_ACE, ACL, ACL_SIZE_INFORMATION, AclSizeInformation,
         DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation,
-        GetSecurityDescriptorControl, GetTokenInformation, OWNER_SECURITY_INFORMATION,
-        PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED, TOKEN_USER, TokenUser,
-        WinBuiltinAdministratorsSid, WinLocalSystemSid,
+        GetSecurityDescriptorControl, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+        SE_DACL_PROTECTED, TokenUser, WinBuiltinAdministratorsSid, WinLocalSystemSid,
     };
     use windows_sys::Win32::Storage::FileSystem::{DELETE, FILE_ALL_ACCESS, FILE_GENERIC_READ};
     use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
 
-    use crate::windows::WellKnown;
+    use crate::windows::{TokenSid, WellKnown};
 
     let system = WellKnown::new(WinLocalSystemSid).expect("SYSTEM's SID");
     let system = system.as_psid();
     let administrators_sid =
         WellKnown::new(WinBuiltinAdministratorsSid).expect("Administrators' SID");
     let administrators_sid = administrators_sid.as_psid();
-    let mut token_user = [0u64; 64];
-    let mut len = 0u32;
-    // SAFETY: `token_user` is 512 bytes, aligned for a `TOKEN_USER`, whose SID
-    // points into it; -4 is `GetCurrentProcessToken`'s pseudo-handle.
-    let process_user: PSID = unsafe {
-        let read = GetTokenInformation(
-            -4isize as HANDLE,
-            TokenUser,
-            token_user.as_mut_ptr().cast(),
-            512,
-            &mut len,
-        );
-        assert_ne!(read, 0, "this process's user");
-        (*token_user.as_ptr().cast::<TOKEN_USER>()).User.Sid
-    };
+    let process_user = TokenSid::read(TokenUser).expect("this process's user");
+    let process_user = process_user.as_psid();
 
     let name: Vec<u16> = file.as_os_str().encode_wide().chain([0]).collect();
     let mut owner: PSID = null_mut();

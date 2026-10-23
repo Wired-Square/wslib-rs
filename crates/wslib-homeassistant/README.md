@@ -32,9 +32,10 @@ The router must be served with `ConnectInfo<SocketAddr>`, as
 
 Either way the proof is set only by these two, on a request whose
 connection's peer, canonicalised (`::ffff:172.30.32.2` is `172.30.32.2`), is
-trusted. `ingress::arrived(&extensions)` reads it. The proof lives in that
-request's extensions alone, so a long-lived connection (a WebSocket) reads
-`Caller` and `IngressBase` before the upgrade and keeps them.
+trusted. `ingress::arrived(&extensions)` reads it. Any `gate` or `recognise`
+in the process sets it, so wrap only the routers that face the proxy. It
+lives in that request's extensions alone: a long-lived connection (a
+WebSocket) reads `Caller` and `IngressBase` before the upgrade and keeps them.
 
 ## What's here
 
@@ -43,7 +44,9 @@ request's extensions alone, so a long-lived connection (a WebSocket) reads
   which trusts every process in the container, and with `host_network` every
   process on the host, so it is never the default. `exempt(path)` answers that
   exact URI path to anyone under `gate`: `/healthz` exempt leaves `/healthz/`
-  refused.
+  refused. `refusal(sentence)` replaces the 403's sentence.
+- **`USER_ID`, `USER_NAME`, `DISPLAY_NAME`, `INGRESS_PATH`**: the header
+  names, lowercase.
 - **`Caller`** (`id`, `name`, `display_name`), extracted as `Option<Caller>`
   from `X-Remote-User-Id`, `-Name` and `-Display-Name`. None when the request
   did not arrive or the id is empty or absent; an empty or absent name is the

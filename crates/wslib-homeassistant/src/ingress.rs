@@ -7,6 +7,10 @@
 //! canonicalised, is one of the [`Peers`]. Anyone else can send the same
 //! headers.
 //!
+//! **The proof is the process's, not one router's**: [`arrived`] and [`Caller`]
+//! trust a request any `gate` or `recognise` marked, so wrap only the routers
+//! that face the proxy.
+//!
 //! **A trusted loopback address trusts every process in the container**, and
 //! on an add-on with `host_network` every process on the host, so loopback is
 //! trusted only when asked for.
@@ -24,10 +28,16 @@ use wslib_http_scaffold::BasePath;
 /// The Supervisor's address on the add-on network, which the proxy calls from.
 pub(crate) const SUPERVISOR: IpAddr = IpAddr::V4(Ipv4Addr::new(172, 30, 32, 2));
 
-pub(crate) const USER_ID: &str = "x-remote-user-id";
-pub(crate) const USER_NAME: &str = "x-remote-user-name";
-pub(crate) const DISPLAY_NAME: &str = "x-remote-user-display-name";
-const INGRESS_PATH: &str = "x-ingress-path";
+/// The Home Assistant user's id.
+pub const USER_ID: &str = "x-remote-user-id";
+/// The Home Assistant user's name.
+pub const USER_NAME: &str = "x-remote-user-name";
+/// The Home Assistant user's display name.
+pub const DISPLAY_NAME: &str = "x-remote-user-display-name";
+/// The base path the proxy serves the app under.
+pub const INGRESS_PATH: &str = "x-ingress-path";
+
+const REFUSAL: &str = "this app answers its ingress proxy alone";
 
 /// The peers whose requests arrived through the proxy, and the paths [`gate`]
 /// answers for anyone.
@@ -35,6 +45,7 @@ const INGRESS_PATH: &str = "x-ingress-path";
 pub struct Peers {
     trusted: Vec<IpAddr>,
     exempt: Vec<String>,
+    refusal: String,
 }
 
 impl Peers {
@@ -47,6 +58,7 @@ impl Peers {
         Self {
             trusted: peers.into_iter().map(|peer| peer.to_canonical()).collect(),
             exempt: Vec::new(),
+            refusal: REFUSAL.to_owned(),
         }
     }
 
@@ -66,6 +78,13 @@ impl Peers {
     /// such as a bundle's fallback, that the exemption was not meant for.
     pub fn exempt(mut self, path: impl Into<String>) -> Self {
         self.exempt.push(path.into());
+        self
+    }
+
+    /// The 403's sentence under [`gate`], replacing "this app answers its ingress
+    /// proxy alone".
+    pub fn refusal(mut self, sentence: impl Into<String>) -> Self {
+        self.refusal = sentence.into();
         self
     }
 
@@ -111,9 +130,7 @@ fn checking<S: Clone + Send + Sync + 'static>(
                     request.extensions_mut().insert(Arrived);
                 } else if refusing && !peers.exempt.iter().any(|path| path == request.uri().path())
                 {
-                    return Err(ApiError::forbidden(
-                        "this app answers its ingress proxy alone",
-                    ));
+                    return Err(ApiError::forbidden(peers.refusal.clone()));
                 }
                 Ok(request)
             }
@@ -296,9 +313,13 @@ mod tests {
             let (status, body) = send(gated(), peer, "/healthz", &[]).await;
             assert_eq!((status, body.as_str()), (StatusCode::OK, "ok"), "{peer:?}");
         }
-        let unexempt = gate(app(), &Peers::home_assistant());
-        let (status, _) = send(unexempt, Some("172.30.32.3:1"), "/healthz", &[]).await;
+        let unexempt = gate(app(), &Peers::home_assistant().refusal("ingress only"));
+        let (status, body) = send(unexempt, Some("172.30.32.3:1"), "/healthz", &[]).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&body).unwrap()["error"],
+            "ingress only"
+        );
     }
 
     #[tokio::test]

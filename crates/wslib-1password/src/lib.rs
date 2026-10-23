@@ -43,7 +43,7 @@ pub use reference::{ReadReference, is_reference, resolve};
 pub use runner::{Call, Output, Runner, ShellRunner};
 pub use types::{
     Account, AccountInfo, Field, Item, ItemRef, ItemSummary, SecretBytes, Section, User, VaultInfo,
-    WhoAmI,
+    WhoAmI, is_item_id,
 };
 pub use wslib_secret::Secret;
 

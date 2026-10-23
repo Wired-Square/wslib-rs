@@ -32,12 +32,14 @@ pub fn find_account(runner: &impl Runner, identifier: &str) -> Result<Account, E
 pub struct Op<R = ShellRunner> {
     runner: R,
     account: Option<String>,
+    include_archive: bool,
 }
 
 impl<R> fmt::Debug for Op<R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Op")
             .field("account", &self.account)
+            .field("include_archive", &self.include_archive)
             .finish_non_exhaustive()
     }
 }
@@ -48,6 +50,7 @@ impl<R: Runner> Op<R> {
         Self {
             runner,
             account: Some(account.into()),
+            include_archive: false,
         }
     }
 
@@ -57,7 +60,14 @@ impl<R: Runner> Op<R> {
         Self {
             runner,
             account: None,
+            include_archive: false,
         }
+    }
+
+    /// This client with item listings and gets also finding archived items (`--include-archive`).
+    pub fn including_archive(mut self) -> Self {
+        self.include_archive = true;
+        self
     }
 
     /// The account every call names; `None` for [`Op::unscoped`].
@@ -141,7 +151,17 @@ impl<R: Runner> Op<R> {
 
     /// The value an `op://vault/item/field` reference names, byte for byte.
     pub fn read(&self, reference: &str) -> Result<SecretBytes, Error> {
-        let out = self.checked(Call::of(["read", "--no-newline"]).arg(reference), &[])?;
+        self.call(["read", "--no-newline", reference])
+    }
+
+    /// `op` run with `args`, scoped and its failures mapped as every other call is,
+    /// answering stdout. The args are logged as given, so none may be a secret.
+    pub fn call<S: Into<String>>(
+        &self,
+        args: impl IntoIterator<Item = S>,
+    ) -> Result<SecretBytes, Error> {
+        let call = args.into_iter().fold(Call::new(), Call::arg);
+        let out = self.checked(call, &[])?;
         Ok(SecretBytes::new(out.stdout))
     }
 
@@ -170,7 +190,7 @@ impl<R: Runner> Op<R> {
         if !categories.is_empty() {
             call = call.arg(format!("--categories={}", categories.join(",")));
         }
-        self.json(call.arg("--format=json"))
+        self.json(self.archive_scoped(call).arg("--format=json"))
     }
 
     fn get_item_json(&self, vault: Option<&str>, item: &ItemRef) -> Result<Output, Error> {
@@ -178,7 +198,7 @@ impl<R: Runner> Op<R> {
         if let Some(vault) = vault {
             call = call.arg(format!("--vault={vault}"));
         }
-        let out = self.checked(call.arg("--format=json"), &[])?;
+        let out = self.checked(self.archive_scoped(call).arg("--format=json"), &[])?;
         if let ItemRef::Id(id) = item {
             #[derive(serde::Deserialize)]
             struct Found {
@@ -202,6 +222,14 @@ impl<R: Runner> Op<R> {
 
     fn checked(&self, call: Call, secrets: &[&str]) -> Result<Output, Error> {
         checked(&self.runner, self.scoped(call), secrets)
+    }
+
+    fn archive_scoped(&self, call: Call) -> Call {
+        if self.include_archive {
+            call.arg("--include-archive")
+        } else {
+            call
+        }
     }
 
     fn scoped(&self, call: Call) -> Call {
@@ -228,6 +256,12 @@ impl<R: Runner> Vault<R> {
     /// The account's client.
     pub fn op(&self) -> &Op<R> {
         &self.op
+    }
+
+    /// This vault with item listings and gets also finding archived items, as [`Op::including_archive`].
+    pub fn including_archive(mut self) -> Self {
+        self.op.include_archive = true;
+        self
     }
 
     /// Whether `item` is here: one `op item get`, `false` only for
@@ -404,12 +438,11 @@ fn checked(runner: &impl Runner, call: Call, secrets: &[&str]) -> Result<Output,
     let start = Instant::now();
     let out = runner.run(&call);
     let elapsed = start.elapsed();
-    match &out {
-        Ok(out) => tracing::debug!(command = %call, code = ?out.code, ?elapsed, "op"),
-        Err(e) => tracing::debug!(command = %call, error = %e, ?elapsed, "op"),
-    }
-    let mut out = out?;
+    let mut out = out.inspect_err(|e| {
+        tracing::warn!(command = %call, error = %e, ?elapsed, "op did not run");
+    })?;
     if out.success() {
+        tracing::debug!(command = %call, ?elapsed, "op");
         return Ok(out);
     }
     if !secrets.is_empty() {
@@ -418,6 +451,7 @@ fn checked(runner: &impl Runner, call: Call, secrets: &[&str]) -> Result<Output,
             out.stderr = out.stderr.replace(secret, "<redacted>");
         }
     }
+    tracing::warn!(command = %call, code = ?out.code, stderr = out.stderr.trim(), ?elapsed, "op failed");
     Err(map_cli_error(&out))
 }
 

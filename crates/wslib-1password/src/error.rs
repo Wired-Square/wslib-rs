@@ -24,6 +24,9 @@ pub enum Error {
     ItemNotFound(String),
     /// The item already exists, a name is a duplicate, or the item is archived.
     ItemConflict(String),
+    /// 1Password's server refused a write that raced another (HTTP 409); the
+    /// write did not happen, so it can be retried.
+    WriteConflict(String),
     /// More than one item has the title; `ids` are theirs, as `op` listed them.
     Ambiguous {
         title: String,
@@ -50,6 +53,8 @@ pub enum Error {
     NotUtf8,
     /// The async runtime shut down before `op` answered.
     Cancelled,
+    /// The testing fake was called with nothing scripted; this is the call.
+    Unscripted(String),
     Io(io::Error),
 }
 
@@ -64,6 +69,7 @@ impl fmt::Display for Error {
             Self::VaultNotFound(m) => write!(f, "vault not found: {m}"),
             Self::ItemNotFound(m) => write!(f, "item not found: {m}"),
             Self::ItemConflict(m) => write!(f, "item conflict: {m}"),
+            Self::WriteConflict(m) => write!(f, "1Password write conflict: {m}"),
             Self::Ambiguous { title, ids } => {
                 write!(
                     f,
@@ -88,8 +94,16 @@ impl fmt::Display for Error {
             }
             Self::NotUtf8 => f.write_str("the value is not UTF-8"),
             Self::Cancelled => f.write_str("the runtime shut down before op answered"),
+            Self::Unscripted(call) => write!(f, "nothing scripted for `{call}`"),
             Self::Io(_) => f.write_str("run op"),
         }
+    }
+}
+
+impl Error {
+    /// Whether the same call may succeed if made again unchanged; the crate never retries by itself.
+    pub fn is_retryable(&self) -> bool {
+        matches!(self, Self::WriteConflict(_))
     }
 }
 
@@ -107,7 +121,7 @@ impl From<io::Error> for Error {
         match e.kind() {
             io::ErrorKind::NotFound => Self::CliNotFound,
             io::ErrorKind::TimedOut => Self::TimedOut,
-            _ => Self::Io(e),
+            _ => e.downcast::<Self>().unwrap_or_else(Self::Io),
         }
     }
 }
@@ -126,6 +140,8 @@ pub fn map_cli_error(out: &Output) -> Error {
 
     if has("more than one item matches") {
         ambiguous(&message)
+    } else if has("(409)") || has("(conflict)") {
+        Error::WriteConflict(message)
     } else if has("no accounts configured") {
         Error::NoAccountsConfigured(message)
     } else if has("authorization timeout") || has("authorization prompt dismissed") {
@@ -267,6 +283,27 @@ mod tests {
             mapped("[ERROR] the item is archived"),
             Error::ItemConflict(_)
         ));
+    }
+
+    #[test]
+    fn a_server_409_is_a_retryable_write_conflict() {
+        let e = mapped(
+            "unable to process line 1: Network: (DB: (409) (Conflict), Internal server conflict.)",
+        );
+        assert!(matches!(e, Error::WriteConflict(_)), "{e:?}");
+        assert!(e.is_retryable());
+    }
+
+    #[test]
+    fn only_a_write_conflict_is_retryable() {
+        for e in [
+            mapped("[ERROR] item already exists"),
+            mapped("[ERROR] authorization timeout"),
+            mapped("[ERROR] boom"),
+            Error::TimedOut,
+        ] {
+            assert!(!e.is_retryable(), "{e:?}");
+        }
     }
 
     #[test]

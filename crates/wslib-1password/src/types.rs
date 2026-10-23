@@ -117,7 +117,7 @@ impl From<&Item> for ItemRef {
 }
 
 /// Whether `s` has the shape of an item id: 26 lowercase letters and digits.
-pub(crate) fn is_item_id(s: &str) -> bool {
+pub fn is_item_id(s: &str) -> bool {
     s.len() == 26
         && s.bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
@@ -133,6 +133,12 @@ pub struct ItemSummary {
     #[serde(default)]
     pub category: String,
     pub vault: VaultInfo,
+    /// RFC 3339, as `op` printed it.
+    #[serde(default)]
+    pub created_at: String,
+    /// RFC 3339, as `op` printed it.
+    #[serde(default)]
+    pub updated_at: String,
 }
 
 /// An item with its fields, from `op item get`.
@@ -149,9 +155,19 @@ pub struct Item {
 }
 
 impl Item {
-    /// The first field labelled `label`, in any section.
+    /// The field labelled `label`, taking the first match across sections.
     pub fn field(&self, label: &str) -> Option<&Field> {
         self.fields.iter().find(|f| f.label == label)
+    }
+
+    /// The field labelled `label` in the section whose id or label is `section`.
+    pub fn field_in(&self, section: &str, label: &str) -> Option<&Field> {
+        self.fields.iter().find(|f| {
+            f.label == label
+                && f.section
+                    .as_ref()
+                    .is_some_and(|s| s.id == section || s.label.as_deref() == Some(section))
+        })
     }
 
     /// The value of [`Item::field`], when it has one.
@@ -177,6 +193,13 @@ pub struct Field {
     pub section: Option<Section>,
     #[serde(default, deserialize_with = "text_value")]
     pub value: Option<Secret>,
+}
+
+impl Field {
+    /// The value, when it is set and not empty.
+    pub fn text(&self) -> Option<&Secret> {
+        self.value.as_ref().filter(|v| !v.is_empty())
+    }
 }
 
 /// The section a [`Field`] is in.
@@ -285,6 +308,34 @@ mod tests {
         assert_eq!(item.value("private_key").unwrap().expose(), "hunter2");
         assert!(item.value("size").is_none());
         assert!(!format!("{item:?}").contains("hunter2"));
+    }
+
+    #[test]
+    fn a_field_is_found_in_its_section_by_id_or_label() {
+        let item: Item = serde_json::from_str(
+            r#"{"id":"i1","vault":{"id":"v1"},"fields":[
+                {"label":"host","value":"top"},
+                {"label":"host","value":"","section":{"id":"s1","label":"Primary"}},
+                {"label":"host","value":"b","section":{"id":"s2","label":"Backup"}}]}"#,
+        )
+        .unwrap();
+        fn text(f: Option<&Field>) -> Option<&str> {
+            f.and_then(Field::text).map(Secret::expose)
+        }
+        assert_eq!(text(item.field("host")), Some("top"));
+        assert_eq!(text(item.field_in("s2", "host")), Some("b"));
+        assert_eq!(text(item.field_in("Backup", "host")), Some("b"));
+        assert!(item.field_in("Primary", "host").is_some());
+        assert_eq!(text(item.field_in("Primary", "host")), None);
+        assert!(item.field_in("Other", "host").is_none());
+    }
+
+    #[test]
+    fn an_item_id_is_26_lowercase_letters_and_digits() {
+        assert!(is_item_id("4ld6tdxnvj5kgsbjbb4e3opyua"));
+        assert!(!is_item_id("4LD6TDXNVJ5KGSBJBB4E3OPYUA"));
+        assert!(!is_item_id("4ld6tdxnvj5kgsbjbb4e3opyu"));
+        assert!(!is_item_id("CA"));
     }
 
     #[test]

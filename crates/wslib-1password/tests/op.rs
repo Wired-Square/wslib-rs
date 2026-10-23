@@ -115,6 +115,41 @@ fn an_unscoped_client_names_no_account() {
 }
 
 #[test]
+fn a_raw_call_is_scoped_and_its_failure_mapped() {
+    let fake = FakeRunner::new();
+    fake.respond(Output::ok("raw\n"))
+        .respond(Output::fail("[ERROR] You are not currently signed in."));
+    let op = op(&fake);
+    let out = op.call(["item", "template", "list"]).unwrap();
+    assert_eq!(out.expose(), b"raw\n");
+    assert_eq!(
+        args(&fake, 0),
+        ["item", "template", "list", "--account", "ops.1password.com"]
+    );
+    assert!(matches!(op.call(["whoami"]), Err(Error::NotSignedIn(_))));
+}
+
+#[test]
+fn only_listings_and_gets_include_the_archive_when_asked() {
+    let fake = FakeRunner::new();
+    fake.respond(Output::ok("[]"))
+        .respond(Output::ok(ITEM))
+        .respond(Output::ok("[]"))
+        .respond(Output::ok(""))
+        .respond(Output::ok("[]"));
+    vault(&fake).including_archive().items(&[]).unwrap();
+    let vault = vault(&fake).including_archive();
+    vault.item(&ItemRef::id(ID)).unwrap();
+    op(&fake).including_archive().items(&[]).unwrap();
+    vault.delete_item(&ItemRef::id(ID)).unwrap();
+    op(&fake).items(&[]).unwrap();
+    let archived: Vec<_> = (0..5)
+        .map(|call| has(&args(&fake, call), "--include-archive"))
+        .collect();
+    assert_eq!(archived, [true, true, true, false, false]);
+}
+
+#[test]
 fn accounts_are_listed_without_an_account_and_found_by_any_identifier() {
     let fake = FakeRunner::new();
     fake.respond(Output::ok(
@@ -227,6 +262,19 @@ fn item_count_counts_every_category() {
     ));
     assert_eq!(vault(&fake).item_count().unwrap(), 2);
     assert!(!args(&fake, 0).iter().any(|a| a.starts_with("--categories")));
+}
+
+#[test]
+fn a_listed_item_carries_its_timestamps_as_op_printed_them() {
+    let fake = FakeRunner::new();
+    fake.respond(Output::ok(format!(
+        r#"[{{"id":"{ID}","title":"CA","version":2,"vault":{{"id":"v1","name":"Deploy"}},
+             "category":"SECURE_NOTE","last_edited_by":"U1",
+             "created_at":"2026-10-23T01:02:03Z","updated_at":"2026-10-23T04:05:06.789Z"}}]"#
+    )));
+    let item = &vault(&fake).items(&[]).unwrap()[0];
+    assert_eq!(item.created_at, "2026-10-23T01:02:03Z");
+    assert_eq!(item.updated_at, "2026-10-23T04:05:06.789Z");
 }
 
 #[test]
@@ -455,9 +503,30 @@ fn a_timeout_or_a_missing_op_is_an_error_not_an_empty_answer() {
 }
 
 #[test]
-fn an_unscripted_call_fails() {
+fn an_unscripted_call_fails_naming_the_call() {
     let fake = FakeRunner::new();
-    assert!(matches!(op(&fake).vaults(), Err(Error::Io(_))));
+    let error = op(&fake).vaults().unwrap_err();
+    assert!(matches!(error, Error::Unscripted(_)));
+    assert_eq!(
+        error.to_string(),
+        "nothing scripted for `op vault list --format=json --account ops.1password.com`"
+    );
+}
+
+#[test]
+fn a_fake_shows_its_calls_and_what_is_left_but_no_file() {
+    let fake = FakeRunner::new();
+    fake.respond(Output::ok("")).respond(Output::ok(""));
+    vault(&fake)
+        .create_document("Doc", "doc.bin", b"hunter2")
+        .unwrap();
+    let shown = format!("{fake:?}");
+    assert!(shown.contains("unanswered: 1"), "{shown}");
+    assert!(shown.contains("document create"), "{shown}");
+    assert!(
+        !shown.contains("hunter2") && !shown.contains("104, 117"),
+        "{shown}"
+    );
 }
 
 #[test]

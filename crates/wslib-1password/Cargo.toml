@@ -29,3 +29,7 @@ tokio = { version = "1.37", features = ["macros", "rt"] }
 [[test]]
 name = "op"
 required-features = ["testing"]
+
+[[test]]
+name = "logging"
+required-features = ["testing"]

@@ -1,10 +1,10 @@
 //! A fake `op` that answers from a script and records each call.
 
 use std::collections::VecDeque;
-use std::io;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::{fmt, io};
 
-use crate::{Call, Output, Runner};
+use crate::{Call, Error, Output, Runner};
 
 /// Answers each call with the next scripted [`Output`], in order, and fails a
 /// call nothing was scripted for. Clones share one script and one record.
@@ -60,6 +60,17 @@ impl FakeRunner {
     }
 }
 
+/// The calls so far and how many answers are left, never a file's contents.
+impl fmt::Debug for FakeRunner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let state = self.state();
+        f.debug_struct("FakeRunner")
+            .field("unanswered", &state.script.len())
+            .field("calls", &state.calls)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Runner for FakeRunner {
     fn run(&self, call: &Call) -> io::Result<Output> {
         let mut state = self.state();
@@ -73,6 +84,6 @@ impl Runner for FakeRunner {
         state
             .script
             .pop_front()
-            .unwrap_or_else(|| Err(io::Error::other(format!("nothing scripted for `{call}`"))))
+            .unwrap_or_else(|| Err(io::Error::other(Error::Unscripted(call.to_string()))))
     }
 }

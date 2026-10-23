@@ -15,32 +15,51 @@ use windows_sys::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, AddAccessAllowedAce, CreateWellKnownSid,
     DACL_SECURITY_INFORMATION, EqualSid, GetLengthSid, InitializeAcl, OWNER_SECURITY_INFORMATION,
     PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_MAX_SID_SIZE,
-    WELL_KNOWN_SID_TYPE, WinLocalSystemSid,
+    WELL_KNOWN_SID_TYPE, WinBuiltinAdministratorsSid, WinLocalSystemSid,
 };
-use windows_sys::Win32::Storage::FileSystem::FILE_ALL_ACCESS;
+use windows_sys::Win32::Storage::FileSystem::{DELETE, FILE_ALL_ACCESS, FILE_GENERIC_READ};
 
 /// Grants the file's owner rather than this process, so a helper run as
 /// another account never takes an existing file from the service; SYSTEM is
 /// the account a Windows service runs as.
 pub(crate) fn owner_only(file: &Path) -> io::Result<()> {
+    restrict(file, None)
+}
+
+/// As [`owner_only`](crate::owner_only), with Administrators also granted read
+/// and delete; a file Administrators own stays theirs in full.
+pub fn administrators_read_and_delete(file: &Path) -> io::Result<()> {
+    let administrators = WellKnown::new(WinBuiltinAdministratorsSid)?;
+    restrict(file, Some(&administrators))
+}
+
+fn restrict(file: &Path, administrators: Option<&WellKnown>) -> io::Result<()> {
     let name: Vec<u16> = file.as_os_str().encode_wide().chain([0]).collect();
     let owner = Owner::of(&name)?;
     let system = WellKnown::new(WinLocalSystemSid)?;
-    let mut grants = vec![owner.sid];
-    // SAFETY: both are valid SIDs for as long as `owner` and `system` live.
-    if unsafe { EqualSid(owner.sid, system.as_psid()) } == 0 {
-        grants.push(system.as_psid());
-    }
+    let others = [
+        Some((&system, FILE_ALL_ACCESS)),
+        administrators.map(|a| (a, FILE_GENERIC_READ | DELETE)),
+    ];
+    let mut grants = vec![(owner.sid, FILE_ALL_ACCESS)];
+    grants.extend(
+        others
+            .into_iter()
+            .flatten()
+            // SAFETY: both are valid SIDs for as long as `owner` and `sid` live.
+            .filter(|(sid, _)| unsafe { EqualSid(owner.sid, sid.as_psid()) } == 0)
+            .map(|(sid, mask)| (sid.as_psid(), mask)),
+    );
 
     let ace_len = |sid| {
         // SAFETY: `sid` is one of the valid SIDs above.
         size_of::<ACCESS_ALLOWED_ACE>() - size_of::<u32>() + unsafe { GetLengthSid(sid) } as usize
     };
-    let acl_len = size_of::<ACL>() + grants.iter().map(|&sid| ace_len(sid)).sum::<usize>();
+    let acl_len = size_of::<ACL>() + grants.iter().map(|&(sid, _)| ace_len(sid)).sum::<usize>();
     // `Vec<u32>` because an ACL must be DWORD-aligned.
     let mut acl = vec![0u32; acl_len.div_ceil(4)];
     let acl_ptr = acl.as_mut_ptr().cast::<ACL>();
-    let acl_bytes = u32::try_from(acl.len() * 4).expect("two ACEs fit a u32");
+    let acl_bytes = u32::try_from(acl.len() * 4).expect("three ACEs fit a u32");
 
     // SAFETY: `acl` is a DWORD-aligned buffer of `acl_bytes`, room for the header
     // and an ACE per SID in `grants`, each of which outlives the calls.
@@ -48,7 +67,7 @@ pub(crate) fn owner_only(file: &Path) -> io::Result<()> {
         InitializeAcl(acl_ptr, acl_bytes, ACL_REVISION) != 0
             && grants
                 .iter()
-                .all(|&sid| AddAccessAllowedAce(acl_ptr, ACL_REVISION, FILE_ALL_ACCESS, sid) != 0)
+                .all(|&(sid, mask)| AddAccessAllowedAce(acl_ptr, ACL_REVISION, mask, sid) != 0)
     };
     if !built {
         return Err(io::Error::last_os_error());
@@ -114,10 +133,10 @@ impl Drop for Owner {
 }
 
 /// A local well-known SID.
-struct WellKnown([u32; SECURITY_MAX_SID_SIZE as usize / 4]);
+pub(crate) struct WellKnown([u32; SECURITY_MAX_SID_SIZE as usize / 4]);
 
 impl WellKnown {
-    fn new(kind: WELL_KNOWN_SID_TYPE) -> io::Result<Self> {
+    pub(crate) fn new(kind: WELL_KNOWN_SID_TYPE) -> io::Result<Self> {
         let mut sid = Self([0; SECURITY_MAX_SID_SIZE as usize / 4]);
         let mut len = SECURITY_MAX_SID_SIZE;
         // SAFETY: the buffer is `len` bytes and DWORD-aligned, and a local
@@ -131,7 +150,7 @@ impl WellKnown {
         Ok(sid)
     }
 
-    fn as_psid(&self) -> PSID {
+    pub(crate) fn as_psid(&self) -> PSID {
         self.0.as_ptr().cast_mut().cast()
     }
 }

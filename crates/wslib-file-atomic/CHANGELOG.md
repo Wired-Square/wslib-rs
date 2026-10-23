@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.3
+
+- `administrators_read_and_delete` (Windows): `owner_only`'s protected DACL,
+  with Administrators also granted read and delete; a file Administrators own
+  stays theirs in full.
+- Feature `testing`: `testing::assert_owner_only` checks `0600`, or on Windows
+  reads the DACL back and checks it is protected and grants the owner and
+  SYSTEM alone; `testing::assert_administrators_read_and_delete` (Windows)
+  checks the DACL `administrators_read_and_delete` sets.
+
 ## 0.1.2
 
 - `Options::hidden_staging(true)` stages as `.<file>.<suffix>`, so

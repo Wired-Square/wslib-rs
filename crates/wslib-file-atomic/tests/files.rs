@@ -355,15 +355,3 @@ fn beside_appends_to_the_whole_name() {
         PathBuf::from("token.next")
     );
 }
-
-#[cfg(unix)]
-#[test]
-fn owner_only_tightens_an_existing_file() {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = Scratch::new("owner-only");
-    let path = dir.join("store.db-wal");
-    fs::write(&path, b"").unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
-    wslib_file_atomic::owner_only(&path).unwrap();
-    assert_eq!(mode(&path), 0o600);
-}

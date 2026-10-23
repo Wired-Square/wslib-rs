@@ -22,11 +22,15 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::{error, fmt};
 
+#[cfg(feature = "testing")]
+pub mod testing;
 mod transaction;
 #[cfg(windows)]
 mod windows;
 
 pub use transaction::{CommitError, Recovered, Transaction, recover};
+#[cfg(windows)]
+pub use windows::administrators_read_and_delete;
 
 /// Create `path` readable by its owner alone and write `contents` to it
 /// durably, refusing a path that exists.

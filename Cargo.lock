@@ -6753,6 +6753,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-host"
+version = "0.1.0"
+dependencies = [
+ "hmac",
+ "libc",
+ "sha2 0.10.9",
+ "uuid",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "wslib-http-error"
 version = "0.1.0"
 dependencies = [
@@ -6847,6 +6858,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-shutdown"
+version = "0.1.0"
+dependencies = [
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "wslib-ssh-keys"
 version = "0.1.0"
 dependencies = [
@@ -6887,6 +6907,16 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "wslib-tasks"
+version = "0.1.0"
+dependencies = [
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "wslib-telemetry",
 ]
 
 [[package]]

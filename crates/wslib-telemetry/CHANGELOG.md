@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.6
+
+- `foreign_error(&dyn Display)` renders another library's error for a log
+  line: URL userinfo stripped, as `strip_userinfo` does, and cut to 512 bytes.
+  It is not a general filter; a secret outside a URL passes through.
+- `foreign_error`, `strip_userinfo` and `truncate` need no feature, where the
+  last two needed `ring`.
+
 ## 0.1.5
 
 - `Telemetry::set_default` installs the same subscriber for the current thread

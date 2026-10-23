@@ -1,6 +1,6 @@
 [package]
 name = "wslib-tls"
-version = "0.1.0"
+version = "0.1.1"
 description = "TLS over the caller's rustls CryptoProvider: outbound trust in OS roots, CA anchors and pins by host, reloaded live with typed rejections, and the serving pair minted, kept and replaced."
 readme = "README.md"
 edition.workspace = true
@@ -27,7 +27,7 @@ tokio-rustls = { version = "0.26", default-features = false }
 tracing = "0.1.41"
 wslib-crypto = { version = "0.1", path = "../wslib-crypto", registry = "wired-square" }
 wslib-crypto-x509 = { version = "0.1", path = "../wslib-crypto-x509", registry = "wired-square" }
-wslib-file-atomic = { version = "0.1.1", path = "../wslib-file-atomic", registry = "wired-square" }
+wslib-file-atomic = { version = "0.1.4", path = "../wslib-file-atomic", registry = "wired-square" }
 wslib-secret = { version = "0.1", path = "../wslib-secret", registry = "wired-square" }
 
 [target.'cfg(unix)'.dependencies]

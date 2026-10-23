@@ -1,0 +1,35 @@
+[package]
+name = "wslib-1password"
+version = "0.1.0"
+description = "The 1Password CLI, typed: sign-in, accounts, vaults, items and documents byte for byte, op:// references and inject, with op's failures as errors and a fake op for tests."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+testing = []
+# Async wrappers that run the blocking calls on `spawn_blocking`.
+tokio = ["dep:tokio"]
+
+[dependencies]
+serde = { version = "1.0.225", features = ["derive"] }
+serde_json = "1.0.85"
+tempfile = "3.10"
+tracing = "0.1.41"
+wslib-secret = { path = "../wslib-secret", version = "0.1.1", registry = "wired-square", features = ["serde"] }
+tokio = { version = "1.37", default-features = false, features = ["rt"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1.37", features = ["macros", "rt"] }
+
+[[test]]
+name = "op"
+required-features = ["testing"]
+
+[[test]]
+name = "logging"
+required-features = ["testing"]

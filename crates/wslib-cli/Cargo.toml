@@ -1,7 +1,7 @@
 [package]
 name = "wslib-cli"
-version = "0.1.0"
-description = "Shared command-line conventions: tables or JSON, exit codes, config discovery and op:// references."
+version = "0.2.0"
+description = "Shared command-line conventions: tables or JSON, exit codes and config discovery."
 readme = "README.md"
 edition.workspace = true
 rust-version.workspace = true
@@ -14,7 +14,6 @@ publish = ["wired-square"]
 default = []
 clap = ["dep:clap"]
 toml = ["dep:toml"]
-op = []
 
 [dependencies]
 comfy-table = { version = "8.0", default-features = false }

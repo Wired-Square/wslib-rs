@@ -278,6 +278,18 @@ fn a_listed_item_carries_its_timestamps_as_op_printed_them() {
 }
 
 #[test]
+fn a_fetched_item_carries_its_timestamps_at_full_precision() {
+    let fake = FakeRunner::new();
+    fake.respond(Output::ok(format!(
+        r#"{{"id":"{ID}","title":"CA","vault":{{"id":"v1"}},
+             "created_at":"2026-10-23T13:03:12.913941+11:00","updated_at":"2026-10-23T13:03:12.913941+11:00"}}"#
+    )));
+    let item = vault(&fake).item(&ItemRef::Id(ID.into())).unwrap();
+    assert_eq!(item.created_at, "2026-10-23T13:03:12.913941+11:00");
+    assert_eq!(item.updated_at, "2026-10-23T13:03:12.913941+11:00");
+}
+
+#[test]
 fn a_created_item_sends_its_values_on_stdin_not_in_argv() {
     let fake = FakeRunner::new();
     fake.respond(Output::ok(ITEM));

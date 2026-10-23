@@ -133,10 +133,11 @@ pub struct ItemSummary {
     #[serde(default)]
     pub category: String,
     pub vault: VaultInfo,
-    /// RFC 3339, as `op` printed it.
+    /// RFC 3339, as `op` printed it; a listing may round it to whole seconds in
+    /// UTC, so order by [`Item::created_at`] instead.
     #[serde(default)]
     pub created_at: String,
-    /// RFC 3339, as `op` printed it.
+    /// RFC 3339, as `op` printed it, with `created_at`'s rounding.
     #[serde(default)]
     pub updated_at: String,
 }
@@ -150,6 +151,12 @@ pub struct Item {
     #[serde(default)]
     pub category: String,
     pub vault: VaultInfo,
+    /// RFC 3339 with `op`'s full precision, as it printed it.
+    #[serde(default)]
+    pub created_at: String,
+    /// RFC 3339 with `op`'s full precision, as it printed it.
+    #[serde(default)]
+    pub updated_at: String,
     #[serde(default)]
     pub fields: Vec<Field>,
 }

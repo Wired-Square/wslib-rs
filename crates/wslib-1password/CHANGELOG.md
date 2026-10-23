@@ -13,7 +13,9 @@
   `rename_item`, `delete_item` (archives), `delete_item_permanently`,
   `reference`. Documents byte for byte: `document`, `create_document`,
   `edit_document`.
-- `ItemSummary::created_at` and `updated_at`, RFC 3339 as `op` prints them.
+- `ItemSummary::created_at` and `updated_at`, RFC 3339 as `op` prints them; a
+  listing may round them to whole seconds in UTC.
+- `Item::created_at` and `updated_at`, at `op item get`'s full precision.
 - `read` byte for byte and `inject`; `is_reference`, `resolve` and
   `ReadReference`, moved from `wslib-cli`'s `op` feature.
 - `ItemRef`: an item by id, never matched as a title, or by title, which

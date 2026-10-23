@@ -43,7 +43,8 @@ let db = vault.document(&ItemRef::title("Database"))?; // SecretBytes, as stored
 - **`Vault`**, naming itself by id on every call: `item_exists` (`false` only
   for not found), `item` (typed `Item`, `Field`, `Section`), `item_json` for
   keeping an item whole, `items`, `items_titled` and `item_count` (each
-  `ItemSummary` with `op`'s RFC 3339 `created_at` and `updated_at`),
+  `ItemSummary` with `op`'s RFC 3339 `created_at` and `updated_at`, which a
+  listing may round to whole seconds; `Item` carries them at full precision),
   `create_item` (answering the new item's `ItemSummary`), `edit_item`,
   `rename_item`, `delete_item` (archives) and `delete_item_permanently`,
   `document`, `create_document`, `edit_document`, and `reference` for an

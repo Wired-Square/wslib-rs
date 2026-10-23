@@ -20,7 +20,7 @@ async fn an_advert_on_loopback_is_resolved_and_removed_when_withdrawn() {
     let mut browse = browser.browse(&kind).unwrap();
     assert!(matches!(browser.browse(&kind), Err(Error::Unsupported(_))));
 
-    let mut service = Service::new(kind.clone(), "Loopback test".parse().unwrap(), 18080);
+    let mut service = Service::new(kind.clone(), r"Loopback a.b\c".parse().unwrap(), 18080);
     service.txt.push("product=widget".parse().unwrap());
     let advert = on_loopback("wslib-mdns-test")
         .advertise(&service)
@@ -36,7 +36,7 @@ async fn an_advert_on_loopback_is_resolved_and_removed_when_withdrawn() {
     })
     .await
     .expect("resolved on loopback");
-    assert_eq!(found.instance.as_str(), "Loopback test");
+    assert_eq!(found.instance.as_str(), r"Loopback a.b\c");
     assert_eq!(found.host, "wslib-mdns-test.local");
     assert_eq!(found.port, 18080);
     assert!(
@@ -64,5 +64,5 @@ async fn an_advert_on_loopback_is_resolved_and_removed_when_withdrawn() {
     })
     .await
     .expect("removed on loopback");
-    assert_eq!(removed.as_str(), "Loopback test");
+    assert_eq!(removed.as_str(), r"Loopback a.b\c");
 }

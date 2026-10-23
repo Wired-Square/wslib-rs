@@ -11,7 +11,7 @@ repository.workspace = true
 publish = ["wired-square"]
 
 [features]
-in-process = ["dep:mdns-sd", "dep:libc", "tokio/rt"]
+in-process = ["dep:mdns-sd", "dep:libc"]
 avahi = ["dep:zbus", "dep:futures-util", "tokio/rt"]
 testing = ["avahi", "zbus/p2p", "tokio/macros", "tokio/net"]
 

@@ -3,7 +3,7 @@ use std::net::IpAddr;
 
 use tokio::sync::watch;
 
-use crate::{InstanceName, ServiceType, Subtype, Txt};
+use crate::{InstanceName, Invalid, ServiceType, Subtype, Txt};
 
 /// A service to advertise.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,6 +113,7 @@ pub enum Error {
     Unsupported(&'static str),
     /// Another avahi client on this machine already holds the name.
     Collision,
+    Invalid(Invalid),
     #[cfg(feature = "avahi")]
     Bus(zbus::Error),
     /// The in-process responder refused, in its own words.
@@ -125,6 +126,7 @@ impl fmt::Display for Error {
         match self {
             Self::Unsupported(what) => write!(f, "unsupported: {what}"),
             Self::Collision => f.write_str("another client of avahi already holds the name"),
+            Self::Invalid(e) => e.fmt(f),
             #[cfg(feature = "avahi")]
             Self::Bus(e) => write!(f, "avahi: {e}"),
             #[cfg(feature = "in-process")]
@@ -138,7 +140,14 @@ impl std::error::Error for Error {
         match self {
             #[cfg(feature = "avahi")]
             Self::Bus(e) => Some(e),
+            Self::Invalid(e) => Some(e),
             _ => None,
         }
+    }
+}
+
+impl From<Invalid> for Error {
+    fn from(e: Invalid) -> Self {
+        Self::Invalid(e)
     }
 }

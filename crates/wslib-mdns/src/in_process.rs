@@ -1,4 +1,5 @@
-use std::collections::HashSet;
+use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
@@ -8,7 +9,6 @@ use mdns_sd::{
     DaemonEvent, IfKind, IfPredicate, ResolvedService, ServiceDaemon, ServiceEvent, ServiceInfo,
 };
 use tokio::sync::watch;
-use tokio::task::AbortHandle;
 
 use crate::service::Held;
 use crate::{
@@ -65,8 +65,8 @@ pub struct Options {
     pub host: Host,
 }
 
-/// An mDNS responder and browser in this process, one daemon shared by every
-/// advert and browse made from it and its clones.
+/// An mDNS responder and browser in this process; share one per process, as
+/// clones do, since each `new` starts its own daemon with its own browses.
 #[derive(Debug, Clone)]
 pub struct InProcess {
     shared: Arc<Shared>,
@@ -75,7 +75,33 @@ pub struct InProcess {
 struct Shared {
     daemon: ServiceDaemon,
     host: String,
-    held: Mutex<HashSet<String>>,
+    browsing: Mutex<HashSet<String>>,
+    adverts: Arc<Adverts>,
+}
+
+/// The adverts being followed, by lower-case full name.
+type Adverts = Mutex<HashMap<String, Watched>>;
+
+/// An advert's state, followed from the daemon's events on a thread of its
+/// own, so it moves whether or not the caller's runtime is free to.
+struct Watched {
+    fullname: String,
+    kind: String,
+    states: watch::Sender<AdvertState>,
+}
+
+impl Watched {
+    fn follow(&self, event: &DaemonEvent) {
+        self.states.send_if_modified(|state| {
+            match next_state(&self.fullname, &self.kind, state, event) {
+                Some(next) if next != *state => {
+                    *state = next;
+                    true
+                }
+                _ => false,
+            }
+        });
+    }
 }
 
 impl fmt::Debug for Shared {
@@ -93,15 +119,15 @@ impl Drop for Shared {
 }
 
 impl Shared {
-    fn hold(&self, name: &str) -> Result<(), Error> {
-        if !self.held.lock().unwrap().insert(name.to_lowercase()) {
-            return Err(Error::Unsupported("the same advert or browse twice"));
-        }
-        Ok(())
+    fn forget(&self, fullname: &str) {
+        self.adverts
+            .lock()
+            .unwrap()
+            .remove(&fullname.to_lowercase());
     }
 
-    fn release(&self, name: &str) {
-        self.held.lock().unwrap().remove(&name.to_lowercase());
+    fn stop_browsing(&self, fqdn: &str) {
+        self.browsing.lock().unwrap().remove(fqdn);
     }
 }
 
@@ -125,11 +151,27 @@ impl InProcess {
             Host::System => machine_name(),
             Host::Named(name) => name,
         };
+        let events = daemon.monitor().map_err(daemon_error)?;
+        let adverts: Arc<Adverts> = Arc::default();
+        let followed = adverts.clone();
+        std::thread::Builder::new()
+            .name("wslib-mdns".into())
+            .spawn(move || {
+                while let Ok(event) = events.recv() {
+                    followed
+                        .lock()
+                        .unwrap()
+                        .values()
+                        .for_each(|a| a.follow(&event));
+                }
+            })
+            .map_err(|e| Error::Daemon(e.to_string()))?;
         Ok(Self {
             shared: Arc::new(Shared {
                 daemon,
                 host: format!("{}.", host.fqdn()),
-                held: Mutex::default(),
+                browsing: Mutex::default(),
+                adverts,
             }),
         })
     }
@@ -155,31 +197,30 @@ impl InProcess {
         .map_err(daemon_error)?
         .enable_addr_auto();
         let fullname = info.get_fullname().to_string();
-        let monitor = self.shared.daemon.monitor().map_err(daemon_error)?;
-        self.shared.hold(&fullname)?;
+        let (states, state) = watch::channel(AdvertState::Registering);
+        match self
+            .shared
+            .adverts
+            .lock()
+            .unwrap()
+            .entry(fullname.to_lowercase())
+        {
+            Entry::Occupied(_) => return Err(Error::Unsupported("the same advert twice")),
+            Entry::Vacant(slot) => slot.insert(Watched {
+                fullname: fullname.clone(),
+                kind,
+                states,
+            }),
+        };
         if let Err(e) = self.shared.daemon.register(info) {
-            self.shared.release(&fullname);
+            self.shared.forget(&fullname);
             return Err(daemon_error(e));
         }
-        let (states, state) = watch::channel(AdvertState::Registering);
-        let watched = fullname.clone();
-        let watcher = tokio::spawn(async move {
-            while let Ok(event) = monitor.recv_async().await {
-                states.send_if_modified(|state| match next_state(&watched, &kind, state, &event) {
-                    Some(next) if next != *state => {
-                        *state = next;
-                        true
-                    }
-                    _ => false,
-                });
-            }
-        });
         Ok(Advert {
             state,
             held: Held::InProcess(Registered {
                 shared: self.shared.clone(),
                 fullname: Some(fullname),
-                watcher: watcher.abort_handle(),
             }),
         })
     }
@@ -187,9 +228,11 @@ impl InProcess {
     /// Browses for `kind` until the [`Browse`] is dropped; one browse per type at a time.
     pub fn browse(&self, kind: &ServiceType) -> Result<Browse, Error> {
         let fqdn = kind.fqdn();
-        self.shared.hold(&fqdn)?;
+        if !self.shared.browsing.lock().unwrap().insert(fqdn.clone()) {
+            return Err(Error::Unsupported("a second browse of one type"));
+        }
         let events = self.shared.daemon.browse(&fqdn).map_err(|e| {
-            self.shared.release(&fqdn);
+            self.shared.stop_browsing(&fqdn);
             daemon_error(e)
         })?;
         Ok(Browse {
@@ -232,7 +275,7 @@ impl Browse {
 impl Drop for Browse {
     fn drop(&mut self) {
         self.shared.daemon.stop_browse(&self.fqdn).ok();
-        self.shared.release(&self.fqdn);
+        self.shared.stop_browsing(&self.fqdn);
     }
 }
 
@@ -240,7 +283,6 @@ impl Drop for Browse {
 pub(crate) struct Registered {
     shared: Arc<Shared>,
     fullname: Option<String>,
-    watcher: AbortHandle,
 }
 
 impl Registered {
@@ -249,7 +291,7 @@ impl Registered {
             return Ok(());
         };
         let done = self.shared.daemon.unregister(&fullname);
-        self.shared.release(&fullname);
+        self.shared.forget(&fullname);
         done.map_err(daemon_error)?.recv_async().await.ok();
         Ok(())
     }
@@ -257,10 +299,9 @@ impl Registered {
 
 impl Drop for Registered {
     fn drop(&mut self) {
-        self.watcher.abort();
         if let Some(fullname) = self.fullname.take() {
             self.shared.daemon.unregister(&fullname).ok();
-            self.shared.release(&fullname);
+            self.shared.forget(&fullname);
         }
     }
 }
@@ -348,7 +389,8 @@ fn resolved(kind: &str, found: &ResolvedService) -> Option<Resolved> {
     })
 }
 
-/// The instance label of `fullname`, as it came off the wire, without `.kind`.
+/// The instance label of `fullname` without `.kind`. Names off the wire come
+/// unescaped, labels joined by dots; only the daemon's own names are escaped.
 fn instance_of<'a>(fullname: &'a str, kind: &str) -> Option<&'a str> {
     let at = fullname.len().checked_sub(kind.len() + 1)?;
     let (instance, suffix) = (fullname.get(..at)?, fullname.get(at..)?);
@@ -359,14 +401,16 @@ fn escape(instance: &str) -> String {
     instance.replace('\\', "\\\\").replace('.', "\\.")
 }
 
+/// Undoes mdns-sd's escaping of its own names, `\.` and `\\` only.
 fn unescape(instance: &str) -> String {
     let mut out = String::with_capacity(instance.len());
-    let mut chars = instance.chars();
+    let mut chars = instance.chars().peekable();
     while let Some(c) = chars.next() {
-        out.push(match c {
-            '\\' => chars.next().unwrap_or('\\'),
-            c => c,
-        });
+        if c == '\\' && matches!(chars.peek(), Some('.' | '\\')) {
+            out.extend(chars.next());
+        } else {
+            out.push(c);
+        }
     }
     out
 }
@@ -406,6 +450,22 @@ mod tests {
             None,
             "a rename is kept once announced"
         );
+    }
+
+    #[test]
+    fn a_followed_advert_is_established_by_the_announcement_alone() {
+        let (states, state) = watch::channel(AdvertState::Registering);
+        let fullname = r"Probe A\.b._http._tcp.local.".to_string();
+        let watched = Watched {
+            fullname: fullname.clone(),
+            kind: KIND.to_string(),
+            states,
+        };
+        watched.follow(&DaemonEvent::Announce(
+            fullname,
+            "wslib-probe.local.:lo0".into(),
+        ));
+        assert_eq!(*state.borrow(), AdvertState::Established);
     }
 
     #[test]
@@ -454,12 +514,39 @@ mod tests {
     }
 
     #[test]
-    fn a_removal_names_the_instance_as_it_came_off_the_wire() {
-        let removed = ServiceEvent::ServiceRemoved(KIND.into(), "a.b._HTTP._tcp.local.".into());
+    fn an_instance_with_a_dot_or_backslash_reads_the_same_removed_resolved_or_renamed() {
+        let name = r"a.b\c";
+        let instance: InstanceName = name.parse().unwrap();
+        let wire = format!("{name}._HTTP._tcp.local.");
+        let removed = ServiceEvent::ServiceRemoved(KIND.into(), wire.clone());
         assert_eq!(
             browse_event(KIND, removed),
-            Some(BrowseEvent::Removed("a.b".parse().unwrap()))
+            Some(BrowseEvent::Removed(instance.clone()))
         );
+
+        let mut found = ServiceInfo::new(
+            KIND,
+            "x",
+            "h.local.",
+            "192.168.1.10",
+            1,
+            None::<HashMap<String, String>>,
+        )
+        .unwrap()
+        .as_resolved_service();
+        found.fullname = wire;
+        assert_eq!(resolved(KIND, &found).unwrap().instance, instance);
+
+        let ours = format!("{}.{KIND}", escape(name));
+        let renamed = name_change(&ours, &format!("{} (2).{KIND}", escape(name)));
+        assert_eq!(
+            next_state(&ours, KIND, &AdvertState::Registering, &renamed),
+            Some(AdvertState::Renamed(format!("{name} (2)").parse().unwrap()))
+        );
+    }
+
+    #[test]
+    fn a_removal_of_another_type_or_another_event_is_no_browse_event() {
         let other = ServiceEvent::ServiceRemoved(KIND.into(), "a._ipp._tcp.local.".into());
         assert_eq!(browse_event(KIND, other), None);
         assert_eq!(
@@ -473,6 +560,7 @@ mod tests {
         for name in ["plain", "a.b", "back\\slash", "a\\.b"] {
             assert_eq!(unescape(&escape(name)), name);
         }
+        assert_eq!(unescape(r"a\b"), r"a\b");
     }
 
     #[test]

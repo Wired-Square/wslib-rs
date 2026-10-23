@@ -26,9 +26,11 @@ state.wait_for(|s| !matches!(s, AdvertState::Registering)).await?;
   name as RFC 6335 has it (1 to 15 letters, digits and single hyphens, a
   letter among them), read with or without `.local.` and printed without.
   `Subtype` is `_name._sub.` and a service type. `InstanceName` is any UTF-8
-  of 1 to 63 bytes without control characters. `Txt` is one `key=value`
-  entry, the key printable ASCII other than `=`, 255 bytes in all.
-  `HostName` is one `.local` label.
+  of 1 to 63 bytes without control characters, equal whatever its ASCII
+  case, as DNS compares names. `Txt` is one `key=value` entry, the key
+  printable ASCII other than `=`, 255 bytes in all; `Txt::pairs` makes a
+  list from `(key, value)` pairs. `HostName` is one `.local` label. An
+  `Invalid` converts into `Error`, so `?` takes either.
 - **`Service`** to advertise, **`Resolved`** for what a browse finds
   (instance, host, port, addresses, TXT, with `txt(key)`), and
   **`BrowseEvent`**, `Resolved` or `Removed`.
@@ -36,11 +38,16 @@ state.wait_for(|s| !matches!(s, AdvertState::Registering)).await?;
   for the responder. `state()` is a watch of `AdvertState`: `Registering`,
   `Established`, `Collided` (down, and left down), `Renamed` (up under the
   name the responder chose), or `Failed`.
-- **`InProcess`** (feature `in-process`): one mdns-sd daemon shared by its
-  clones, on the `Interfaces` asked for (all, loopback, or those a test of the
-  name accepts). `advertise` carries this host's addresses as they come and
-  go, and maps mdns-sd's rename to `Renamed`; mdns-sd takes one subtype per
-  advert. `browse` yields `BrowseEvent`s until dropped, one browse per type
+- **`InProcess`** (feature `in-process`): one mdns-sd daemon, on the
+  `Interfaces` asked for (all, loopback, or those a test of the name
+  accepts). Share one per process by cloning it: each `new` starts another
+  daemon, and the one-browse-per-type limit is per daemon. `advertise`
+  carries this host's addresses as they come and go. The advert is
+  `Established` once its announcement has gone out, which a peer may resolve
+  a moment before, and mdns-sd's rename is `Renamed`. States are followed on
+  the daemon's own thread, so they move however busy the caller's runtime
+  is. mdns-sd takes one subtype per advert. Instance names read the same in
+  `Resolved`, `Removed` and `Renamed`, dots and backslashes included. `browse` yields `BrowseEvent`s until dropped, one browse per type
   at a time, and `verify` asks an instance to answer or be removed.
   **`Host`**: beside avahi or mDNSResponder an advert must not claim the
   machine's own `<host>.local`, so the default host is

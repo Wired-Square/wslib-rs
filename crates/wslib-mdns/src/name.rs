@@ -159,13 +159,45 @@ impl fmt::Display for Subtype {
     }
 }
 
-/// A service instance's name, the label people read in a browser: any UTF-8.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+/// A service instance's name, the label people read in a browser: any UTF-8,
+/// compared without regard to ASCII case as DNS compares it (RFC 6762 §16).
+#[derive(Debug, Clone)]
 pub struct InstanceName(String);
 
 impl InstanceName {
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    fn folded(&self) -> impl Iterator<Item = u8> + '_ {
+        self.0.bytes().map(|b| b.to_ascii_lowercase())
+    }
+}
+
+impl PartialEq for InstanceName {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.eq_ignore_ascii_case(&other.0)
+    }
+}
+
+impl Eq for InstanceName {}
+
+impl std::hash::Hash for InstanceName {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.folded().for_each(|b| state.write_u8(b));
+        state.write_u8(0xff);
+    }
+}
+
+impl PartialOrd for InstanceName {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for InstanceName {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.folded().cmp(other.folded())
     }
 }
 
@@ -211,6 +243,16 @@ impl Txt {
             key: key.to_string(),
             value: value.to_string(),
         })
+    }
+
+    /// Entries from `(key, value)` pairs, such as `Txt::pairs([("product", "widget")])`.
+    pub fn pairs<K: AsRef<str>, V: AsRef<str>>(
+        pairs: impl IntoIterator<Item = (K, V)>,
+    ) -> Result<Vec<Self>, Invalid> {
+        pairs
+            .into_iter()
+            .map(|(k, v)| Self::new(k.as_ref(), v.as_ref()))
+            .collect()
     }
 
     pub fn key(&self) -> &str {
@@ -392,6 +434,30 @@ mod tests {
             "line\nbreak".parse::<InstanceName>(),
             Err(Invalid::ControlCharacter)
         );
+    }
+
+    #[test]
+    fn an_instance_name_compares_without_ascii_case_and_keeps_its_spelling() {
+        let widget: InstanceName = "Widget Ä".parse().unwrap();
+        let lower: InstanceName = "widget Ä".parse().unwrap();
+        assert_eq!(widget, lower);
+        assert_ne!(widget, "widget ä".parse().unwrap(), "only ASCII folds");
+        assert_eq!(widget.cmp(&lower), std::cmp::Ordering::Equal);
+        assert_eq!(
+            std::collections::HashSet::from([widget.clone(), lower]).len(),
+            1
+        );
+        assert_eq!(widget.to_string(), "Widget Ä");
+    }
+
+    #[test]
+    fn txt_entries_come_from_pairs() {
+        let txt = Txt::pairs([("product", "widget"), ("v", "1")]).unwrap();
+        assert_eq!(
+            txt,
+            ["product=widget".parse().unwrap(), "v=1".parse().unwrap()]
+        );
+        assert_eq!(Txt::pairs([("", "x")]), Err(Invalid::TxtKey));
     }
 
     #[test]

@@ -38,3 +38,6 @@
   call including `GetHostName`), `GetHostName` and refused calls recorded,
   `refuse_next`, `forgive`, `hold`, and `NoChangeError` for a rename to the
   same name.
+- `FakeAvahi` sends every signal from avahi's current unique name, which
+  moves with `restart` and `stop` and is read with `owner()`, and answers
+  `GetNameOwner`, so its signals still reach the client after a restart.

@@ -304,3 +304,38 @@ async fn restarts_and_stops_are_watched_and_a_stopped_avahi_is_not_running() {
         "avahi starts after the app"
     );
 }
+
+#[tokio::test]
+async fn signals_after_a_restart_come_from_the_new_owner_and_reach_the_client() {
+    let fake = FakeAvahi::new();
+    let (bus, served) = fake.connect().await.unwrap();
+    let first = fake.owner().unwrap();
+    let mut states = avahi::server_states(&bus).await.unwrap();
+    let mut restarts = avahi::restarts(&bus).await.unwrap();
+
+    fake.restart(&served).await.unwrap();
+    assert_eq!(restarts.next().await, Some(true));
+    assert_ne!(fake.owner().unwrap(), first);
+    fake.server_state(&served, ServerState::Running)
+        .await
+        .unwrap();
+    assert_eq!(states.next().await, Some(ServerState::Running));
+
+    fake.rename(&served, "box-2").await.unwrap();
+    for state in [
+        ServerState::Collision,
+        ServerState::Registering,
+        ServerState::Running,
+    ] {
+        assert_eq!(states.next().await, Some(state));
+    }
+    let advert = Avahi::new(&bus).advertise(&service()).await.unwrap();
+    let mut state = advert.state();
+    settles(&mut state, AdvertState::Established).await;
+    fake.collide(&served, "Widget").await.unwrap();
+    settles(&mut state, AdvertState::Collided).await;
+
+    fake.stop(&served).await.unwrap();
+    assert_eq!(restarts.next().await, Some(false));
+    assert_eq!(fake.owner(), None);
+}

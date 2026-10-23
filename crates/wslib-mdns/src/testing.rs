@@ -24,7 +24,7 @@ use tokio::sync::{Notify, watch};
 use zbus::connection::Builder;
 use zbus::message::{Header, Message};
 use zbus::names::ErrorName;
-use zbus::object_server::{ObjectServer, SignalEmitter};
+use zbus::object_server::ObjectServer;
 use zbus::zvariant::OwnedObjectPath;
 use zbus::{Connection, Guid};
 
@@ -228,11 +228,8 @@ impl FakeAvahi {
             })
             .collect();
         for n in hit {
-            let group = served
-                .object_server()
-                .interface::<_, GroupObject>(group_path(n))
+            self.state_changed(served, group_path(n).as_str(), GROUP, COLLISION)
                 .await?;
-            GroupObject::state_changed(group.signal_emitter(), COLLISION, "").await?;
         }
         Ok(())
     }
@@ -254,8 +251,28 @@ impl FakeAvahi {
             ServerState::Failure => 4,
             ServerState::Invalid => 0,
         };
-        let server = served.object_server().interface::<_, Server>("/").await?;
-        Server::state_changed(server.signal_emitter(), code, "").await
+        self.state_changed(served, "/", SERVER, code).await
+    }
+
+    /// The unique name avahi holds the bus name under, `None` while stopped.
+    pub fn owner(&self) -> Option<String> {
+        let state = self.state();
+        state.running.then(|| format!(":1.{}", state.instance))
+    }
+
+    /// `StateChanged` from the owner, as zbus drops a signal any other sender sends.
+    async fn state_changed(
+        &self,
+        connection: &Connection,
+        path: &str,
+        interface: &str,
+        state: i32,
+    ) -> zbus::Result<()> {
+        let mut signal = Message::signal(path, interface, "StateChanged")?;
+        if let Some(owner) = self.owner() {
+            signal = signal.sender(owner)?;
+        }
+        connection.send(&signal.build(&(state, ""))?).await
     }
 
     /// A new avahi takes the name, holding none of the old one's groups.
@@ -270,14 +287,14 @@ impl FakeAvahi {
     }
 
     async fn owner_changed(&self, served: &Connection, running: bool) -> zbus::Result<()> {
-        let (old, new) = {
+        let old = self.owner();
+        {
             let mut state = self.state();
-            let old = state.running.then(|| format!(":1.{}", state.instance));
             state.groups.clear();
             state.running = running;
             state.instance += 1;
-            (old, running.then(|| format!(":1.{}", state.instance)))
-        };
+        }
+        let new = self.owner();
         let signal = zbus::Message::signal(
             "/org/freedesktop/DBus",
             "org.freedesktop.DBus",
@@ -313,7 +330,10 @@ impl Hold {
     }
 }
 
+const SERVER: &str = "org.freedesktop.Avahi.Server";
+const GROUP: &str = "org.freedesktop.Avahi.EntryGroup";
 const SERVICE_UNKNOWN: &str = "org.freedesktop.DBus.Error.ServiceUnknown";
+const NO_OWNER: &str = "org.freedesktop.DBus.Error.NameHasNoOwner";
 const COLLISION_ERROR: &str = "org.freedesktop.Avahi.CollisionError";
 const NOT_PERMITTED: &str = "org.freedesktop.Avahi.NotPermittedError";
 const BAD_STATE: &str = "org.freedesktop.Avahi.BadStateError";
@@ -397,7 +417,7 @@ impl Server {
     async fn set_host_name(
         &self,
         name: String,
-        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+        #[zbus(connection)] connection: &Connection,
     ) -> Result<(), Refusal> {
         self.0.call("SetHostName", name.clone()).await?;
         let unchanged = std::mem::replace(&mut self.0.state().host_name, name.clone()) == name;
@@ -407,17 +427,11 @@ impl Server {
                 "the name is already the host's".into(),
             ));
         }
-        Self::state_changed(&emitter, 1, "").await?;
-        Self::state_changed(&emitter, 2, "").await?;
+        for state in [1, 2] {
+            self.0.state_changed(connection, "/", SERVER, state).await?;
+        }
         Ok(())
     }
-
-    #[zbus(signal)]
-    async fn state_changed(
-        emitter: &SignalEmitter<'_>,
-        state: i32,
-        error: &str,
-    ) -> zbus::Result<()>;
 }
 
 struct GroupObject(FakeAvahi, u32);
@@ -480,10 +494,7 @@ impl GroupObject {
     }
 
     #[zbus(name = "Commit")]
-    async fn commit(
-        &self,
-        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
-    ) -> Result<(), Refusal> {
+    async fn commit(&self, #[zbus(connection)] connection: &Connection) -> Result<(), Refusal> {
         self.0.call("Commit", self.1.to_string()).await?;
         let settled = {
             let mut state = self.0.state();
@@ -499,8 +510,11 @@ impl GroupObject {
             group.state = if collides { COLLISION } else { ESTABLISHED };
             group.state
         };
-        Self::state_changed(&emitter, 1, "").await?;
-        Self::state_changed(&emitter, settled, "").await?;
+        for state in [1, settled] {
+            self.0
+                .state_changed(connection, group_path(self.1).as_str(), GROUP, state)
+                .await?;
+        }
         Ok(())
     }
 
@@ -510,13 +524,6 @@ impl GroupObject {
         self.0.state().groups.remove(&self.1);
         Ok(())
     }
-
-    #[zbus(signal)]
-    async fn state_changed(
-        emitter: &SignalEmitter<'_>,
-        state: i32,
-        error: &str,
-    ) -> zbus::Result<()>;
 }
 
 struct Bus(FakeAvahi);
@@ -526,5 +533,11 @@ impl Bus {
     #[zbus(name = "NameHasOwner")]
     fn name_has_owner(&self, name: String) -> bool {
         name == AVAHI && self.0.state().running
+    }
+
+    #[zbus(name = "GetNameOwner")]
+    fn get_name_owner(&self, name: String) -> Result<String, Refusal> {
+        let owner = self.0.owner().filter(|_| name == AVAHI);
+        owner.ok_or_else(|| Refusal::new(NO_OWNER, format!("nobody owns {name}")))
     }
 }

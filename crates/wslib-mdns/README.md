@@ -81,7 +81,8 @@ state.wait_for(|s| !matches!(s, AdvertState::Registering)).await?;
   released, for a publish cut short. From the test it collides an
   established group, renames its host, sends a server state, restarts or
   stops; stopped, every call fails as
-  `org.freedesktop.DBus.Error.ServiceUnknown`.
+  `org.freedesktop.DBus.Error.ServiceUnknown`. Its signals come from
+  avahi's current unique name, `owner()`, which a restart moves.
 
 ## What isn't
 

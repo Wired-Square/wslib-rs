@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0
+
+- The `op` feature is gone: `is_reference`, `resolve` and `ReadReference`
+  moved to `wslib-1password`, where `Op` takes `OpCli`'s place and a read
+  answers a `Secret`.
+
 ## 0.1.0
 
 - `Output`: human or JSON, from a global `--json` flag. `rows` draws a

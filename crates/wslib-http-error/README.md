@@ -39,7 +39,8 @@ let app = Router::new()
   `unsupported_media_type`, `unprocessable`, `too_many_requests` with
   `Retry-After`), then `with_code`, `with_field` and `with_header`.
   `internal(what, cause)` and `unavailable` answer "could not {what}" and log
-  the cause through `tracing`, never sending it.
+  the cause through `tracing`, never sending it, with any URL's credentials
+  stripped by `wslib_telemetry::foreign_error`.
 - **`extract`** (feature `axum`, on by default): `Json`, `Query` and `Path`
   whose rejections are `ApiError`s at axum's status (400, 413, 415 or 422),
   and `method_not_allowed` for `Router::method_not_allowed_fallback`.

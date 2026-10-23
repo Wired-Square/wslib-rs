@@ -67,7 +67,8 @@ impl ApiError {
             .with_header(header::RETRY_AFTER, HeaderValue::from(seconds))
     }
 
-    /// A 500 answering "could not {what}"; `cause` goes to the log, never the client.
+    /// A 500 answering "could not {what}"; `cause` goes to the log, with URL
+    /// credentials stripped, never to the client.
     pub fn internal(what: &'static str, cause: impl fmt::Display) -> Self {
         Self::failed(StatusCode::INTERNAL_SERVER_ERROR, what, cause)
     }
@@ -78,7 +79,8 @@ impl ApiError {
     }
 
     fn failed(status: StatusCode, what: &'static str, cause: impl fmt::Display) -> Self {
-        tracing::error!(status = status.as_u16(), what, cause = %cause, "request failed");
+        let cause = wslib_telemetry::foreign_error(&cause);
+        tracing::error!(status = status.as_u16(), what, %cause, "request failed");
         Self::new(status, format!("could not {what}"))
     }
 

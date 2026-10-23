@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+- `internal` and `unavailable` log their cause through
+  `wslib_telemetry::foreign_error`: a URL's userinfo is stripped and the cause
+  cut to 512 bytes.
+
 ## 0.1.0
 
 - `ApiErrorBody`: `{"error": <sentence>, "code"?: <snake_case>}` with the

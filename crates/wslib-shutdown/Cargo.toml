@@ -1,0 +1,19 @@
+[package]
+name = "wslib-shutdown"
+version = "0.1.0"
+description = "The signal a service manager or a terminal stops a process with, registered up front, and a token cancelled by it."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[dependencies]
+tokio = { version = "1.47", default-features = false, features = ["macros", "signal"] }
+tokio-util = { version = "0.7.5", default-features = false }
+tracing = "0.1.41"
+
+[dev-dependencies]
+tokio = { version = "1.47", features = ["macros", "rt", "time"] }

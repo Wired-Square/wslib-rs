@@ -107,8 +107,10 @@ for warning in &installed.report.warnings { /* expired, host not covered, ... */
   match or load, is moved aside to `<file>.unusable` and replaced at a
   `Location::managed` location, and refused with `ServingError::Named` at a
   `Location::named` one. A path that cannot even be looked at is refused at
-  either. Blocks: it reads and writes files, and RSA generation takes
-  seconds.
+  either. An interrupted write that cannot be finished, or whose record is
+  refused, is set aside the same way at a managed location, record and
+  staged files, and is `ServingError::Recover` at a named one. Blocks: it
+  reads and writes files, and RSA generation takes seconds.
 - **Writing the pair** goes through a `wslib_file_atomic::Transaction`
   recorded beside the key as `<key file>.txn`: both files land or neither,
   `0600`, key first, a symlink at either path replaced rather than

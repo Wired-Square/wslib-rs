@@ -11,6 +11,10 @@
   `Serving` finishes the record its own failed commit left while it is
   still that file, whatever its directory. Refused or failed, it is
   `ServingError::Recover`. Needs `wslib-file-atomic` 0.1.4.
+- `load_or_mint` at a managed location sets an interrupted write it cannot
+  finish, or whose record is refused, aside as `.unusable`, record and
+  staged files, with a warning, and goes on to load or mint; at a named
+  location it is still `ServingError::Recover`.
 
 ## 0.1.0
 

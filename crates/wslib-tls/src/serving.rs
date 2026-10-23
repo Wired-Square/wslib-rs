@@ -114,7 +114,17 @@ impl Serving {
         names: &[SubjectAltName],
         algorithm: KeyAlgorithm,
     ) -> Result<Self, ServingError> {
-        recover(&location, None)?;
+        if let Err(failed) = recover(&location, None) {
+            if location.named {
+                return Err(failed);
+            }
+            tracing::warn!(
+                key = %location.key.display(),
+                because = %failed,
+                "setting an interrupted write of the serving pair aside"
+            );
+            set_aside_interrupted(&location)?;
+        }
 
         let unusable = match present(&location)? {
             Present::Both => match load(&provider, &location) {
@@ -480,6 +490,16 @@ fn named_record_acted_on(record_dir: &Path, record: &str) -> io::Result<()> {
             path.display()
         ),
     ))
+}
+
+/// The staged files go aside before the record, as a record lost first would
+/// strand a staged key with nothing naming it.
+fn set_aside_interrupted(location: &Location) -> Result<(), ServingError> {
+    let (record_dir, record) = transaction(location);
+    let suffix = format!("{record}.txn");
+    displace(&wslib_file_atomic::beside(&location.cert, &suffix))?;
+    displace(&wslib_file_atomic::beside(&location.key, &suffix))?;
+    displace(&record_dir.join(suffix))
 }
 
 /// Both or neither, across a crash, once [`recover`] has run; the key is
@@ -1103,6 +1123,56 @@ mod tests {
             Err(ServingError::Recover(_))
         ));
         assert!(record.exists());
+    }
+
+    /// A committed write whose certificate cannot be renamed into place
+    /// because a directory is there.
+    fn wedged(dir: &Scratch) {
+        let (cert, key) = another_pair(&providers()[0].1);
+        let mut crashed = Transaction::begin(&dir.0, "key.pem").unwrap();
+        crashed
+            .stage(&dir.join("key.pem"), key.as_bytes(), &Options::new())
+            .unwrap();
+        crashed
+            .stage(&dir.join("cert.pem"), cert.as_bytes(), &Options::new())
+            .unwrap();
+        occupy(&dir.join("cert.pem"));
+        assert!(crashed.commit().is_err());
+    }
+
+    #[test]
+    fn a_recover_that_fails_at_the_managed_location_is_set_aside_and_a_pair_minted() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("wedged-managed");
+        start(provider, dir.managed()).unwrap();
+        wedged(&dir);
+
+        start(provider, dir.managed()).unwrap();
+        assert_eq!(
+            dir.listing(),
+            [
+                "cert.pem",
+                "cert.pem.key.pem.txn.unusable",
+                "cert.pem.unusable",
+                "key.pem",
+                "key.pem.txn.unusable",
+                "key.pem.unusable",
+            ]
+        );
+        start(provider, dir.managed()).expect("the fresh pair loads");
+    }
+
+    #[test]
+    fn a_recover_that_fails_at_a_named_location_is_an_error_and_nothing_moves() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("wedged-named");
+        start(provider, dir.named()).unwrap();
+        wedged(&dir);
+        let before = dir.listing();
+
+        let e = start(provider, dir.named()).expect_err("a named pair is the operator's");
+        assert!(matches!(e, ServingError::Recover(_)), "{e}");
+        assert_eq!(dir.listing(), before);
     }
 
     #[cfg(unix)]

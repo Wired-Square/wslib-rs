@@ -14,6 +14,16 @@ mod macos;
 #[cfg(windows)]
 mod windows;
 
+/// Where [`hostname`] reads on this platform, for a log line when it fails.
+#[cfg(not(any(target_os = "macos", windows)))]
+pub const HOSTNAME_SOURCE: &str = "/proc/sys/kernel/hostname";
+/// Where [`hostname`] reads on this platform, for a log line when it fails.
+#[cfg(target_os = "macos")]
+pub const HOSTNAME_SOURCE: &str = "gethostname";
+/// Where [`hostname`] reads on this platform, for a log line when it fails.
+#[cfg(windows)]
+pub const HOSTNAME_SOURCE: &str = "GetComputerNameExW";
+
 /// The kernel's running hostname, on macOS its first label only, on Windows
 /// the DNS host name.
 ///
@@ -26,7 +36,7 @@ pub fn hostname() -> Option<String> {
     #[cfg(windows)]
     return windows::hostname();
     #[cfg(not(any(target_os = "macos", windows)))]
-    read_trimmed("/proc/sys/kernel/hostname")
+    read_trimmed(HOSTNAME_SOURCE)
 }
 
 /// How long the host has been up, sleep included, on a clock that does not

@@ -44,4 +44,5 @@ links.notify();
   never hold one row's resource. A pass waits for every task it stops, so a
   task must end promptly once its token is cancelled.
 - **`named(name)`** puts `name` in the `table` field of its log lines;
-  `Default` names it `unnamed`.
+  `Default` names it `unnamed`. It logs under the target `wslib_tasks`: add
+  it to a filter or a log ring that captures by target.

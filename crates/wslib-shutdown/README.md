@@ -19,7 +19,8 @@ let which = wslib_shutdown::stop_signal().await;
 - **`stop_signal()`** resolves with the `Signal` that asked the process to
   stop. `SIGTERM` is what systemd and launchd send: a service that only
   handles `SIGINT` is killed rather than stopped. `Signal` displays as
-  `SIGTERM`, `SIGINT` or `Ctrl-C`.
+  `SIGTERM`, `SIGINT` or `Ctrl-C`, and `as_str()` gives the same for a log
+  field.
 - **`cancel_on_stop(token)`** waits for the same, logs which at `info`, and
   cancels the token.
 - **Both register their handlers at the call.** A signal that arrives after
@@ -28,6 +29,8 @@ let which = wslib_shutdown::stop_signal().await;
 - **A failed registration doesn't stop the process.** It is logged at
   `error` and that signal is never reported: a service that refuses to start
   over a signal handler is worse than one that has to be killed.
+- **It logs under the target `wslib_shutdown`**: add it to a filter or a log
+  ring that captures by target.
 
 ## Not covered
 

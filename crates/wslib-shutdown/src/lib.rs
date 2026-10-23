@@ -23,13 +23,20 @@ pub enum Signal {
     CtrlC,
 }
 
-impl fmt::Display for Signal {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
+impl Signal {
+    /// `SIGTERM`, `SIGINT` or `Ctrl-C`, as [`Display`](fmt::Display) prints it.
+    pub fn as_str(&self) -> &'static str {
+        match self {
             Signal::Terminate => "SIGTERM",
             Signal::Interrupt => "SIGINT",
             Signal::CtrlC => "Ctrl-C",
-        })
+        }
+    }
+}
+
+impl fmt::Display for Signal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -82,7 +89,7 @@ pub fn stop_signal() -> impl Future<Output = Signal> + Send + 'static {
 }
 
 async fn registration_failed(which: Signal, e: std::io::Error) -> Signal {
-    tracing::error!(signal = %which, error = %e, "could not listen for a signal");
+    tracing::error!(signal = which.as_str(), error = %e, "could not listen for a signal");
     std::future::pending().await
 }
 
@@ -92,7 +99,7 @@ pub fn cancel_on_stop(token: CancellationToken) -> impl Future<Output = ()> + Se
     let stopping = stop_signal();
     async move {
         let which = stopping.await;
-        tracing::info!(signal = %which, "shutting down");
+        tracing::info!(signal = which.as_str(), "shutting down");
         token.cancel();
     }
 }
@@ -106,6 +113,7 @@ mod tests {
         assert_eq!(Signal::Terminate.to_string(), "SIGTERM");
         assert_eq!(Signal::Interrupt.to_string(), "SIGINT");
         assert_eq!(Signal::CtrlC.to_string(), "Ctrl-C");
+        assert_eq!(Signal::Terminate.as_str(), "SIGTERM");
     }
 
     /// **The only test in this crate that raises a signal**, and it raises it

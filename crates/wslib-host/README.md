@@ -16,7 +16,9 @@ let id = wslib_host::machine_id(MY_APP);
 
 ## What's here
 
-Every reader returns `None` rather than an error when the host can't answer.
+Every reader returns `None` rather than an error when the host can't answer;
+`HOSTNAME_SOURCE` names where `hostname` reads, for the log line. The crate
+logs nothing itself.
 
 | Reader           | Linux                               | macOS                         | Windows                           |
 | ---------------- | ----------------------------------- | ----------------------------- | --------------------------------- |

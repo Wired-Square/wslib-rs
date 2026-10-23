@@ -6,8 +6,8 @@ mod common;
 
 use common::{Scratch, read};
 use wslib_file_atomic::{
-    CommitError, Options, Readers, Recovered, Transaction, recover, recover_expecting,
-    replace_private,
+    CommitError, Options, Readers, RecordIdentity, Recovered, Transaction, recover,
+    recover_expecting, recover_identified, replace_private,
 };
 
 const KEY: &str = "app.key";
@@ -491,6 +491,49 @@ fn a_commit_failing_after_the_commit_point_is_left_for_recover() {
     assert_eq!(read(&dir.join(KEY)), b"new key");
     assert_eq!(read(&dir.join(CERT)), b"new cert");
     assert_only(&dir, &[KEY, CERT]);
+}
+
+fn left_for_recovery(name: &str) -> (Scratch, RecordIdentity) {
+    let dir = pair(name);
+    let transaction = stage_pair(&dir);
+    occupy(&dir.join(CERT));
+    let Err((CommitError::Committed(_), Some(identity))) = transaction.commit_identified() else {
+        panic!("the certificate could not be renamed over a directory");
+    };
+    fs::remove_dir_all(dir.join(CERT)).unwrap();
+    (dir, identity)
+}
+
+#[test]
+fn a_record_still_the_one_a_commit_left_is_finished_without_the_owner_checks() {
+    let (dir, identity) = left_for_recovery("txn-identified");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(dir.join(RECORD), fs::Permissions::from_mode(0o666)).unwrap();
+    }
+    let targets = [dir.join(KEY), dir.join(CERT)];
+    let targets = [targets[0].as_path(), &targets[1]];
+    let recovered = recover_identified(&dir.0, "tls", &targets, &identity).unwrap();
+    assert_eq!(recovered, Some(Recovered::RolledForward));
+    assert_eq!(read(&dir.join(CERT)), b"new cert");
+    assert_only(&dir, &[KEY, CERT]);
+    let gone = recover_identified(&dir.0, "tls", &targets, &identity).unwrap();
+    assert_eq!(gone, Some(Recovered::Nothing));
+}
+
+#[test]
+fn a_record_swapped_for_another_file_is_passed_over_by_its_identity() {
+    let (dir, identity) = left_for_recovery("txn-swapped");
+    let swapped = dir.join("swapped");
+    fs::copy(dir.join(RECORD), &swapped).unwrap();
+    fs::rename(&swapped, dir.join(RECORD)).unwrap();
+    let targets = [dir.join(KEY), dir.join(CERT)];
+    let targets = [targets[0].as_path(), &targets[1]];
+    let passed_over = recover_identified(&dir.0, "tls", &targets, &identity).unwrap();
+    assert_eq!(passed_over, None);
+    assert!(dir.join(STAGED_CERT).exists());
+    assert_eq!(recover(&dir.0, "tls").unwrap(), Recovered::RolledForward);
 }
 
 #[test]

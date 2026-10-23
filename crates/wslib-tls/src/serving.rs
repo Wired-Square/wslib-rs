@@ -9,7 +9,7 @@ use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use wslib_crypto::{KeyAlgorithm, Signer};
 use wslib_crypto_x509::pem::{self, CERTIFICATE, PRIVATE_KEY};
 use wslib_crypto_x509::{CertificateView, Report, SubjectAltName};
-use wslib_file_atomic::{Options, Transaction};
+use wslib_file_atomic::{Options, RecordIdentity, Transaction};
 use wslib_secret::Secret;
 
 const DISPLACED: &str = "unusable";
@@ -53,10 +53,19 @@ impl Location {
         self.named
     }
 
-    /// The pair on disk, for a backup taken with nothing serving; `None` when neither file is there.
+    /// Finishes an interrupted write of the pair, refusing a record naming
+    /// other files or one not this process's own; at a named location also
+    /// one in a directory others may write, or on Windows any record.
+    pub fn recover(&self) -> Result<(), ServingError> {
+        recover(self, None)
+    }
+
+    /// The pair on disk, for a backup taken with nothing serving, after
+    /// [`recover`](Self::recover); `None` when neither file is there.
     ///
     /// Whether the pair loads is not asked.
     pub fn read_pair(&self) -> Result<Option<ServingPair>, ServingError> {
+        self.recover()?;
         match present(self)? {
             Present::Both => read_pair(self).map(Some),
             Present::Neither => Ok(None),
@@ -90,7 +99,8 @@ pub struct Serving {
     location: Location,
     current: RwLock<Arc<ServerConfig>>,
     cannot_replace: Option<(PathBuf, io::ErrorKind)>,
-    installing: tokio::sync::Mutex<()>,
+    /// Taken for each install, holding the record a failed commit left.
+    installing: tokio::sync::Mutex<Option<RecordIdentity>>,
 }
 
 impl Serving {
@@ -104,8 +114,7 @@ impl Serving {
         names: &[SubjectAltName],
         algorithm: KeyAlgorithm,
     ) -> Result<Self, ServingError> {
-        let (record_dir, record) = transaction(&location);
-        wslib_file_atomic::recover(record_dir, &record).map_err(ServingError::Recover)?;
+        recover(&location, None)?;
 
         let unusable = match present(&location)? {
             Present::Both => match load(&provider, &location) {
@@ -140,7 +149,7 @@ impl Serving {
             location,
             current: RwLock::new(config),
             cannot_replace,
-            installing: tokio::sync::Mutex::new(()),
+            installing: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -152,7 +161,7 @@ impl Serving {
     ) -> Result<Self, ServingError> {
         tracing::info!(cert = %location.cert.display(), ?names, "minting a serving pair");
         let (pair, config) = mint_pair(&provider, names, algorithm)?;
-        commit_pair(&location, &pair)?;
+        commit_pair(&location, &pair).map_err(|(error, _)| error)?;
         Ok(Self::new(provider, location, config))
     }
 
@@ -225,17 +234,31 @@ impl Serving {
         pair: ServingPair,
         config: Arc<ServerConfig>,
     ) -> Result<(), ServingError> {
-        let _turn = self.installing.lock().await;
+        let mut left = self.installing.lock().await;
         self.replaceable()?;
-        let location = self.location.clone();
-        blocking(move || commit_pair(&location, &pair)).await?;
+        let (location, remembered) = (self.location.clone(), left.take());
+        let (written, still_left) = blocking(move || {
+            if let Err(error) = recover(&location, remembered.as_ref()) {
+                return (Err(error), remembered);
+            }
+            match commit_pair(&location, &pair) {
+                Ok(()) => (Ok(()), None),
+                Err((error, identity)) => (Err(error), identity),
+            }
+        })
+        .await;
+        *left = still_left;
+        written?;
         *self.current.write().unwrap_or_else(PoisonError::into_inner) = config;
         Ok(())
     }
 
-    /// The pair on disk, for a backup; never one install's key beside another's certificate.
+    /// The pair on disk, for a backup, after finishing an interrupted write;
+    /// never one install's key beside another's certificate.
     pub async fn pair(&self) -> Result<ServingPair, ServingError> {
-        let _turn = self.installing.lock().await;
+        let mut left = self.installing.lock().await;
+        recover(&self.location, left.as_ref())?;
+        *left = None;
         read_pair(&self.location)
     }
 }
@@ -404,22 +427,82 @@ fn transaction(location: &Location) -> (&Path, String) {
     )
 }
 
-/// Both or neither, across a crash, once [`wslib_file_atomic::recover`] has
-/// run; the key is renamed into place first. Both `0600`, staged and renamed
-/// over the targets, so a symlink there is replaced and not followed.
-fn commit_pair(location: &Location, pair: &ServingPair) -> Result<(), ServingError> {
+/// The record a commit `left` is finished without the trust checks while it
+/// is still that file and names only this pair.
+fn recover(location: &Location, left: Option<&RecordIdentity>) -> Result<(), ServingError> {
     let (record_dir, record) = transaction(location);
-    let write = || -> io::Result<()> {
-        let mut txn = Transaction::begin(record_dir, &record)?;
-        txn.stage(
-            &location.key,
-            pair.key_pem.expose().as_bytes(),
-            &Options::new(),
-        )?;
-        txn.stage(&location.cert, pair.cert_pem.as_bytes(), &Options::new())?;
-        Ok(txn.commit()?)
-    };
-    write().map_err(ServingError::Write)
+    let targets = [location.cert.as_path(), &location.key];
+    if let Some(identity) = left
+        && wslib_file_atomic::recover_identified(record_dir, &record, &targets, identity)
+            .map_err(ServingError::Recover)?
+            .is_some()
+    {
+        return Ok(());
+    }
+    if location.named {
+        named_record_acted_on(record_dir, &record).map_err(ServingError::Recover)?;
+    }
+    wslib_file_atomic::recover_expecting(record_dir, &record, &targets)
+        .map(drop)
+        .map_err(ServingError::Recover)
+}
+
+/// Only a record that is there is judged, so a named pair in a shared directory still starts.
+fn named_record_acted_on(record_dir: &Path, record: &str) -> io::Result<()> {
+    let path = record_dir.join(format!("{record}.txn"));
+    match fs::symlink_metadata(&path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        there => there.map(drop)?,
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let directory = fs::metadata(record_dir)?;
+        // SAFETY: a plain syscall with no arguments.
+        let euid = unsafe { libc::geteuid() };
+        if [euid, 0].contains(&directory.uid()) && directory.mode() & 0o022 == 0 {
+            return Ok(());
+        }
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "{} may be written by others, so {} is not acted on",
+                record_dir.display(),
+                path.display()
+            ),
+        ))
+    }
+    #[cfg(windows)]
+    Err(io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        format!(
+            "{} is at a named location, so it is left for the operator",
+            path.display()
+        ),
+    ))
+}
+
+/// Both or neither, across a crash, once [`recover`] has run; the key is
+/// renamed into place first. Both `0600`, staged and renamed over the
+/// targets, so a symlink there is replaced and not followed. A commit left
+/// for recovery hands back its record's identity.
+fn commit_pair(
+    location: &Location,
+    pair: &ServingPair,
+) -> Result<(), (ServingError, Option<RecordIdentity>)> {
+    let (record_dir, record) = transaction(location);
+    let unwritten = |error| (ServingError::Write(error), None);
+    let mut txn = Transaction::begin(record_dir, &record).map_err(unwritten)?;
+    txn.stage(
+        &location.key,
+        pair.key_pem.expose().as_bytes(),
+        &Options::new(),
+    )
+    .map_err(unwritten)?;
+    txn.stage(&location.cert, pair.cert_pem.as_bytes(), &Options::new())
+        .map_err(unwritten)?;
+    txn.commit_identified()
+        .map_err(|(error, identity)| (ServingError::Write(error.into()), identity))
 }
 
 /// Off the runtime's workers; a panic there is carried on here.
@@ -828,6 +911,198 @@ mod tests {
                 .is_symlink()
         );
         assert_eq!(on_disk(&dir.join("cert.pem")), fingerprint(&cert));
+    }
+
+    fn occupy(path: &Path) {
+        let _ = fs::remove_file(path);
+        fs::create_dir(path).unwrap();
+        write(&path.join("inside"), "");
+    }
+
+    /// Installs a pair whose certificate cannot be renamed into place, so the
+    /// commit is left for recovery, then clears the way.
+    async fn left_for_recovery(
+        provider: &Arc<CryptoProvider>,
+        serving: &Serving,
+        dir: &Scratch,
+    ) -> String {
+        let (cert, key) = another_pair(provider);
+        occupy(&dir.join("cert.pem"));
+        let failed = install(serving, &cert, &key).await.map(drop);
+        assert!(matches!(failed, Err(ServingError::Write(_))), "{failed:?}");
+        fs::remove_dir_all(dir.join("cert.pem")).unwrap();
+        cert
+    }
+
+    #[tokio::test]
+    async fn a_commit_left_for_recovery_is_finished_before_the_pair_is_read() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("left-then-read");
+        let serving = start(provider, dir.managed()).unwrap();
+        let cert = left_for_recovery(provider, &serving, &dir).await;
+        assert_eq!(serving.pair().await.unwrap().cert_pem, cert);
+        assert_eq!(dir.listing(), ["cert.pem", "key.pem"]);
+    }
+
+    #[tokio::test]
+    async fn a_commit_left_for_recovery_is_finished_before_the_next_commit() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("left-then-commit");
+        let serving = start(provider, dir.managed()).unwrap();
+        left_for_recovery(provider, &serving, &dir).await;
+        let (cert, key) = another_pair(provider);
+        install(&serving, &cert, &key).await.unwrap();
+        assert_eq!(on_disk(&dir.join("cert.pem")), fingerprint(&cert));
+        assert_eq!(dir.listing(), ["cert.pem", "key.pem"]);
+    }
+
+    #[tokio::test]
+    async fn the_location_finishes_an_interrupted_write_before_reading_the_pair() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("left-then-location");
+        let serving = start(provider, dir.managed()).unwrap();
+        let cert = left_for_recovery(provider, &serving, &dir).await;
+        drop(serving);
+        assert_eq!(dir.managed().read_pair().unwrap().unwrap().cert_pem, cert);
+
+        left_for_recovery(provider, &start(provider, dir.managed()).unwrap(), &dir).await;
+        dir.managed().recover().unwrap();
+        assert_eq!(dir.listing(), ["cert.pem", "key.pem"]);
+    }
+
+    /// A pending record naming a file the pair does not hold.
+    fn plant_record(dir: &Scratch) {
+        let elsewhere = fs::canonicalize(&dir.0).unwrap().join("elsewhere.pem");
+        write(
+            &dir.join("key.pem.txn"),
+            &format!("pending\n{}\n", elsewhere.display()),
+        );
+    }
+
+    #[test]
+    fn a_refused_record_fails_a_read_and_nothing_is_set_aside_or_minted() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("refused-read");
+        start(provider, dir.managed()).unwrap();
+        plant_record(&dir);
+        let before = dir.listing();
+        for location in [dir.managed(), dir.named()] {
+            let refused = location.read_pair();
+            assert!(
+                matches!(&refused, Err(ServingError::Recover(e)) if e.kind() == io::ErrorKind::PermissionDenied),
+                "{refused:?}"
+            );
+            assert!(location.recover().is_err());
+        }
+        assert_eq!(dir.listing(), before);
+    }
+
+    #[tokio::test]
+    async fn a_refused_record_fails_the_served_pair_and_a_commit() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("refused-serving");
+        let serving = start(provider, dir.managed()).unwrap();
+        plant_record(&dir);
+        let before = dir.listing();
+        assert!(matches!(
+            serving.pair().await,
+            Err(ServingError::Recover(_))
+        ));
+        let (cert, key) = another_pair(provider);
+        let refused = install(&serving, &cert, &key).await.map(drop);
+        assert!(
+            matches!(refused, Err(ServingError::Recover(_))),
+            "{refused:?}"
+        );
+        assert_eq!(dir.listing(), before);
+    }
+
+    #[cfg(unix)]
+    fn loosen(dir: &Scratch) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&dir.0, fs::Permissions::from_mode(0o777)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_record_in_a_named_directory_others_may_write_is_refused() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("named-loose-dir");
+        start(provider, dir.named()).unwrap();
+        let mut crashed = Transaction::begin(&dir.0, "key.pem").unwrap();
+        crashed
+            .stage(&dir.join("key.pem"), b"staged", &Options::new())
+            .unwrap();
+        std::mem::forget(crashed);
+        loosen(&dir);
+        let before = dir.listing();
+
+        let refused = dir.named().recover().unwrap_err();
+        let ServingError::Recover(e) = &refused else {
+            panic!("{refused}");
+        };
+        assert_eq!(e.kind(), io::ErrorKind::PermissionDenied);
+        assert!(e.to_string().contains(&*dir.0.to_string_lossy()), "{e}");
+        assert!(matches!(
+            start(provider, dir.named()),
+            Err(ServingError::Recover(_))
+        ));
+        assert_eq!(dir.listing(), before);
+        dir.managed().recover().unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn any_record_at_a_named_location_is_left_for_the_operator() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("named-windows");
+        start(provider, dir.named()).unwrap();
+        std::mem::forget(Transaction::begin(&dir.0, "key.pem").unwrap());
+        let before = dir.listing();
+        let refused = dir.named().recover();
+        assert!(
+            matches!(&refused, Err(ServingError::Recover(e)) if e.kind() == io::ErrorKind::PermissionDenied),
+            "{refused:?}"
+        );
+        assert!(matches!(
+            start(provider, dir.named()),
+            Err(ServingError::Recover(_))
+        ));
+        assert_eq!(dir.listing(), before);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_serving_finishes_the_record_its_own_commit_left_whatever_its_directory() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("own-record");
+        let serving = start(provider, dir.named()).unwrap();
+        loosen(&dir);
+        let cert = left_for_recovery(provider, &serving, &dir).await;
+        assert!(
+            dir.named().recover().is_err(),
+            "another reader gets the full checks"
+        );
+        assert_eq!(serving.pair().await.unwrap().cert_pem, cert);
+        assert_eq!(dir.listing(), ["cert.pem", "key.pem"]);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_record_swapped_after_a_failed_commit_gets_the_full_checks() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("swapped-record");
+        let serving = start(provider, dir.named()).unwrap();
+        loosen(&dir);
+        left_for_recovery(provider, &serving, &dir).await;
+        let (record, swapped) = (dir.join("key.pem.txn"), dir.join("swapped"));
+        fs::copy(&record, &swapped).unwrap();
+        fs::rename(&swapped, &record).unwrap();
+        assert!(matches!(
+            serving.pair().await,
+            Err(ServingError::Recover(_))
+        ));
+        assert!(record.exists());
     }
 
     #[cfg(unix)]

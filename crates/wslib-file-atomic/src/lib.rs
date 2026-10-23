@@ -28,7 +28,10 @@ mod transaction;
 #[cfg(windows)]
 mod windows;
 
-pub use transaction::{CommitError, Recovered, Transaction, recover, recover_expecting};
+pub use transaction::{
+    CommitError, RecordIdentity, Recovered, Transaction, recover, recover_expecting,
+    recover_identified,
+};
 #[cfg(windows)]
 pub use windows::administrators_read_and_delete;
 

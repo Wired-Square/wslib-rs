@@ -113,7 +113,10 @@ tls.commit()?;
   `commit` says which side it failed on: `CommitError::RolledBack` left every
   target as it was; `CommitError::Committed` left the record, and `recover`
   rolls it forward, so the new files will be served. It converts to an
-  `io::Error` of the same kind.
+  `io::Error` of the same kind. `commit_identified` also hands back the
+  left record's `RecordIdentity`, and `recover_identified` finishes that
+  record without the owner and mode checks while it is still that file,
+  passing over (`None`) one that is not.
 - **Callers serialise transactions of one name**, as they do writers of one
   path.
 

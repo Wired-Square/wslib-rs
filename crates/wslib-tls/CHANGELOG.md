@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.1
+
+- `Location::recover()` finishes an interrupted write of the pair, and
+  `read_pair()`, `Serving::pair()` and every write (`install_pem`,
+  `regenerate`, a mint) run it first, so a `CommitError::Committed` is
+  finished before the next write begins. A record naming other files than
+  the pair, or not this process's own, is refused; at a named location so
+  is one in a directory others may write (Unix) and any record (Windows). A
+  `Serving` finishes the record its own failed commit left while it is
+  still that file, whatever its directory. Refused or failed, it is
+  `ServingError::Recover`. Needs `wslib-file-atomic` 0.1.4.
+
 ## 0.1.0
 
 - `Outbound`: outbound trust over the caller's `CryptoProvider` from a

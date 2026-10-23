@@ -20,7 +20,10 @@ use windows_sys::Win32::Security::{
     SECURITY_MAX_SID_SIZE, TOKEN_INFORMATION_CLASS, TokenOwner, TokenUser, WELL_KNOWN_SID_TYPE,
     WinBuiltinAdministratorsSid, WinLocalSystemSid,
 };
-use windows_sys::Win32::Storage::FileSystem::{DELETE, FILE_ALL_ACCESS, FILE_GENERIC_READ};
+use windows_sys::Win32::Storage::FileSystem::{
+    BY_HANDLE_FILE_INFORMATION, DELETE, FILE_ALL_ACCESS, FILE_GENERIC_READ,
+    GetFileInformationByHandle,
+};
 
 /// Grants the file's owner rather than this process, so a helper run as
 /// another account never takes an existing file from the service; SYSTEM is
@@ -148,6 +151,16 @@ impl Owner {
         };
         win32(status).map(|()| owner)
     }
+}
+
+pub(crate) fn file_id(file: &File) -> io::Result<(u64, u64)> {
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: the handle is open for the call and `info` is written in place.
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
+    Ok((u64::from(info.dwVolumeSerialNumber), index))
 }
 
 /// An elevated process gives what it creates to Administrators, its token's

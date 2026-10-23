@@ -23,6 +23,25 @@ pub struct Transaction {
     open: bool,
 }
 
+/// Which file a committed record is, compared on an open handle: the device
+/// and inode, or on Windows the volume serial and file index.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordIdentity(u64, u64);
+
+impl RecordIdentity {
+    #[cfg(unix)]
+    fn of(file: &File) -> io::Result<Self> {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = file.metadata()?;
+        Ok(Self(metadata.dev(), metadata.ino()))
+    }
+
+    #[cfg(windows)]
+    fn of(file: &File) -> io::Result<Self> {
+        crate::windows::file_id(file).map(|(volume, index)| Self(volume, index))
+    }
+}
+
 /// What [`recover`] found.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,17 +150,31 @@ impl Transaction {
 
     /// Replace every staged file's target, or, failing before the commit
     /// point, none of them.
-    pub fn commit(mut self) -> Result<(), CommitError> {
+    pub fn commit(self) -> Result<(), CommitError> {
+        self.commit_identified().map_err(|(error, _)| error)
+    }
+
+    /// As [`Transaction::commit`], with the identity of a committed record
+    /// left for [`recover_identified`].
+    pub fn commit_identified(mut self) -> Result<(), (CommitError, Option<RecordIdentity>)> {
+        let mut identity = None;
+        let contents = self.contents(COMMITTED);
         let staged = self
             .ensure_open()
             // Under a committed record a missing staged file must mean renamed.
             .and_then(|()| sync_parents(&self.targets))
-            .and_then(|()| Options::new().stage(&self.record, self.contents(COMMITTED).as_bytes()));
+            .and_then(|()| {
+                Options::new().stage_with(&self.record, |file| {
+                    file.write_all(contents.as_bytes())?;
+                    identity = Some(RecordIdentity::of(file)?);
+                    Ok(())
+                })
+            });
         let staged = match staged {
             Ok(staged) => staged,
             Err(e) => {
                 let _ = self.roll_back();
-                return Err(CommitError::RolledBack(e));
+                return Err((CommitError::RolledBack(e), None));
             }
         };
         // The rename of the committed record is the commit point: from there
@@ -150,14 +183,14 @@ impl Transaction {
             Err(PromoteError::Unmoved { staged, error }) => {
                 let _ = staged.discard();
                 let _ = self.roll_back();
-                Err(CommitError::RolledBack(error))
+                Err((CommitError::RolledBack(error), None))
             }
             promoted => {
                 self.open = false;
                 promoted
                     .map_err(io::Error::from)
                     .and_then(|()| roll_forward(&self.record, &self.suffix, &self.targets))
-                    .map_err(CommitError::Committed)
+                    .map_err(|error| (CommitError::Committed(error), identity))
             }
         }
     }
@@ -245,20 +278,48 @@ impl Drop for Transaction {
 /// else; on Windows, owned by this process's user or its default owner. So is
 /// a staged file a committed record would rename over its target.
 pub fn recover(dir: &Path, name: &str) -> io::Result<Recovered> {
-    recover_checked(dir, name, None)
+    recover_checked(dir, name, None, None).map(checked_in_full)
 }
 
 /// As [`recover`], also refusing a record that names a file outside `targets`.
 pub fn recover_expecting(dir: &Path, name: &str, targets: &[&Path]) -> io::Result<Recovered> {
-    let expected: Vec<_> = targets.iter().map(|target| as_recorded(target)).collect();
-    recover_checked(dir, name, Some(&expected))
+    let expected = expected(targets);
+    recover_checked(dir, name, Some(&expected), None).map(checked_in_full)
 }
 
-fn recover_checked(dir: &Path, name: &str, expected: Option<&[PathBuf]>) -> io::Result<Recovered> {
+/// As [`recover_expecting`] without the owner and mode checks, for a record
+/// that is still the file `identity` names; `None`, touching nothing, when it
+/// is another.
+pub fn recover_identified(
+    dir: &Path,
+    name: &str,
+    targets: &[&Path],
+    identity: &RecordIdentity,
+) -> io::Result<Option<Recovered>> {
+    let expected = expected(targets);
+    recover_checked(dir, name, Some(&expected), Some(identity))
+}
+
+fn expected(targets: &[&Path]) -> Vec<PathBuf> {
+    targets.iter().map(|target| as_recorded(target)).collect()
+}
+
+fn checked_in_full(recovered: Option<Recovered>) -> Recovered {
+    recovered.expect("only an identified record is passed over")
+}
+
+fn recover_checked(
+    dir: &Path,
+    name: &str,
+    expected: Option<&[PathBuf]>,
+    identity: Option<&RecordIdentity>,
+) -> io::Result<Option<Recovered>> {
     let record = record_path(dir, name)?;
-    let contents = match read_record(&record) {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Recovered::Nothing),
-        read => read?,
+    let contents = match read_record(&record, identity) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Some(Recovered::Nothing)),
+        Ok(None) => return Ok(None),
+        Ok(Some(contents)) => contents,
+        Err(e) => return Err(e),
     };
     let malformed = || {
         io::Error::new(
@@ -292,6 +353,7 @@ fn recover_checked(dir: &Path, name: &str, expected: Option<&[PathBuf]>) -> io::
         COMMITTED => roll_forward(&record, &suffix, &targets).map(|()| Recovered::RolledForward),
         _ => Err(malformed()),
     }
+    .map(Some)
 }
 
 /// As [`Transaction`] lists it: the parent canonical, so a link there names the same file.
@@ -311,10 +373,14 @@ fn refused(record: &Path, why: &str) -> io::Error {
 }
 
 /// Read from the file that was checked, so nothing can be swapped in between.
-fn read_record(record: &Path) -> io::Result<String> {
+fn read_record(record: &Path, identity: Option<&RecordIdentity>) -> io::Result<Option<String>> {
     let file = open_record(record)?;
-    refuse_unless_ours(record, &file)?;
-    io::read_to_string(file)
+    match identity {
+        Some(identity) if RecordIdentity::of(&file)? != *identity => return Ok(None),
+        Some(_) => {}
+        None => refuse_unless_ours(record, &file)?,
+    }
+    io::read_to_string(file).map(Some)
 }
 
 fn refuse_unless_ours(path: &Path, file: &File) -> io::Result<()> {

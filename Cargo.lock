@@ -7490,6 +7490,7 @@ name = "wslib-tls"
 version = "0.1.0"
 dependencies = [
  "http",
+ "libc",
  "rcgen",
  "rustls",
  "rustls-native-certs",

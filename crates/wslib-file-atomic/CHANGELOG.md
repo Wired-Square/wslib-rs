@@ -12,6 +12,11 @@
   file outside `targets`.
 - A create-new write whose directory sync fails removes the file it made, so
   a retry is not refused with `AlreadyExists`.
+- `Transaction::commit_identified` is `commit` handing back a
+  `RecordIdentity` for a record left for recovery, and
+  `recover_identified(dir, name, targets, identity)` finishes that record
+  without the owner and mode checks while it is still that file, returning
+  `None` and touching nothing when it is another.
 
 ## 0.1.3
 

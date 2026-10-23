@@ -71,9 +71,10 @@ own, from anywhere.
   `_sqlx_migrations`, in sqlx's own table and columns. A chain is mirrored if
   it asks (`Chain::new(..).mirrored()`) or if the import made it; the
   registry keeps that for good: asking later is `MirroredTooLate`, and a
-  mirrored chain stays mirrored without asking. A version that table already
-  holds, or that two mirrored chains would both write, is a `Collision`
-  before anything applies.
+  mirrored chain stays mirrored without asking. Mirrored chains share one
+  version space, as sqlx's runner has only one, even on a fresh database:
+  a version that table already holds, or that two mirrored chains would
+  both write, is a `Collision` before anything applies.
 - **The import from sqlx's runner** happens once, on the open that creates
   the registry, if `_sqlx_migrations` has rows: each row goes to the chain
   whose `Migrator` has its version, checksum checked, in the same

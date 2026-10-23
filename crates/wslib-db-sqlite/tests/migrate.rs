@@ -582,3 +582,28 @@ async fn mirroring_asked_for_after_a_chain_was_registered_without_is_refused() {
         );
     }
 }
+
+#[tokio::test]
+async fn a_failed_row_in_sqlx_table_is_refused_as_dirty() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.db");
+    sqlx_runner(&path, LIB, APP).await.expect("the old build");
+    let pool = SqlitePool::connect_with(SqliteConnectOptions::new().filename(&path))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE _sqlx_migrations SET success = FALSE WHERE version = 1000")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    for refused in [
+        open_existing(&path, LIB, APP).await,
+        open(&path, LIB, APP).await,
+    ] {
+        assert!(
+            matches!(&refused, Err(Error::Migrate { chain, source: MigrateError::Dirty(1000) }) if chain == "app"),
+            "{refused:?}"
+        );
+    }
+}

@@ -115,6 +115,7 @@ struct LegacyRow {
     description: String,
     installed_on: String,
     checksum: Vec<u8>,
+    success: bool,
 }
 
 pub(crate) fn check_names(chains: &[Chain]) -> Result<(), Error> {
@@ -307,7 +308,7 @@ pub(crate) async fn apply(pool: &SqlitePool, chains: &[Chain]) -> Result<(), Err
 }
 
 /// Each `_sqlx_migrations` row with the index of the one chain that has its
-/// version, checksum checked.
+/// version, checksum checked and a failed row refused, as sqlx's runner does.
 fn claim<'r>(
     rows: &'r [LegacyRow],
     chains: &[Chain],
@@ -326,6 +327,9 @@ fn claim<'r>(
                 chain: chain.name.clone(),
                 other: other.name.clone(),
             });
+        }
+        if !row.success {
+            return Err(chain.error(MigrateError::Dirty(version)));
         }
         if *chain.get(version).expect("claimed").checksum != *row.checksum {
             return Err(chain.error(MigrateError::VersionMismatch(version)));
@@ -451,20 +455,23 @@ async fn legacy_rows(conn: &mut SqliteConnection) -> Result<Vec<LegacyRow>, Erro
     if !table_exists(conn, LEGACY).await? {
         return Ok(Vec::new());
     }
-    let rows: Vec<(i64, String, String, Vec<u8>)> = sqlx::query_as(&format!(
-        "SELECT version, description, CAST(installed_on AS TEXT), checksum \
+    let rows: Vec<(i64, String, String, Vec<u8>, bool)> = sqlx::query_as(&format!(
+        "SELECT version, description, CAST(installed_on AS TEXT), checksum, success \
          FROM {LEGACY} ORDER BY version"
     ))
     .fetch_all(conn)
     .await?;
     Ok(rows
         .into_iter()
-        .map(|(version, description, installed_on, checksum)| LegacyRow {
-            version,
-            description,
-            installed_on,
-            checksum,
-        })
+        .map(
+            |(version, description, installed_on, checksum, success)| LegacyRow {
+                version,
+                description,
+                installed_on,
+                checksum,
+                success,
+            },
+        )
         .collect())
 }
 

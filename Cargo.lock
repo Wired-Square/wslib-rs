@@ -6449,6 +6449,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
+name = "wslib-1password"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "wslib-secret",
+]
+
+[[package]]
 name = "wslib-auth"
 version = "0.1.0"
 dependencies = [
@@ -6524,7 +6536,7 @@ version = "0.1.0"
 
 [[package]]
 name = "wslib-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "comfy-table",

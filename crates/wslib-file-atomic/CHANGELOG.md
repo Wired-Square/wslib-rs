@@ -6,7 +6,8 @@
   `PermissionDenied` naming it: a symbolic link, anything but a regular file
   (a FIFO is not waited on), or one owned by another user or writable by
   group or others; on Windows one owned by neither the process token's user
-  nor its default owner. It reads the record from the file it checked.
+  nor its default owner. It reads the record from the file it checked, and
+  checks each staged file a committed record renames the same way.
   `recover_expecting(dir, name, targets)` also refuses a record naming a
   file outside `targets`.
 

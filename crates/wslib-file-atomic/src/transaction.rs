@@ -242,7 +242,8 @@ impl Drop for Transaction {
 ///
 /// A record is refused, as `PermissionDenied`, unless it is a regular file,
 /// not a symbolic link, owned by this process's user and writable by no one
-/// else; on Windows, owned by this process's user or its default owner.
+/// else; on Windows, owned by this process's user or its default owner. So is
+/// a staged file a committed record would rename over its target.
 pub fn recover(dir: &Path, name: &str) -> io::Result<Recovered> {
     recover_checked(dir, name, None)
 }
@@ -312,13 +313,18 @@ fn refused(record: &Path, why: &str) -> io::Error {
 /// Read from the file that was checked, so nothing can be swapped in between.
 fn read_record(record: &Path) -> io::Result<String> {
     let file = open_record(record)?;
-    if !file.metadata()?.is_file() {
-        return Err(refused(record, "not a regular file"));
-    }
-    if let Some(why) = untrusted(&file)? {
-        return Err(refused(record, why));
-    }
+    refuse_unless_ours(record, &file)?;
     io::read_to_string(file)
+}
+
+fn refuse_unless_ours(path: &Path, file: &File) -> io::Result<()> {
+    if !file.metadata()?.is_file() {
+        return Err(refused(path, "not a regular file"));
+    }
+    match untrusted(file)? {
+        Some(why) => Err(refused(path, why)),
+        None => Ok(()),
+    }
 }
 
 /// Non-blocking, so a FIFO planted as the record is refused rather than waited on.
@@ -402,10 +408,16 @@ fn roll_back(record: &Path, suffix: &str, targets: &[PathBuf]) -> io::Result<()>
 }
 
 /// A staged file already gone under a committed record was renamed before the
-/// crash, so replaying is idempotent.
+/// crash, so replaying is idempotent; one there is checked as the record is, as
+/// a file planted under its name would be renamed over the target.
 fn roll_forward(record: &Path, suffix: &str, targets: &[PathBuf]) -> io::Result<()> {
     for target in targets {
-        match fs::rename(beside(target, suffix), target) {
+        let staged = beside(target, suffix);
+        match open_record(&staged) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            opened => refuse_unless_ours(&staged, &opened?)?,
+        }
+        match fs::rename(&staged, target) {
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             renamed => renamed?,
         }

@@ -425,6 +425,22 @@ fn a_record_owned_by_someone_else_is_refused() {
     assert_refused_untouched(&dir, recover(&dir.0, "tls").unwrap_err());
 }
 
+#[cfg(unix)]
+#[test]
+fn a_staged_file_others_may_write_is_not_renamed_over_its_target() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = pair("txn-planted-staged");
+    write_record(&dir, "committed");
+    fs::write(dir.join(KEY), b"new key").unwrap();
+    stage_by_hand(&dir, &[STAGED_CERT]);
+    fs::set_permissions(dir.join(STAGED_CERT), fs::Permissions::from_mode(0o664)).unwrap();
+
+    let refused = recover(&dir.0, "tls").unwrap_err();
+    assert_eq!(refused.kind(), io::ErrorKind::PermissionDenied, "{refused}");
+    assert!(refused.to_string().contains(STAGED_CERT), "{refused}");
+    assert_eq!(read(&dir.join(CERT)), b"old cert");
+}
+
 #[test]
 fn a_record_naming_a_target_outside_the_expected_set_is_refused() {
     let dir = committed_and_staged("txn-unexpected-target");

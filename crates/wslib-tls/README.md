@@ -129,8 +129,8 @@ for warning in &installed.report.warnings { /* expired, host not covered, ... */
 - **A failed write says where it stopped**: `ServingError::Write { path }`
   replaced nothing; `ServingError::Unfinished { record, named }` was
   committed, the old pair still served, and the next write, backup read or
-  start finishes it. `next_step()` says that part on its own, and at a named
-  location names the record to move aside if a start cannot.
+  start finishes it (at a named location, a start only if it can and may).
+  `next_step()` says that part on its own, naming the record.
 - **`replaceable()`**: whether both directories took a new file when the
   pair was loaded, for a caller about to do something an install failing
   would leave half done.

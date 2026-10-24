@@ -426,12 +426,18 @@ impl ServingError {
 
 fn unfinished_next_step(record: &Path, named: bool) -> String {
     let record = record.display();
-    let otherwise = if named {
-        format!("a start that cannot refuses to serve until {record} is moved aside by hand")
+    if named {
+        format!(
+            "the next write or backup read finishes it from {record}; a start refuses to serve \
+             until {record} is moved aside by hand, unless it can and may finish it"
+        )
     } else {
-        "a start that cannot sets it aside and mints a fresh pair".to_string()
-    };
-    format!("the next write, backup read or start finishes it from {record}, or {otherwise}")
+        format!(
+            "the next write, backup read or start finishes it from {record}, or a start that \
+             cannot sets it aside and serves the pair on disk, making a fresh one only if that \
+             will not load"
+        )
+    }
 }
 
 enum Present {
@@ -1234,8 +1240,8 @@ mod tests {
         assert_eq!(
             failed.next_step().unwrap(),
             format!(
-                "the next write, backup read or start finishes it from {record}, or a start \
-                 that cannot refuses to serve until {record} is moved aside by hand"
+                "the next write or backup read finishes it from {record}; a start refuses to \
+                 serve until {record} is moved aside by hand, unless it can and may finish it"
             )
         );
     }

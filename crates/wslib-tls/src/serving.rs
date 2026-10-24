@@ -1357,7 +1357,11 @@ mod tests {
         let before = dir.listing();
 
         let e = start(provider, dir.named()).expect_err("a named pair is the operator's");
-        assert!(matches!(e, ServingError::Recover(_)), "{e}");
+        if cfg!(windows) {
+            assert!(matches!(e, ServingError::RecordRefused { .. }), "{e}");
+        } else {
+            assert!(matches!(e, ServingError::Recover(_)), "{e}");
+        }
         assert_eq!(dir.listing(), before);
     }
 

@@ -429,7 +429,8 @@ fn unfinished_next_step(record: &Path, named: bool) -> String {
     if named {
         format!(
             "the next write or backup read finishes it from {record}; a start refuses to serve \
-             until {record} is moved aside by hand, unless it can and may finish it"
+             until the pair's files are checked and {record} is moved aside by hand, unless it \
+             can and may finish it"
         )
     } else {
         format!(
@@ -1241,7 +1242,8 @@ mod tests {
             failed.next_step().unwrap(),
             format!(
                 "the next write or backup read finishes it from {record}; a start refuses to \
-                 serve until {record} is moved aside by hand, unless it can and may finish it"
+                 serve until the pair's files are checked and {record} is moved aside by hand, \
+                 unless it can and may finish it"
             )
         );
     }

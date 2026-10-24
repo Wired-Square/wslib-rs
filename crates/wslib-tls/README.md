@@ -86,9 +86,9 @@ app's provider with ALPN left empty.
 use wslib_tls::{Location, Serving};
 
 let location = Location::managed(state.join("cert.pem"), state.join("key.pem"));
-let names = ["widget-01", "widget-01.local", "127.0.0.1"].map(|n| n.parse().unwrap());
+let names = || Vec::from(["widget-01", "widget-01.local", "127.0.0.1"].map(|n| n.parse().unwrap()));
 let serving = tokio::task::spawn_blocking(move || {
-    Serving::load_or_mint(provider, location, &names, KeyAlgorithm::EcP256)
+    Serving::load_or_mint(provider, location, names, KeyAlgorithm::EcP256)
 })
 .await??;
 let tls = wslib_http_server::Tls::new(serving.config()); // adds h2 and http/1.1
@@ -103,14 +103,15 @@ for warning in &installed.report.warnings { /* expired, host not covered, ... */
 
 - **`Serving::load_or_mint`**: both files there and loadable, they are
   served; neither, a self-signed pair is minted with `wslib_crypto_x509::mint`
-  for the caller's names; one half, or a pair that will not read, parse,
+  for the names the caller's closure gives, called only then; one half, or a pair that will not read, parse,
   match or load, is moved aside to the first free `<file>.unusable`,
   `.unusable.1`, … and replaced at a
   `Location::managed` location, and refused with `ServingError::Named` at a
   `Location::named` one. A path that cannot even be looked at is refused at
   either. An interrupted write that cannot be finished, or whose record is
   refused, is set aside the same way at a managed location, record and
-  staged files, and is an error at a named one. Blocks: it
+  staged files, and is an error inside `ServingError::Named` at a named
+  one. Blocks: it
   reads and writes files, and RSA generation takes seconds.
 - **Writing the pair** goes through a `wslib_file_atomic::Transaction`
   recorded beside the key as `<key file>.txn` (`Location::record()`): both
@@ -121,9 +122,14 @@ for warning in &installed.report.warnings { /* expired, host not covered, ... */
   first. A record naming other files, or not this process's own, is refused;
   at a named location so is one in a directory others may write, and on
   Windows any record. A refused record is `ServingError::RecordRefused`,
-  for an operator to check and move aside by hand. A `Serving` finishes the
-  record its own failed commit left while it is still that file, whatever
-  its directory.
+  and one that cannot be finished `ServingError::Recover`, each naming the
+  record for an operator to check and move aside by hand. A `Serving`
+  finishes the record its own failed commit left while it is still that
+  file, whatever its directory.
+- **A failed write says where it stopped**: `ServingError::Write { path }`
+  replaced nothing; `ServingError::Unfinished { record, named }` was
+  committed, the old pair still served, and the next write, backup read or
+  start finishes it.
 - **`replaceable()`**: whether both directories took a new file when the
   pair was loaded, for a caller about to do something an install failing
   would leave half done.
@@ -139,10 +145,16 @@ for warning in &installed.report.warnings { /* expired, host not covered, ... */
 - **`regenerate(names, algorithm)`**: a fresh self-signed pair for the
   caller's names, minted off the runtime and written under the same lock;
   returns the config for `Tls::reload`.
+- **`watch()`**: a `tokio::sync::watch::Receiver<Arc<ServerConfig>>` sent
+  each configuration a write puts in place, in the order written, for a
+  listener's reload.
 - **`pair()`** and **`Location::read_pair()`**: the PEM on disk for a
   backup, the certificate file filtered to its `CERTIFICATE` sections and
   the key a `Secret`;
-  `pair()` under the install lock, `read_pair()` with nothing serving.
+  `pair()` under the install lock and off the runtime, `read_pair()` with
+  nothing serving. **`Location::read_pair_untouched()`** writes nothing: a
+  write's record there is `ServingError::Interrupted`, for a read as another
+  user or while the app is stopped.
 
 ## What isn't
 

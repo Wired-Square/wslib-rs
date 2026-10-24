@@ -6,7 +6,7 @@ mod common;
 
 use common::{Scratch, read};
 use wslib_file_atomic::{
-    CommitError, Options, Readers, RecordIdentity, Recovered, Transaction, recover,
+    CommitError, Options, Readers, RecordIdentity, Recovered, Refused, Transaction, recover,
     recover_expecting, recover_identified, replace_private,
 };
 
@@ -354,14 +354,25 @@ fn a_malformed_record_is_an_error_and_nothing_is_touched() {
         stage_by_hand(&dir, &[STAGED_KEY]);
         let refused = recover(&dir.0, "tls").unwrap_err();
         assert_eq!(refused.kind(), io::ErrorKind::InvalidData, "{case}");
+        assert!(refusal(&refused).is_none(), "{case}");
         assert_old_pair(&dir);
         assert_only(&dir, &[KEY, CERT, STAGED_KEY, RECORD]);
     }
 }
 
-fn assert_refused_untouched(dir: &Scratch, refused: io::Error) {
+fn refusal(error: &io::Error) -> Option<&Refused> {
+    error.get_ref()?.downcast_ref()
+}
+
+fn assert_refused(refused: &io::Error, path: &str) {
     assert_eq!(refused.kind(), io::ErrorKind::PermissionDenied, "{refused}");
-    assert!(refused.to_string().contains(RECORD), "{refused}");
+    assert!(refused.to_string().contains(path), "{refused}");
+    let refusal = refusal(refused).expect("a refusal carries Refused");
+    assert_eq!(refusal.path().file_name().unwrap(), path, "{refused}");
+}
+
+fn assert_refused_untouched(dir: &Scratch, refused: io::Error) {
+    assert_refused(&refused, RECORD);
     assert_old_pair(dir);
     assert_eq!(
         read(&dir.join(STAGED_KEY)),
@@ -435,9 +446,7 @@ fn a_staged_file_others_may_write_is_not_renamed_over_its_target() {
     stage_by_hand(&dir, &[STAGED_CERT]);
     fs::set_permissions(dir.join(STAGED_CERT), fs::Permissions::from_mode(0o664)).unwrap();
 
-    let refused = recover(&dir.0, "tls").unwrap_err();
-    assert_eq!(refused.kind(), io::ErrorKind::PermissionDenied, "{refused}");
-    assert!(refused.to_string().contains(STAGED_CERT), "{refused}");
+    assert_refused(&recover(&dir.0, "tls").unwrap_err(), STAGED_CERT);
     assert_eq!(read(&dir.join(CERT)), b"old cert");
 }
 
@@ -555,9 +564,7 @@ fn a_staged_file_owned_by_someone_else_is_not_renamed_over_its_target() {
         return;
     }
 
-    let refused = recover(&dir.0, "tls").unwrap_err();
-    assert_eq!(refused.kind(), io::ErrorKind::PermissionDenied, "{refused}");
-    assert!(refused.to_string().contains(STAGED_CERT), "{refused}");
+    assert_refused(&recover(&dir.0, "tls").unwrap_err(), STAGED_CERT);
     assert_eq!(read(&dir.join(CERT)), b"old cert");
 }
 

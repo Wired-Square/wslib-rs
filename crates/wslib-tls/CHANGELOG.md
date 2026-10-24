@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.2.0
+
+- `Serving::pair()` finishes an interrupted write and reads the pair off the
+  runtime, through `spawn_blocking`, as a write does.
+- A refused record is told from a failed recover by `wslib-file-atomic`'s
+  `Refused`, not by its error kind. Needs `wslib-file-atomic` 0.1.5.
+- `Location::read_pair_untouched()`: the pair as `read_pair()` reads it,
+  writing nothing; `ServingError::Interrupted { record }` while a write's
+  record is there, for a backup read while nothing serves.
+- Breaking: at a named location `load_or_mint`'s `RecordRefused` and
+  `Recover` come back inside `ServingError::Named`, as an unusable pair
+  does.
+- Breaking: `ServingError::Recover` is `Recover { record, source }`, and says
+  to check the record and move it aside by hand, as `RecordRefused` does.
+- Breaking: `ServingError::Write` is `Write { path, source }`, for a write
+  that replaced nothing; one committed but not finished is
+  `ServingError::Unfinished { record, named, source }`, whose message says
+  the old pair is still served and what the next write, read or start does.
+- `Serving::watch()`: a `watch::Receiver` of each configuration a write puts
+  in place, sent under the install lock, so in the order written.
+- Breaking: `load_or_mint` takes the names as `impl FnOnce() ->
+  Vec<SubjectAltName>`, called only when it mints.
+
 ## 0.1.1
 
 - `Location::recover()` finishes an interrupted write of the pair, and

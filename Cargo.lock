@@ -7263,7 +7263,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-file-atomic"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -7487,7 +7487,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-tls"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "http",
  "libc",

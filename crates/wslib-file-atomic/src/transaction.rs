@@ -98,6 +98,29 @@ impl From<CommitError> for io::Error {
     }
 }
 
+/// Why [`recover`] would not act on a record, or on a staged file a committed
+/// record renames: the source of the `PermissionDenied` it returns.
+#[derive(Debug)]
+pub struct Refused {
+    path: PathBuf,
+    why: String,
+}
+
+impl Refused {
+    /// The record or staged file refused.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl fmt::Display for Refused {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} is refused: {}", self.path.display(), self.why)
+    }
+}
+
+impl error::Error for Refused {}
+
 impl Transaction {
     /// Start a transaction named `name` with its record in `dir`, refused while
     /// an unfinished one of that name is there.
@@ -276,7 +299,8 @@ impl Drop for Transaction {
 /// A record is refused, as `PermissionDenied`, unless it is a regular file,
 /// not a symbolic link, owned by this process's user and writable by no one
 /// else; on Windows, owned by this process's user or its default owner. So is
-/// a staged file a committed record would rename over its target.
+/// a staged file a committed record would rename over its target. A refusal
+/// carries a [`Refused`].
 pub fn recover(dir: &Path, name: &str) -> io::Result<Recovered> {
     recover_checked(dir, name, None, None).map(checked_in_full)
 }
@@ -365,11 +389,12 @@ fn as_recorded(target: &Path) -> PathBuf {
     }
 }
 
-fn refused(record: &Path, why: &str) -> io::Error {
-    io::Error::new(
-        io::ErrorKind::PermissionDenied,
-        format!("{} is refused: {why}", record.display()),
-    )
+fn refused(path: &Path, why: &str) -> io::Error {
+    let refused = Refused {
+        path: path.to_path_buf(),
+        why: why.to_string(),
+    };
+    io::Error::new(io::ErrorKind::PermissionDenied, refused)
 }
 
 /// Read from the file that was checked, so nothing can be swapped in between.

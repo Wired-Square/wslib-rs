@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.9
+
+- `Telemetry::writer` sends the lines to any `MakeWriter`, such as a log file,
+  instead of stdout or stderr. Colour is off for it unless `ansi(true)` turns it
+  on.
+
 ## 0.1.8
 
 - `try_init` warns about a `RUST_LOG` or default filter that did not parse

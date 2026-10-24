@@ -8,7 +8,7 @@ use tracing::subscriber::DefaultGuard;
 use tracing_subscriber::EnvFilter;
 #[cfg(any(test, not(feature = "setup")))]
 use tracing_subscriber::filter::Targets;
-use tracing_subscriber::fmt::writer::BoxMakeWriter;
+use tracing_subscriber::fmt::writer::{BoxMakeWriter, MakeWriter};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::{SubscriberInitExt, TryInitError};
@@ -33,10 +33,11 @@ pub struct Telemetry {
     ring: Option<Logs>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 enum Output {
     Stdout,
     Stderr,
+    Writer(BoxMakeWriter),
     #[cfg(feature = "journald")]
     Journald,
 }
@@ -70,6 +71,16 @@ impl Telemetry {
     /// Writes to stderr instead of stdout.
     pub fn stderr(mut self) -> Self {
         self.output = Output::Stderr;
+        self
+    }
+
+    /// Writes to `writer` instead of stdout, such as a log file, with colour off
+    /// unless [`ansi`](Self::ansi) turns it on.
+    pub fn writer<W>(mut self, writer: W) -> Self
+    where
+        W: for<'a> MakeWriter<'a> + Send + Sync + 'static,
+    {
+        self.output = Output::Writer(BoxMakeWriter::new(writer));
         self
     }
 
@@ -153,33 +164,38 @@ impl Telemetry {
         let rust_log = std::env::var_os("RUST_LOG");
         let (filter, rejected) = choose_filter::<Filter>(&self.default_filter, rust_log.as_deref());
 
+        #[cfg(feature = "ring")]
+        let ring = self.ring.clone();
         let subscriber = tracing_subscriber::registry()
             .with(filter)
             .with(self.formatter());
         #[cfg(feature = "ring")]
-        let subscriber = subscriber.with(self.ring.as_ref().map(|logs| logs.layer().boxed()));
+        let subscriber = subscriber.with(ring.map(|logs| logs.layer().boxed()));
         (subscriber, rejected)
     }
 
-    fn formatter<S>(&self) -> Box<dyn Layer<S> + Send + Sync>
+    fn formatter<S>(self) -> Box<dyn Layer<S> + Send + Sync>
     where
         S: tracing::Subscriber + for<'a> LookupSpan<'a>,
     {
-        let (writer, journald) = match self.output {
-            Output::Stdout => (BoxMakeWriter::new(io::stdout), false),
-            Output::Stderr => (BoxMakeWriter::new(io::stderr), false),
+        let colour =
+            |terminal: bool| colour_by_default(terminal, std::env::var_os("NO_COLOR").as_deref());
+        let (writer, journald, ansi_by_default) = match self.output {
+            Output::Stdout => (
+                BoxMakeWriter::new(io::stdout),
+                false,
+                colour(io::stdout().is_terminal()),
+            ),
+            Output::Stderr => (
+                BoxMakeWriter::new(io::stderr),
+                false,
+                colour(io::stderr().is_terminal()),
+            ),
+            Output::Writer(writer) => (writer, false, false),
             #[cfg(feature = "journald")]
-            Output::Journald => (BoxMakeWriter::new(crate::journald::stdout()), true),
+            Output::Journald => (BoxMakeWriter::new(crate::journald::stdout()), true, false),
         };
-        let ansi = cfg!(feature = "ansi")
-            && !journald
-            && self.ansi.unwrap_or_else(|| {
-                let terminal = match self.output {
-                    Output::Stderr => io::stderr().is_terminal(),
-                    _ => io::stdout().is_terminal(),
-                };
-                colour_by_default(terminal, std::env::var_os("NO_COLOR").as_deref())
-            });
+        let ansi = cfg!(feature = "ansi") && !journald && self.ansi.unwrap_or(ansi_by_default);
         let time = self.time && !journald;
         let layer = fmt::layer()
             .with_writer(writer)

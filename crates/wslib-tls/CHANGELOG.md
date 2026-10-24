@@ -18,8 +18,15 @@
   that replaced nothing; one committed but not finished is
   `ServingError::Unfinished { record, named, source }`, whose message says
   the old pair is still served and what the next write, read or start does.
+  Both variants are `#[non_exhaustive]`.
+- `ServingError::next_step()`: what follows an `Unfinished` write, on its
+  own; at a named location it names the record to move aside if a start
+  cannot.
+- `Serving::with_alpn(protocols)`: the ALPN `config()`, `watch()`, installs
+  and regenerates carry; none by default.
 - `Serving::watch()`: a `watch::Receiver` of each configuration a write puts
-  in place, sent under the install lock, so in the order written.
+  in place, sent under the install lock, so in the order written. A listener
+  following it reloads after the write returns, not before.
 - Breaking: `load_or_mint` takes the names as `impl FnOnce() ->
   Vec<SubjectAltName>`, called only when it mints.
 

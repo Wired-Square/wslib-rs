@@ -80,7 +80,7 @@ Needs tokio's multi-threaded runtime feature, for `block_in_place`.
 ## Serving its own listener
 
 The certificate and key an app serves, as an `Arc<ServerConfig>` on the
-app's provider with ALPN left empty.
+app's provider with the ALPN it asks for, none by default.
 
 ```rust
 use wslib_tls::{Location, Serving};
@@ -129,7 +129,8 @@ for warning in &installed.report.warnings { /* expired, host not covered, ... */
 - **A failed write says where it stopped**: `ServingError::Write { path }`
   replaced nothing; `ServingError::Unfinished { record, named }` was
   committed, the old pair still served, and the next write, backup read or
-  start finishes it.
+  start finishes it (at a named location, a start only if it can and may).
+  `next_step()` says that part on its own, naming the record.
 - **`replaceable()`**: whether both directories took a new file when the
   pair was loaded, for a caller about to do something an install failing
   would leave half done.
@@ -145,16 +146,24 @@ for warning in &installed.report.warnings { /* expired, host not covered, ... */
 - **`regenerate(names, algorithm)`**: a fresh self-signed pair for the
   caller's names, minted off the runtime and written under the same lock;
   returns the config for `Tls::reload`.
+- **`with_alpn(protocols)`**: the ALPN list, set once on the `Serving`
+  after `load_or_mint`; `config()`, `watch()` and every install and
+  regenerate carry it.
 - **`watch()`**: a `tokio::sync::watch::Receiver<Arc<ServerConfig>>` sent
   each configuration a write puts in place, in the order written, for a
-  listener's reload.
+  listener's reload. The listener reloads some time after the write
+  returns; one that must serve the next connection with the new pair
+  reloads from the write's own config or `config()`.
 - **`pair()`** and **`Location::read_pair()`**: the PEM on disk for a
   backup, the certificate file filtered to its `CERTIFICATE` sections and
   the key a `Secret`;
   `pair()` under the install lock and off the runtime, `read_pair()` with
   nothing serving. **`Location::read_pair_untouched()`** writes nothing: a
   write's record there is `ServingError::Interrupted`, for a read as another
-  user or while the app is stopped.
+  user or while the app is stopped. It looks for the record once, before
+  reading and without following a symlink, so a dangling one counts as
+  interrupted and a commit racing the read can hand back halves of two
+  writes.
 
 ## What isn't
 

@@ -175,11 +175,13 @@ pub(crate) fn owned_by_this_process(file: &File) -> io::Result<bool> {
 }
 
 /// This process's `TOKEN_USER` or `TOKEN_OWNER`, each led by the SID.
-pub(crate) struct TokenSid([u64; 64]);
+///
+/// Boxed: the leading SID pointer points into the buffer, so it must not move.
+pub(crate) struct TokenSid(Box<[u64; 64]>);
 
 impl TokenSid {
     pub(crate) fn read(class: TOKEN_INFORMATION_CLASS) -> io::Result<Self> {
-        let mut info = Self([0; 64]);
+        let mut info = Self(Box::new([0; 64]));
         let mut len = 0u32;
         // SAFETY: the buffer is 512 bytes, aligned for either structure, whose
         // SID points into it; -4 is `GetCurrentProcessToken`'s pseudo-handle.
@@ -231,5 +233,33 @@ impl WellKnown {
 
     pub(crate) fn as_psid(&self) -> PSID {
         self.0.as_ptr().cast_mut().cast()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[inline(never)]
+    fn read_elsewhere(class: TOKEN_INFORMATION_CLASS) -> TokenSid {
+        TokenSid::read(class).unwrap()
+    }
+
+    #[test]
+    fn a_token_sid_still_names_the_user_after_it_is_moved() {
+        let moved = read_elsewhere(TokenUser);
+        let fresh = TokenSid::read(TokenUser).unwrap();
+        // SAFETY: both are valid SIDs while `moved` and `fresh` live.
+        assert_ne!(unsafe { EqualSid(moved.as_psid(), fresh.as_psid()) }, 0);
+    }
+
+    #[test]
+    fn a_file_this_process_creates_is_its_own() {
+        let path = std::env::temp_dir().join(format!("wslib-owned-{}", std::process::id()));
+        let file = File::create(&path).unwrap();
+        let owned = owned_by_this_process(&file);
+        drop(file);
+        let _ = std::fs::remove_file(&path);
+        assert!(owned.unwrap());
     }
 }

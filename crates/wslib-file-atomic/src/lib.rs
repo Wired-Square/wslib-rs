@@ -29,7 +29,7 @@ mod transaction;
 mod windows;
 
 pub use transaction::{
-    CommitError, RecordIdentity, Recovered, Transaction, recover, recover_expecting,
+    CommitError, RecordIdentity, Recovered, Refused, Transaction, recover, recover_expecting,
     recover_identified,
 };
 #[cfg(windows)]

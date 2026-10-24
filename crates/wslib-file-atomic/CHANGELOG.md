@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.5
+
+- `Refused`: the source a refusal by `recover`, `recover_expecting` or
+  `recover_identified` carries inside its `PermissionDenied`, with the
+  `path()` of the record or staged file refused, so a caller tells a refusal
+  from a failed rename by downcasting rather than by the error's kind.
+
 ## 0.1.4
 
 - `recover` refuses a record this process could not have written, as

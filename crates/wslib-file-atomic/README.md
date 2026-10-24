@@ -105,7 +105,8 @@ tls.commit()?;
   and writable by no one else (on Windows, owned by the process token's user
   or default owner). Anything else is `PermissionDenied` naming the record,
   and nothing is touched. A staged file a committed record would rename over
-  its target is checked the same way first, and refused naming it. `recover_expecting(dir, name, targets)` also
+  its target is checked the same way first, and refused naming it. A
+  refusal's source is a `Refused`, with the `path()` refused. `recover_expecting(dir, name, targets)` also
   refuses a record naming a file outside `targets`.
 - **`begin` refuses while a record is there** (`AlreadyExists`): recover first.
 - **A failure before the commit point rolls back**, a failed `stage`

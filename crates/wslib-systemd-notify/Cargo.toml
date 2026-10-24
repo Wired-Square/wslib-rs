@@ -1,6 +1,6 @@
 [package]
 name = "wslib-systemd-notify"
-version = "0.1.0"
+version = "0.1.1"
 description = "Tells systemd a service is ready, stopping or alive over $NOTIFY_SOCKET, without libsystemd."
 readme = "README.md"
 edition.workspace = true
@@ -14,7 +14,7 @@ publish = ["wired-square"]
 tokio = ["dep:tokio"]
 
 [dependencies]
-tokio = { version = "1.19", default-features = false, features = ["time"], optional = true }
+tokio = { version = "1.47", default-features = false, features = ["time"], optional = true }
 
 [dev-dependencies]
-tokio = { version = "1.19", features = ["macros", "rt", "sync", "test-util", "time"] }
+tokio = { version = "1.47", features = ["macros", "rt", "sync", "test-util", "time"] }

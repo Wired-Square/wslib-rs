@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- The `tokio` feature's floor is tokio 1.47, the rest of the workspace's, so a
+  crate on both builds at its dependency floors.
+
 ## 0.1.0
 
 - `ready`, `status`, `stopping` and `watchdog` send `READY=1`, `STATUS=`,

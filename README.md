@@ -48,25 +48,24 @@ at the top of its own README.
 ## Using a crate
 
 Crates are published to the private Cargo registry on Forgejo, never to
-crates.io. In the consuming repo's `.cargo/config.toml`:
+crates.io. Name it once, machine-wide, in `~/.cargo/config.toml`:
 
 ```toml
 [registries.wired-square]
 index = "sparse+https://forge.wiredsquare.com/api/packages/wired-square/cargo/"
 ```
 
-The credential provider goes in your own `~/.cargo/config.toml`, never in a
-repo's. Cargo merges every config above the build directory and refuses a
-string provider beside an array, so a repo that sets one breaks every
-checkout whose user config sets the other:
+and store a `read:package` Forgejo token for it in `~/.cargo/credentials.toml`:
 
-```toml
-[registries.wired-square]
-credential-provider = ["cargo:token-from-stdout", "sh", "-c", 'printf "Bearer %s" "$(op read "$WSLIB_REGISTRY_TOKEN_REF")"']
+```sh
+cargo login --registry wired-square
 ```
 
-`WSLIB_REGISTRY_TOKEN_REF` is the `op://` reference of your Forgejo token
-(`read:package` is enough), and the host must trust the CA that signs
+given as `Bearer <token>`.
+
+Set no `credential-provider`, in a repo or your own config: Cargo refuses to
+merge a string provider with an array one, so setting one breaks every
+checkout that sets the other. The host must trust the CA that signs
 `forge.wiredsquare.com`. Then:
 
 ```toml
@@ -87,12 +86,12 @@ replace-with = "wired-square-mirror"
 
 [registries.wired-square-mirror]
 index = "sparse+https://crates.wiredsquare.com/"
-credential-provider = ["cargo:token-from-stdout", "sh", "-c", 'printf "Bearer %s" "$(op read "$WSLIB_CRATES_TOKEN_REF")"']
 ```
 
+with its read token stored by `cargo login --registry wired-square-mirror`.
 `Cargo.lock` still records Forgejo, so the same lockfile builds either way.
-In Actions, use `credential-provider = "cargo:token"` and supply the token
-from a repository secret as `CARGO_REGISTRIES_WIRED_SQUARE_MIRROR_TOKEN`.
+In Actions, supply the token from a repository secret as
+`CARGO_REGISTRIES_WIRED_SQUARE_MIRROR_TOKEN`.
 
 ## Working here
 
@@ -128,25 +127,18 @@ doesn't stop at the old repo's tag.
 
 Bump the crate's `version` and give its `CHANGELOG.md` a heading for it in
 the PR. Once that is merged, on `main`, with `.env` filled in from
-`.env.example` (`WSLIB_REGISTRY_TOKEN_REF` is the `op://` reference of a
-`write:package` token, which Cargo reads from 1Password only when it
-publishes), and your `~/.cargo/config.toml` provider pointed at this clone's
-script:
-
-```toml
-[registries.wired-square]
-credential-provider = ["cargo:token-from-stdout", "/path/to/wslib-rs/scripts/registry-token.sh"]
-```
-
-Then:
+`.env.example`:
 
 ```sh
-cargo release -p wslib-build-id --execute
+scripts/release.sh -p wslib-build-id --execute
 git push origin wslib-build-id-v<version>
 scripts/mirror.sh
 ```
 
-`cargo release` runs `scripts/ci.sh --tag`, publishes to the registry and
-tags `<crate>-v<version>`; `scripts/mirror.sh` copies the registry to the
-mirror consumers read from. The tag records what was published; consumers
+Both scripts read the `write:package` token from 1Password at
+`WSLIB_REGISTRY_TOKEN_REF`, so it never sits on disk; `credentials.toml` holds
+only the read token. `scripts/release.sh` runs `cargo release`, which runs
+`scripts/ci.sh --tag`, publishes to the registry and tags
+`<crate>-v<version>`; `scripts/mirror.sh` copies the registry to the mirror
+consumers read from. The tag records what was published; consumers
 pin the registry version, not the tag.

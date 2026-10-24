@@ -78,6 +78,10 @@ impl Location {
 
     /// The pair on disk as [`read_pair`](Self::read_pair) reads it, writing
     /// nothing: [`ServingError::Interrupted`] while a write's record is there.
+    ///
+    /// The record is looked for once, before the read and without following a
+    /// symlink, so a dangling one counts as interrupted; a commit racing the
+    /// read can hand back the halves of two writes.
     pub fn read_pair_untouched(&self) -> Result<Option<ServingPair>, ServingError> {
         let record = self.record();
         match fs::symlink_metadata(&record) {
@@ -123,6 +127,7 @@ pub struct Serving {
     provider: Arc<CryptoProvider>,
     location: Location,
     configs: watch::Sender<Arc<ServerConfig>>,
+    alpn: Vec<Vec<u8>>,
     cannot_replace: Option<(PathBuf, io::ErrorKind)>,
     /// Taken for each install, holding the record a failed commit left.
     installing: tokio::sync::Mutex<Option<RecordIdentity>>,
@@ -179,6 +184,7 @@ impl Serving {
             provider,
             location,
             configs: watch::Sender::new(config),
+            alpn: Vec::new(),
             cannot_replace,
             installing: tokio::sync::Mutex::new(None),
         }
@@ -196,13 +202,31 @@ impl Serving {
         Ok(Self::new(provider, location, config))
     }
 
-    /// The configuration being served, built on the caller's provider with no ALPN.
+    /// Serves `protocols` as ALPN in every configuration from here on, the one
+    /// being served included; none until then.
+    pub fn with_alpn(mut self, protocols: Vec<Vec<u8>>) -> Self {
+        self.alpn = protocols;
+        self.configs.send_replace(self.with_own_alpn(self.config()));
+        self
+    }
+
+    fn with_own_alpn(&self, mut config: Arc<ServerConfig>) -> Arc<ServerConfig> {
+        Arc::make_mut(&mut config).alpn_protocols = self.alpn.clone();
+        config
+    }
+
+    /// The configuration being served, built on the caller's provider with the
+    /// ALPN of [`with_alpn`](Self::with_alpn).
     pub fn config(&self) -> Arc<ServerConfig> {
         self.configs.borrow().clone()
     }
 
     /// Each configuration a write puts in place, in the order written; the one
     /// being served is marked seen.
+    ///
+    /// A listener following it reloads some time after the write returns, not
+    /// before; one that must serve the next connection with it reloads from
+    /// the write's own configuration or [`config`](Self::config) instead.
     pub fn watch(&self) -> watch::Receiver<Arc<ServerConfig>> {
         self.configs.subscribe()
     }
@@ -245,7 +269,7 @@ impl Serving {
         let (chain, key, view) = parse(&self.provider, &pair)?;
         let report = wslib_crypto_x509::examine(view, host, now);
         let config = server_config(&self.provider, chain, key)?;
-        self.commit(pair, config.clone()).await?;
+        let config = self.commit(pair, config).await?;
         Ok(Installed { config, report })
     }
 
@@ -259,15 +283,15 @@ impl Serving {
     ) -> Result<Arc<ServerConfig>, ServingError> {
         let (provider, names) = (self.provider.clone(), names.to_vec());
         let (pair, config) = blocking(move || mint_pair(&provider, &names, algorithm)).await?;
-        self.commit(pair, config.clone()).await?;
-        Ok(config)
+        self.commit(pair, config).await
     }
 
     async fn commit(
         &self,
         pair: ServingPair,
         config: Arc<ServerConfig>,
-    ) -> Result<(), ServingError> {
+    ) -> Result<Arc<ServerConfig>, ServingError> {
+        let config = self.with_own_alpn(config);
         let mut left = self.installing.lock().await;
         self.replaceable()?;
         self.after_recovery(&mut left, move |location| {
@@ -277,8 +301,8 @@ impl Serving {
             }
         })
         .await?;
-        self.configs.send_replace(config);
-        Ok(())
+        self.configs.send_replace(config.clone());
+        Ok(config)
     }
 
     /// The pair on disk, for a backup, after finishing an interrupted write;
@@ -366,17 +390,13 @@ pub enum ServingError {
     #[error("minting a certificate: {0}")]
     Mint(#[source] wslib_crypto_x509::Error),
     #[error("writing {}, so nothing was replaced: {source}", path.display())]
+    #[non_exhaustive]
     Write { path: PathBuf, source: io::Error },
     #[error(
-        "the new pair is committed but not in place, and the old one is still served; the next \
-         write, backup read or start finishes it from {}, {}: {source}",
-        record.display(),
-        if *named {
-            "or a start that cannot refuses to serve"
-        } else {
-            "or a start that cannot sets it aside and mints a fresh pair"
-        }
+        "the new pair is committed but not in place, and the old one is still served; {}: {source}",
+        unfinished_next_step(record, *named)
     )]
+    #[non_exhaustive]
     Unfinished {
         record: PathBuf,
         named: bool,
@@ -392,6 +412,26 @@ pub enum ServingError {
         directory: PathBuf,
         kind: io::ErrorKind,
     },
+}
+
+impl ServingError {
+    /// What follows, for an error whose message says: [`Unfinished`](Self::Unfinished)'s.
+    pub fn next_step(&self) -> Option<String> {
+        match self {
+            Self::Unfinished { record, named, .. } => Some(unfinished_next_step(record, *named)),
+            _ => None,
+        }
+    }
+}
+
+fn unfinished_next_step(record: &Path, named: bool) -> String {
+    let record = record.display();
+    let otherwise = if named {
+        format!("a start that cannot refuses to serve until {record} is moved aside by hand")
+    } else {
+        "a start that cannot sets it aside and mints a fresh pair".to_string()
+    };
+    format!("the next write, backup read or start finishes it from {record}, or {otherwise}")
 }
 
 enum Present {
@@ -1174,9 +1214,30 @@ mod tests {
             (record, *named),
             (&serving.location().record(), serving.location().is_named())
         );
-        assert!(failed.to_string().contains("finishes it"), "{failed}");
+        let next = failed.next_step().unwrap();
+        assert!(next.contains(&record.display().to_string()), "{next}");
+        assert!(failed.to_string().contains(&next), "{failed}");
         fs::remove_dir_all(dir.join("cert.pem")).unwrap();
         cert
+    }
+
+    #[tokio::test]
+    async fn a_commit_left_at_a_named_location_names_the_record_to_move_aside() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("left-named");
+        start(provider, dir.managed()).unwrap();
+        let serving = start(provider, dir.named()).unwrap();
+        let (cert, key) = another_pair(provider);
+        occupy(&dir.join("cert.pem"));
+        let failed = install(&serving, &cert, &key).await.unwrap_err();
+        let record = serving.location().record().display().to_string();
+        assert_eq!(
+            failed.next_step().unwrap(),
+            format!(
+                "the next write, backup read or start finishes it from {record}, or a start \
+                 that cannot refuses to serve until {record} is moved aside by hand"
+            )
+        );
     }
 
     #[tokio::test]
@@ -1510,6 +1571,30 @@ mod tests {
             !configs.has_changed().unwrap(),
             "only a write in place is sent"
         );
+    }
+
+    #[tokio::test]
+    async fn the_alpn_asked_for_is_served_by_every_configuration() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("alpn");
+        let started = start(provider, dir.managed()).unwrap();
+        assert!(started.config().alpn_protocols.is_empty());
+        let mut configs = started.watch();
+        let alpn = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        let serving = started.with_alpn(alpn.clone());
+        assert_eq!(serving.config().alpn_protocols, alpn);
+        assert_eq!(configs.borrow_and_update().alpn_protocols, alpn);
+
+        let (cert, key) = another_pair(provider);
+        let installed = install(&serving, &cert, &key).await.unwrap();
+        assert_eq!(installed.config.alpn_protocols, alpn);
+        assert_eq!(configs.borrow_and_update().alpn_protocols, alpn);
+        let regenerated = serving
+            .regenerate(&["widget-02".parse().unwrap()], KeyAlgorithm::EcP256)
+            .await
+            .unwrap();
+        assert_eq!(regenerated.alpn_protocols, alpn);
+        assert!(Arc::ptr_eq(&configs.borrow(), &serving.config()));
     }
 
     #[tokio::test]

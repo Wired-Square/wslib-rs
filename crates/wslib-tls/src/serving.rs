@@ -611,19 +611,23 @@ fn rename_without_the_flag(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
+/// The raw call: glibc before 2.28 has no wrapper, and the libc crate binds
+/// musl's only from 0.2.187.
 #[cfg(target_os = "linux")]
 fn rename_exclusive(from: &Path, to: &Path) -> io::Result<()> {
     let (from, to) = (c_path(from)?, c_path(to)?);
     // SAFETY: both paths are NUL-terminated and outlive the call.
-    os_result(unsafe {
-        libc::renameat2(
+    let status = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
             libc::AT_FDCWD,
             from.as_ptr(),
             libc::AT_FDCWD,
             to.as_ptr(),
             libc::RENAME_NOREPLACE,
         )
-    })
+    };
+    os_result(status as libc::c_int)
 }
 
 #[cfg(target_vendor = "apple")]

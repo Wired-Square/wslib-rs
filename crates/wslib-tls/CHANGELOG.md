@@ -17,6 +17,7 @@
   location it is still `ServingError::Recover`.
 - An unusable file is moved aside to the first free `<file>.unusable`,
   `.unusable.1`, …, never over an earlier one or a directory there.
+- `libc` is a dependency on Unix (>= 0.2.174).
 
 ## 0.1.0
 

@@ -17,6 +17,7 @@
   `recover_identified(dir, name, targets, identity)` finishes that record
   without the owner and mode checks while it is still that file, returning
   `None` and touching nothing when it is another.
+- `libc` is now a normal dependency on Unix (>= 0.2.174).
 
 ## 0.1.3
 

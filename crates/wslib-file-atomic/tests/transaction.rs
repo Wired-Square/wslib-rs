@@ -441,6 +441,126 @@ fn a_staged_file_others_may_write_is_not_renamed_over_its_target() {
     assert_eq!(read(&dir.join(CERT)), b"old cert");
 }
 
+/// Gives `path` to SYSTEM, which only an elevated process may do; false when
+/// this one may not.
+#[cfg(windows)]
+fn give_to_system(path: &Path) -> bool {
+    let given = std::process::Command::new("icacls")
+        .arg(path)
+        .args(["/setowner", "*S-1-5-18"])
+        .output()
+        .unwrap();
+    if !given.status.success() {
+        eprintln!("skipped: only an elevated process can give a file away");
+    }
+    given.status.success()
+}
+
+#[cfg(windows)]
+fn owner_of(path: &Path) -> String {
+    let script = format!("(Get-Acl -LiteralPath '{}').Owner", path.display());
+    let read = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-Command", &script])
+        .output()
+        .unwrap();
+    String::from_utf8(read.stdout).unwrap().trim().to_string()
+}
+
+#[cfg(windows)]
+#[test]
+fn a_symlinked_record_is_refused() {
+    let dir = committed_and_staged("txn-symlinked");
+    let planted = dir.join("planted");
+    fs::rename(dir.join(RECORD), &planted).unwrap();
+    if let Err(e) = std::os::windows::fs::symlink_file(&planted, dir.join(RECORD)) {
+        eprintln!("skipped: no symbolic link privilege: {e}");
+        return;
+    }
+    let refused = recover(&dir.0, "tls").unwrap_err();
+    assert!(
+        refused.to_string().contains("not a regular file"),
+        "{refused}"
+    );
+    assert_refused_untouched(&dir, refused);
+    assert!(planted.exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn a_record_that_is_a_junction_or_a_directory_is_refused() {
+    let dir = committed_and_staged("txn-junction");
+    let planted = dir.join("planted");
+    fs::create_dir(&planted).unwrap();
+    fs::remove_file(dir.join(RECORD)).unwrap();
+    let made = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(dir.join(RECORD))
+        .arg(&planted)
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "{made:?}");
+    let refused = recover(&dir.0, "tls").unwrap_err();
+    assert!(
+        refused.to_string().contains("not a regular file"),
+        "{refused}"
+    );
+    assert_refused_untouched(&dir, refused);
+
+    fs::remove_dir(dir.join(RECORD)).unwrap();
+    assert!(planted.exists(), "removing the junction left its target");
+    fs::create_dir(dir.join(RECORD)).unwrap();
+    let refused = recover(&dir.0, "tls").unwrap_err();
+    assert!(
+        refused.to_string().contains("not a regular file"),
+        "{refused}"
+    );
+    assert_refused_untouched(&dir, refused);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_record_owned_by_someone_else_is_refused() {
+    let dir = committed_and_staged("txn-owned-by-another");
+    if !give_to_system(&dir.join(RECORD)) {
+        return;
+    }
+    let refused = recover(&dir.0, "tls").unwrap_err();
+    assert!(
+        refused.to_string().contains("owned by another user"),
+        "{refused}"
+    );
+    assert_refused_untouched(&dir, refused);
+}
+
+/// An elevated process owns what it makes through Administrators, its token's
+/// default owner; an unelevated one through its user.
+#[cfg(windows)]
+#[test]
+fn a_record_this_process_made_is_recovered_whoever_owns_it_for_the_token() {
+    let dir = committed_and_staged("txn-own-record");
+    eprintln!("the record is owned by {}", owner_of(&dir.join(RECORD)));
+    assert_eq!(recover(&dir.0, "tls").unwrap(), Recovered::RolledForward);
+    assert_eq!(read(&dir.join(KEY)), format!("new {STAGED_KEY}").as_bytes());
+    assert_only(&dir, &[KEY, CERT]);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_staged_file_owned_by_someone_else_is_not_renamed_over_its_target() {
+    let dir = pair("txn-planted-staged");
+    write_record(&dir, "committed");
+    fs::write(dir.join(KEY), b"new key").unwrap();
+    stage_by_hand(&dir, &[STAGED_CERT]);
+    if !give_to_system(&dir.join(STAGED_CERT)) {
+        return;
+    }
+
+    let refused = recover(&dir.0, "tls").unwrap_err();
+    assert_eq!(refused.kind(), io::ErrorKind::PermissionDenied, "{refused}");
+    assert!(refused.to_string().contains(STAGED_CERT), "{refused}");
+    assert_eq!(read(&dir.join(CERT)), b"old cert");
+}
+
 #[test]
 fn a_record_naming_a_target_outside_the_expected_set_is_refused() {
     let dir = committed_and_staged("txn-unexpected-target");

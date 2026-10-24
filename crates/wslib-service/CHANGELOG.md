@@ -14,4 +14,11 @@
   Taken from the chassis's `appliance-service` and made generic.
 - `private_directory`, `LogFile` and `Layout`: the state directory checked,
   the log file opened, rotated and reopened, and each platform's paths for
-  them. Every refusal is a `Refused`, displayed as `refusing <path>: <because>`.
+  them. Every refusal is a `Refused`, displayed as `refusing <path>: <because>`
+  and built with `Refused::new` for a path of the product's own; on unix,
+  `no_extended_acl` is the macOS ACL check alone.
+- Each stop logs one `info` line with the grace: the signal, the service
+  control manager's control, or a stop by the service itself.
+- Feature `testing`: `testing::stop()`, a `Stop` under `Manager::Detached` and
+  the `Recorder` that stops it and keeps what it was told, for a consumer's
+  tests.

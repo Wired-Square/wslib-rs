@@ -30,7 +30,7 @@ pub(crate) fn private_directory(dir: &Path) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn no_extended_acl(dir: &Path) -> Result<(), String> {
+pub(crate) fn no_extended_acl(dir: &Path) -> Result<(), String> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
 
@@ -58,7 +58,7 @@ fn no_extended_acl(dir: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn no_extended_acl(_: &Path) -> Result<(), String> {
+pub(crate) fn no_extended_acl(_: &Path) -> Result<(), String> {
     Ok(())
 }
 
@@ -133,5 +133,17 @@ mod tests {
             .unwrap();
         assert!(added.success());
         assert!(refusal(&state).ends_with("it carries an extended ACL"));
+        assert_eq!(
+            crate::no_extended_acl(&state)
+                .expect_err("refuses")
+                .to_string(),
+            format!("refusing {}: it carries an extended ACL", state.display())
+        );
+    }
+
+    #[test]
+    fn a_path_without_an_extended_acl_passes() {
+        let dir = TempDir::new("private");
+        crate::no_extended_acl(state_dir(&dir)).expect("no extended ACL");
     }
 }

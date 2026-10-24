@@ -91,7 +91,7 @@ fn service_main(_: Vec<OsString>) {
                     ServiceControl::Preshutdown => "preshutdown",
                     _ => "shutdown",
                 };
-                tracing::info!(control, "stopping");
+                tracing::info!(control, ?grace, "stopping");
                 requested.cancel();
                 ServiceControlHandlerResult::NoError
             }
@@ -144,7 +144,9 @@ fn service_main(_: Vec<OsString>) {
         );
     }
 
-    let ended = crate::drive(&name, grace, requested.clone(), main, |token| {
+    let mut stopped = None;
+    let ended = crate::drive(&name, grace, requested, main, |token| {
+        stopped = Some(token.clone());
         tokio::spawn({
             let (token, progress) = (token.clone(), progress.clone());
             async move {
@@ -154,7 +156,8 @@ fn service_main(_: Vec<OsString>) {
         });
         Stop::new(Manager::WindowsService, token, progress.clone())
     });
-    let asked = requested.is_cancelled() && !matches!(ended, Err(Failure::Overran(_)));
+    let asked = stopped.is_some_and(|token| token.is_cancelled())
+        && !matches!(ended, Err(Failure::Overran(_)));
     *lock(&OUTCOME) = Some(ended);
     progress.stopped(asked);
 }

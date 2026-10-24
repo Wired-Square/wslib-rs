@@ -29,6 +29,12 @@ fn child() {
     let Ok(does) = std::env::var(CHILD) else {
         return;
     };
+    if matches!(does.as_str(), "serves" | "stops-itself") {
+        wslib_telemetry::Telemetry::new("info")
+            .writer(std::io::stderr)
+            .without_time()
+            .init();
+    }
     let ran = Daemon::new("widgets")
         .grace(Duration::from_millis(200))
         .run(move |mut stop| async move {
@@ -129,6 +135,11 @@ fn ended(mut child: Child) -> Ended {
     }
 }
 
+fn stopping(ended: &Ended) -> Vec<&str> {
+    let lines = ended.stderr.lines();
+    lines.filter(|line| line.contains("stopping")).collect()
+}
+
 fn stopped_by_sigterm(does: &str) -> Ended {
     sigterm_once_serving(spawn(does))
 }
@@ -158,6 +169,11 @@ fn a_service_stopped_by_sigterm_exits_successfully_with_what_main_returned() {
         ended.stdout.contains("returned stopped"),
         "{}",
         ended.stdout
+    );
+    assert!(
+        matches!(&stopping(&ended)[..], [line] if line.contains("SIGTERM") && line.contains("grace=200ms")),
+        "{}",
+        ended.stderr
     );
 }
 
@@ -195,6 +211,11 @@ fn a_stop_of_its_own_is_a_success_with_what_main_returned() {
         ended.stdout.contains("returned to apply"),
         "{}",
         ended.stdout
+    );
+    assert!(
+        matches!(&stopping(&ended)[..], [line] if line.ends_with("stopping, by the service itself grace=200ms")),
+        "{}",
+        ended.stderr
     );
 }
 

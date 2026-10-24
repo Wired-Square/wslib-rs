@@ -32,25 +32,21 @@ impl Layout {
 
     /// A Windows service's: `%ProgramData%\<product>\state`, and the log at
     /// `%ProgramData%\<product>\logs\<name>.log`, with `%ProgramData%` taken as
-    /// `C:\ProgramData` when it is unset.
+    /// `C:\ProgramData` when it is unset or empty.
     pub fn windows(product: &str, name: &str) -> Self {
         Self::windows_under(std::env::var_os("ProgramData"), product, name)
     }
 
     fn windows_under(program_data: Option<OsString>, product: &str, name: &str) -> Self {
-        let data = program_data.unwrap_or_else(|| r"C:\ProgramData".into());
-        let under = |parts: &[&str]| {
-            let mut path = data.clone();
-            for part in parts {
-                path.push(r"\");
-                path.push(part);
-            }
-            PathBuf::from(path)
-        };
+        let data = program_data
+            .filter(|data| !data.is_empty())
+            .map_or_else(|| PathBuf::from(r"C:\ProgramData"), PathBuf::from)
+            .join(product);
+        let log_dir = data.join("logs");
         Self {
-            state_dir: under(&[product, "state"]),
-            log_dir: under(&[product, "logs"]),
-            log_file: Some(under(&[product, "logs", &format!("{name}.log")])),
+            state_dir: data.join("state"),
+            log_file: Some(log_dir.join(format!("{name}.log"))),
+            log_dir,
         }
     }
 
@@ -121,19 +117,40 @@ mod tests {
     }
 
     #[test]
-    fn the_windows_layout_is_under_program_data_or_its_default() {
+    fn the_windows_layout_is_under_program_data() {
+        let data = Path::new(r"D:\Data").join("Widget Monitor");
         assert_eq!(
             Layout::windows_under(Some(r"D:\Data".into()), "Widget Monitor", "widgets"),
             Layout {
-                state_dir: r"D:\Data\Widget Monitor\state".into(),
-                log_dir: r"D:\Data\Widget Monitor\logs".into(),
-                log_file: Some(r"D:\Data\Widget Monitor\logs\widgets.log".into()),
+                state_dir: data.join("state"),
+                log_dir: data.join("logs"),
+                log_file: Some(data.join("logs").join("widgets.log")),
             }
         );
-        assert_eq!(
-            Layout::windows_under(None, "Widget Monitor", "widgets").state_dir,
-            PathBuf::from(r"C:\ProgramData\Widget Monitor\state")
-        );
+    }
+
+    #[test]
+    fn an_unset_or_empty_program_data_is_c_program_data() {
+        for unset in [None, Some(OsString::new())] {
+            assert_eq!(
+                Layout::windows_under(unset, "Widget Monitor", "widgets").state_dir,
+                Path::new(r"C:\ProgramData")
+                    .join("Widget Monitor")
+                    .join("state")
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_program_data_with_a_trailing_backslash_takes_one_separator() {
+        for data in [r"D:\Data", r"D:\Data\"] {
+            let layout = Layout::windows_under(Some(data.into()), "Widget Monitor", "widgets");
+            assert_eq!(
+                layout.log_file.unwrap().as_os_str(),
+                r"D:\Data\Widget Monitor\logs\widgets.log"
+            );
+        }
     }
 
     #[test]

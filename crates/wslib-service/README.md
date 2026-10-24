@@ -59,6 +59,11 @@ fn main() -> ExitCode {
   code of 1.** The installer sets what follows: `sc failure <name> reset=
   86400 actions= restart/5000` and `sc failureflag <name> 1`. A start that
   finds no failure actions logs a warning.
+- **Feature `testing`**: `testing::stop()` gives a `Stop` under
+  `Manager::Detached` and a `Recorder`, for a consumer's tests in any Tokio
+  runtime, without `Daemon::run`. `Recorder::stop()` is the manager's stop;
+  `Recorder::told()` says whether ready was sent and with what status, the
+  statuses sent alone, and whether the service stopped itself.
 - **`private_directory(dir)`** refuses a state directory anyone else could
   use: on unix one not owned by this user, a link, group-writable, open to
   others, or with an extended ACL on macOS; on Windows one whose owner or DACL
@@ -72,11 +77,25 @@ fn main() -> ExitCode {
   `wslib_telemetry::Telemetry::writer` takes it. `LogFile::builder()` sets how
   often it checks its path and the size it rotates at.
 - **`Refused`** is every check's error, displayed as `refusing <path>:
-  <because>`.
+  <because>`; `Refused::new` builds one for a path of your own. On unix,
+  `no_extended_acl(path)` is the macOS ACL check on its own, `Ok` elsewhere.
 - **`Layout::macos`, `windows`, `systemd` and `for_this_os`** name where the
   state directory and log go on each: `/Library/Application Support` and
   `/Library/Logs`, `%ProgramData%`, or systemd's `$STATE_DIRECTORY` and
   `$LOGS_DIRECTORY`, with no log file since journald keeps the output.
+
+## A command instead of the service
+
+A CLI verb that runs and exits, such as `widgets check-config`, is handled
+before `Daemon::run`, on a runtime of its own from
+`tokio::runtime::Builder::new_multi_thread().enable_all().build()`: `run`
+counts an `Ok` without a stop as `Failure::Unasked`.
+
+## Moving from the chassis's `run_as_service`
+
+An error after the stop, or overrunning the grace, is now a `Failure`, and a
+service-specific exit code of 1 under the service control manager. The old
+wrapper counted any end after a stop as success.
 
 ## Running under
 

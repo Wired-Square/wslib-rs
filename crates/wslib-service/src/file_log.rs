@@ -21,7 +21,8 @@ use crate::Refused;
 /// On Windows the file must be owned by this process's user, SYSTEM or
 /// Administrators, in a directory with the same owners that nobody else may
 /// add to, delete from, rename or change the security of. The directory is
-/// held open while the `LogFile` lives, so it cannot be renamed.
+/// held open while the `LogFile` lives, so it cannot be renamed; under a global
+/// subscriber, that is the life of the process.
 ///
 /// Rotate it with a newsyslog entry carrying the `N` flag, no pid file, and an
 /// `owner:group` with mode `640`, so the file it makes keeps the group: the

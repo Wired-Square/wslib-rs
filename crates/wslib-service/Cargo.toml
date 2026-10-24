@@ -10,6 +10,11 @@ authors.workspace = true
 repository.workspace = true
 publish = ["wired-square"]
 
+# `testing::stop`: a `Stop` outside `Daemon::run`, and what it told, for a
+# consumer's tests.
+[features]
+testing = []
+
 [dependencies]
 thiserror = "2"
 tokio = { version = "1.47", default-features = false, features = ["macros", "rt-multi-thread", "time"] }
@@ -49,3 +54,7 @@ wslib-telemetry = { version = "0.1.9", path = "../wslib-telemetry", registry = "
 # The DACL read-backs.
 [target.'cfg(windows)'.dev-dependencies]
 wslib-file-atomic = { version = "0.1.5", path = "../wslib-file-atomic", registry = "wired-square", features = ["testing"] }
+
+[[test]]
+name = "testing"
+required-features = ["testing"]

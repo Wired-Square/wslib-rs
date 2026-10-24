@@ -104,6 +104,8 @@ mod scm;
 mod systemd;
 #[cfg(test)]
 mod test_dir;
+#[cfg(feature = "testing")]
+pub mod testing;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]
@@ -179,7 +181,10 @@ impl Daemon {
     /// calling thread: call it from a plain `fn main`, not `#[tokio::main]`.
     /// Install telemetry first, there or inside `main`. The runtime is the one
     /// `#[tokio::main]` builds, multi-thread with every driver enabled; the
-    /// app's own tokio features still apply, through feature unification.
+    /// app's own tokio features still apply, through feature unification. A
+    /// CLI verb that runs instead of the service belongs before `run`, on a
+    /// runtime of its own, since an `Ok` without a stop is
+    /// [`Failure::Unasked`].
     ///
     /// **Ending once stopped is `Ok` with what `main` returned. Ending
     /// unasked, by returning or panicking, is a failure**, so that the service
@@ -262,59 +267,52 @@ impl Daemon {
 
     fn run_signalled(self, main: Main) -> Result<Value, Failure> {
         let grace = self.grace;
-        drive(
-            &self.name,
-            grace,
-            CancellationToken::new(),
-            main,
-            move |token| {
-                #[cfg(target_os = "linux")]
-                let systemd =
-                    std::env::var_os("NOTIFY_SOCKET").is_some_and(|socket| !socket.is_empty());
-                let signalled = wslib_shutdown::stop_signal();
-                tokio::spawn({
-                    let token = token.clone();
-                    async move {
-                        let signal = signalled.await;
-                        tracing::info!(signal = signal.as_str(), ?grace, "stopping");
-                        #[cfg(target_os = "linux")]
-                        if systemd {
-                            systemd::stopping(grace, wslib_systemd_notify::notify);
-                        }
-                        token.cancel();
-                    }
-                });
+        let manager = CancellationToken::new();
+        drive(&self.name, grace, manager.clone(), main, move |token| {
+            #[cfg(target_os = "linux")]
+            let systemd =
+                std::env::var_os("NOTIFY_SOCKET").is_some_and(|socket| !socket.is_empty());
+            let signalled = wslib_shutdown::stop_signal();
+            tokio::spawn(async move {
+                let signal = signalled.await;
+                tracing::info!(signal = signal.as_str(), ?grace, "stopping");
                 #[cfg(target_os = "linux")]
                 if systemd {
-                    tokio::spawn(async {
-                        let fed = wslib_systemd_notify::feed_watchdog(std::future::pending());
-                        if let Err(e) = fed.await {
-                            tracing::warn!(error = %e, "could not feed systemd's watchdog");
-                        }
-                    });
-                    return Stop::new(
-                        Manager::Systemd,
-                        token,
-                        systemd::Systemd(wslib_systemd_notify::notify),
-                    );
+                    systemd::stopping(grace, wslib_systemd_notify::notify);
                 }
-                let manager = if cfg!(windows) {
-                    Manager::WindowsConsole
-                } else {
-                    Manager::Signals
-                };
-                Stop::new(manager, token, Untold)
-            },
-        )
+                manager.cancel();
+            });
+            #[cfg(target_os = "linux")]
+            if systemd {
+                tokio::spawn(async {
+                    let fed = wslib_systemd_notify::feed_watchdog(std::future::pending());
+                    if let Err(e) = fed.await {
+                        tracing::warn!(error = %e, "could not feed systemd's watchdog");
+                    }
+                });
+                return Stop::new(
+                    Manager::Systemd,
+                    token,
+                    systemd::Systemd(wslib_systemd_notify::notify),
+                );
+            }
+            let manager = if cfg!(windows) {
+                Manager::WindowsConsole
+            } else {
+                Manager::Signals
+            };
+            Stop::new(manager, token, Untold)
+        })
     }
 }
 
-/// Runs `main` with the `Stop` that `stop` makes, inside the runtime, and
-/// judges how it ended by whether `token` was cancelled.
+/// Runs `main` with the `Stop` that `stop` makes from a child of `manager`,
+/// the token the service manager's stop cancels, inside the runtime, and
+/// judges how it ended by whether the child was cancelled.
 fn drive(
     name: &str,
     grace: Duration,
-    token: CancellationToken,
+    manager: CancellationToken,
     main: Main,
     stop: impl FnOnce(CancellationToken) -> Stop,
 ) -> Result<Value, Failure> {
@@ -344,8 +342,18 @@ fn drive(
             );
         }
     }));
+    let token = manager.child_token();
     let ran = std::panic::catch_unwind(AssertUnwindSafe(|| {
         runtime.block_on(async {
+            tokio::spawn({
+                let token = token.clone();
+                async move {
+                    token.cancelled().await;
+                    if !manager.is_cancelled() {
+                        tracing::info!(?grace, "stopping, by the service itself");
+                    }
+                }
+            });
             let overran = async {
                 token.cancelled().await;
                 tokio::time::sleep(grace).await;
@@ -410,6 +418,8 @@ pub enum Manager {
     Systemd,
     /// Stopped by `SIGTERM` or `SIGINT`, as under launchd.
     Signals,
+    /// Under no manager: a `Stop` from `testing::stop`.
+    Detached,
 }
 
 impl Manager {
@@ -419,6 +429,7 @@ impl Manager {
             Manager::WindowsConsole => "a console",
             Manager::Systemd => "systemd",
             Manager::Signals => "signals",
+            Manager::Detached => "no service manager",
         }
     }
 }
@@ -609,15 +620,18 @@ impl From<Failure> for ExitCode {
 /// A directory or file of the service's that fails its check.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("refusing {}: {because}", path.display())]
+#[non_exhaustive]
 pub struct Refused {
     pub path: PathBuf,
     pub because: String,
 }
 
 impl Refused {
-    fn new(path: &Path, because: impl Into<String>) -> Self {
+    /// `because` is the sentence the refusal ends with, such as "it is a
+    /// symbolic link".
+    pub fn new(path: impl Into<PathBuf>, because: impl Into<String>) -> Self {
         Self {
-            path: path.to_path_buf(),
+            path: path.into(),
             because: because.into(),
         }
     }
@@ -642,6 +656,14 @@ pub fn private_directory(dir: impl AsRef<Path>) -> Result<Held, Refused> {
         .map_err(|because| Refused::new(dir, because));
     #[cfg(windows)]
     return windows::private_directory(dir).map(|handles| Held { _handles: handles });
+}
+
+/// Refuses `path` if it carries an extended ACL, as one a group or anyone else
+/// could be let in by; `Ok` off macOS, where the mode says it all.
+#[cfg(unix)]
+pub fn no_extended_acl(path: impl AsRef<Path>) -> Result<(), Refused> {
+    let path = path.as_ref();
+    unix::no_extended_acl(path).map_err(|because| Refused::new(path, because))
 }
 
 /// What [`private_directory`] holds open: on Windows the directory and its

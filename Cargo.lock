@@ -7263,7 +7263,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-file-atomic"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -7472,7 +7472,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-telemetry"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "chrono",
  "log",
@@ -7487,9 +7487,10 @@ dependencies = [
 
 [[package]]
 name = "wslib-tls"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "http",
+ "libc",
  "rcgen",
  "rustls",
  "rustls-native-certs",
@@ -7498,6 +7499,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tracing",
+ "windows-sys 0.61.2",
  "wslib-crypto",
  "wslib-crypto-x509",
  "wslib-file-atomic",

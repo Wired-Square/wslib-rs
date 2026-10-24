@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.8
+
+- `try_init` warns about a `RUST_LOG` or default filter that did not parse
+  even when it fails, so the warning is not lost when a `log` logger was
+  already installed: tracing is live by then, and the warning reaches
+  whichever subscriber is global.
+
 ## 0.1.7
 
 - `init` installs the `log` bridge under every feature with `Telemetry`:

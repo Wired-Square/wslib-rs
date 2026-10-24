@@ -9,7 +9,7 @@ use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use wslib_crypto::{KeyAlgorithm, Signer};
 use wslib_crypto_x509::pem::{self, CERTIFICATE, PRIVATE_KEY};
 use wslib_crypto_x509::{CertificateView, Report, SubjectAltName};
-use wslib_file_atomic::{Options, Transaction};
+use wslib_file_atomic::{Options, RecordIdentity, Transaction};
 use wslib_secret::Secret;
 
 const DISPLACED: &str = "unusable";
@@ -53,10 +53,25 @@ impl Location {
         self.named
     }
 
-    /// The pair on disk, for a backup taken with nothing serving; `None` when neither file is there.
+    /// Where an interrupted write of the pair leaves its record: `<key file>.txn` beside the key.
+    pub fn record(&self) -> PathBuf {
+        wslib_file_atomic::beside(&self.key, "txn")
+    }
+
+    /// Finishes an interrupted write of the pair, refusing a record naming
+    /// other files or one not this process's own; at a named location also
+    /// one in a directory others may write, or on Windows any record, as
+    /// [`ServingError::RecordRefused`].
+    pub fn recover(&self) -> Result<(), ServingError> {
+        recover(self, None)
+    }
+
+    /// The pair on disk, for a backup taken with nothing serving, after
+    /// [`recover`](Self::recover); `None` when neither file is there.
     ///
     /// Whether the pair loads is not asked.
     pub fn read_pair(&self) -> Result<Option<ServingPair>, ServingError> {
+        self.recover()?;
         match present(self)? {
             Present::Both => read_pair(self).map(Some),
             Present::Neither => Ok(None),
@@ -90,7 +105,8 @@ pub struct Serving {
     location: Location,
     current: RwLock<Arc<ServerConfig>>,
     cannot_replace: Option<(PathBuf, io::ErrorKind)>,
-    installing: tokio::sync::Mutex<()>,
+    /// Taken for each install, holding the record a failed commit left.
+    installing: tokio::sync::Mutex<Option<RecordIdentity>>,
 }
 
 impl Serving {
@@ -104,8 +120,17 @@ impl Serving {
         names: &[SubjectAltName],
         algorithm: KeyAlgorithm,
     ) -> Result<Self, ServingError> {
-        let (record_dir, record) = transaction(&location);
-        wslib_file_atomic::recover(record_dir, &record).map_err(ServingError::Recover)?;
+        if let Err(failed) = recover(&location, None) {
+            if location.named {
+                return Err(failed);
+            }
+            tracing::warn!(
+                key = %location.key.display(),
+                because = %failed,
+                "setting an interrupted write of the serving pair aside"
+            );
+            set_aside_interrupted(&location)?;
+        }
 
         let unusable = match present(&location)? {
             Present::Both => match load(&provider, &location) {
@@ -140,7 +165,7 @@ impl Serving {
             location,
             current: RwLock::new(config),
             cannot_replace,
-            installing: tokio::sync::Mutex::new(()),
+            installing: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -152,7 +177,7 @@ impl Serving {
     ) -> Result<Self, ServingError> {
         tracing::info!(cert = %location.cert.display(), ?names, "minting a serving pair");
         let (pair, config) = mint_pair(&provider, names, algorithm)?;
-        commit_pair(&location, &pair)?;
+        commit_pair(&location, &pair).map_err(|(error, _)| error)?;
         Ok(Self::new(provider, location, config))
     }
 
@@ -225,17 +250,31 @@ impl Serving {
         pair: ServingPair,
         config: Arc<ServerConfig>,
     ) -> Result<(), ServingError> {
-        let _turn = self.installing.lock().await;
+        let mut left = self.installing.lock().await;
         self.replaceable()?;
-        let location = self.location.clone();
-        blocking(move || commit_pair(&location, &pair)).await?;
+        let (location, remembered) = (self.location.clone(), left.take());
+        let (written, still_left) = blocking(move || {
+            if let Err(error) = recover(&location, remembered.as_ref()) {
+                return (Err(error), remembered);
+            }
+            match commit_pair(&location, &pair) {
+                Ok(()) => (Ok(()), None),
+                Err((error, identity)) => (Err(error), identity),
+            }
+        })
+        .await;
+        *left = still_left;
+        written?;
         *self.current.write().unwrap_or_else(PoisonError::into_inner) = config;
         Ok(())
     }
 
-    /// The pair on disk, for a backup; never one install's key beside another's certificate.
+    /// The pair on disk, for a backup, after finishing an interrupted write;
+    /// never one install's key beside another's certificate.
     pub async fn pair(&self) -> Result<ServingPair, ServingError> {
-        let _turn = self.installing.lock().await;
+        let mut left = self.installing.lock().await;
+        recover(&self.location, left.as_ref())?;
+        *left = None;
         read_pair(&self.location)
     }
 }
@@ -276,6 +315,11 @@ pub enum ServingError {
     Displace { path: PathBuf, source: io::Error },
     #[error("finishing an interrupted write of the pair: {0}")]
     Recover(#[source] io::Error),
+    #[error(
+        "an interrupted write's record is refused; check {}, then move it aside by hand: {source}",
+        record.display()
+    )]
+    RecordRefused { record: PathBuf, source: io::Error },
     #[error("generating a key: {0}")]
     Generate(#[source] wslib_crypto::Error),
     #[error("minting a certificate: {0}")]
@@ -404,22 +448,101 @@ fn transaction(location: &Location) -> (&Path, String) {
     )
 }
 
-/// Both or neither, across a crash, once [`wslib_file_atomic::recover`] has
-/// run; the key is renamed into place first. Both `0600`, staged and renamed
-/// over the targets, so a symlink there is replaced and not followed.
-fn commit_pair(location: &Location, pair: &ServingPair) -> Result<(), ServingError> {
+/// A refusal is made by the checks, with no OS error behind it.
+fn recover(location: &Location, left: Option<&RecordIdentity>) -> Result<(), ServingError> {
+    finish_interrupted(location, left).map_err(|source| {
+        if source.kind() == io::ErrorKind::PermissionDenied && source.raw_os_error().is_none() {
+            ServingError::RecordRefused {
+                record: location.record(),
+                source,
+            }
+        } else {
+            ServingError::Recover(source)
+        }
+    })
+}
+
+/// The record a commit `left` is finished without the trust checks while it
+/// is still that file and names only this pair.
+fn finish_interrupted(location: &Location, left: Option<&RecordIdentity>) -> io::Result<()> {
     let (record_dir, record) = transaction(location);
-    let write = || -> io::Result<()> {
-        let mut txn = Transaction::begin(record_dir, &record)?;
-        txn.stage(
-            &location.key,
-            pair.key_pem.expose().as_bytes(),
-            &Options::new(),
-        )?;
-        txn.stage(&location.cert, pair.cert_pem.as_bytes(), &Options::new())?;
-        Ok(txn.commit()?)
-    };
-    write().map_err(ServingError::Write)
+    let targets = [location.cert.as_path(), &location.key];
+    if let Some(identity) = left
+        && wslib_file_atomic::recover_identified(record_dir, &record, &targets, identity)?.is_some()
+    {
+        return Ok(());
+    }
+    if location.named {
+        named_record_acted_on(&location.record())?;
+    }
+    wslib_file_atomic::recover_expecting(record_dir, &record, &targets).map(drop)
+}
+
+/// Only a record that is there is judged, so a named pair in a shared directory still starts.
+fn named_record_acted_on(path: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        there => there.map(drop)?,
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let record_dir = directory_of(path);
+        let directory = fs::metadata(record_dir)?;
+        // SAFETY: a plain syscall with no arguments.
+        let euid = unsafe { libc::geteuid() };
+        if [euid, 0].contains(&directory.uid()) && directory.mode() & 0o022 == 0 {
+            return Ok(());
+        }
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "{} may be written by others, so {} is not acted on",
+                record_dir.display(),
+                path.display()
+            ),
+        ))
+    }
+    #[cfg(windows)]
+    Err(io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        format!(
+            "{} is at a named location, so it is left for the operator",
+            path.display()
+        ),
+    ))
+}
+
+/// The staged files go aside before the record, as a record lost first would
+/// strand a staged key with nothing naming it.
+fn set_aside_interrupted(location: &Location) -> Result<(), ServingError> {
+    let suffix = format!("{}.txn", transaction(location).1);
+    displace(&wslib_file_atomic::beside(&location.cert, &suffix))?;
+    displace(&wslib_file_atomic::beside(&location.key, &suffix))?;
+    displace(&location.record())
+}
+
+/// Both or neither, across a crash, once [`recover`] has run; the key is
+/// renamed into place first. Both `0600`, staged and renamed over the
+/// targets, so a symlink there is replaced and not followed. A commit left
+/// for recovery hands back its record's identity.
+fn commit_pair(
+    location: &Location,
+    pair: &ServingPair,
+) -> Result<(), (ServingError, Option<RecordIdentity>)> {
+    let (record_dir, record) = transaction(location);
+    let unwritten = |error| (ServingError::Write(error), None);
+    let mut txn = Transaction::begin(record_dir, &record).map_err(unwritten)?;
+    txn.stage(
+        &location.key,
+        pair.key_pem.expose().as_bytes(),
+        &Options::new(),
+    )
+    .map_err(unwritten)?;
+    txn.stage(&location.cert, pair.cert_pem.as_bytes(), &Options::new())
+        .map_err(unwritten)?;
+    txn.commit_identified()
+        .map_err(|(error, identity)| (ServingError::Write(error.into()), identity))
 }
 
 /// Off the runtime's workers; a panic there is carried on here.
@@ -429,18 +552,127 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) 
         .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()))
 }
 
+/// Into the first free `.unusable`, `.unusable.1`, …, so an earlier incident's file is kept.
 fn displace(path: &Path) -> Result<(), ServingError> {
-    let aside = wslib_file_atomic::beside(path, DISPLACED);
-    match fs::rename(path, &aside) {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(ServingError::Displace {
-            path: path.to_path_buf(),
-            source,
-        }),
-        Ok(()) => {
-            tracing::warn!(from = %path.display(), to = %aside.display(), "kept the unusable file");
-            Ok(())
+    for n in 0u32.. {
+        let suffix = match n {
+            0 => DISPLACED.to_string(),
+            n => format!("{DISPLACED}.{n}"),
+        };
+        let aside = wslib_file_atomic::beside(path, &suffix);
+        match rename_no_replace(path, &aside) {
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(source) => {
+                return Err(ServingError::Displace {
+                    path: path.to_path_buf(),
+                    source,
+                });
+            }
+            Ok(()) => {
+                tracing::warn!(from = %path.display(), to = %aside.display(), "kept the unusable file");
+                return Ok(());
+            }
         }
+    }
+    unreachable!("a free name among four billion")
+}
+
+#[cfg(unix)]
+fn c_path(path: &Path) -> io::Result<std::ffi::CString> {
+    use std::os::unix::ffi::OsStrExt;
+    std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(io::Error::other)
+}
+
+#[cfg(unix)]
+fn os_result(status: libc::c_int) -> io::Result<()> {
+    match status {
+        0 => Ok(()),
+        _ => Err(io::Error::last_os_error()),
+    }
+}
+
+#[cfg(unix)]
+fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    let renamed = if tests::NO_REPLACE_UNSUPPORTED.get() {
+        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+    } else {
+        rename_exclusive(from, to)
+    };
+    #[cfg(not(test))]
+    let renamed = rename_exclusive(from, to);
+    // ENOTSUP is EOPNOTSUPP on Linux and its own code on macOS.
+    let unsupported = [libc::EINVAL, libc::ENOSYS, libc::EOPNOTSUPP, libc::ENOTSUP];
+    match renamed {
+        Err(e)
+            if e.raw_os_error()
+                .is_some_and(|code| unsupported.contains(&code)) =>
+        {
+            rename_without_the_flag(from, to)
+        }
+        renamed => renamed,
+    }
+}
+
+/// A link refuses an existing name. A directory cannot be linked, so it is
+/// renamed only to a name found free, which loses at most an empty directory
+/// made there in between.
+#[cfg(unix)]
+fn rename_without_the_flag(from: &Path, to: &Path) -> io::Result<()> {
+    if !fs::symlink_metadata(from)?.is_dir() {
+        fs::hard_link(from, to)?;
+        return fs::remove_file(from);
+    }
+    match fs::symlink_metadata(to) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => fs::rename(from, to),
+        Err(e) => Err(e),
+        Ok(_) => Err(io::ErrorKind::AlreadyExists.into()),
+    }
+}
+
+/// The raw call: glibc before 2.28 has no wrapper, and the libc crate binds
+/// musl's only from 0.2.187.
+#[cfg(target_os = "linux")]
+fn rename_exclusive(from: &Path, to: &Path) -> io::Result<()> {
+    let (from, to) = (c_path(from)?, c_path(to)?);
+    // SAFETY: both paths are NUL-terminated and outlive the call.
+    let status = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    os_result(status as libc::c_int)
+}
+
+#[cfg(target_vendor = "apple")]
+fn rename_exclusive(from: &Path, to: &Path) -> io::Result<()> {
+    let (from, to) = (c_path(from)?, c_path(to)?);
+    // SAFETY: both paths are NUL-terminated and outlive the call.
+    os_result(unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) })
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_vendor = "apple"))))]
+fn rename_exclusive(_: &Path, _: &Path) -> io::Result<()> {
+    Err(io::Error::from_raw_os_error(libc::ENOSYS))
+}
+
+#[cfg(windows)]
+fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
+    let wide = |path: &Path| -> Vec<u16> { path.as_os_str().encode_wide().chain([0]).collect() };
+    let (from, to) = (wide(from), wide(to));
+    // SAFETY: both paths are NUL-terminated and outlive the call; no
+    // `MOVEFILE_REPLACE_EXISTING`, so an existing name is refused.
+    match unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), 0) } {
+        0 => Err(io::Error::last_os_error()),
+        _ => Ok(()),
     }
 }
 
@@ -828,6 +1060,362 @@ mod tests {
                 .is_symlink()
         );
         assert_eq!(on_disk(&dir.join("cert.pem")), fingerprint(&cert));
+    }
+
+    fn occupy(path: &Path) {
+        let _ = fs::remove_file(path);
+        fs::create_dir(path).unwrap();
+        write(&path.join("inside"), "");
+    }
+
+    /// Installs a pair whose certificate cannot be renamed into place, so the
+    /// commit is left for recovery, then clears the way.
+    async fn left_for_recovery(
+        provider: &Arc<CryptoProvider>,
+        serving: &Serving,
+        dir: &Scratch,
+    ) -> String {
+        let (cert, key) = another_pair(provider);
+        occupy(&dir.join("cert.pem"));
+        let failed = install(serving, &cert, &key).await.map(drop);
+        assert!(matches!(failed, Err(ServingError::Write(_))), "{failed:?}");
+        fs::remove_dir_all(dir.join("cert.pem")).unwrap();
+        cert
+    }
+
+    #[tokio::test]
+    async fn a_commit_left_for_recovery_is_finished_before_the_pair_is_read() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("left-then-read");
+        let serving = start(provider, dir.managed()).unwrap();
+        let cert = left_for_recovery(provider, &serving, &dir).await;
+        assert_eq!(serving.pair().await.unwrap().cert_pem, cert);
+        assert_eq!(dir.listing(), ["cert.pem", "key.pem"]);
+    }
+
+    #[tokio::test]
+    async fn a_commit_left_for_recovery_is_finished_before_the_next_commit() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("left-then-commit");
+        let serving = start(provider, dir.managed()).unwrap();
+        left_for_recovery(provider, &serving, &dir).await;
+        let (cert, key) = another_pair(provider);
+        install(&serving, &cert, &key).await.unwrap();
+        assert_eq!(on_disk(&dir.join("cert.pem")), fingerprint(&cert));
+        assert_eq!(dir.listing(), ["cert.pem", "key.pem"]);
+    }
+
+    #[tokio::test]
+    async fn the_location_finishes_an_interrupted_write_before_reading_the_pair() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("left-then-location");
+        let serving = start(provider, dir.managed()).unwrap();
+        let cert = left_for_recovery(provider, &serving, &dir).await;
+        drop(serving);
+        assert_eq!(dir.managed().read_pair().unwrap().unwrap().cert_pem, cert);
+
+        left_for_recovery(provider, &start(provider, dir.managed()).unwrap(), &dir).await;
+        dir.managed().recover().unwrap();
+        assert_eq!(dir.listing(), ["cert.pem", "key.pem"]);
+    }
+
+    #[tokio::test]
+    async fn the_record_is_where_a_commit_left_for_recovery_leaves_it() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("record-path");
+        let serving = start(provider, dir.managed()).unwrap();
+        left_for_recovery(provider, &serving, &dir).await;
+        assert_eq!(dir.managed().record(), dir.join("key.pem.txn"));
+        assert!(dir.managed().record().exists());
+        let bare = Location::managed("cert.pem", "key.pem");
+        assert_eq!(bare.record(), Path::new("key.pem.txn"));
+    }
+
+    /// A pending record naming a file the pair does not hold.
+    fn plant_record(dir: &Scratch) {
+        let elsewhere = fs::canonicalize(&dir.0).unwrap().join("elsewhere.pem");
+        write(
+            &dir.join("key.pem.txn"),
+            &format!("pending\n{}\n", elsewhere.display()),
+        );
+    }
+
+    #[test]
+    fn a_refused_record_fails_a_read_and_nothing_is_set_aside_or_minted() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("refused-read");
+        start(provider, dir.managed()).unwrap();
+        plant_record(&dir);
+        let before = dir.listing();
+        for location in [dir.managed(), dir.named()] {
+            let refused = location.read_pair().unwrap_err();
+            let ServingError::RecordRefused { record, .. } = &refused else {
+                panic!("{refused}");
+            };
+            assert_eq!(record, &location.record());
+            assert!(refused.to_string().contains("by hand"), "{refused}");
+            assert!(matches!(
+                location.recover(),
+                Err(ServingError::RecordRefused { .. })
+            ));
+        }
+        assert_eq!(dir.listing(), before);
+    }
+
+    #[tokio::test]
+    async fn a_refused_record_fails_the_served_pair_and_a_commit() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("refused-serving");
+        let serving = start(provider, dir.managed()).unwrap();
+        plant_record(&dir);
+        let before = dir.listing();
+        assert!(matches!(
+            serving.pair().await,
+            Err(ServingError::RecordRefused { .. })
+        ));
+        let (cert, key) = another_pair(provider);
+        let refused = install(&serving, &cert, &key).await.map(drop);
+        assert!(
+            matches!(refused, Err(ServingError::RecordRefused { .. })),
+            "{refused:?}"
+        );
+        assert_eq!(dir.listing(), before);
+    }
+
+    #[cfg(unix)]
+    fn loosen(dir: &Scratch) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&dir.0, fs::Permissions::from_mode(0o777)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_record_in_a_named_directory_others_may_write_is_refused() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("named-loose-dir");
+        start(provider, dir.named()).unwrap();
+        let mut crashed = Transaction::begin(&dir.0, "key.pem").unwrap();
+        crashed
+            .stage(&dir.join("key.pem"), b"staged", &Options::new())
+            .unwrap();
+        std::mem::forget(crashed);
+        loosen(&dir);
+        let before = dir.listing();
+
+        let refused = dir.named().recover().unwrap_err();
+        let ServingError::RecordRefused { source, .. } = &refused else {
+            panic!("{refused}");
+        };
+        assert!(
+            source.to_string().contains(&*dir.0.to_string_lossy()),
+            "{source}"
+        );
+        assert!(matches!(
+            start(provider, dir.named()),
+            Err(ServingError::RecordRefused { .. })
+        ));
+        assert_eq!(dir.listing(), before);
+        dir.managed().recover().unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn any_record_at_a_named_location_is_left_for_the_operator() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("named-windows");
+        start(provider, dir.named()).unwrap();
+        std::mem::forget(Transaction::begin(&dir.0, "key.pem").unwrap());
+        let before = dir.listing();
+        let refused = dir.named().recover();
+        assert!(
+            matches!(&refused, Err(ServingError::RecordRefused { .. })),
+            "{refused:?}"
+        );
+        assert!(matches!(
+            start(provider, dir.named()),
+            Err(ServingError::RecordRefused { .. })
+        ));
+        assert_eq!(dir.listing(), before);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_serving_finishes_the_record_its_own_commit_left_whatever_its_directory() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("own-record");
+        let serving = start(provider, dir.named()).unwrap();
+        loosen(&dir);
+        let cert = left_for_recovery(provider, &serving, &dir).await;
+        assert!(
+            dir.named().recover().is_err(),
+            "another reader gets the full checks"
+        );
+        assert_eq!(serving.pair().await.unwrap().cert_pem, cert);
+        assert_eq!(dir.listing(), ["cert.pem", "key.pem"]);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_record_swapped_after_a_failed_commit_gets_the_full_checks() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("swapped-record");
+        let serving = start(provider, dir.named()).unwrap();
+        loosen(&dir);
+        left_for_recovery(provider, &serving, &dir).await;
+        let (record, swapped) = (dir.join("key.pem.txn"), dir.join("swapped"));
+        fs::copy(&record, &swapped).unwrap();
+        fs::rename(&swapped, &record).unwrap();
+        assert!(matches!(
+            serving.pair().await,
+            Err(ServingError::RecordRefused { .. })
+        ));
+        assert!(record.exists());
+    }
+
+    /// A committed write whose certificate cannot be renamed into place
+    /// because a directory is there.
+    fn wedged(dir: &Scratch) {
+        let (cert, key) = another_pair(&providers()[0].1);
+        let mut crashed = Transaction::begin(&dir.0, "key.pem").unwrap();
+        crashed
+            .stage(&dir.join("key.pem"), key.as_bytes(), &Options::new())
+            .unwrap();
+        crashed
+            .stage(&dir.join("cert.pem"), cert.as_bytes(), &Options::new())
+            .unwrap();
+        occupy(&dir.join("cert.pem"));
+        assert!(crashed.commit().is_err());
+    }
+
+    #[test]
+    fn a_recover_that_fails_at_the_managed_location_is_set_aside_and_the_start_goes_on() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("wedged-managed");
+        start(provider, dir.managed()).unwrap();
+        wedged(&dir);
+
+        start(provider, dir.managed()).unwrap();
+        assert_eq!(
+            dir.listing(),
+            [
+                "cert.pem",
+                "cert.pem.key.pem.txn.unusable",
+                "cert.pem.unusable",
+                "key.pem",
+                "key.pem.txn.unusable",
+                "key.pem.unusable",
+            ]
+        );
+        start(provider, dir.managed()).expect("the fresh pair loads");
+    }
+
+    #[test]
+    fn a_half_rolled_pair_left_by_a_set_aside_is_mismatched_and_replaced() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("half-rolled");
+        start(provider, dir.managed()).unwrap();
+        let old_key = fs::read_to_string(dir.join("key.pem")).unwrap();
+        let (new_cert, _) = another_pair(provider);
+        let canonical = fs::canonicalize(&dir.0).unwrap();
+        write(
+            &dir.join("key.pem.txn"),
+            &format!(
+                "committed\n{}\n{}\n",
+                canonical.join("cert.pem").display(),
+                canonical.join("key.pem").display()
+            ),
+        );
+        write(&dir.join("cert.pem.key.pem.txn"), &new_cert);
+        occupy(&dir.join("key.pem.key.pem.txn"));
+
+        start(provider, dir.managed()).unwrap();
+        assert!(dir.join("key.pem.txn.unusable").exists());
+        assert_eq!(
+            fs::read_to_string(dir.join("cert.pem.unusable")).unwrap(),
+            new_cert
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("key.pem.unusable")).unwrap(),
+            old_key
+        );
+        let displaced =
+            Location::named(dir.join("cert.pem.unusable"), dir.join("key.pem.unusable"));
+        assert!(matches!(
+            load(provider, &displaced),
+            Err(ServingError::Mismatched)
+        ));
+        assert_ne!(on_disk(&dir.join("cert.pem")), fingerprint(&new_cert));
+        start(provider, dir.managed()).expect("the fresh pair loads");
+    }
+
+    #[test]
+    fn a_recover_that_fails_at_a_named_location_is_an_error_and_nothing_moves() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("wedged-named");
+        start(provider, dir.named()).unwrap();
+        wedged(&dir);
+        let before = dir.listing();
+
+        let e = start(provider, dir.named()).expect_err("a named pair is the operator's");
+        if cfg!(windows) {
+            assert!(matches!(e, ServingError::RecordRefused { .. }), "{e}");
+        } else {
+            assert!(matches!(e, ServingError::Recover(_)), "{e}");
+        }
+        assert_eq!(dir.listing(), before);
+    }
+
+    #[test]
+    fn displacing_never_replaces_an_earlier_unusable_file_or_directory() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("displace-twice");
+        write(&dir.join("cert.pem"), "not PEM");
+        write(&dir.join("key.pem"), "not PEM either");
+        write(&dir.join("cert.pem.unusable"), "an earlier incident");
+        occupy(&dir.join("key.pem.unusable"));
+
+        start(provider, dir.managed()).unwrap();
+        let read = |name: &str| fs::read_to_string(dir.join(name)).unwrap();
+        assert_eq!(read("cert.pem.unusable"), "an earlier incident");
+        assert_eq!(read("cert.pem.unusable.1"), "not PEM");
+        assert!(dir.join("key.pem.unusable/inside").exists());
+        assert_eq!(read("key.pem.unusable.1"), "not PEM either");
+    }
+
+    #[cfg(unix)]
+    thread_local! {
+        pub(super) static NO_REPLACE_UNSUPPORTED: std::cell::Cell<bool> =
+            const { std::cell::Cell::new(false) };
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn without_a_no_replace_rename_a_file_is_linked_aside_and_a_directory_moved_to_a_free_name() {
+        let dir = Scratch::new("displace-unsupported");
+        write(&dir.join("key.pem"), "a key");
+        write(&dir.join("key.pem.unusable"), "an earlier key");
+        occupy(&dir.join("cert.pem"));
+        occupy(&dir.join("cert.pem.unusable"));
+
+        NO_REPLACE_UNSUPPORTED.set(true);
+        let displaced =
+            displace(&dir.join("key.pem")).and_then(|()| displace(&dir.join("cert.pem")));
+        NO_REPLACE_UNSUPPORTED.set(false);
+        displaced.unwrap();
+        let read = |name: &str| fs::read_to_string(dir.join(name)).unwrap();
+        assert_eq!(read("key.pem.unusable"), "an earlier key");
+        assert_eq!(read("key.pem.unusable.1"), "a key");
+        assert!(dir.join("cert.pem.unusable/inside").exists());
+        assert!(dir.join("cert.pem.unusable.1/inside").exists());
+        assert_eq!(
+            dir.listing(),
+            [
+                "cert.pem.unusable",
+                "cert.pem.unusable.1",
+                "key.pem.unusable",
+                "key.pem.unusable.1"
+            ]
+        );
     }
 
     #[cfg(unix)]

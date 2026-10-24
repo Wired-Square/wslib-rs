@@ -48,7 +48,8 @@ hidden.discard_staged(path)?;
   can mean the new file is in place. A staged file an earlier run
   left is cleared first rather than reused, so its mode never carries over.
 - **`write_private`** (or `Options::create_new`) writes at the path itself and
-  refuses one that exists; a failed write removes what it made.
+  refuses one that exists; a failed write, its directory sync included,
+  removes what it made, so a retry is not refused.
 - **`stage`** returns a `Staged` you `promote()` or `discard()`;
   `Staged::path()` is where it is and `Staged::target()` what it replaces,
   and `Options::staged_path` names where it goes. Dropping it leaves the
@@ -99,13 +100,23 @@ tls.commit()?;
   read, or one naming a relative path, is `InvalidData`, and nothing is touched:
   an operator moves `<name>.txn` (`Transaction::record`) aside after checking
   it. Never delete it automatically.
+- **A record is trusted only if this process could have written it**: a
+  regular file, opened without following a link, owned by the effective user
+  and writable by no one else (on Windows, owned by the process token's user
+  or default owner). Anything else is `PermissionDenied` naming the record,
+  and nothing is touched. A staged file a committed record would rename over
+  its target is checked the same way first, and refused naming it. `recover_expecting(dir, name, targets)` also
+  refuses a record naming a file outside `targets`.
 - **`begin` refuses while a record is there** (`AlreadyExists`): recover first.
 - **A failure before the commit point rolls back**, a failed `stage`
   included, and so does `abort` or dropping the transaction uncommitted.
   `commit` says which side it failed on: `CommitError::RolledBack` left every
   target as it was; `CommitError::Committed` left the record, and `recover`
   rolls it forward, so the new files will be served. It converts to an
-  `io::Error` of the same kind.
+  `io::Error` of the same kind. `commit_identified` also hands back the
+  left record's `RecordIdentity`, and `recover_identified` finishes that
+  record without the owner and mode checks while it is still that file,
+  passing over (`None`) one that is not.
 - **Callers serialise transactions of one name**, as they do writers of one
   path.
 

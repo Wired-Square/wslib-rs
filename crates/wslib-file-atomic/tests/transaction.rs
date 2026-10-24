@@ -6,7 +6,8 @@ mod common;
 
 use common::{Scratch, read};
 use wslib_file_atomic::{
-    CommitError, Options, Readers, Recovered, Transaction, recover, replace_private,
+    CommitError, Options, Readers, RecordIdentity, Recovered, Transaction, recover,
+    recover_expecting, recover_identified, replace_private,
 };
 
 const KEY: &str = "app.key";
@@ -358,6 +359,221 @@ fn a_malformed_record_is_an_error_and_nothing_is_touched() {
     }
 }
 
+fn assert_refused_untouched(dir: &Scratch, refused: io::Error) {
+    assert_eq!(refused.kind(), io::ErrorKind::PermissionDenied, "{refused}");
+    assert!(refused.to_string().contains(RECORD), "{refused}");
+    assert_old_pair(dir);
+    assert_eq!(
+        read(&dir.join(STAGED_KEY)),
+        format!("new {STAGED_KEY}").as_bytes()
+    );
+}
+
+fn committed_and_staged(name: &str) -> Scratch {
+    let dir = pair(name);
+    write_record(&dir, "committed");
+    stage_by_hand(&dir, &[STAGED_KEY, STAGED_CERT]);
+    dir
+}
+
+#[cfg(unix)]
+#[test]
+fn a_record_others_may_write_is_refused() {
+    use std::os::unix::fs::PermissionsExt;
+    for mode in [0o620, 0o602] {
+        let dir = committed_and_staged(&format!("txn-writable-{mode:o}"));
+        fs::set_permissions(dir.join(RECORD), fs::Permissions::from_mode(mode)).unwrap();
+        assert_refused_untouched(&dir, recover(&dir.0, "tls").unwrap_err());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_record_is_refused() {
+    let dir = committed_and_staged("txn-symlinked");
+    let planted = dir.join("planted");
+    fs::rename(dir.join(RECORD), &planted).unwrap();
+    std::os::unix::fs::symlink(&planted, dir.join(RECORD)).unwrap();
+    assert_refused_untouched(&dir, recover(&dir.0, "tls").unwrap_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_record_that_is_not_a_regular_file_is_refused() {
+    let dir = committed_and_staged("txn-not-a-file");
+    fs::remove_file(dir.join(RECORD)).unwrap();
+    fs::create_dir(dir.join(RECORD)).unwrap();
+    assert_refused_untouched(&dir, recover(&dir.0, "tls").unwrap_err());
+
+    fs::remove_dir(dir.join(RECORD)).unwrap();
+    let fifo = std::ffi::CString::new(dir.join(RECORD).into_os_string().into_encoded_bytes());
+    // SAFETY: a NUL-terminated path.
+    assert_eq!(unsafe { libc::mkfifo(fifo.unwrap().as_ptr(), 0o600) }, 0);
+    assert_refused_untouched(&dir, recover(&dir.0, "tls").unwrap_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_record_owned_by_someone_else_is_refused() {
+    // SAFETY: a plain syscall with no arguments.
+    if unsafe { libc::geteuid() } != 0 {
+        eprintln!("skipped: only root can give a file away");
+        return;
+    }
+    let dir = committed_and_staged("txn-owned-by-another");
+    std::os::unix::fs::chown(dir.join(RECORD), Some(65534), None).unwrap();
+    assert_refused_untouched(&dir, recover(&dir.0, "tls").unwrap_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_staged_file_others_may_write_is_not_renamed_over_its_target() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = pair("txn-planted-staged");
+    write_record(&dir, "committed");
+    fs::write(dir.join(KEY), b"new key").unwrap();
+    stage_by_hand(&dir, &[STAGED_CERT]);
+    fs::set_permissions(dir.join(STAGED_CERT), fs::Permissions::from_mode(0o664)).unwrap();
+
+    let refused = recover(&dir.0, "tls").unwrap_err();
+    assert_eq!(refused.kind(), io::ErrorKind::PermissionDenied, "{refused}");
+    assert!(refused.to_string().contains(STAGED_CERT), "{refused}");
+    assert_eq!(read(&dir.join(CERT)), b"old cert");
+}
+
+/// Gives `path` to SYSTEM, which only an elevated process may do; false when
+/// this one may not.
+#[cfg(windows)]
+fn give_to_system(path: &Path) -> bool {
+    let given = std::process::Command::new("icacls")
+        .arg(path)
+        .args(["/setowner", "*S-1-5-18"])
+        .output()
+        .unwrap();
+    if !given.status.success() {
+        eprintln!("skipped: only an elevated process can give a file away");
+    }
+    given.status.success()
+}
+
+#[cfg(windows)]
+fn owner_of(path: &Path) -> String {
+    let script = format!("(Get-Acl -LiteralPath '{}').Owner", path.display());
+    let read = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-Command", &script])
+        .output()
+        .unwrap();
+    String::from_utf8(read.stdout).unwrap().trim().to_string()
+}
+
+#[cfg(windows)]
+#[test]
+fn a_symlinked_record_is_refused() {
+    let dir = committed_and_staged("txn-symlinked");
+    let planted = dir.join("planted");
+    fs::rename(dir.join(RECORD), &planted).unwrap();
+    if let Err(e) = std::os::windows::fs::symlink_file(&planted, dir.join(RECORD)) {
+        eprintln!("skipped: no symbolic link privilege: {e}");
+        return;
+    }
+    let refused = recover(&dir.0, "tls").unwrap_err();
+    assert!(
+        refused.to_string().contains("not a regular file"),
+        "{refused}"
+    );
+    assert_refused_untouched(&dir, refused);
+    assert!(planted.exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn a_record_that_is_a_junction_or_a_directory_is_refused() {
+    let dir = committed_and_staged("txn-junction");
+    let planted = dir.join("planted");
+    fs::create_dir(&planted).unwrap();
+    fs::remove_file(dir.join(RECORD)).unwrap();
+    let made = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(dir.join(RECORD))
+        .arg(&planted)
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "{made:?}");
+    let refused = recover(&dir.0, "tls").unwrap_err();
+    assert!(
+        refused.to_string().contains("not a regular file"),
+        "{refused}"
+    );
+    assert_refused_untouched(&dir, refused);
+
+    fs::remove_dir(dir.join(RECORD)).unwrap();
+    assert!(planted.exists(), "removing the junction left its target");
+    fs::create_dir(dir.join(RECORD)).unwrap();
+    let refused = recover(&dir.0, "tls").unwrap_err();
+    assert!(
+        refused.to_string().contains("not a regular file"),
+        "{refused}"
+    );
+    assert_refused_untouched(&dir, refused);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_record_owned_by_someone_else_is_refused() {
+    let dir = committed_and_staged("txn-owned-by-another");
+    if !give_to_system(&dir.join(RECORD)) {
+        return;
+    }
+    let refused = recover(&dir.0, "tls").unwrap_err();
+    assert!(
+        refused.to_string().contains("owned by another user"),
+        "{refused}"
+    );
+    assert_refused_untouched(&dir, refused);
+}
+
+/// An elevated process owns what it makes through Administrators, its token's
+/// default owner; an unelevated one through its user.
+#[cfg(windows)]
+#[test]
+fn a_record_this_process_made_is_recovered_whoever_owns_it_for_the_token() {
+    let dir = committed_and_staged("txn-own-record");
+    eprintln!("the record is owned by {}", owner_of(&dir.join(RECORD)));
+    assert_eq!(recover(&dir.0, "tls").unwrap(), Recovered::RolledForward);
+    assert_eq!(read(&dir.join(KEY)), format!("new {STAGED_KEY}").as_bytes());
+    assert_only(&dir, &[KEY, CERT]);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_staged_file_owned_by_someone_else_is_not_renamed_over_its_target() {
+    let dir = pair("txn-planted-staged");
+    write_record(&dir, "committed");
+    fs::write(dir.join(KEY), b"new key").unwrap();
+    stage_by_hand(&dir, &[STAGED_CERT]);
+    if !give_to_system(&dir.join(STAGED_CERT)) {
+        return;
+    }
+
+    let refused = recover(&dir.0, "tls").unwrap_err();
+    assert_eq!(refused.kind(), io::ErrorKind::PermissionDenied, "{refused}");
+    assert!(refused.to_string().contains(STAGED_CERT), "{refused}");
+    assert_eq!(read(&dir.join(CERT)), b"old cert");
+}
+
+#[test]
+fn a_record_naming_a_target_outside_the_expected_set_is_refused() {
+    let dir = committed_and_staged("txn-unexpected-target");
+    let key = dir.join(KEY);
+    let refused = recover_expecting(&dir.0, "tls", &[&key]).unwrap_err();
+    assert_refused_untouched(&dir, refused);
+
+    let expected = [key.as_path(), &dir.join(CERT)];
+    let recovered = recover_expecting(&dir.0, "tls", &expected).unwrap();
+    assert_eq!(recovered, Recovered::RolledForward);
+    assert_only(&dir, &[KEY, CERT]);
+}
+
 fn occupy(path: &Path) {
     let _ = fs::remove_file(path);
     fs::create_dir(path).unwrap();
@@ -395,6 +611,49 @@ fn a_commit_failing_after_the_commit_point_is_left_for_recover() {
     assert_eq!(read(&dir.join(KEY)), b"new key");
     assert_eq!(read(&dir.join(CERT)), b"new cert");
     assert_only(&dir, &[KEY, CERT]);
+}
+
+fn left_for_recovery(name: &str) -> (Scratch, RecordIdentity) {
+    let dir = pair(name);
+    let transaction = stage_pair(&dir);
+    occupy(&dir.join(CERT));
+    let Err((CommitError::Committed(_), Some(identity))) = transaction.commit_identified() else {
+        panic!("the certificate could not be renamed over a directory");
+    };
+    fs::remove_dir_all(dir.join(CERT)).unwrap();
+    (dir, identity)
+}
+
+#[test]
+fn a_record_still_the_one_a_commit_left_is_finished_without_the_owner_checks() {
+    let (dir, identity) = left_for_recovery("txn-identified");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(dir.join(RECORD), fs::Permissions::from_mode(0o666)).unwrap();
+    }
+    let targets = [dir.join(KEY), dir.join(CERT)];
+    let targets = [targets[0].as_path(), &targets[1]];
+    let recovered = recover_identified(&dir.0, "tls", &targets, &identity).unwrap();
+    assert_eq!(recovered, Some(Recovered::RolledForward));
+    assert_eq!(read(&dir.join(CERT)), b"new cert");
+    assert_only(&dir, &[KEY, CERT]);
+    let gone = recover_identified(&dir.0, "tls", &targets, &identity).unwrap();
+    assert_eq!(gone, Some(Recovered::Nothing));
+}
+
+#[test]
+fn a_record_swapped_for_another_file_is_passed_over_by_its_identity() {
+    let (dir, identity) = left_for_recovery("txn-swapped");
+    let swapped = dir.join("swapped");
+    fs::copy(dir.join(RECORD), &swapped).unwrap();
+    fs::rename(&swapped, dir.join(RECORD)).unwrap();
+    let targets = [dir.join(KEY), dir.join(CERT)];
+    let targets = [targets[0].as_path(), &targets[1]];
+    let passed_over = recover_identified(&dir.0, "tls", &targets, &identity).unwrap();
+    assert_eq!(passed_over, None);
+    assert!(dir.join(STAGED_CERT).exists());
+    assert_eq!(recover(&dir.0, "tls").unwrap(), Recovered::RolledForward);
 }
 
 #[test]

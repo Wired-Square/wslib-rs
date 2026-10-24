@@ -131,9 +131,11 @@ impl Telemetry {
     /// subscriber or a `log` logger is already installed.
     pub fn try_init(self) -> Result<(), TryInitError> {
         let (subscriber, rejected) = self.subscriber();
-        subscriber.try_init()?;
+        // Whichever subscriber is global after a failure takes the warning:
+        // tracing goes live before the `log` bridge is refused.
+        let installed = subscriber.try_init();
         rejected.warn();
-        Ok(())
+        installed
     }
 
     /// Installs the subscriber for this thread until the guard drops, leaving

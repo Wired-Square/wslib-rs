@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.4
+
+- `recover` refuses a record this process could not have written, as
+  `PermissionDenied` naming it: a symbolic link, anything but a regular file
+  (a FIFO is not waited on), or one owned by another user or writable by
+  group or others; on Windows one owned by neither the process token's user
+  nor its default owner. It reads the record from the file it checked, and
+  checks each staged file a committed record renames the same way.
+  `recover_expecting(dir, name, targets)` also refuses a record naming a
+  file outside `targets`.
+- A create-new write whose directory sync fails removes the file it made, so
+  a retry is not refused with `AlreadyExists`.
+- `Transaction::commit_identified` is `commit` handing back a
+  `RecordIdentity` for a record left for recovery, and
+  `recover_identified(dir, name, targets, identity)` finishes that record
+  without the owner and mode checks while it is still that file, returning
+  `None` and touching nothing when it is another.
+- `libc` is now a normal dependency on Unix (>= 0.2.174).
+
 ## 0.1.3
 
 - `administrators_read_and_delete` (Windows): `owner_only`'s protected DACL,

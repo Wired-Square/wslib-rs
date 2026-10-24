@@ -104,16 +104,26 @@ for warning in &installed.report.warnings { /* expired, host not covered, ... */
 - **`Serving::load_or_mint`**: both files there and loadable, they are
   served; neither, a self-signed pair is minted with `wslib_crypto_x509::mint`
   for the caller's names; one half, or a pair that will not read, parse,
-  match or load, is moved aside to `<file>.unusable` and replaced at a
+  match or load, is moved aside to the first free `<file>.unusable`,
+  `.unusable.1`, … and replaced at a
   `Location::managed` location, and refused with `ServingError::Named` at a
   `Location::named` one. A path that cannot even be looked at is refused at
-  either. Blocks: it reads and writes files, and RSA generation takes
-  seconds.
+  either. An interrupted write that cannot be finished, or whose record is
+  refused, is set aside the same way at a managed location, record and
+  staged files, and is an error at a named one. Blocks: it
+  reads and writes files, and RSA generation takes seconds.
 - **Writing the pair** goes through a `wslib_file_atomic::Transaction`
-  recorded beside the key as `<key file>.txn`: both files land or neither,
+  recorded beside the key as `<key file>.txn` (`Location::record()`): both
+  files land or neither,
   `0600`, key first, a symlink at either path replaced rather than
-  followed. `load_or_mint` finishes or rolls back an interrupted write before
-  it reads.
+  followed. `Location::recover()` finishes or rolls back an interrupted
+  write, and `load_or_mint`, `read_pair()`, `pair()` and every write run it
+  first. A record naming other files, or not this process's own, is refused;
+  at a named location so is one in a directory others may write, and on
+  Windows any record. A refused record is `ServingError::RecordRefused`,
+  for an operator to check and move aside by hand. A `Serving` finishes the
+  record its own failed commit left while it is still that file, whatever
+  its directory.
 - **`replaceable()`**: whether both directories took a new file when the
   pair was loaded, for a caller about to do something an install failing
   would leave half done.

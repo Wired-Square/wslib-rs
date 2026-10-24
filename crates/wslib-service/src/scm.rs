@@ -28,8 +28,8 @@ use windows_sys::Win32::System::Services::{
     QueryServiceConfig2W, SERVICE_CONFIG_PRESHUTDOWN_INFO, SERVICE_PRESHUTDOWN_INFO,
 };
 
-use crate::progress::{self, Progress, State, Status};
-use crate::{Failure, Main, Manager, Stop};
+use crate::progress::{Progress, State, Status};
+use crate::{Failure, Main, Manager, Stop, Value};
 
 const TICK: Duration = Duration::from_secs(1);
 const WAIT_HINT: Duration = Duration::from_secs(5);
@@ -40,14 +40,14 @@ const EVENT_MESSAGE_FILE: &str =
     r"%SystemRoot%\Microsoft.NET\Framework64\v4.0.30319\EventLogMessages.dll";
 
 static MAIN: Mutex<Option<(String, Duration, Main)>> = Mutex::new(None);
-static OUTCOME: Mutex<Option<Result<(), Failure>>> = Mutex::new(None);
+static OUTCOME: Mutex<Option<Result<Value, Failure>>> = Mutex::new(None);
 
 define_windows_service!(ffi_service_main, service_main);
 
 /// Runs `main` as the service `name`, returning how it ended once it has
 /// stopped, or `main` itself when the process was not started by the service
 /// control manager.
-pub(crate) fn run(name: &str, grace: Duration, main: Main) -> Result<Result<(), Failure>, Main> {
+pub(crate) fn run(name: &str, grace: Duration, main: Main) -> Result<Result<Value, Failure>, Main> {
     *lock(&MAIN) = Some((name.to_string(), grace, main));
     let dispatched = service_dispatcher::start(name, ffi_service_main);
     let main = lock(&MAIN).take();
@@ -86,6 +86,12 @@ fn service_main(_: Vec<OsString>) {
         let requested = requested.clone();
         service_control_handler::register(&name, move |control| match control {
             ServiceControl::Stop | ServiceControl::Preshutdown | ServiceControl::Shutdown => {
+                let control = match control {
+                    ServiceControl::Stop => "stop",
+                    ServiceControl::Preshutdown => "preshutdown",
+                    _ => "shutdown",
+                };
+                tracing::info!(control, "stopping");
                 requested.cancel();
                 ServiceControlHandlerResult::NoError
             }
@@ -138,13 +144,17 @@ fn service_main(_: Vec<OsString>) {
         );
     }
 
-    let ended = crate::drive(&name, &requested, main, || {
-        Stop::new(
-            Manager::WindowsService,
-            progress::stop(progress.clone(), requested.clone()),
-        )
+    let ended = crate::drive(&name, grace, requested.clone(), main, |token| {
+        tokio::spawn({
+            let (token, progress) = (token.clone(), progress.clone());
+            async move {
+                token.cancelled().await;
+                progress.stopping();
+            }
+        });
+        Stop::new(Manager::WindowsService, token, progress.clone())
     });
-    let asked = ended.is_ok();
+    let asked = requested.is_cancelled() && !matches!(ended, Err(Failure::Overran(_)));
     *lock(&OUTCOME) = Some(ended);
     progress.stopped(asked);
 }

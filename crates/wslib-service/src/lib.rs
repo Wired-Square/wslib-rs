@@ -52,6 +52,47 @@
 //! })
 //! # }
 //! ```
+//!
+//! A service that stops itself to apply an update cancels the [`Stop::token`],
+//! which is a success and tells systemd nothing, returns why, and re-executes
+//! once `run` has torn the runtime down:
+//!
+//! ```no_run
+//! # use wslib_service::CancellationToken;
+//! # use wslib_service::{Daemon, Stop};
+//! # async fn serve(stop: Stop) -> std::io::Result<()> { stop.await; Ok(()) }
+//! # fn stage_updates(token: CancellationToken) -> tokio::task::JoinHandle<bool> {
+//! #     tokio::spawn(async move { token.cancel(); true })
+//! # }
+//! enum Stopped {
+//!     Asked,
+//!     ToApply,
+//! }
+//!
+//! # #[cfg(unix)]
+//! fn main() -> std::process::ExitCode {
+//!     use std::os::unix::process::CommandExt;
+//!
+//!     let ran = Daemon::new("widgets").run(|stop: Stop| async move {
+//!         // Cancels the token once an update is staged.
+//!         let staging = stage_updates(stop.token());
+//!         serve(stop).await?;
+//!         let staged = staging.is_finished() && staging.await.unwrap_or(false);
+//!         Ok::<_, std::io::Error>(if staged { Stopped::ToApply } else { Stopped::Asked })
+//!     });
+//!     match ran {
+//!         Ok(Stopped::ToApply) => {
+//!             let failed = std::process::Command::new("/proc/self/exe").exec();
+//!             eprintln!("could not re-execute: {failed}");
+//!             std::process::ExitCode::FAILURE
+//!         }
+//!         Ok(Stopped::Asked) => std::process::ExitCode::SUCCESS,
+//!         Err(failure) => failure.into(),
+//!     }
+//! }
+//! # #[cfg(not(unix))]
+//! # fn main() {}
+//! ```
 
 mod file_log;
 mod layout;
@@ -75,17 +116,20 @@ use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use tokio_util::sync::CancellationToken;
-
 pub use file_log::{LogFile, LogFileBuilder};
 pub use layout::Layout;
+pub use tokio_util::sync::CancellationToken;
 
 const DEFAULT_GRACE: Duration = Duration::from_secs(15);
+const TEARDOWN: Duration = Duration::from_secs(1);
 
-type Main = Box<dyn FnOnce(Stop) -> Pin<Box<dyn Future<Output = Result<(), String>>>> + Send>;
+type Value = Box<dyn Any + Send>;
+type Main = Box<dyn FnOnce(Stop) -> Pin<Box<dyn Future<Output = Result<Value, String>>>> + Send>;
 
 /// A service to run as `name`, under whichever service manager started it.
 #[derive(Clone, Debug)]
@@ -105,94 +149,143 @@ impl Daemon {
         }
     }
 
-    /// How long `main` takes to end once its [`Stop`] completes, 15 s unless
-    /// set. It is `main`'s to keep; what it tells the service manager differs:
+    /// How long `main` has to return once stopped, by the service manager or
+    /// through [`Stop::token`]; 15 s unless set. It bounds everything `main`
+    /// still does after the stop, not only a drain: unadvertising, joining
+    /// tasks, flushing. It is the outer bound, so a drain timeout of the app's
+    /// own, such as an HTTP server's, must sit inside it. Past it, `main` is
+    /// dropped and `run` returns [`Failure::Overran`]. What it tells the
+    /// service manager differs:
     ///
     /// - The service control manager: each start raises the service's
     ///   preshutdown timeout to `grace` + 5 s, if it is shorter.
-    /// - systemd: the stop sends `EXTEND_TIMEOUT_USEC` of `grace` + 5 s.
+    /// - systemd: a stop it sends is answered with `EXTEND_TIMEOUT_USEC` of
+    ///   `grace` + 5 s, so this one setting covers both.
     /// - launchd: nothing. Its `ExitTimeOut` is the plist's, 20 s by default,
     ///   so keep `grace` inside it.
+    /// - A container: nothing. Docker and the Home Assistant Supervisor send
+    ///   `SIGKILL` 10 s after `SIGTERM` by default, so keep `grace` under 10 s
+    ///   there; the 15 s default suits systemd and the service control
+    ///   manager.
     pub fn grace(mut self, grace: Duration) -> Self {
         self.grace = grace;
         self
     }
 
-    /// Run `main` on a multi-thread Tokio runtime of its own until it ends.
+    /// Run `main` on a multi-thread Tokio runtime of its own until it ends,
+    /// handing back what it returned.
     ///
-    /// **Ending once asked to stop is success, however `main` ended. Ending
+    /// No runtime is needed before this, and there must not be one on the
+    /// calling thread: call it from a plain `fn main`, not `#[tokio::main]`.
+    /// Install telemetry first, there or inside `main`. The runtime is the one
+    /// `#[tokio::main]` builds, multi-thread with every driver enabled; the
+    /// app's own tokio features still apply, through feature unification.
+    ///
+    /// **Ending once stopped is `Ok` with what `main` returned. Ending
     /// unasked, by returning or panicking, is a failure**, so that the service
-    /// manager restarts it. An error, a panic or ending unasked is logged:
-    /// through `tracing` once a subscriber is installed, and before then to
-    /// stderr, or on Windows the Application event log under `name`. While
-    /// `main` runs, the process's panic hook is one that logs a panic and where
-    /// it happened, and the previous one is restored once it returns. Open what
-    /// can fail, the log file included, inside `main`, so that its failure is
-    /// the service's.
+    /// manager restarts it, and so is an error or a panic after the stop, or
+    /// overrunning the [`grace`](Self::grace). An error, a panic, ending unasked
+    /// or overrunning is logged: through `tracing` once a subscriber is
+    /// installed, and before then to stderr, or on Windows the Application
+    /// event log under `name`. While `main` runs, the process's panic hook is
+    /// one that logs a panic and where it happened, and the previous one is
+    /// restored once it returns. Open what can fail, the log file included,
+    /// inside `main`, so that its failure is the service's. When `run` returns,
+    /// the runtime has been shut down, waiting at most 1 s for its tasks, so
+    /// what they held, sockets included, has been dropped. A task `main` left
+    /// running gets that second, not the grace.
     ///
-    /// The first poll of the [`Stop`] logs one `info` line naming the
-    /// [`Manager`] and tells it the service is ready; how it stops is the
+    /// The service is ready when `main` first polls its [`Stop`], or, once
+    /// [`Stop::ready`] has been taken, when the [`Ready`] says so. The first
+    /// time logs one `info` line naming the [`Manager`]. How it stops is the
     /// manager's:
     ///
     /// - **Under the Windows service control manager**, the service is reported
-    ///   as starting, with a checkpoint each second, until `main` first polls
-    ///   its `Stop`, then as running, then as stopping, with a checkpoint each
-    ///   second, from the stop until `main` returns. A stop, a preshutdown or a
-    ///   shutdown completes the `Stop`. A failure is reported with a
-    ///   service-specific exit code; what follows is the installer's to set,
-    ///   such as a restart after 5 s with
+    ///   as starting, with a checkpoint each second, until it is ready, then as
+    ///   running, then as stopping, with a checkpoint each second, from the
+    ///   stop until `main` returns. A stop, a preshutdown or a shutdown control
+    ///   is the stop, and so is cancelling [`Stop::token`]. A failure is
+    ///   reported with a service-specific exit code; what follows is the
+    ///   installer's to set, such as a restart after 5 s with
     ///   `sc failure <name> reset= 86400 actions= restart/5000`, and
     ///   `sc failureflag <name> 1` so that an exit code counts as a failure. A
-    ///   start that finds no failure actions logs a warning. An error or a
-    ///   panic always goes to the Application event log under `name` as well;
-    ///   a warning goes there only while no subscriber is installed. A start
-    ///   that finds `name` unregistered as that log's event source registers
-    ///   it, so that Event Viewer shows each message as written, and keeps an
-    ///   installer's registration. Registering needs write access to HKLM, as
-    ///   LocalSystem has; a start that cannot logs a warning, so a service
-    ///   under another account has its installer register the source.
+    ///   stop the manager or the app asked for is not a failure unless `main`
+    ///   overruns its grace. A start that finds no failure actions logs a
+    ///   warning. An error or a panic always goes to the Application event log
+    ///   under `name` as well; a warning goes there only while no subscriber is
+    ///   installed. A start that finds `name` unregistered as that log's event
+    ///   source registers it, so that Event Viewer shows each message as
+    ///   written, and keeps an installer's registration. Registering needs
+    ///   write access to HKLM, as LocalSystem has; a start that cannot logs a
+    ///   warning, so a service under another account has its installer
+    ///   register the source.
     /// - **On Windows, not started by the service control manager**, `main`
     ///   runs in the console, and Ctrl-C is the stop.
-    /// - **Under systemd**, with `$NOTIFY_SOCKET` set on Linux, the first poll
-    ///   sends `READY=1`, and the stop `STOPPING=1` with `EXTEND_TIMEOUT_USEC`
-    ///   of the grace + 5 s. The watchdog is fed while `main` runs, when
-    ///   systemd asked for one.
+    /// - **Under systemd**, with `$NOTIFY_SOCKET` set on Linux, ready sends
+    ///   `READY=1`, and `SIGTERM` or `SIGINT` is the stop, answered with
+    ///   `STOPPING=1` and `EXTEND_TIMEOUT_USEC` of the grace + 5 s. A stop
+    ///   through [`Stop::token`] sends nothing, so a process that re-executes
+    ///   itself keeps its unit running. When systemd asked for a watchdog, it
+    ///   is fed from the start of `run` until `main` returns, the drain
+    ///   included, since systemd times it from the process's start. It is fed
+    ///   from a task of its own, so it shows the runtime is alive, not that
+    ///   the service is serving.
+    ///   `$NOTIFY_SOCKET` and `$WATCHDOG_USEC` are left set, for a process
+    ///   that re-executes itself.
     /// - **Otherwise, as under launchd**, `SIGTERM` or `SIGINT` is the stop,
     ///   logged at `info`. Both handlers are registered before `main` is
-    ///   called, so a signal sent while it starts stops it once it polls the
-    ///   `Stop`.
-    pub fn run<F, Fut, E>(self, main: F) -> Result<(), Failure>
+    ///   called, so a signal sent while it starts stops it once it is ready.
+    pub fn run<F, Fut, T, E>(self, main: F) -> Result<T, Failure>
     where
         F: FnOnce(Stop) -> Fut + Send + 'static,
-        Fut: Future<Output = Result<(), E>> + 'static,
+        Fut: Future<Output = Result<T, E>> + 'static,
+        T: Send + 'static,
         E: Display,
     {
-        let main: Main =
-            Box::new(|stop| Box::pin(async { main(stop).await.map_err(|e| e.to_string()) }));
+        let main: Main = Box::new(|stop| {
+            Box::pin(async {
+                match main(stop).await {
+                    Ok(value) => Ok(Box::new(value) as Value),
+                    Err(e) => Err(format!("{e:#}")),
+                }
+            })
+        });
         #[cfg(windows)]
-        let main = match scm::run(&self.name, self.grace, main) {
-            Ok(ran) => return ran,
-            Err(not_a_service) => not_a_service,
+        let ran = match scm::run(&self.name, self.grace, main) {
+            Ok(ran) => ran,
+            Err(not_a_service) => self.run_signalled(not_a_service),
         };
-        self.run_signalled(main)
+        #[cfg(not(windows))]
+        let ran = self.run_signalled(main);
+        ran.map(|value| *value.downcast().expect("the value `main` returned"))
     }
 
-    fn run_signalled(self, main: Main) -> Result<(), Failure> {
-        let requested = CancellationToken::new();
-        let stop = {
-            let requested = requested.clone();
-            move || {
+    fn run_signalled(self, main: Main) -> Result<Value, Failure> {
+        let grace = self.grace;
+        drive(
+            &self.name,
+            grace,
+            CancellationToken::new(),
+            main,
+            move |token| {
+                #[cfg(target_os = "linux")]
+                let systemd =
+                    std::env::var_os("NOTIFY_SOCKET").is_some_and(|socket| !socket.is_empty());
                 let signalled = wslib_shutdown::stop_signal();
                 tokio::spawn({
-                    let requested = requested.clone();
+                    let token = token.clone();
                     async move {
                         let signal = signalled.await;
-                        tracing::info!(signal = signal.as_str(), grace = ?self.grace, "stopping");
-                        requested.cancel();
+                        tracing::info!(signal = signal.as_str(), ?grace, "stopping");
+                        #[cfg(target_os = "linux")]
+                        if systemd {
+                            systemd::stopping(grace, wslib_systemd_notify::notify);
+                        }
+                        token.cancel();
                     }
                 });
                 #[cfg(target_os = "linux")]
-                if std::env::var_os("NOTIFY_SOCKET").is_some_and(|socket| !socket.is_empty()) {
+                if systemd {
                     tokio::spawn(async {
                         let fed = wslib_systemd_notify::feed_watchdog(std::future::pending());
                         if let Err(e) = fed.await {
@@ -201,7 +294,8 @@ impl Daemon {
                     });
                     return Stop::new(
                         Manager::Systemd,
-                        systemd::stop(requested, self.grace, wslib_systemd_notify::notify),
+                        token,
+                        systemd::Systemd(wslib_systemd_notify::notify),
                     );
                 }
                 let manager = if cfg!(windows) {
@@ -209,21 +303,21 @@ impl Daemon {
                 } else {
                     Manager::Signals
                 };
-                Stop::new(manager, async move { requested.cancelled().await })
-            }
-        };
-        drive(&self.name, &requested, main, stop)
+                Stop::new(manager, token, Untold)
+            },
+        )
     }
 }
 
 /// Runs `main` with the `Stop` that `stop` makes, inside the runtime, and
-/// judges how it ended by whether `requested` was cancelled.
+/// judges how it ended by whether `token` was cancelled.
 fn drive(
     name: &str,
-    requested: &CancellationToken,
+    grace: Duration,
+    token: CancellationToken,
     main: Main,
-    stop: impl FnOnce() -> Stop,
-) -> Result<(), Failure> {
+    stop: impl FnOnce(CancellationToken) -> Stop,
+) -> Result<Value, Failure> {
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -251,22 +345,31 @@ fn drive(
         }
     }));
     let ran = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        runtime.block_on(async { main(stop()).await })
+        runtime.block_on(async {
+            let overran = async {
+                token.cancelled().await;
+                tokio::time::sleep(grace).await;
+            };
+            tokio::select! {
+                biased;
+                ended = main(stop(token.clone())) => Some(ended),
+                () = overran => None,
+            }
+        })
     }));
     std::panic::set_hook(previous);
-    runtime.shutdown_background();
+    runtime.shutdown_timeout(TEARDOWN);
 
-    let asked = requested.is_cancelled();
+    let asked = token.is_cancelled();
     let failure = match ran {
-        Err(_recorded_by_the_hook) => Failure::Panicked,
-        Ok(Err(e)) => Failure::Ended(e),
-        Ok(Ok(())) if asked => return Ok(()),
-        Ok(Ok(())) => Failure::Unasked,
+        Err(_recorded_by_the_hook) => return Err(Failure::Panicked),
+        Ok(None) => Failure::Overran(grace),
+        Ok(Some(Err(e))) => Failure::Ended(e),
+        Ok(Some(Ok(value))) if asked => return Ok(value),
+        Ok(Some(Ok(_))) => Failure::Unasked,
     };
-    if !matches!(failure, Failure::Panicked) {
-        error(name, &failure);
-    }
-    if asked { Ok(()) } else { Err(failure) }
+    error(name, &failure);
+    Err(failure)
 }
 
 fn panic_message(panic: &(dyn Any + Send)) -> &str {
@@ -326,29 +429,95 @@ impl Display for Manager {
     }
 }
 
-/// Completes when the service manager asks the service to stop.
+/// What the service manager is told as the service runs.
+trait Tell: Send + Sync {
+    fn ready(&self, status: Option<&str>);
+    fn status(&self, _: &str) {}
+}
+
+impl<T: Tell + ?Sized> Tell for Arc<T> {
+    fn ready(&self, status: Option<&str>) {
+        (**self).ready(status);
+    }
+
+    fn status(&self, status: &str) {
+        (**self).status(status);
+    }
+}
+
+struct Untold;
+
+impl Tell for Untold {
+    fn ready(&self, _: Option<&str>) {}
+}
+
+struct Shared {
+    manager: Manager,
+    tell: Box<dyn Tell>,
+    explicit: AtomicBool,
+    readied: AtomicBool,
+}
+
+impl Shared {
+    fn ready(&self, status: Option<&str>) {
+        if !self.readied.swap(true, Ordering::SeqCst) {
+            tracing::info!(under = self.manager.as_str(), "serving");
+            self.tell.ready(status);
+        } else if let Some(status) = status {
+            self.tell.status(status);
+        }
+    }
+}
+
+/// Completes when the service is stopped: by the service manager, or by
+/// cancelling its [`token`](Self::token).
 ///
 /// **The first poll tells the service manager the service is ready**, as
 /// running to the service control manager and `READY=1` to systemd, so poll it
-/// only once serving has started. That holds on every platform.
+/// only once serving has started, or take [`ready`](Self::ready) to say so
+/// yourself. That holds on every platform.
 pub struct Stop {
-    manager: Manager,
-    stopping: Pin<Box<dyn Future<Output = ()> + Send>>,
+    shared: Arc<Shared>,
+    token: CancellationToken,
+    polled: bool,
+    stopped: Pin<Box<dyn Future<Output = ()> + Send>>,
 }
 
 impl Stop {
-    fn new(manager: Manager, stopping: impl Future<Output = ()> + Send + 'static) -> Self {
+    fn new(manager: Manager, token: CancellationToken, tell: impl Tell + 'static) -> Self {
         Self {
-            manager,
-            stopping: Box::pin(async move {
-                tracing::info!(under = manager.as_str(), "serving");
-                stopping.await;
+            shared: Arc::new(Shared {
+                manager,
+                tell: Box::new(tell),
+                explicit: AtomicBool::new(false),
+                readied: AtomicBool::new(false),
             }),
+            stopped: Box::pin({
+                let token = token.clone();
+                async move { token.cancelled().await }
+            }),
+            token,
+            polled: false,
         }
     }
 
     pub fn manager(&self) -> Manager {
-        self.manager
+        self.shared.manager
+    }
+
+    /// The handle that says when the service is ready, for when that is not
+    /// when this is first polled. Taking it turns ready-on-first-poll off; it
+    /// borrows, so take it before `stop` moves into a serve call.
+    pub fn ready(&self) -> Ready {
+        self.shared.explicit.store(true, Ordering::SeqCst);
+        Ready(self.shared.clone())
+    }
+
+    /// Cancelled when the service manager asks the service to stop. Cancelling
+    /// it is a stop of the app's own: success, under the same grace, and on
+    /// systemd sent as nothing, so the unit is not stopped with it.
+    pub fn token(&self) -> CancellationToken {
+        self.token.clone()
     }
 }
 
@@ -356,33 +525,71 @@ impl Future for Stop {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        self.stopping.as_mut().poll(cx)
+        if !std::mem::replace(&mut self.polled, true)
+            && !self.shared.explicit.load(Ordering::SeqCst)
+        {
+            self.shared.ready(None);
+        }
+        self.stopped.as_mut().poll(cx)
     }
 }
 
 impl std::fmt::Debug for Stop {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Stop")
-            .field("manager", &self.manager)
+            .field("manager", &self.shared.manager)
             .finish_non_exhaustive()
     }
 }
 
-/// How [`Daemon::run`] failed: the service ended without being asked to, or
+/// Tells the service manager the service is ready, taken from
+/// [`Stop::ready`]: running to the service control manager, `READY=1` to
+/// systemd, and nothing under launchd or in a console.
+#[derive(Clone)]
+pub struct Ready(Arc<Shared>);
+
+impl Ready {
+    /// The service is ready, with `status` as systemd's `STATUS=` in the same
+    /// notification. Ready is said once: a later `send`, or one after the
+    /// first poll said it, sends only its `status`, and under the service
+    /// control manager nothing. The service control manager has no status
+    /// text.
+    pub fn send(&self, status: Option<&str>) {
+        self.0.ready(status);
+    }
+
+    /// A `STATUS=` line for `systemctl status`, at any time; only systemd
+    /// shows it.
+    pub fn status(&self, status: &str) {
+        self.0.tell.status(status);
+    }
+}
+
+impl std::fmt::Debug for Ready {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Ready").field(&self.0.manager).finish()
+    }
+}
+
+/// How [`Daemon::run`] failed: the service ended unasked, badly or late, or
 /// could not run at all.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Failure {
-    /// `main` returned this error, unasked.
+    /// `main` returned this error, before or after the stop.
     #[error("the service ended in error: {0}")]
     Ended(String),
 
     #[error("the service ended without being asked to stop")]
     Unasked,
 
-    /// `main` panicked, unasked; the hook logged where.
+    /// `main` panicked; the hook logged where.
     #[error("the service panicked")]
     Panicked,
+
+    /// `main` was still running its grace after the stop, and was dropped.
+    #[error("the service did not end within its grace of {0:?} once stopped")]
+    Overran(Duration),
 
     #[error("could not start a runtime: {0}")]
     Runtime(std::io::Error),
@@ -457,6 +664,42 @@ mod tests {
             refused.to_string(),
             "refusing /var/lib/widgets: it is a symbolic link"
         );
+    }
+
+    #[derive(Clone, Default)]
+    struct Told(Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl Tell for Told {
+        fn ready(&self, status: Option<&str>) {
+            self.0.lock().unwrap().push(format!("ready {status:?}"));
+        }
+
+        fn status(&self, status: &str) {
+            self.0.lock().unwrap().push(format!("status {status}"));
+        }
+    }
+
+    fn polled_once(stop: &mut Stop) {
+        let waker = std::task::Waker::noop();
+        let _ = Pin::new(stop).poll(&mut Context::from_waker(waker));
+    }
+
+    #[test]
+    fn the_first_poll_says_ready_once_unless_the_handle_was_taken() {
+        let told = Told::default();
+        let mut stop = Stop::new(Manager::Signals, CancellationToken::new(), told.clone());
+        polled_once(&mut stop);
+        polled_once(&mut stop);
+        stop.ready().send(Some("late"));
+        assert_eq!(*told.0.lock().unwrap(), ["ready None", "status late"]);
+
+        let told = Told::default();
+        let mut stop = Stop::new(Manager::Signals, CancellationToken::new(), told.clone());
+        let ready = stop.ready();
+        polled_once(&mut stop);
+        ready.send(Some("x"));
+        ready.send(None);
+        assert_eq!(*told.0.lock().unwrap(), [r#"ready Some("x")"#]);
     }
 
     #[test]

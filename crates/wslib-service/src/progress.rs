@@ -2,9 +2,7 @@
 //! and stops, apart from the calls that tell it, so the sequence is tested on
 //! every platform.
 
-use std::sync::{Arc, Mutex};
-
-use tokio_util::sync::CancellationToken;
+use std::sync::Mutex;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum State {
@@ -92,17 +90,16 @@ impl Status {
     }
 }
 
-/// Reports running when first polled, as serving starts, and stopping once
-/// `requested` fires.
-pub(crate) async fn stop<R: Fn(Status)>(progress: Arc<Progress<R>>, requested: CancellationToken) {
-    progress.running();
-    requested.cancelled().await;
-    progress.stopping();
+impl<R: Fn(Status) + Send + Sync> crate::Tell for Progress<R> {
+    fn ready(&self, _: Option<&str>) {
+        self.running();
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     type Reports = Arc<Mutex<Vec<Status>>>;
 
@@ -158,25 +155,14 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn the_stop_future_reports_running_once_awaited_and_stopping_once_requested() {
+    #[test]
+    fn ready_reports_running_once_and_never_after_stopping() {
+        use crate::Tell;
         let (progress, reports) = recorded();
-        let progress = Arc::new(progress);
-        let requested = CancellationToken::new();
-        let stopping = stop(progress.clone(), requested.clone());
-        assert_eq!(reports.lock().unwrap().len(), 1, "nothing until awaited");
-
-        let stopped = tokio::spawn(stopping);
-        tokio::time::timeout(std::time::Duration::from_secs(5), async {
-            while reports.lock().unwrap().len() < 2 {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("reports running");
-        requested.cancel();
-        stopped.await.unwrap();
-
+        progress.ready(Some("ignored"));
+        progress.ready(None);
+        progress.stopping();
+        progress.ready(None);
         assert_eq!(
             reports.lock().unwrap()[1..],
             [at(State::Running, 0), at(State::Stopping, 1)]

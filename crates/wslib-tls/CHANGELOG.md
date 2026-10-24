@@ -9,14 +9,17 @@
   the pair, or not this process's own, is refused; at a named location so
   is one in a directory others may write (Unix) and any record (Windows). A
   `Serving` finishes the record its own failed commit left while it is
-  still that file, whatever its directory. Refused or failed, it is
-  `ServingError::Recover`. Needs `wslib-file-atomic` 0.1.4.
+  still that file, whatever its directory. A refused record is
+  `ServingError::RecordRefused`, naming it for an operator to check and move
+  aside by hand; a recover that fails otherwise is `ServingError::Recover`.
+  Needs `wslib-file-atomic` 0.1.4.
 - `load_or_mint` at a managed location sets an interrupted write it cannot
   finish, or whose record is refused, aside as `.unusable`, record and
-  staged files, with a warning, and goes on to load or mint; at a named
-  location it is still `ServingError::Recover`.
+  staged files, with a warning, then loads the pair, or moves it aside and
+  mints, as any start does; at a named location it is an error.
 - An unusable file is moved aside to the first free `<file>.unusable`,
   `.unusable.1`, …, never over an earlier one or a directory there.
+- `Location::record()`: the path of the transaction record a write leaves.
 - `libc` is a dependency on Unix (>= 0.2.174).
 
 ## 0.1.0

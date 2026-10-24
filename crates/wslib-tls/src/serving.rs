@@ -53,9 +53,15 @@ impl Location {
         self.named
     }
 
+    /// Where an interrupted write of the pair leaves its record: `<key file>.txn` beside the key.
+    pub fn record(&self) -> PathBuf {
+        wslib_file_atomic::beside(&self.key, "txn")
+    }
+
     /// Finishes an interrupted write of the pair, refusing a record naming
     /// other files or one not this process's own; at a named location also
-    /// one in a directory others may write, or on Windows any record.
+    /// one in a directory others may write, or on Windows any record, as
+    /// [`ServingError::RecordRefused`].
     pub fn recover(&self) -> Result<(), ServingError> {
         recover(self, None)
     }
@@ -309,6 +315,11 @@ pub enum ServingError {
     Displace { path: PathBuf, source: io::Error },
     #[error("finishing an interrupted write of the pair: {0}")]
     Recover(#[source] io::Error),
+    #[error(
+        "an interrupted write's record is refused; check {}, then move it aside by hand: {source}",
+        record.display()
+    )]
+    RecordRefused { record: PathBuf, source: io::Error },
     #[error("generating a key: {0}")]
     Generate(#[source] wslib_crypto::Error),
     #[error("minting a certificate: {0}")]
@@ -437,36 +448,46 @@ fn transaction(location: &Location) -> (&Path, String) {
     )
 }
 
+/// A refusal is made by the checks, with no OS error behind it.
+fn recover(location: &Location, left: Option<&RecordIdentity>) -> Result<(), ServingError> {
+    finish_interrupted(location, left).map_err(|source| {
+        if source.kind() == io::ErrorKind::PermissionDenied && source.raw_os_error().is_none() {
+            ServingError::RecordRefused {
+                record: location.record(),
+                source,
+            }
+        } else {
+            ServingError::Recover(source)
+        }
+    })
+}
+
 /// The record a commit `left` is finished without the trust checks while it
 /// is still that file and names only this pair.
-fn recover(location: &Location, left: Option<&RecordIdentity>) -> Result<(), ServingError> {
+fn finish_interrupted(location: &Location, left: Option<&RecordIdentity>) -> io::Result<()> {
     let (record_dir, record) = transaction(location);
     let targets = [location.cert.as_path(), &location.key];
     if let Some(identity) = left
-        && wslib_file_atomic::recover_identified(record_dir, &record, &targets, identity)
-            .map_err(ServingError::Recover)?
-            .is_some()
+        && wslib_file_atomic::recover_identified(record_dir, &record, &targets, identity)?.is_some()
     {
         return Ok(());
     }
     if location.named {
-        named_record_acted_on(record_dir, &record).map_err(ServingError::Recover)?;
+        named_record_acted_on(&location.record())?;
     }
-    wslib_file_atomic::recover_expecting(record_dir, &record, &targets)
-        .map(drop)
-        .map_err(ServingError::Recover)
+    wslib_file_atomic::recover_expecting(record_dir, &record, &targets).map(drop)
 }
 
 /// Only a record that is there is judged, so a named pair in a shared directory still starts.
-fn named_record_acted_on(record_dir: &Path, record: &str) -> io::Result<()> {
-    let path = record_dir.join(format!("{record}.txn"));
-    match fs::symlink_metadata(&path) {
+fn named_record_acted_on(path: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(path) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
         there => there.map(drop)?,
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
+        let record_dir = directory_of(path);
         let directory = fs::metadata(record_dir)?;
         // SAFETY: a plain syscall with no arguments.
         let euid = unsafe { libc::geteuid() };
@@ -495,11 +516,10 @@ fn named_record_acted_on(record_dir: &Path, record: &str) -> io::Result<()> {
 /// The staged files go aside before the record, as a record lost first would
 /// strand a staged key with nothing naming it.
 fn set_aside_interrupted(location: &Location) -> Result<(), ServingError> {
-    let (record_dir, record) = transaction(location);
-    let suffix = format!("{record}.txn");
+    let suffix = format!("{}.txn", transaction(location).1);
     displace(&wslib_file_atomic::beside(&location.cert, &suffix))?;
     displace(&wslib_file_atomic::beside(&location.key, &suffix))?;
-    displace(&record_dir.join(suffix))
+    displace(&location.record())
 }
 
 /// Both or neither, across a crash, once [`recover`] has run; the key is
@@ -1099,6 +1119,18 @@ mod tests {
         assert_eq!(dir.listing(), ["cert.pem", "key.pem"]);
     }
 
+    #[tokio::test]
+    async fn the_record_is_where_a_commit_left_for_recovery_leaves_it() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("record-path");
+        let serving = start(provider, dir.managed()).unwrap();
+        left_for_recovery(provider, &serving, &dir).await;
+        assert_eq!(dir.managed().record(), dir.join("key.pem.txn"));
+        assert!(dir.managed().record().exists());
+        let bare = Location::managed("cert.pem", "key.pem");
+        assert_eq!(bare.record(), Path::new("key.pem.txn"));
+    }
+
     /// A pending record naming a file the pair does not hold.
     fn plant_record(dir: &Scratch) {
         let elsewhere = fs::canonicalize(&dir.0).unwrap().join("elsewhere.pem");
@@ -1116,12 +1148,16 @@ mod tests {
         plant_record(&dir);
         let before = dir.listing();
         for location in [dir.managed(), dir.named()] {
-            let refused = location.read_pair();
-            assert!(
-                matches!(&refused, Err(ServingError::Recover(e)) if e.kind() == io::ErrorKind::PermissionDenied),
-                "{refused:?}"
-            );
-            assert!(location.recover().is_err());
+            let refused = location.read_pair().unwrap_err();
+            let ServingError::RecordRefused { record, .. } = &refused else {
+                panic!("{refused}");
+            };
+            assert_eq!(record, &location.record());
+            assert!(refused.to_string().contains("by hand"), "{refused}");
+            assert!(matches!(
+                location.recover(),
+                Err(ServingError::RecordRefused { .. })
+            ));
         }
         assert_eq!(dir.listing(), before);
     }
@@ -1135,12 +1171,12 @@ mod tests {
         let before = dir.listing();
         assert!(matches!(
             serving.pair().await,
-            Err(ServingError::Recover(_))
+            Err(ServingError::RecordRefused { .. })
         ));
         let (cert, key) = another_pair(provider);
         let refused = install(&serving, &cert, &key).await.map(drop);
         assert!(
-            matches!(refused, Err(ServingError::Recover(_))),
+            matches!(refused, Err(ServingError::RecordRefused { .. })),
             "{refused:?}"
         );
         assert_eq!(dir.listing(), before);
@@ -1167,14 +1203,16 @@ mod tests {
         let before = dir.listing();
 
         let refused = dir.named().recover().unwrap_err();
-        let ServingError::Recover(e) = &refused else {
+        let ServingError::RecordRefused { source, .. } = &refused else {
             panic!("{refused}");
         };
-        assert_eq!(e.kind(), io::ErrorKind::PermissionDenied);
-        assert!(e.to_string().contains(&*dir.0.to_string_lossy()), "{e}");
+        assert!(
+            source.to_string().contains(&*dir.0.to_string_lossy()),
+            "{source}"
+        );
         assert!(matches!(
             start(provider, dir.named()),
-            Err(ServingError::Recover(_))
+            Err(ServingError::RecordRefused { .. })
         ));
         assert_eq!(dir.listing(), before);
         dir.managed().recover().unwrap();
@@ -1190,12 +1228,12 @@ mod tests {
         let before = dir.listing();
         let refused = dir.named().recover();
         assert!(
-            matches!(&refused, Err(ServingError::Recover(e)) if e.kind() == io::ErrorKind::PermissionDenied),
+            matches!(&refused, Err(ServingError::RecordRefused { .. })),
             "{refused:?}"
         );
         assert!(matches!(
             start(provider, dir.named()),
-            Err(ServingError::Recover(_))
+            Err(ServingError::RecordRefused { .. })
         ));
         assert_eq!(dir.listing(), before);
     }
@@ -1229,7 +1267,7 @@ mod tests {
         fs::rename(&swapped, &record).unwrap();
         assert!(matches!(
             serving.pair().await,
-            Err(ServingError::Recover(_))
+            Err(ServingError::RecordRefused { .. })
         ));
         assert!(record.exists());
     }
@@ -1250,7 +1288,7 @@ mod tests {
     }
 
     #[test]
-    fn a_recover_that_fails_at_the_managed_location_is_set_aside_and_a_pair_minted() {
+    fn a_recover_that_fails_at_the_managed_location_is_set_aside_and_the_start_goes_on() {
         let (_, provider) = &providers()[0];
         let dir = Scratch::new("wedged-managed");
         start(provider, dir.managed()).unwrap();
@@ -1268,6 +1306,45 @@ mod tests {
                 "key.pem.unusable",
             ]
         );
+        start(provider, dir.managed()).expect("the fresh pair loads");
+    }
+
+    #[test]
+    fn a_half_rolled_pair_left_by_a_set_aside_is_mismatched_and_replaced() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("half-rolled");
+        start(provider, dir.managed()).unwrap();
+        let old_key = fs::read_to_string(dir.join("key.pem")).unwrap();
+        let (new_cert, _) = another_pair(provider);
+        let canonical = fs::canonicalize(&dir.0).unwrap();
+        write(
+            &dir.join("key.pem.txn"),
+            &format!(
+                "committed\n{}\n{}\n",
+                canonical.join("cert.pem").display(),
+                canonical.join("key.pem").display()
+            ),
+        );
+        write(&dir.join("cert.pem.key.pem.txn"), &new_cert);
+        occupy(&dir.join("key.pem.key.pem.txn"));
+
+        start(provider, dir.managed()).unwrap();
+        assert!(dir.join("key.pem.txn.unusable").exists());
+        assert_eq!(
+            fs::read_to_string(dir.join("cert.pem.unusable")).unwrap(),
+            new_cert
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("key.pem.unusable")).unwrap(),
+            old_key
+        );
+        let displaced =
+            Location::named(dir.join("cert.pem.unusable"), dir.join("key.pem.unusable"));
+        assert!(matches!(
+            load(provider, &displaced),
+            Err(ServingError::Mismatched)
+        ));
+        assert_ne!(on_disk(&dir.join("cert.pem")), fingerprint(&new_cert));
         start(provider, dir.managed()).expect("the fresh pair loads");
     }
 

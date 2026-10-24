@@ -53,6 +53,15 @@ crates.io. In the consuming repo's `.cargo/config.toml`:
 ```toml
 [registries.wired-square]
 index = "sparse+https://forge.wiredsquare.com/api/packages/wired-square/cargo/"
+```
+
+The credential provider goes in your own `~/.cargo/config.toml`, never in a
+repo's. Cargo merges every config above the build directory and refuses a
+string provider beside an array, so a repo that sets one breaks every
+checkout whose user config sets the other:
+
+```toml
+[registries.wired-square]
 credential-provider = ["cargo:token-from-stdout", "sh", "-c", 'printf "Bearer %s" "$(op read "$WSLIB_REGISTRY_TOKEN_REF")"']
 ```
 
@@ -121,7 +130,15 @@ Bump the crate's `version` and give its `CHANGELOG.md` a heading for it in
 the PR. Once that is merged, on `main`, with `.env` filled in from
 `.env.example` (`WSLIB_REGISTRY_TOKEN_REF` is the `op://` reference of a
 `write:package` token, which Cargo reads from 1Password only when it
-publishes):
+publishes), and your `~/.cargo/config.toml` provider pointed at this clone's
+script:
+
+```toml
+[registries.wired-square]
+credential-provider = ["cargo:token-from-stdout", "/path/to/wslib-rs/scripts/registry-token.sh"]
+```
+
+Then:
 
 ```sh
 cargo release -p wslib-build-id --execute

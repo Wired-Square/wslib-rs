@@ -518,7 +518,9 @@ impl Stop {
 
     /// The handle that says when the service is ready, for when that is not
     /// when this is first polled. Taking it turns ready-on-first-poll off; it
-    /// borrows, so take it before `stop` moves into a serve call.
+    /// borrows, so take it before `stop` moves into a serve call, or into a
+    /// library: once the first poll has said ready, taking it cannot undo
+    /// that.
     pub fn ready(&self) -> Ready {
         self.shared.explicit.store(true, Ordering::SeqCst);
         Ready(self.shared.clone())
@@ -555,7 +557,9 @@ impl std::fmt::Debug for Stop {
 
 /// Tells the service manager the service is ready, taken from
 /// [`Stop::ready`]: running to the service control manager, `READY=1` to
-/// systemd, and nothing under launchd or in a console.
+/// systemd, and nothing under launchd or in a console. One from a dropped
+/// `Stop`, or a test's detached one, tells nobody, which is supported: a
+/// harness can take `testing::stop().0.ready()` as a `Ready` that goes nowhere.
 #[derive(Clone)]
 pub struct Ready(Arc<Shared>);
 

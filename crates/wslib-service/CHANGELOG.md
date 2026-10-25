@@ -20,5 +20,5 @@
 - Each stop logs one `info` line with the grace: the signal, the service
   control manager's control, or a stop by the service itself.
 - Feature `testing`: `testing::stop()`, a `Stop` under `Manager::Detached` and
-  the `Recorder` that stops it and keeps what it was told, for a consumer's
-  tests.
+  the `Recorder` that stops it, keeps what it was told and awaits ready, for a
+  consumer's tests.

@@ -11,6 +11,7 @@ pub fn stop() -> (Stop, Recorder) {
     let manager = CancellationToken::new();
     let recorder = Recorder {
         told: Arc::default(),
+        readied: CancellationToken::new(),
         token: manager.child_token(),
         manager,
     };
@@ -35,6 +36,7 @@ pub struct Told {
 #[derive(Clone, Debug)]
 pub struct Recorder {
     told: Arc<Mutex<Told>>,
+    readied: CancellationToken,
     manager: CancellationToken,
     token: CancellationToken,
 }
@@ -43,6 +45,12 @@ impl Recorder {
     /// The service manager's stop, as a signal or a stop control would be.
     pub fn stop(&self) {
         self.manager.cancel();
+    }
+
+    /// Resolves once ready has been sent, with the status it carried.
+    pub async fn ready(&self) -> Option<String> {
+        self.readied.cancelled().await;
+        self.lock().ready.clone().flatten()
     }
 
     pub fn told(&self) -> Told {
@@ -60,6 +68,7 @@ impl Recorder {
 impl Tell for Recorder {
     fn ready(&self, status: Option<&str>) {
         self.lock().ready = Some(status.map(str::to_string));
+        self.readied.cancel();
     }
 
     fn status(&self, status: &str) {

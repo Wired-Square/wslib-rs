@@ -29,14 +29,18 @@ fn main() -> ExitCode {
   service control manager, `READY=1` to systemd. Poll it only once serving,
   or take `stop.ready()` and call `Ready::send(Some("status"))` yourself,
   which sends `READY=1` and `STATUS=` in one datagram, once; `Ready::status`
-  updates `STATUS=` after. `Stop::manager()` says which `Manager` ran it, and
+  updates `STATUS=` after. Take `stop.ready()` before handing the `Stop` down
+  to a library: taking it later cannot undo a ready the first poll sent. `Stop::manager()` says which `Manager` ran it, and
   ready logs one `info` line naming it.
 - **How it stops is the manager's.** Under the service control manager, a
   stop, preshutdown or shutdown control, logged by name, with checkpoints
   while starting and stopping. On Windows outside it, Ctrl-C in the console.
   Under systemd (`$NOTIFY_SOCKET` on Linux), `SIGTERM`, answered with
-  `STOPPING=1`. Elsewhere, as under launchd, `SIGTERM` or `SIGINT`. The
-  signal is logged at `info`.
+  `STOPPING=1` and `EXTEND_TIMEOUT_USEC` in one datagram, so a test expecting
+  a bare `STOPPING=1` needs updating. systemd is Linux-only here: unlike
+  `wslib-systemd-notify`, which sends on any unix with `$NOTIFY_SOCKET`, `run`
+  tells nothing off Linux. Elsewhere, as under launchd, `SIGTERM` or
+  `SIGINT`. The signal is logged at `info`.
 - **`Stop::token()`** is cancelled at the stop. Cancelling it yourself is a
   stop of your own: a success, under the same grace, reported as stopping to
   the service control manager and as nothing to systemd, so a process that
@@ -62,6 +66,7 @@ fn main() -> ExitCode {
 - **Feature `testing`**: `testing::stop()` gives a `Stop` under
   `Manager::Detached` and a `Recorder`, for a consumer's tests in any Tokio
   runtime, without `Daemon::run`. `Recorder::stop()` is the manager's stop;
+  `Recorder::ready().await` resolves once ready is sent, with its status;
   `Recorder::told()` says whether ready was sent and with what status, the
   statuses sent alone, and whether the service stopped itself.
 - **`private_directory(dir)`** refuses a state directory anyone else could

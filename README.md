@@ -76,7 +76,7 @@ wslib-build-id = { version = "0.1", registry = "wired-square" }
 ### From GitHub Actions
 
 GitHub Actions can't reach Forgejo, so it reads the read-only mirror at
-`crates.wiredsquare.com` instead, with its own read token; so can any other
+`mirror.wiredsquare.com/cargo/` instead, with its own read token; so can any other
 machine off the network. In that machine's `~/.cargo/config.toml`:
 
 ```toml
@@ -85,7 +85,7 @@ registry = "sparse+https://forge.wiredsquare.com/api/packages/wired-square/cargo
 replace-with = "wired-square-mirror"
 
 [registries.wired-square-mirror]
-index = "sparse+https://crates.wiredsquare.com/"
+index = "sparse+https://mirror.wiredsquare.com/cargo/"
 ```
 
 with its read token stored by `cargo login --registry wired-square-mirror`.

@@ -1,0 +1,60 @@
+[package]
+name = "wslib-service"
+version = "0.1.0"
+description = "A background service on launchd, systemd or the Windows service control manager from one call, and its private state and log."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+# `testing::stop`: a `Stop` outside `Daemon::run`, and what it told, for a
+# consumer's tests.
+[features]
+testing = []
+
+[dependencies]
+thiserror = "2"
+tokio = { version = "1.47", default-features = false, features = ["macros", "rt-multi-thread", "time"] }
+tokio-util = { version = "0.7.5", default-features = false }
+tracing = "0.1.41"
+wslib-shutdown = { version = "0.1", path = "../wslib-shutdown", registry = "wired-square" }
+
+# The installer's layout checked: the process's uid, and opening the log
+# without following a link.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.174"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+wslib-systemd-notify = { version = "0.1.1", path = "../wslib-systemd-notify", registry = "wired-square", features = ["tokio"] }
+
+# The service control manager, the event log and its source registration, the
+# preshutdown timeout; the log file's and the state directory's owner and DACL.
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8"
+wslib-file-atomic = { version = "0.1.5", path = "../wslib-file-atomic", registry = "wired-square" }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_EventLog",
+    "Win32_System_Registry",
+    "Win32_System_Services",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tokio = { version = "1.47", features = ["macros", "rt", "time"] }
+wslib-telemetry = { version = "0.1.9", path = "../wslib-telemetry", registry = "wired-square", default-features = false, features = ["setup-core"] }
+
+# The DACL read-backs.
+[target.'cfg(windows)'.dev-dependencies]
+wslib-file-atomic = { version = "0.1.5", path = "../wslib-file-atomic", registry = "wired-square", features = ["testing"] }
+
+[[test]]
+name = "testing"
+required-features = ["testing"]

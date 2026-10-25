@@ -21,15 +21,22 @@ impl<N: Fn(&[(&str, &str)]) -> io::Result<()> + Send + Sync> Tell for Systemd<N>
     fn status(&self, status: &str) {
         told((self.0)(&[("STATUS", status)]));
     }
+
+    fn extend(&self, grace: Duration) {
+        told((self.0)(&[("EXTEND_TIMEOUT_USEC", &extend_usec(grace))]));
+    }
 }
 
 /// `STOPPING=1`, with the time `grace` needs, in answer to a signal.
 pub(crate) fn stopping(grace: Duration, notify: impl Fn(&[(&str, &str)]) -> io::Result<()>) {
-    let extend = (grace + STOP_MARGIN).as_micros().to_string();
     told(notify(&[
         ("STOPPING", "1"),
-        ("EXTEND_TIMEOUT_USEC", &extend),
+        ("EXTEND_TIMEOUT_USEC", &extend_usec(grace)),
     ]));
+}
+
+fn extend_usec(grace: Duration) -> String {
+    (grace + STOP_MARGIN).as_micros().to_string()
 }
 
 fn told(sent: io::Result<()>) {
@@ -82,5 +89,12 @@ mod tests {
             *sent.lock().unwrap(),
             ["STOPPING=1\nEXTEND_TIMEOUT_USEC=20000000"]
         );
+    }
+
+    #[test]
+    fn a_late_grace_extends_the_timeout_again_by_the_grace_and_the_margin() {
+        let sent = Sent::default();
+        Systemd(recording(&sent)).extend(Duration::from_secs(15));
+        assert_eq!(*sent.lock().unwrap(), ["EXTEND_TIMEOUT_USEC=20000000"]);
     }
 }

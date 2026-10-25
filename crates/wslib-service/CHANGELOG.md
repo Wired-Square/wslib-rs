@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2
+
+- The grace runs from the later of the stop and the first poll of `Stop`, so a
+  stop while starting no longer ends in `Failure::Overran` for a slow start.
+  systemd is sent `EXTEND_TIMEOUT_USEC` again when the grace starts late.
+- The panic hook is documented as replaced, not chained, while `main` runs.
+
 ## 0.1.1
 
 - The stop signal is its own now, not `wslib-shutdown`'s, so a failure to

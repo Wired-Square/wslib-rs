@@ -47,9 +47,13 @@ fn main() -> ExitCode {
   re-executes itself keeps its unit.
 - **`grace`**, 15 s unless set, bounds everything `main` does after a stop of
   either kind; past it `main` is dropped and `run` returns
-  `Failure::Overran`. Keep any drain timeout of your own inside it. The
-  service control manager's preshutdown timeout is raised to it plus 5 s,
-  and systemd is sent `EXTEND_TIMEOUT_USEC` of the same.
+  `Failure::Overran`. Keep any drain timeout of your own inside it. **It runs
+  from the later of the stop and the first poll of `Stop`**, so a stop while
+  starting does not eat into the drain. The service control manager's
+  preshutdown timeout is raised to it plus 5 s, and systemd is sent
+  `EXTEND_TIMEOUT_USEC` of the same, again at the first poll if the stop came
+  first. Windows' preshutdown timeout still runs from the stop, so a machine
+  shutdown can cut a long start short.
 - **The systemd watchdog** is fed from a task of its own from the start of
   `run` until `main` returns, so it shows the runtime is alive, not that the
   service serves. `$NOTIFY_SOCKET` and `$WATCHDOG_USEC` are left set.
@@ -58,7 +62,8 @@ fn main() -> ExitCode {
   `{:#}`, so an anyhow chain is whole. On Windows an error or a panic also
   goes to the Application event log under the service's name, registered as
   its event source on first start. While `main` runs the panic hook logs where
-  a panic happened; the previous hook is restored once it returns.
+  a panic happened; the previous hook is restored once it returns. It is
+  replaced, not chained, so install a hook of your own inside `main`.
 - **Under the service control manager, a failure is a service-specific exit
   code of 1.** The installer sets what follows: `sc failure <name> reset=
   86400 actions= restart/5000` and `sc failureflag <name> 1`. A start that

@@ -1,6 +1,6 @@
 [package]
 name = "wslib-service"
-version = "0.1.1"
+version = "0.1.2"
 description = "A background service on launchd, systemd or the Windows service control manager from one call, and its private state and log."
 readme = "README.md"
 edition.workspace = true

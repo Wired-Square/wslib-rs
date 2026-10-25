@@ -7421,7 +7421,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-service"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libc",
  "thiserror 2.0.21",
@@ -7431,18 +7431,8 @@ dependencies = [
  "windows-service",
  "windows-sys 0.61.2",
  "wslib-file-atomic",
- "wslib-shutdown",
  "wslib-systemd-notify",
  "wslib-telemetry",
-]
-
-[[package]]
-name = "wslib-shutdown"
-version = "0.1.0"
-dependencies = [
- "tokio",
- "tokio-util",
- "tracing",
 ]
 
 [[package]]

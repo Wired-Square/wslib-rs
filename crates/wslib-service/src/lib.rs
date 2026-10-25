@@ -100,6 +100,7 @@ mod layout;
 mod progress;
 #[cfg(windows)]
 mod scm;
+mod signal;
 #[cfg(any(target_os = "linux", test))]
 mod systemd;
 #[cfg(test)]
@@ -272,7 +273,7 @@ impl Daemon {
             #[cfg(target_os = "linux")]
             let systemd =
                 std::env::var_os("NOTIFY_SOCKET").is_some_and(|socket| !socket.is_empty());
-            let signalled = wslib_shutdown::stop_signal();
+            let signalled = signal::stop_signal();
             tokio::spawn(async move {
                 let signal = signalled.await;
                 tracing::info!(signal = signal.as_str(), ?grace, "stopping");

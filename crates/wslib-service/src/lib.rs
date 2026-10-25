@@ -195,7 +195,8 @@ impl Daemon {
     /// installed, and before then to stderr, or on Windows the Application
     /// event log under `name`. While `main` runs, the process's panic hook is
     /// one that logs a panic and where it happened, and the previous one is
-    /// restored once it returns. Open what can fail, the log file included,
+    /// restored once it returns, not chained to, so install a hook of the
+    /// app's own inside `main`. Open what can fail, the log file included,
     /// inside `main`, so that its failure is the service's. When `run` returns,
     /// the runtime has been shut down, waiting at most 1 s for its tasks, so
     /// what they held, sockets included, has been dropped. A task `main` left

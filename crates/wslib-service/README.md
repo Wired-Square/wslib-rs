@@ -58,7 +58,8 @@ fn main() -> ExitCode {
   `{:#}`, so an anyhow chain is whole. On Windows an error or a panic also
   goes to the Application event log under the service's name, registered as
   its event source on first start. While `main` runs the panic hook logs where
-  a panic happened; the previous hook is restored once it returns.
+  a panic happened; the previous hook is restored once it returns. It is
+  replaced, not chained, so install a hook of your own inside `main`.
 - **Under the service control manager, a failure is a service-specific exit
   code of 1.** The installer sets what follows: `sc failure <name> reset=
   86400 actions= restart/5000` and `sc failureflag <name> 1`. A start that

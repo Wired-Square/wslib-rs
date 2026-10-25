@@ -36,7 +36,6 @@ appliance chassis and every app beside it.
 | `wslib-1password`       | The `op` CLI typed: vaults, items, documents, `op://` reads |
 | `wslib-db-sqlite`       | One SQLite database: WAL, migration chains, settings        |
 | `wslib-host`            | Hostname, uptime, kernel, OS and an app-specific machine id |
-| `wslib-shutdown`        | SIGTERM and SIGINT as one future, or a cancelled token      |
 | `wslib-tasks`           | One task per row of a desired set, reconciled on change     |
 | `wslib-homeassistant`   | Home Assistant Ingress: peer check, caller and base path    |
 | `wslib-mcu-flash`       | ESP32 and STM32 flashing: tty lookup, images, five backends |

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- The stop signal is its own now, not `wslib-shutdown`'s, so a failure to
+  listen for one logs under `wslib_service`.
+
 ## 0.1.0
 
 - `Daemon::new(name).grace(..).run(main)`: `main` on a runtime of its own,

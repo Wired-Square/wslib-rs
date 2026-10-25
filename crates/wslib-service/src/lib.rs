@@ -157,13 +157,17 @@ impl Daemon {
     /// still does after the stop, not only a drain: unadvertising, joining
     /// tasks, flushing. It is the outer bound, so a drain timeout of the app's
     /// own, such as an HTTP server's, must sit inside it. Past it, `main` is
-    /// dropped and `run` returns [`Failure::Overran`]. What it tells the
+    /// dropped and `run` returns [`Failure::Overran`]. It runs from the later
+    /// of the stop and the first poll of the [`Stop`], so a stop while
+    /// starting leaves the whole grace for the drain. What it tells the
     /// service manager differs:
     ///
     /// - The service control manager: each start raises the service's
-    ///   preshutdown timeout to `grace` + 5 s, if it is shorter.
+    ///   preshutdown timeout to `grace` + 5 s, if it is shorter. That timeout
+    ///   runs from the stop, so a machine shutdown can cut a long start short.
     /// - systemd: a stop it sends is answered with `EXTEND_TIMEOUT_USEC` of
-    ///   `grace` + 5 s, so this one setting covers both.
+    ///   `grace` + 5 s, and again at the first poll if the stop came first, so
+    ///   this one setting covers both.
     /// - launchd: nothing. Its `ExitTimeOut` is the plist's, 20 s by default,
     ///   so keep `grace` inside it.
     /// - A container: nothing. Docker and the Home Assistant Supervisor send
@@ -349,6 +353,7 @@ fn drive(
         runtime.block_on(async {
             tokio::spawn({
                 let token = token.clone();
+                let manager = manager.clone();
                 async move {
                     token.cancelled().await;
                     if !manager.is_cancelled() {
@@ -356,13 +361,21 @@ fn drive(
                     }
                 }
             });
+            let stop = stop(token.clone());
+            let shared = stop.shared.clone();
             let overran = async {
                 token.cancelled().await;
+                if !shared.started.is_cancelled() {
+                    shared.started.cancelled().await;
+                    if manager.is_cancelled() {
+                        shared.tell.extend(grace);
+                    }
+                }
                 tokio::time::sleep(grace).await;
             };
             tokio::select! {
                 biased;
-                ended = main(stop(token.clone())) => Some(ended),
+                ended = main(stop) => Some(ended),
                 () = overran => None,
             }
         })
@@ -446,6 +459,8 @@ impl Display for Manager {
 trait Tell: Send + Sync {
     fn ready(&self, status: Option<&str>);
     fn status(&self, _: &str) {}
+    /// The grace starts now, later than the stop it was announced with.
+    fn extend(&self, _: Duration) {}
 }
 
 impl<T: Tell + ?Sized> Tell for Arc<T> {
@@ -455,6 +470,10 @@ impl<T: Tell + ?Sized> Tell for Arc<T> {
 
     fn status(&self, status: &str) {
         (**self).status(status);
+    }
+
+    fn extend(&self, grace: Duration) {
+        (**self).extend(grace);
     }
 }
 
@@ -469,10 +488,14 @@ struct Shared {
     tell: Box<dyn Tell>,
     explicit: AtomicBool,
     readied: AtomicBool,
+    /// Cancelled at the first poll, ready or drop of the `Stop`, where a grace
+    /// for a stop sent earlier starts.
+    started: CancellationToken,
 }
 
 impl Shared {
     fn ready(&self, status: Option<&str>) {
+        self.started.cancel();
         if !self.readied.swap(true, Ordering::SeqCst) {
             tracing::info!(under = self.manager.as_str(), "serving");
             self.tell.ready(status);
@@ -504,6 +527,7 @@ impl Stop {
                 tell: Box::new(tell),
                 explicit: AtomicBool::new(false),
                 readied: AtomicBool::new(false),
+                started: CancellationToken::new(),
             }),
             stopped: Box::pin({
                 let token = token.clone();
@@ -540,12 +564,19 @@ impl Future for Stop {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        if !std::mem::replace(&mut self.polled, true)
-            && !self.shared.explicit.load(Ordering::SeqCst)
-        {
-            self.shared.ready(None);
+        if !std::mem::replace(&mut self.polled, true) {
+            self.shared.started.cancel();
+            if !self.shared.explicit.load(Ordering::SeqCst) {
+                self.shared.ready(None);
+            }
         }
         self.stopped.as_mut().poll(cx)
+    }
+}
+
+impl Drop for Stop {
+    fn drop(&mut self) {
+        self.shared.started.cancel();
     }
 }
 
@@ -705,6 +736,59 @@ mod tests {
         fn status(&self, status: &str) {
             self.0.lock().unwrap().push(format!("status {status}"));
         }
+
+        fn extend(&self, grace: Duration) {
+            self.0.lock().unwrap().push(format!("extend {grace:?}"));
+        }
+    }
+
+    const GRACE: Duration = Duration::from_millis(50);
+
+    fn driven(
+        manager: CancellationToken,
+        told: &Told,
+        main: impl AsyncFnOnce(Stop) + Send + 'static,
+    ) -> Result<Value, Failure> {
+        let told = told.clone();
+        drive(
+            "widgets",
+            GRACE,
+            manager,
+            Box::new(|stop| {
+                Box::pin(async move {
+                    main(stop).await;
+                    Ok(Box::new(()) as Value)
+                })
+            }),
+            |token| Stop::new(Manager::Signals, token, told),
+        )
+    }
+
+    #[test]
+    fn a_stop_while_starting_is_given_its_grace_from_the_first_poll() {
+        let manager = CancellationToken::new();
+        manager.cancel();
+        let told = Told::default();
+        let ran = driven(manager, &told, async |stop| {
+            tokio::time::sleep(GRACE * 4).await;
+            stop.await;
+            tokio::time::sleep(GRACE / 5).await;
+        });
+        assert!(ran.is_ok(), "{ran:?}");
+        assert_eq!(*told.0.lock().unwrap(), ["ready None", "extend 50ms"]);
+    }
+
+    #[test]
+    fn a_stop_once_started_is_given_its_grace_from_the_stop() {
+        let manager = CancellationToken::new();
+        let told = Told::default();
+        let ran = driven(manager.clone(), &told, async move |mut stop| {
+            polled_once(&mut stop);
+            manager.cancel();
+            tokio::time::sleep(GRACE * 4).await;
+        });
+        assert!(matches!(ran, Err(Failure::Overran(GRACE))), "{ran:?}");
+        assert_eq!(*told.0.lock().unwrap(), ["ready None"]);
     }
 
     fn polled_once(stop: &mut Stop) {

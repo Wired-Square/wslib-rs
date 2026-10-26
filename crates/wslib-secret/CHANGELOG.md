@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2
+
+- `token` feature, off by default: `Secret::random` draws bytes from the OS as
+  unpadded base64url or base32, and `TokenHash` keeps the SHA-256 of a token's
+  text as unpadded base64url, compared in constant time. The hash is
+  `wslib-auth`'s session token hash.
+
 ## 0.1.1
 
 - Deserialising a non-string fails with a message that never quotes the value.

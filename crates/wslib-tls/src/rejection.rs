@@ -4,6 +4,8 @@ use std::sync::Arc;
 use rustls::{CertificateError, OtherError};
 use wslib_crypto::Fingerprint;
 
+use crate::KeyFingerprint;
+
 /// Why [`Outbound`](crate::Outbound)'s verifier refused a certificate, where rustls's own
 /// [`CertificateError`] does not say.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -15,6 +17,15 @@ pub enum Rejection {
         host: String,
         presented: Fingerprint,
         pinned: Fingerprint,
+    },
+    /// The host is pinned to another key.
+    #[error(
+        "{host} presented a key with sha256:{presented} but is pinned to the key with sha256:{pinned}"
+    )]
+    KeyPinMismatch {
+        host: String,
+        presented: KeyFingerprint,
+        pinned: KeyFingerprint,
     },
     /// The first read of the OS store did not land in time.
     #[error("the OS trust store has not been read yet, so {host} cannot be checked against it")]

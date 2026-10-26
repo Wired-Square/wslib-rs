@@ -1,6 +1,6 @@
 [package]
 name = "wslib-tls"
-version = "0.2.0"
+version = "0.2.1"
 description = "TLS over the caller's rustls CryptoProvider: outbound trust in OS roots, CA anchors and pins by host, reloaded live with typed rejections, and the serving pair minted, kept and replaced."
 readme = "README.md"
 edition.workspace = true

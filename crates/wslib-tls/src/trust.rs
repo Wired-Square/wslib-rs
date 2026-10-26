@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::net::IpAddr;
+use std::str::FromStr;
 
 use rustls_pki_types::{CertificateDer, TrustAnchor};
 use wslib_crypto::Fingerprint;
@@ -11,7 +13,13 @@ use wslib_crypto_x509::pem;
 pub struct Trust {
     pub(crate) os_roots: bool,
     pub(crate) anchors: Vec<(CertificateDer<'static>, TrustAnchor<'static>)>,
-    pub(crate) pins: HashMap<String, Fingerprint>,
+    pub(crate) pins: HashMap<String, Pin>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Pin {
+    Certificate(Fingerprint),
+    Key(KeyFingerprint),
 }
 
 impl Trust {
@@ -46,11 +54,50 @@ impl Trust {
 
     /// Trusts exactly the certificate with `fingerprint` for `host`, replacing any earlier pin.
     pub fn pin(&mut self, host: &str, fingerprint: Fingerprint) {
-        self.pins.insert(normalise_host(host), fingerprint);
+        self.pins
+            .insert(normalise_host(host), Pin::Certificate(fingerprint));
+    }
+
+    /// Trusts any certificate over the key with `fingerprint` for `host`, replacing any earlier pin.
+    pub fn pin_key(&mut self, host: &str, fingerprint: KeyFingerprint) {
+        self.pins
+            .insert(normalise_host(host), Pin::Key(fingerprint));
     }
 }
 
-fn authority(
+/// The SHA-256 of a certificate's DER SubjectPublicKeyInfo, spelt as a
+/// [`Fingerprint`] is: it holds while a certificate is re-minted over the same key.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct KeyFingerprint(pub Fingerprint);
+
+impl KeyFingerprint {
+    pub fn of(certificate: &CertificateDer<'_>) -> Result<Self, wslib_crypto_x509::Error> {
+        let view = wslib_crypto_x509::inspect(certificate)?;
+        Ok(Self(Fingerprint::of(&view.spki)))
+    }
+}
+
+impl fmt::Display for KeyFingerprint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl fmt::Debug for KeyFingerprint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "KeyFingerprint({self})")
+    }
+}
+
+impl FromStr for KeyFingerprint {
+    type Err = wslib_crypto::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.parse().map(Self)
+    }
+}
+
+pub(crate) fn authority(
     certificate: &CertificateDer<'_>,
 ) -> Result<(CertificateDer<'static>, TrustAnchor<'static>), AnchorError> {
     let view = wslib_crypto_x509::inspect(certificate)?;
@@ -72,6 +119,8 @@ pub enum AnchorError {
     NotAnAuthority { fingerprint: Fingerprint },
     #[error("not usable as a trust anchor: {0}")]
     Unusable(#[from] ChainError),
+    #[error("no authority was given")]
+    NoneGiven,
 }
 
 /// The one spelling of a host a pin is keyed by, so a pin and the name rustls

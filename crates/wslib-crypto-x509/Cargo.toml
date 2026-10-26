@@ -1,6 +1,6 @@
 [package]
 name = "wslib-crypto-x509"
-version = "0.1.2"
+version = "0.1.3"
 description = "X.509 certificates on wslib-crypto: PEM hygiene, inspect and examine with warnings, name coverage, chain checks over the caller's algorithms, and a self-signed serving certificate."
 readme = "README.md"
 edition.workspace = true

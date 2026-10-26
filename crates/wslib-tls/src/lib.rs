@@ -3,12 +3,13 @@
 //! configuration that enforces it.
 //!
 //! [`Outbound`]'s verifier consults the pins first: a pinned host is trusted
-//! for exactly that certificate, its name and expiry unchecked, because the pin
-//! *is* the identity. Any other host is verified against the operating
-//! system's roots and the [`Trust`]'s authorities. Every handshake reads the
-//! trust last given to [`Outbound::set_trust`], so no client is rebuilt; a
-//! connection already pooled is not reached, so an app that wants a removal to
-//! bite at once drops its clients on [`Outbound::subscribe`].
+//! for exactly that certificate, or any over the pinned key, its name and
+//! expiry unchecked, because the pin *is* the identity. Any other host is
+//! verified against the operating system's roots and the [`Trust`]'s
+//! authorities. Every handshake reads the trust last given to
+//! [`Outbound::set_trust`], so no client is rebuilt; a connection already
+//! pooled is not reached, so an app that wants a removal to bite at once drops
+//! its clients on [`Outbound::subscribe`].
 //!
 //! **Session resumption is off**: rustls does not run the verifier on a
 //! resumed handshake, so a ticket would carry a removed pin or authority on.
@@ -41,4 +42,4 @@ pub use outbound::Outbound;
 pub use probe::{Presented, ProbeError};
 pub use rejection::{Cause, Rejection, cause};
 pub use serving::{Installed, Location, Serving, ServingError, ServingPair};
-pub use trust::{AnchorError, Trust, normalise_host};
+pub use trust::{AnchorError, KeyFingerprint, Trust, normalise_host};

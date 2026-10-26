@@ -6,7 +6,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use rcgen::{
-    BasicConstraints, CertificateParams, DnType, IsCa, KeyIdMethod, KeyUsagePurpose, SerialNumber,
+    BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, KeyIdMethod,
+    KeyUsagePurpose, SerialNumber,
 };
 use rustls::crypto::CryptoProvider;
 use rustls::{ClientConfig, ServerConfig};
@@ -52,6 +53,16 @@ impl Authority {
     /// A leaf for `names`, DNS names or addresses, signed by this authority.
     pub fn sign(&self, names: &[&str]) -> Pair {
         self.sign_with(names, |_| {})
+    }
+
+    /// A client's leaf for `common_name`, signed by this authority.
+    pub fn sign_client(&self, common_name: &str) -> Pair {
+        self.sign_with(&[], |params| {
+            params
+                .distinguished_name
+                .push(DnType::CommonName, common_name);
+            params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+        })
     }
 
     pub(crate) fn sign_with(

@@ -4,11 +4,12 @@ use const_oid::ObjectIdentifier;
 use const_oid::db::rfc5280::{
     ANY_EXTENDED_KEY_USAGE, ID_AD_CA_ISSUERS, ID_CE_AUTHORITY_KEY_IDENTIFIER,
     ID_CE_BASIC_CONSTRAINTS, ID_CE_CRL_DISTRIBUTION_POINTS, ID_CE_EXT_KEY_USAGE, ID_CE_KEY_USAGE,
-    ID_CE_SUBJECT_KEY_IDENTIFIER, ID_KP_CLIENT_AUTH, ID_KP_CODE_SIGNING, ID_KP_EMAIL_PROTECTION,
-    ID_KP_OCSP_SIGNING, ID_KP_SERVER_AUTH, ID_KP_TIME_STAMPING, ID_PE_AUTHORITY_INFO_ACCESS,
+    ID_CE_NAME_CONSTRAINTS, ID_CE_SUBJECT_KEY_IDENTIFIER, ID_KP_CLIENT_AUTH, ID_KP_CODE_SIGNING,
+    ID_KP_EMAIL_PROTECTION, ID_KP_OCSP_SIGNING, ID_KP_SERVER_AUTH, ID_KP_TIME_STAMPING,
+    ID_PE_AUTHORITY_INFO_ACCESS,
 };
 use rcgen::CustomExtension;
-use wslib_crypto_x509::{ExtendedKeyUsage, KeyUsage, SubjectAltName};
+use wslib_crypto_x509::{ExtendedKeyUsage, KeyUsage, NameConstraints, NameSubtree, SubjectAltName};
 
 use crate::Error;
 use crate::der::{self, SEQUENCE, extension, tlv};
@@ -66,6 +67,8 @@ pub struct Profile {
     pub key_usage: Option<Extension<Vec<KeyUsage>>>,
     pub extended_key_usage: Option<Extension<Vec<ExtendedKeyUsage>>>,
     pub names: SanPolicy,
+    /// RFC 5280 4.2.1.10 has a CA mark it critical.
+    pub name_constraints: Option<Extension<NameConstraints>>,
     /// CRL distribution point URLs, all in one distribution point.
     pub crl_distribution_points: Vec<String>,
     /// Authority information access URLs for the issuer's certificate.
@@ -123,6 +126,13 @@ impl Profile {
         if !names.is_empty() {
             // RFC 5280 4.2.1.6: critical when the subject is empty.
             out.push(der::subject_alt_name(&names, subject.name_is_empty)?);
+        }
+        if let Some(Extension { value, critical }) = &self.name_constraints {
+            out.push(extension(
+                ID_CE_NAME_CONSTRAINTS,
+                *critical,
+                name_constraints(value)?,
+            ));
         }
         if !self.crl_distribution_points.is_empty() {
             let full_name = self
@@ -264,6 +274,41 @@ fn purpose(usage: &ExtendedKeyUsage) -> Result<ObjectIdentifier, Error> {
             })?
         }
     })
+}
+
+fn name_constraints(constraints: &NameConstraints) -> Result<Vec<u8>, Error> {
+    if constraints.permitted.is_empty() && constraints.excluded.is_empty() {
+        return Err(Error::EmptyExtension("name constraints"));
+    }
+    let subtrees = |tag, subtrees: &[NameSubtree]| -> Result<Vec<u8>, Error> {
+        if subtrees.is_empty() {
+            return Ok(Vec::new());
+        }
+        let encoded = subtrees
+            .iter()
+            .map(|subtree| Ok(tlv(SEQUENCE, &subtree_base(subtree)?)))
+            .collect::<Result<Vec<_>, Error>>()?;
+        Ok(tlv(tag, &encoded.concat()))
+    };
+    Ok(tlv(
+        SEQUENCE,
+        &[
+            subtrees(0xa0, &constraints.permitted)?,
+            subtrees(0xa1, &constraints.excluded)?,
+        ]
+        .concat(),
+    ))
+}
+
+fn subtree_base(subtree: &NameSubtree) -> Result<Vec<u8>, Error> {
+    match subtree {
+        NameSubtree::Dns(name) => der::general_name(&SubjectAltName::Dns(name.clone())),
+        NameSubtree::Ip(network) => Ok(tlv(0x87, &network.octets())),
+        NameSubtree::Other(_) => Err(Error::Name {
+            name: subtree.to_string(),
+            reason: "only DNS and address subtrees are issued",
+        }),
+    }
 }
 
 fn uri(url: &str) -> Result<Vec<u8>, Error> {

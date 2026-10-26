@@ -14,6 +14,7 @@ const LIB: &[(i64, &str)] = &[
 ];
 const APP: &[(i64, &str)] = &[(1000, "CREATE TABLE widgets (name TEXT)")];
 const BROKEN: &str = "CREATE TABLE nonsense (";
+const GADGETS: &str = "CREATE TABLE gadgets (name TEXT)";
 
 fn with(base: &[(i64, &'static str)], more: &[(i64, &'static str)]) -> Vec<(i64, &'static str)> {
     base.iter().chain(more).copied().collect()
@@ -69,30 +70,30 @@ async fn a_fresh_database_takes_every_chain_and_keeps_each_in_its_own_table() {
     let db = Database::open_in_memory(&chains(LIB, APP).await)
         .await
         .expect("open");
-    assert_eq!(versions(db.pool(), "lib_migrations").await, [1, 2]);
-    assert_eq!(versions(db.pool(), "app_migrations").await, [1000]);
+    assert_eq!(versions(db.pool(), "_lib_migrations").await, [1, 2]);
+    assert_eq!(versions(db.pool(), "_app_migrations").await, [1000]);
     assert_eq!(
         tables(db.pool()).await,
         [
+            "_app_migrations",
+            "_lib_migrations",
             "_migration_chains",
-            "app_migrations",
             "lib_a",
             "lib_b",
-            "lib_migrations",
             "widgets"
         ],
         "a chain not mirrored never makes _sqlx_migrations"
     );
 
     let row = sqlx::query(
-        "SELECT description, checksum, installed_on FROM lib_migrations WHERE version = 1",
+        "SELECT description, checksum, installed_on FROM _lib_migrations WHERE version = 1",
     )
     .fetch_one(db.pool())
     .await
     .unwrap();
     assert_eq!(row.get::<String, _>("description"), "migration 1");
     assert_eq!(row.get::<String, _>("checksum").len(), 96, "SHA-384 in hex");
-    wslib_db_sqlite::stamp::from_row(&row, "lib_migrations", "installed_on").expect("a stamp");
+    wslib_db_sqlite::stamp::from_row(&row, "_lib_migrations", "installed_on").expect("a stamp");
 }
 
 #[tokio::test]
@@ -100,7 +101,7 @@ async fn two_chains_may_number_alike() {
     let db = Database::open_in_memory(&chains(LIB, &[(1, "CREATE TABLE app_a (x TEXT)")]).await)
         .await
         .expect("open");
-    assert_eq!(versions(db.pool(), "app_migrations").await, [1]);
+    assert_eq!(versions(db.pool(), "_app_migrations").await, [1]);
 }
 
 #[tokio::test]
@@ -114,7 +115,7 @@ async fn a_migration_added_to_an_earlier_chain_after_a_later_one_applied_runs_at
         .await;
 
     let db = open(&path, LIB, APP).await.expect("reopen");
-    assert_eq!(versions(db.pool(), "lib_migrations").await, [1, 2]);
+    assert_eq!(versions(db.pool(), "_lib_migrations").await, [1, 2]);
     assert!(tables(db.pool()).await.contains(&"lib_b".to_string()));
     db.close().await;
 }
@@ -138,7 +139,7 @@ async fn a_failing_migration_in_a_later_chain_rolls_back_an_earlier_chains_too()
     let db = Database::open_existing(&path, &chains(&LIB[..1], APP).await)
         .await
         .expect("exactly as it was");
-    assert_eq!(versions(db.pool(), "lib_migrations").await, [1]);
+    assert_eq!(versions(db.pool(), "_lib_migrations").await, [1]);
     assert!(!tables(db.pool()).await.contains(&"lib_b".to_string()));
     db.close().await;
 }
@@ -238,8 +239,8 @@ async fn a_database_from_sqlx_runner_is_imported_and_the_old_build_still_refuses
     sqlx_runner(&path, LIB, APP).await.expect("the old build");
 
     let db = open(&path, LIB, APP).await.expect("imports");
-    assert_eq!(versions(db.pool(), "lib_migrations").await, [1, 2]);
-    assert_eq!(versions(db.pool(), "app_migrations").await, [1000]);
+    assert_eq!(versions(db.pool(), "_lib_migrations").await, [1, 2]);
+    assert_eq!(versions(db.pool(), "_app_migrations").await, [1000]);
     assert_eq!(versions(db.pool(), "_sqlx_migrations").await, [1, 2, 1000]);
     let imported: Vec<String> =
         sqlx::query_scalar("SELECT name FROM _migration_chains WHERE mirrored ORDER BY name")
@@ -253,7 +254,7 @@ async fn a_database_from_sqlx_runner_is_imported_and_the_old_build_still_refuses
         .await
         .expect("the old build opens an unchanged schema");
 
-    let newer = with(APP, &[(1001, "CREATE TABLE gadgets (name TEXT)")]);
+    let newer = with(APP, &[(1001, GADGETS)]);
     let db = open(&path, LIB, &newer).await.expect("applies 1001");
     assert_eq!(
         versions(db.pool(), "_sqlx_migrations").await,
@@ -306,12 +307,12 @@ async fn an_import_interrupted_leaves_sqlx_bookkeeping_untouched_and_runs_again(
     assert_eq!(versions(&pool, "_sqlx_migrations").await, [1, 2, 1000]);
     pool.close().await;
 
-    let app = with(APP, &[(1001, "CREATE TABLE gadgets (name TEXT)")]);
+    let app = with(APP, &[(1001, GADGETS)]);
     let db = open(&path, &lib, &app)
         .await
         .expect("imports again, then applies");
-    assert_eq!(versions(db.pool(), "lib_migrations").await, [1, 2, 3]);
-    assert_eq!(versions(db.pool(), "app_migrations").await, [1000, 1001]);
+    assert_eq!(versions(db.pool(), "_lib_migrations").await, [1, 2, 3]);
+    assert_eq!(versions(db.pool(), "_app_migrations").await, [1000, 1001]);
     assert_eq!(
         versions(db.pool(), "_sqlx_migrations").await,
         [1, 2, 3, 1000, 1001]
@@ -361,7 +362,7 @@ async fn imported_chains_whose_versions_collide_refuse_the_open_before_anything_
     let app = with(APP, &[(2, "CREATE TABLE gadgets (name TEXT)")]);
     let held = open(&path, LIB, &app).await;
     assert!(
-        matches!(&held, Err(Error::Collision { version: 2, chain, other }) if chain == "app" && other.as_deref() == Some("lib")),
+        matches!(&held, Err(Error::Collision { version: 2, chain, other }) if chain == "app" && other == "lib"),
         "a version _sqlx_migrations holds for lib: {held:?}"
     );
 
@@ -369,13 +370,13 @@ async fn imported_chains_whose_versions_collide_refuse_the_open_before_anything_
     let app = with(APP, &[(3, "CREATE TABLE gadgets (name TEXT)")]);
     let both = open(&path, &lib, &app).await;
     assert!(
-        matches!(&both, Err(Error::Collision { version: 3, chain, other }) if chain == "app" && other.as_deref() == Some("lib")),
+        matches!(&both, Err(Error::Collision { version: 3, chain, other }) if chain == "app" && other == "lib"),
         "a version both would write: {both:?}"
     );
 
     let db = open(&path, LIB, APP).await.expect("nothing applied");
     assert_eq!(versions(db.pool(), "_sqlx_migrations").await, [1, 2, 1000]);
-    assert_eq!(versions(db.pool(), "lib_migrations").await, [1, 2]);
+    assert_eq!(versions(db.pool(), "_lib_migrations").await, [1, 2]);
     db.close().await;
 }
 
@@ -389,7 +390,7 @@ async fn a_chain_added_after_the_import_never_touches_sqlx_bookkeeping() {
     let mut all = chains(LIB, APP).await.to_vec();
     all.push(chain("extra", &[(1, "CREATE TABLE extra_a (x TEXT)")]).await);
     let db = Database::open(&path, &all).await.expect("open");
-    assert_eq!(versions(db.pool(), "extra_migrations").await, [1]);
+    assert_eq!(versions(db.pool(), "_extra_migrations").await, [1]);
     assert_eq!(versions(db.pool(), "_sqlx_migrations").await, [1, 2, 1000]);
     db.close().await;
 }
@@ -457,9 +458,9 @@ async fn a_stray_empty_sqlx_table_is_never_imported_nor_written() {
     .unwrap();
     db.close().await;
 
-    let app = with(APP, &[(1001, "CREATE TABLE gadgets (name TEXT)")]);
+    let app = with(APP, &[(1001, GADGETS)]);
     let db = open(&path, LIB, &app).await.expect("reopen");
-    assert_eq!(versions(db.pool(), "app_migrations").await, [1000, 1001]);
+    assert_eq!(versions(db.pool(), "_app_migrations").await, [1000, 1001]);
     assert!(versions(db.pool(), "_sqlx_migrations").await.is_empty());
     let mirrored: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _migration_chains WHERE mirrored")
         .fetch_one(db.pool())
@@ -485,7 +486,7 @@ async fn mirrored_chains_on_a_fresh_database_satisfy_sqlx_runner_until_a_newer_m
         .await
         .expect("an older build finds every version it knows");
 
-    let newer = with(APP, &[(1001, "CREATE TABLE gadgets (name TEXT)")]);
+    let newer = with(APP, &[(1001, GADGETS)]);
     let [lib, app] = chains(LIB, &newer).await;
     Database::open(&path, &mirrored(lib, app))
         .await
@@ -500,7 +501,7 @@ async fn mirrored_chains_on_a_fresh_database_satisfy_sqlx_runner_until_a_newer_m
 }
 
 #[tokio::test]
-async fn a_version_already_in_sqlx_table_for_no_chain_is_a_collision() {
+async fn a_row_in_sqlx_table_whose_checksum_differs_from_its_mirrored_chain_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("app.db");
     let lib = chain("lib", &LIB[..1]).await.mirrored();
@@ -514,17 +515,127 @@ async fn a_version_already_in_sqlx_table_for_no_chain_is_a_collision() {
     .unwrap();
     db.close().await;
 
-    let refused = Database::open(&path, &[chain("lib", LIB).await.mirrored()]).await;
-    assert!(
-        matches!(&refused, Err(Error::Collision { version: 2, chain, other: None }) if chain == "lib"),
-        "{refused:?}"
+    let lib = [chain("lib", LIB).await.mirrored()];
+    for refused in [
+        Database::open(&path, &lib).await,
+        Database::open_existing(&path, &lib).await,
+    ] {
+        assert!(
+            matches!(&refused, Err(Error::Migrate { chain, source: MigrateError::VersionMismatch(2) }) if chain == "lib"),
+            "{refused:?}"
+        );
+    }
+}
+
+/// Imported at `APP`, then rolled back to a build on sqlx's runner that
+/// applied 1001.
+async fn rolled_back_past_1001(path: &Path) {
+    sqlx_runner(path, LIB, APP).await.expect("the old build");
+    open(path, LIB, APP).await.expect("imports").close().await;
+    sqlx_runner(path, LIB, &with(APP, &[(1001, GADGETS)]))
+        .await
+        .expect("the old build applies 1001");
+}
+
+#[tokio::test]
+async fn a_migration_sqlx_runner_applied_after_the_import_is_adopted_not_run_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.db");
+    rolled_back_past_1001(&path).await;
+
+    let app = with(APP, &[(1001, GADGETS)]);
+    open_existing(&path, LIB, &app)
+        .await
+        .expect("current, counting 1001")
+        .close()
+        .await;
+
+    let app = with(&app, &[(1002, "CREATE TABLE gizmos (name TEXT)")]);
+    let db = open(&path, LIB, &app)
+        .await
+        .expect("adopts 1001, which would fail if run again, and applies 1002");
+    assert_eq!(
+        versions(db.pool(), "_app_migrations").await,
+        [1000, 1001, 1002]
     );
-    assert!(
-        refused
-            .unwrap_err()
-            .to_string()
-            .ends_with("it is already recorded there")
+    assert_eq!(
+        versions(db.pool(), "_sqlx_migrations").await,
+        [1, 2, 1000, 1001, 1002]
     );
+    db.close().await;
+    open_existing(&path, LIB, &app)
+        .await
+        .expect("current")
+        .close()
+        .await;
+}
+
+#[tokio::test]
+async fn a_build_without_a_migration_sqlx_runner_applied_after_the_import_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.db");
+    rolled_back_past_1001(&path).await;
+
+    for refused in [
+        open_existing(&path, LIB, APP).await,
+        open(&path, LIB, APP).await,
+    ] {
+        assert!(
+            matches!(refused, Err(Error::Unclaimed { version: 1001 })),
+            "{refused:?}"
+        );
+    }
+}
+
+const PARENTS_AND_CHILDREN: &str = "CREATE TABLE parents (id INTEGER PRIMARY KEY);
+     CREATE TABLE children (id INTEGER PRIMARY KEY, parent INTEGER REFERENCES parents (id));";
+
+#[tokio::test]
+async fn a_migration_that_leaves_a_dangling_reference_fails_as_that_migration() {
+    let app = [
+        (1, PARENTS_AND_CHILDREN),
+        (2, "INSERT INTO children (parent) VALUES (9)"),
+    ];
+    let failed = Database::open_in_memory(&[chain("app", &app).await]).await;
+    let Err(Error::Migrate {
+        chain,
+        source: MigrateError::ExecuteMigration(e, 2),
+    }) = &failed
+    else {
+        panic!("{failed:?}");
+    };
+    assert_eq!(chain, "app");
+    assert!(
+        e.as_database_error()
+            .is_some_and(|e| e.is_foreign_key_violation()),
+        "{e:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_reference_dangling_before_the_open_is_not_blamed_on_a_migration() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.db");
+    let app = [(1, PARENTS_AND_CHILDREN)];
+    open(&path, &[], &app).await.expect("open").close().await;
+    let pool = SqlitePool::connect_with(
+        SqliteConnectOptions::new()
+            .filename(&path)
+            .foreign_keys(false),
+    )
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO children (parent) VALUES (9)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    open(&path, &[], &with(&app, &[(2, GADGETS)]))
+        .await
+        .expect("applies 2")
+        .close()
+        .await;
 }
 
 #[tokio::test]
@@ -543,7 +654,7 @@ async fn open_existing_before_the_import_verifies_against_sqlx_table_and_writes_
     );
     db.close().await;
 
-    let newer = with(APP, &[(1001, "CREATE TABLE gadgets (name TEXT)")]);
+    let newer = with(APP, &[(1001, GADGETS)]);
     let behind = open_existing(&path, LIB, &newer).await;
     assert!(
         matches!(&behind, Err(Error::SchemaBehind { chain, version: 1001 }) if chain == "app"),

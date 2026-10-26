@@ -111,7 +111,7 @@ fn is_uri(v: &str) -> bool {
 }
 
 /// What rustls accepts as a server name, with a wildcard only as the whole first label.
-fn is_dns_name(v: &str, allow_wildcard: bool) -> bool {
+pub(crate) fn is_dns_name(v: &str, allow_wildcard: bool) -> bool {
     let name = match v.strip_prefix("*.") {
         Some(rest) if allow_wildcard => rest,
         _ => v,

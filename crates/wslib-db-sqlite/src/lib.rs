@@ -82,6 +82,10 @@ pub enum Error {
     #[error("{0:?} is not a plain lower-case name: a letter, then letters, digits or _")]
     InvalidName(String),
 
+    /// A chain whose table would be `_sqlx_migrations` or `_migration_chains`.
+    #[error("{0:?} cannot name a chain: its table would be one this crate keeps for itself")]
+    ReservedChain(String),
+
     #[error("two chains are named {0:?}")]
     DuplicateChain(String),
 
@@ -92,11 +96,12 @@ pub enum Error {
     )]
     NoTransaction { chain: String, version: i64 },
 
-    /// A `_sqlx_migrations` row being imported that no chain has.
+    /// A `_sqlx_migrations` row that no mirrored chain has, as sqlx's runner
+    /// refuses an applied version it lacks.
     #[error("_sqlx_migrations has migration {version}, which no chain has")]
     Unclaimed { version: i64 },
 
-    /// A `_sqlx_migrations` row being imported that two chains have.
+    /// A `_sqlx_migrations` row that two mirrored chains have.
     #[error("_sqlx_migrations has migration {version}, which chains {chain} and {other} both have")]
     Ambiguous {
         version: i64,
@@ -104,16 +109,16 @@ pub enum Error {
         other: String,
     },
 
-    /// A migration of a mirrored chain whose version `_sqlx_migrations` already
-    /// holds, for the chain `other` or none, or that `other` is about to write too.
+    /// A migration of a mirrored chain whose version mirrored chain `other` has
+    /// applied or is about to apply, in the one version space of `_sqlx_migrations`.
     #[error(
-        "migration {version} of chain {chain} cannot be recorded in _sqlx_migrations: {}",
-        held_by(.other)
+        "migration {version} of chain {chain} cannot be recorded in _sqlx_migrations: chain \
+         {other} has that version there too"
     )]
     Collision {
         version: i64,
         chain: String,
-        other: Option<String>,
+        other: String,
     },
 
     /// A chain registered in the database that the open was not given.
@@ -154,13 +159,6 @@ impl Error {
             what,
             because: because.to_string(),
         }
-    }
-}
-
-fn held_by(other: &Option<String>) -> String {
-    match other {
-        Some(other) => format!("chain {other} has that version there too"),
-        None => "it is already recorded there".to_string(),
     }
 }
 

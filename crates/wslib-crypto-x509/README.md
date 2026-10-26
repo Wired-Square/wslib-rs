@@ -48,7 +48,12 @@ signature::verify(&inspect(&leaf)?.spki, &algorithm_identifier, message, signed,
   from any SubjectPublicKeyInfo, and `bits` gives its size), the signature
   algorithm by OpenSSL's name (`sha256WithRSAEncryption`), SHA-256
   fingerprint, the SubjectPublicKeyInfo for `wslib_crypto::key_matches`,
-  and the CA flag, key usages and extended key usages.
+  and the CA flag, key usages, extended key usages and name constraints.
+- **`NameConstraints`**: permitted and excluded `NameSubtree`s: a DNS name
+  (with an optional leading dot for the names below it only), an
+  `IpSubtree` (an address and prefix length, with no host bits set), or any
+  other subtree as its DER. A subtree parses from and displays as
+  `example.com` or `10.0.0.0/8`.
 - **`rfc_4514(name)`**: any DER Name in that same form, such as a CRL's
   issuer.
 - **`name_attributes(name)`**: a DER Name's attributes in the order the DER

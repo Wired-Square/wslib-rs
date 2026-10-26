@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- `txt::split`: a long value as TXT character-strings of at most 255
+  octets, split only between characters; an empty value is one empty
+  string. `txt::quote`: strings in zone file form, `"a" "b"`, with `"` and
+  `\` escaped.
+
 ## 0.2.0
 
 - **Breaking:** `Answer` and `HickoryOptions` are `#[non_exhaustive]`; build

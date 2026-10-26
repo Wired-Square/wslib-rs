@@ -121,6 +121,9 @@ Discovery futures are `Send`, and concurrency within a call needs no runtime.
   addresses (each counted once) and IPv6 networks, count only `pass` blocks.
   `Netblock::is_global` tells whether a block avoids private and reserved
   space.
+- `Flattened::missing_from` lists the `pass` blocks one tree authorises that
+  another doesn't, judged by address range: a vendor's block inside a wider
+  published one, or across adjacent ones, is covered.
 - `SpfTree::targets` lists every `include:` and `redirect=` target with its
   record.
 - `spf::check_host(resolver, ip, helo, sender)` is the full RFC 7208 §4

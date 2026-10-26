@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.2
+
+- `Flattened::missing_from`: the `pass` netblocks a tree authorises that
+  another tree's `pass` netblocks don't, judged by address range, so a block
+  inside a wider one or across adjacent ones counts as covered. For telling
+  whether a published SPF record already covers a sender's record by content
+  rather than by `include:` name.
+
 ## 0.5.1
 
 - The mark certificate's chain is checked through wslib-crypto-x509's

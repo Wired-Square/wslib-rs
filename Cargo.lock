@@ -7238,7 +7238,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-dns-mail"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "flate2",
  "quick-xml 0.38.4",

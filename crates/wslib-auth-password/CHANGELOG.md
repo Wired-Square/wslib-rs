@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- `why_unreadable`: why a stored hash is not a readable PHC string, for a
+  log line, so a caller needs no `argon2` of its own.
+
 ## 0.1.1
 
 - `needs_rehash` is true only when a parameter is below the pin; a hash made

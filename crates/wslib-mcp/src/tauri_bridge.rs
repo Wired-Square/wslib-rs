@@ -1,6 +1,6 @@
 //! A [`DomBridge`] over Tauri events: `harness:request` `{ id, op, args }` to
 //! one window, `harness:reply` `{ id, ok }` or `{ id, error }` back, answered
-//! on the page by [`BRIDGE_TS`].
+//! on the page by `@wired-square/mcp-bridge/tauri-bridge`.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,9 +14,6 @@ use crate::dom::DomBridge;
 pub const REQUEST_EVENT: &str = "harness:request";
 pub const REPLY_EVENT: &str = "harness:reply";
 pub const DEFAULT_WINDOW: &str = "main";
-
-/// The page half, to be vendored byte-for-byte beside `dom-ops.ts`.
-pub const BRIDGE_TS: &str = include_str!("../js/tauri-bridge.ts");
 
 /// Build one and clone it: every instance hears every reply, and ids are
 /// only unique within one.
@@ -93,13 +90,6 @@ mod tests {
         window.listen(REQUEST_EVENT, move |event| {
             answer(serde_json::from_str(event.payload()).unwrap())
         });
-    }
-
-    #[test]
-    fn the_page_half_uses_the_same_events() {
-        for event in [REQUEST_EVENT, REPLY_EVENT] {
-            assert!(BRIDGE_TS.contains(&format!("\"{event}\"")), "{event}");
-        }
     }
 
     #[tokio::test]

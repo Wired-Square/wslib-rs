@@ -44,8 +44,8 @@ pub fn verify_password(account: &Account, password: &str) -> bool {
         return true;
     }
     let user_id = &account.user.id;
-    if let Err(e) = argon2::PasswordHash::new(stored) {
-        tracing::error!(%user_id, error = %e, "a stored password hash is unreadable");
+    if let Some(error) = wslib_auth_password::why_unreadable(stored) {
+        tracing::error!(%user_id, %error, "a stored password hash is unreadable");
     }
     if password.len() > MAX_PASSWORD_BYTES {
         tracing::warn!(%user_id, "a password tried is over the maximum, so it cannot verify");

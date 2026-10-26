@@ -11,7 +11,6 @@ repository.workspace = true
 publish = ["wired-square"]
 
 [dependencies]
-argon2 = { version = "0.6", default-features = false, features = ["password-hash"] }
 base64 = { version = "0.23", default-features = false, features = ["alloc"] }
 chrono = { version = "0.4.38", default-features = false }
 getrandom = "0.3"
@@ -24,7 +23,7 @@ wslib-appliance-store = { path = "../wslib-appliance-store", version = "0.0.1", 
 wslib-appliance-types = { path = "../wslib-appliance-types", version = "0.0.1", registry = "wired-square" }
 wslib-auth = { path = "../wslib-auth", version = "0.1.0", registry = "wired-square", default-features = false, features = ["sqlite"] }
 wslib-auth-passkey = { path = "../wslib-auth-passkey", version = "0.1.0", registry = "wired-square", default-features = false, features = ["ceremonies"] }
-wslib-auth-password = { path = "../wslib-auth-password", version = "0.1.1", registry = "wired-square", default-features = false }
+wslib-auth-password = { path = "../wslib-auth-password", version = "0.1.2", registry = "wired-square", default-features = false }
 wslib-auth-totp = { path = "../wslib-auth-totp", version = "0.1.1", registry = "wired-square", default-features = false, features = ["codes"] }
 wslib-secret = { path = "../wslib-secret", version = "0.1.0", registry = "wired-square" }
 

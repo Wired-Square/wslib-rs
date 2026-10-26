@@ -6961,6 +6961,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-appliance"
+version = "0.1.0"
+dependencies = [
+ "wslib-appliance-config",
+ "wslib-appliance-types",
+]
+
+[[package]]
+name = "wslib-appliance-config"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml 1.1.8+spec-1.1.0",
+ "tracing",
+ "wslib-http-scaffold",
+]
+
+[[package]]
+name = "wslib-appliance-types"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "ts-rs",
+ "wslib-auth-passkey",
+ "wslib-auth-totp",
+ "wslib-http-error",
+ "wslib-secret",
+ "wslib-telemetry",
+]
+
+[[package]]
 name = "wslib-auth"
 version = "0.1.0"
 dependencies = [

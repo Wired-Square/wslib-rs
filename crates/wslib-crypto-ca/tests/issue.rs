@@ -1,5 +1,8 @@
 mod common;
 
+use std::fs;
+use std::path::PathBuf;
+use std::process::Command;
 use std::time::{Duration, SystemTime};
 
 use common::{algorithms, another_key, names, providers, signer, widget_subject};
@@ -10,7 +13,7 @@ use wslib_crypto_ca::{
     Serial, Subject, Validity, build_csr,
 };
 use wslib_crypto_x509::chain::{self, Purpose};
-use wslib_crypto_x509::{ExtendedKeyUsage, KeyUsage, pem};
+use wslib_crypto_x509::{ExtendedKeyUsage, KeyUsage, NameConstraints, NameSubtree, inspect, pem};
 use x509_parser::prelude::{FromDer, X509Certificate};
 
 const CRL_URL: &str = "http://crl.example.com/ca.crl";
@@ -579,4 +582,178 @@ fn a_serial_from_an_i64_is_positive() {
     assert_eq!(Serial::try_from(5i64).unwrap(), serial(5));
     assert!(matches!(Serial::try_from(-5i64), Err(Error::Serial)));
     assert!(matches!(Serial::try_from(0i64), Err(Error::Serial)));
+}
+
+fn constraints(permitted: &[&str], excluded: &[&str]) -> NameConstraints {
+    let subtrees = |list: &[&str]| list.iter().map(|s| s.parse().unwrap()).collect();
+    NameConstraints {
+        permitted: subtrees(permitted),
+        excluded: subtrees(excluded),
+    }
+}
+
+/// The subtrees `tests/data/openssl-name-constrained-ca.pem` was made with.
+fn openssl_constraints() -> NameConstraints {
+    constraints(
+        &[
+            "example.com",
+            ".example.net",
+            "10.20.0.0/16",
+            "fd00:20::/32",
+        ],
+        &["secret.example.com", "0.0.0.0/0", "::/0"],
+    )
+}
+
+fn constrained_ca_profile(constraints: NameConstraints) -> Profile {
+    Profile {
+        basic_constraints: Some(Extension::critical(BasicConstraints::Authority {
+            path_length: Some(0),
+        })),
+        name_constraints: Some(Extension::critical(constraints)),
+        ..ca_profile()
+    }
+}
+
+fn csr_for(key: &Signer, common_name: &str, names: &[&str]) -> Csr {
+    let der = build_csr(key, &Subject::new(common_name), &common::names(names)).unwrap();
+    Csr::from_der(&der, algorithms()).unwrap()
+}
+
+fn constrained_ca(root: &Authority, constraints: NameConstraints) -> Authority {
+    let (_, provider) = &providers()[0];
+    let key = Signer::new(provider.clone(), &another_key()).unwrap();
+    let csr = csr_for(&key, "ACME Broker CA", &[]);
+    let issued = root
+        .issue(
+            &csr,
+            &constrained_ca_profile(constraints),
+            &serial(2),
+            a_year(),
+        )
+        .unwrap();
+    Authority::new(issued, key, KeyIdentifierMethod::Sha1).unwrap()
+}
+
+const OPENSSL_NAME_CONSTRAINED_CA: &str = include_str!("data/openssl-name-constrained-ca.pem");
+
+#[test]
+fn name_constraints_are_written_as_openssl_wrote_them() {
+    let (_, provider) = &providers()[0];
+    let root = root(signer(provider, KeyAlgorithm::EcP256));
+    let ours = Profile {
+        crl_distribution_points: vec![CRL_URL.into()],
+        ca_issuers: vec![CA_URL.into()],
+        ..constrained_ca_profile(openssl_constraints())
+    };
+    let csr = request(&Signer::new(provider.clone(), &another_key()).unwrap());
+    let issued = root.issue(&csr, &ours, &serial(2), a_year()).unwrap();
+    let openssl = &pem::certificates(OPENSSL_NAME_CONSTRAINED_CA).unwrap()[0];
+    assert_eq!(extensions(&issued)[2..], extensions(openssl)[2..]);
+}
+
+#[test]
+fn name_constraints_read_back_as_they_were_issued() {
+    let (_, provider) = &providers()[0];
+    let root = root(signer(provider, KeyAlgorithm::EcP256));
+    let ca = constrained_ca(&root, openssl_constraints());
+    for der in [
+        ca.certificate().to_vec(),
+        pem::certificates(OPENSSL_NAME_CONSTRAINED_CA).unwrap()[0].to_vec(),
+    ] {
+        assert_eq!(
+            inspect(&der).unwrap().name_constraints,
+            Some(openssl_constraints())
+        );
+    }
+}
+
+#[test]
+fn name_constraints_must_say_something_issuable() {
+    let (_, provider) = &providers()[0];
+    let root = root(signer(provider, KeyAlgorithm::EcP256));
+    let csr = request(&Signer::new(provider.clone(), &another_key()).unwrap());
+    let issue = |constraints| {
+        root.issue(
+            &csr,
+            &constrained_ca_profile(constraints),
+            &serial(2),
+            a_year(),
+        )
+    };
+    assert!(matches!(
+        issue(NameConstraints::default()),
+        Err(Error::EmptyExtension("name constraints"))
+    ));
+    let email = NameConstraints {
+        permitted: vec![NameSubtree::Other(vec![0x30, 3, 0x81, 1, b'a'])],
+        excluded: vec![],
+    };
+    assert!(matches!(issue(email), Err(Error::Name { .. })));
+}
+
+/// `openssl verify`'s verdict on a leaf with `names` under a CA constrained to `constraints`.
+fn openssl_verifies(constraints: &NameConstraints, names: &[&str]) -> Result<(), String> {
+    let (_, provider) = &providers()[0];
+    let root = root(signer(provider, KeyAlgorithm::EcP256));
+    let ca = constrained_ca(&root, constraints.clone());
+    let csr = csr_for(
+        &signer(provider, KeyAlgorithm::EcP384),
+        "Leaf Device",
+        names,
+    );
+    let leaf_profile = Profile {
+        basic_constraints: Some(Extension::non_critical(BasicConstraints::EndEntity)),
+        names: SanPolicy::Requested,
+        ..Profile::default()
+    };
+    let leaf = ca.issue(&csr, &leaf_profile, &serial(3), a_year()).unwrap();
+
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("name-constraints");
+    fs::create_dir_all(&dir).unwrap();
+    for (file, der) in [
+        ("root.pem", root.certificate().as_ref()),
+        ("ca.pem", ca.certificate().as_ref()),
+        ("leaf.pem", leaf.as_ref()),
+    ] {
+        fs::write(dir.join(file), pem::encode(pem::CERTIFICATE, der)).unwrap();
+    }
+    let out = Command::new("openssl")
+        .current_dir(&dir)
+        .args(["verify", "-attime", "1810000000", "-CAfile", "root.pem"])
+        .args(["-untrusted", "ca.pem", "leaf.pem"])
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&[out.stdout, out.stderr].concat()).into_owned();
+    if out.status.success() && said.trim_end().ends_with("leaf.pem: OK") {
+        Ok(())
+    } else {
+        Err(said)
+    }
+}
+
+#[test]
+fn openssl_refuses_a_leaf_outside_the_subtrees_and_accepts_one_inside() {
+    if Command::new("openssl").arg("version").output().is_err() {
+        eprintln!("skipped: no openssl on the PATH");
+        return;
+    }
+    let broker = constraints(&["example.com", "10.20.0.0/16"], &["secret.example.com"]);
+    let no_addresses = constraints(&["example.com"], &["0.0.0.0/0", "::/0"]);
+    for (constraints, names, holds) in [
+        (&broker, &["www.example.com"][..], true),
+        (&broker, &["www.example.com", "10.20.1.5"], true),
+        (&broker, &["www.example.org"], false),
+        (&broker, &["www.example.com", "10.30.1.5"], false),
+        (&broker, &["secret.example.com"], false),
+        (&no_addresses, &["www.example.com"], true),
+        (&no_addresses, &["www.example.com", "10.20.1.5"], false),
+        (&no_addresses, &["www.example.com", "fd00::5"], false),
+    ] {
+        match (openssl_verifies(constraints, names), holds) {
+            (Ok(()), true) => {}
+            (Err(said), false) if said.contains("subtree violation") => {}
+            (verdict, _) => panic!("{names:?}: {verdict:?}"),
+        }
+    }
 }

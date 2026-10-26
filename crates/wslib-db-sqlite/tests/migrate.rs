@@ -638,6 +638,78 @@ async fn a_reference_dangling_before_the_open_is_not_blamed_on_a_migration() {
         .await;
 }
 
+const PARENTS_AND_KIDS: &str = "CREATE TABLE parents (id INTEGER PRIMARY KEY, name TEXT);
+     CREATE TABLE kids (id INTEGER PRIMARY KEY, parent INTEGER REFERENCES parents (id));
+     INSERT INTO parents (id, name) VALUES (1, 'Pat');
+     INSERT INTO kids (id, parent) VALUES (1, 1);";
+
+fn rebuild_parents(kept: &str) -> String {
+    format!(
+        "CREATE TABLE parents_new (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+         INSERT INTO parents_new SELECT id, name FROM parents WHERE {kept};
+         DROP TABLE parents;
+         ALTER TABLE parents_new RENAME TO parents;"
+    )
+}
+
+#[tokio::test]
+async fn a_migration_may_rebuild_a_referenced_table_the_way_sqlite_documents() {
+    let rebuild = rebuild_parents("TRUE");
+    let app = [(1001, PARENTS_AND_KIDS), (1002, rebuild.as_str())];
+    let db = Database::open_in_memory(&[chain("app", &app).await])
+        .await
+        .expect("open");
+
+    let joined: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT kids.id, parents.name FROM kids JOIN parents ON parents.id = kids.parent",
+    )
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(joined, [(1, "Pat".to_string())]);
+    let orphan = sqlx::query("INSERT INTO kids (parent) VALUES (9)")
+        .execute(db.pool())
+        .await;
+    assert!(orphan.is_err(), "the rebuilt parents is still referenced");
+}
+
+#[tokio::test]
+async fn a_rebuild_that_drops_a_referenced_row_fails_as_that_migration_and_rolls_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.db");
+    let app = [(1001, PARENTS_AND_KIDS)];
+    let before = chains(&[], &app).await;
+    open(&path, &[], &app).await.expect("open").close().await;
+
+    let rebuild = rebuild_parents("id <> 1");
+    let failed = open(&path, &[], &[app[0], (1002, &rebuild)]).await;
+    let Err(Error::Migrate {
+        chain,
+        source: MigrateError::ExecuteMigration(e, 1002),
+    }) = &failed
+    else {
+        panic!("{failed:?}");
+    };
+    assert_eq!(chain, "app");
+    assert!(
+        e.as_database_error()
+            .is_some_and(|e| e.is_foreign_key_violation()),
+        "{e:?}"
+    );
+
+    let db = Database::open_existing(&path, &before)
+        .await
+        .expect("exactly as it was");
+    assert_eq!(versions(db.pool(), "_app_migrations").await, [1001]);
+    assert!(!tables(db.pool()).await.contains(&"parents_new".to_string()));
+    let parents: Vec<i64> = sqlx::query_scalar("SELECT id FROM parents")
+        .fetch_all(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(parents, [1]);
+    db.close().await;
+}
+
 #[tokio::test]
 async fn open_existing_before_the_import_verifies_against_sqlx_table_and_writes_nothing() {
     let dir = tempfile::tempdir().unwrap();

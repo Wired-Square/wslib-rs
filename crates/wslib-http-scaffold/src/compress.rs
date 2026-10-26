@@ -156,7 +156,7 @@ pub(crate) fn listed(headers: &HeaderMap, name: header::HeaderName) -> impl Iter
 }
 
 /// Whether `headers` take gzip, by RFC 9110 §12.5.3: `gzip` or `x-gzip` at a
-/// q-value above zero, else `*` at one when neither is named; a malformed
+/// q-value above zero, else `*` above zero when neither is named; a malformed
 /// q-value is zero.
 pub fn accepts_gzip(headers: &HeaderMap) -> bool {
     let (mut named, mut any) = (None, None);

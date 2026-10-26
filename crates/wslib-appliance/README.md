@@ -6,6 +6,8 @@ The appliance family in one dependency:
   the wire contract; the `ts` feature turns on its TypeScript.
 - `wslib_appliance::config` is [`wslib-appliance-config`](../wslib-appliance-config),
   the bootstrap settings.
+- `wslib_appliance::store` is [`wslib-appliance-store`](../wslib-appliance-store),
+  the database, behind the `store` feature (off by default).
 
 ```toml
 [dependencies]

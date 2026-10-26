@@ -6965,6 +6965,7 @@ name = "wslib-appliance"
 version = "0.1.0"
 dependencies = [
  "wslib-appliance-config",
+ "wslib-appliance-store",
  "wslib-appliance-types",
 ]
 
@@ -6979,6 +6980,26 @@ dependencies = [
  "toml 1.1.8+spec-1.1.0",
  "tracing",
  "wslib-http-scaffold",
+]
+
+[[package]]
+name = "wslib-appliance-store"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "uuid",
+ "wslib-appliance-types",
+ "wslib-auth",
+ "wslib-db-sqlite",
+ "wslib-file-atomic",
+ "wslib-secret",
 ]
 
 [[package]]

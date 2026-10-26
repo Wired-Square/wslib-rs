@@ -1,6 +1,6 @@
 [package]
 name = "wslib-auth-password"
-version = "0.1.1"
+version = "0.1.2"
 description = "Argon2id password hashes: hash, verify, a dummy verify for unknown accounts, rehash detection and a length policy."
 readme = "README.md"
 edition.workspace = true

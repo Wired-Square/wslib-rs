@@ -30,6 +30,8 @@ if verified && stored.is_some_and(needs_rehash) {
 - **`verify(stored, password)`**: `false` for a wrong password, an unreadable
   PHC string and an overlong password alike; it never panics. Hashes from
   argon2 0.5's `Argon2::default()` verify, since they are the same parameters.
+- **`why_unreadable(stored)`**: why a stored string is not a readable PHC
+  string, for a log line beside a `verify` that was false; `None` when it is.
 - **`verify_absent(password)`**: the cost of a `verify`, always `false`, for a
   name no account has, so it answers no faster than a wrong password. Its
   hash is made once, by the same hasher.

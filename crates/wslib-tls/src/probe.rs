@@ -8,7 +8,7 @@ use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
 use crate::outbound::{Judge, Recorder};
-use crate::{Outbound, normalise_host};
+use crate::{KeyFingerprint, Outbound, normalise_host};
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -21,6 +21,8 @@ pub struct Presented {
     pub port: u16,
     pub end_entity: CertificateDer<'static>,
     pub intermediates: Vec<CertificateDer<'static>>,
+    /// Of `end_entity`, for [`Trust::pin_key`](crate::Trust::pin_key); `None` when it cannot be read.
+    pub key_fingerprint: Option<KeyFingerprint>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -74,6 +76,7 @@ impl Outbound {
             (Some((end_entity, intermediates)), _) => Ok(Presented {
                 host,
                 port,
+                key_fingerprint: KeyFingerprint::of(&end_entity).ok(),
                 end_entity,
                 intermediates,
             }),

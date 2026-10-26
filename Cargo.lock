@@ -7224,7 +7224,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-http-server"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "axum",
  "axum-server",
@@ -7395,7 +7395,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-tls"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "http",
  "libc",

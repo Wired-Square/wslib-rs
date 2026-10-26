@@ -1,12 +1,17 @@
 use std::io;
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::Arc;
 
+use axum::Extension;
+use axum::middleware::AddExtension;
+use axum_server::accept::Accept;
 use axum_server::tls_rustls::RustlsConfig;
 use rustls::ServerConfig;
 use rustls::crypto::CryptoProvider;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use tokio_rustls::server::TlsStream;
 
 /// The TLS listener's configuration, reloadable in place; clones share it.
 #[derive(Clone, Debug)]
@@ -40,6 +45,52 @@ fn with_alpn(mut config: Arc<ServerConfig>) -> Arc<ServerConfig> {
         Arc::make_mut(&mut config).alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
     }
     config
+}
+
+/// The certificates a TLS client presented, leaf first, as verified by the
+/// configuration's client verifier: an extension on each of its requests,
+/// empty when it presented none.
+#[derive(Clone, Debug, Default)]
+pub struct PeerCertificates(Arc<[CertificateDer<'static>]>);
+
+impl PeerCertificates {
+    pub fn end_entity(&self) -> Option<&CertificateDer<'static>> {
+        self.0.first()
+    }
+
+    pub fn chain(&self) -> &[CertificateDer<'static>] {
+        &self.0
+    }
+}
+
+/// An acceptor whose connections' services add the [`PeerCertificates`] to each request.
+#[derive(Clone)]
+pub(crate) struct Identifying<A>(pub(crate) A);
+
+impl<I, S, A, T> Accept<I, S> for Identifying<A>
+where
+    A: Accept<I, S, Stream = TlsStream<T>>,
+    A::Future: Send + 'static,
+{
+    type Stream = TlsStream<T>;
+    type Service = AddExtension<A::Service, PeerCertificates>;
+    type Future = Pin<Box<dyn Future<Output = io::Result<(Self::Stream, Self::Service)>> + Send>>;
+
+    fn accept(&self, stream: I, service: S) -> Self::Future {
+        let accepting = self.0.accept(stream, service);
+        Box::pin(async move {
+            let (stream, service) = accepting.await?;
+            let peer = PeerCertificates(
+                stream
+                    .get_ref()
+                    .1
+                    .peer_certificates()
+                    .unwrap_or_default()
+                    .into(),
+            );
+            Ok((stream, tower::Layer::layer(&Extension(peer), service)))
+        })
+    }
 }
 
 /// A server configuration from a PEM certificate chain and private key, on

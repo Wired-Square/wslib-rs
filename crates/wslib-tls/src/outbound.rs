@@ -3,15 +3,19 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-use rustls::client::{Resumption, WebPkiServerVerifier};
+use rustls::client::{Resumption, WantsClientCert, WebPkiServerVerifier};
 use rustls::crypto::CryptoProvider;
-use rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme};
-use rustls_pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{
+    CertificateError, ClientConfig, ConfigBuilder, DigitallySignedStruct, RootCertStore,
+    SignatureScheme,
+};
+use rustls_pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use tokio::sync::watch;
 use wslib_crypto::Fingerprint;
 
 use crate::os::{OsRoots, ReadOs};
-use crate::{Rejection, Trust, normalise_host};
+use crate::trust::Pin;
+use crate::{KeyFingerprint, Rejection, Trust, normalise_host};
 
 pub(crate) const OS_WAIT: Duration = Duration::from_secs(30);
 
@@ -89,8 +93,26 @@ impl Outbound {
         self.config(Judge::Trusting(self.clone()))
     }
 
+    /// [`client_config`](Self::client_config), presenting `chain`, leaf first,
+    /// and its `key` to a server that asks for a client certificate.
+    ///
+    /// Fails when the provider cannot load the key or it is not the leaf's.
+    pub fn client_config_presenting(
+        self: &Arc<Self>,
+        chain: Vec<CertificateDer<'static>>,
+        key: PrivateKeyDer<'static>,
+    ) -> Result<ClientConfig, rustls::Error> {
+        self.verifying(Judge::Trusting(self.clone()))
+            .with_client_auth_cert(chain, key)
+            .map(without_resumption)
+    }
+
     pub(crate) fn config(&self, judge: Judge) -> ClientConfig {
-        let mut config = ClientConfig::builder_with_provider(self.provider.clone())
+        without_resumption(self.verifying(judge).with_no_client_auth())
+    }
+
+    fn verifying(&self, judge: Judge) -> ConfigBuilder<ClientConfig, WantsClientCert> {
+        ClientConfig::builder_with_provider(self.provider.clone())
             .with_safe_default_protocol_versions()
             .expect("checked in Outbound::new")
             .dangerous()
@@ -98,9 +120,6 @@ impl Outbound {
                 provider: self.provider.clone(),
                 judge,
             }))
-            .with_no_client_auth();
-        config.resumption = Resumption::disabled();
-        config
     }
 
     fn replace(&self, trust: Trust) {
@@ -154,6 +173,11 @@ impl Outbound {
     }
 }
 
+fn without_resumption(mut config: ClientConfig) -> ClientConfig {
+    config.resumption = Resumption::disabled();
+    config
+}
+
 impl fmt::Debug for Outbound {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Outbound")
@@ -175,17 +199,26 @@ impl Reading {
         host: &str,
         end_entity: &CertificateDer<'_>,
     ) -> Option<Result<ServerCertVerified, rustls::Error>> {
-        let pinned = *self.trust.pins.get(host)?;
-        let presented = Fingerprint::of(end_entity);
-        Some(if presented == pinned {
-            Ok(ServerCertVerified::assertion())
-        } else {
-            Err(Rejection::PinMismatch {
-                host: host.to_string(),
-                presented,
-                pinned,
-            }
-            .into())
+        Some(match *self.trust.pins.get(host)? {
+            Pin::Certificate(pinned) => match Fingerprint::of(end_entity) {
+                presented if presented == pinned => Ok(ServerCertVerified::assertion()),
+                presented => Err(Rejection::PinMismatch {
+                    host: host.to_string(),
+                    presented,
+                    pinned,
+                }
+                .into()),
+            },
+            Pin::Key(pinned) => match KeyFingerprint::of(end_entity) {
+                Ok(presented) if presented == pinned => Ok(ServerCertVerified::assertion()),
+                Ok(presented) => Err(Rejection::KeyPinMismatch {
+                    host: host.to_string(),
+                    presented,
+                    pinned,
+                }
+                .into()),
+                Err(_) => Err(CertificateError::BadEncoding.into()),
+            },
         })
     }
 
@@ -300,7 +333,11 @@ mod tests {
     use rustls_native_certs::CertificateResult;
 
     use super::*;
-    use crate::testing::{Authority, TlsPeer, outbound_with_os_roots, providers, self_signed};
+    use wslib_crypto::{KeyAlgorithm, Signer};
+
+    use crate::testing::{
+        Authority, Pair, TlsPeer, outbound_with_os_roots, providers, self_signed,
+    };
     use crate::{Cause, cause};
 
     /// An OS store holding one root that signed nothing here.
@@ -653,6 +690,128 @@ mod tests {
                 .await
                 .expect(name);
         }
+    }
+
+    /// A self-signed certificate for `127.0.0.1` over `key`, freshly minted.
+    fn minted_over(provider: &Arc<CryptoProvider>, key: &PrivateKeyDer<'static>) -> Pair {
+        let signer = Signer::new(provider.clone(), key).expect("loads");
+        let names = ["127.0.0.1".parse().expect("an address")];
+        Pair {
+            chain: vec![wslib_crypto_x509::mint(&signer, &names).expect("mints")],
+            key: key.clone_key(),
+        }
+    }
+
+    fn generated() -> PrivateKeyDer<'static> {
+        PrivateKeyDer::from(KeyAlgorithm::EcP256.generate().expect("generates"))
+    }
+
+    #[tokio::test]
+    async fn a_key_pin_trusts_a_certificate_re_minted_over_the_same_key() {
+        for (name, provider) in providers() {
+            let key = generated();
+            let (printed, reminted) = (minted_over(&provider, &key), minted_over(&provider, &key));
+            assert_ne!(printed.chain, reminted.chain);
+            let mut trust = Trust::default();
+            trust.pin_key(
+                "127.0.0.1",
+                KeyFingerprint::of(&printed.chain[0]).expect("readable"),
+            );
+
+            let peer = TlsPeer::presenting(provider.clone(), &reminted).await;
+            let config = Arc::new(outbound(&provider, trust, vec![]).client_config());
+            peer.handshake(&config).await.expect(name);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_key_pin_refuses_a_certificate_over_another_key_with_both() {
+        for (name, provider) in providers() {
+            let pinned = KeyFingerprint::of(&minted_over(&provider, &generated()).chain[0])
+                .expect("readable");
+            let other = minted_over(&provider, &generated());
+            let mut trust = Trust::default();
+            trust.pin_key("127.0.0.1", pinned);
+
+            let peer = TlsPeer::presenting(provider.clone(), &other).await;
+            let config = Arc::new(outbound(&provider, trust, vec![]).client_config());
+            assert_eq!(
+                refused(peer.handshake(&config).await),
+                Cause::Rejected(Rejection::KeyPinMismatch {
+                    host: "127.0.0.1".into(),
+                    presented: KeyFingerprint::of(&other.chain[0]).expect("readable"),
+                    pinned,
+                }),
+                "{name}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_look_reports_the_fingerprint_of_the_key_presented() {
+        for (name, provider) in providers() {
+            let key = generated();
+            let signer = Signer::new(provider.clone(), &key).expect("loads");
+            let peer = TlsPeer::presenting(provider.clone(), &minted_over(&provider, &key)).await;
+            let outbound = outbound(&provider, Trust::default(), vec![]);
+
+            let seen = outbound.inspect(&peer.target()).await.expect(name);
+            assert_eq!(
+                seen.key_fingerprint,
+                Some(KeyFingerprint(Fingerprint::of(signer.spki()))),
+                "{name}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_client_presents_its_certificate_to_a_server_that_asks() {
+        for (name, provider) in providers() {
+            let clients = Authority::new(provider.clone(), "Client Root");
+            let mut roots = RootCertStore::empty();
+            roots.add(clients.certificate.clone()).expect("a root");
+            let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
+                Arc::new(roots),
+                provider.clone(),
+            )
+            .build()
+            .expect("a verifier");
+            let served = self_signed(provider.clone(), &["127.0.0.1"]);
+            let config = rustls::ServerConfig::builder_with_provider(provider.clone())
+                .with_safe_default_protocol_versions()
+                .expect("TLS 1.2 or 1.3")
+                .with_client_cert_verifier(verifier)
+                .with_single_cert(served.chain.clone(), served.key.clone_key())
+                .expect("a pair");
+            let peer = TlsPeer::serving(Arc::new(config)).await;
+            let mut trust = Trust::default();
+            trust.pin("127.0.0.1", Fingerprint::of(&served.chain[0]));
+            let outbound = outbound(&provider, trust, vec![]);
+
+            assert!(
+                peer.handshake(&Arc::new(outbound.client_config()))
+                    .await
+                    .is_err(),
+                "{name}: no certificate"
+            );
+            let client = clients.sign_client("Session");
+            let presenting = outbound
+                .client_config_presenting(client.chain, client.key)
+                .expect("the key is the leaf's");
+            peer.handshake(&Arc::new(presenting)).await.expect(name);
+        }
+    }
+
+    #[test]
+    fn a_client_key_that_is_not_the_leafs_is_refused_up_front() {
+        let (_, provider) = &providers()[0];
+        let outbound = outbound(provider, Trust::default(), vec![]);
+        let client = Authority::new(provider.clone(), "Client Root").sign_client("Session");
+        assert!(
+            outbound
+                .client_config_presenting(client.chain, generated())
+                .is_err()
+        );
     }
 
     #[test]

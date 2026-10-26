@@ -45,7 +45,9 @@ filters by target has to include it.
   `Bounds::SERVING` is 16 connections, 10s and 10s; `Bounds::REDIRECT` is 8,
   5s and 10s.
 - **`serve_http`** and **`serve_https`**: the router until `stop` completes
-  and the listener has drained. Handlers get `ConnectInfo<SocketAddr>`. h2
+  and the listener has drained. Handlers get `ConnectInfo<SocketAddr>`, and
+  over TLS `Extension<PeerCertificates>`: the client's chain, leaf first, as
+  the config's client verifier passed it, empty when it presented none. h2
   connections are pinged every 20s and hold at most 32 streams.
 - **`Tls`**: the config a TLS listener serves. `Tls::new` offers h2 and
   http/1.1 by ALPN when the config names none; a config that names its own

@@ -32,7 +32,10 @@ product's from it. They are two `wslib-db-sqlite` chains, applied in one
 transaction and mirrored into `_sqlx_migrations`, so a build on sqlx's own
 runner still opens the database. The platform's `.sql` files are frozen byte
 for byte, and its table and index names are reserved (the crate doc lists
-them); later platform objects are named `platform_…`.
+them); later platform objects are named `platform_…`. Once a database is
+imported the chains are the record, so a test that fakes an older database by
+deleting `_sqlx_migrations` rows must drop `_migration_chains`,
+`_platform_migrations` and `_app_migrations` too.
 
 ## The tables
 

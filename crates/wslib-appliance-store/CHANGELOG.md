@@ -7,7 +7,12 @@ Moved from `appliance-store` 0.17.1 in wslib-appliance-rs; what differs:
 - `stamp` and `now` are `wslib-db-sqlite`'s, and a revocation or
   `replace_accounts` ends sessions through `wslib-auth`'s
   `SqliteSessionStore::remove_user_in` in the same transaction as the write.
-  `replace_accounts` takes `&self`.
+  `replace_accounts` takes `&self`, as `replace_exportable_settings` does
+  below, so a restore needs the `Store` as well as its transaction.
+- The store logs nothing itself: its warnings about the file, closing,
+  documents and imports, once under `appliance_store`, come from
+  `wslib_db_sqlite`'s targets, so a log capture filtering on `appliance_*` no
+  longer sees them, and nothing fails.
 - Opened through `wslib-db-sqlite`'s `Database`, with the platform's and the
   product's migrations as two chains, `platform` and `app`. The database gains
   `_migration_chains` and `_platform_migrations`, and `_app_migrations` once
@@ -50,5 +55,4 @@ Moved from `appliance-store` 0.17.1 in wslib-appliance-rs; what differs:
   carried reserved key as "an import carried a key in a reserved namespace;
   it was not applied" (was "a backup carried …").
 - `close` warns "closing the database with connections open" (was "closing
-  the store with database connections open"). The warnings about the file,
-  closing, documents and imports log under `wslib_db_sqlite`'s targets.
+  the store with database connections open").

@@ -20,7 +20,7 @@ rsa = { version = "0.9.10", default-features = false, features = ["std"] }
 # No provider: the caller's signs, verifies and supplies randomness.
 rustls = { version = "0.23.27", default-features = false }
 rustls-pki-types = { version = "1.12", features = ["std"] }
-sha2 = "0.10.8"
+sha2 = "0.10.9"
 
 [dev-dependencies]
 rustls = { version = "0.23.27", default-features = false, features = ["aws_lc_rs", "ring", "std"] }

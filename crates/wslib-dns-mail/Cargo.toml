@@ -22,7 +22,7 @@ wslib-crypto-x509 = { version = "0.1", path = "../wslib-crypto-x509", registry =
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 quick-xml = "0.38"
 rustls-pki-types = { version = "1.12", features = ["std"] }
-sha2 = "0.10.8"
+sha2 = "0.10.9"
 x509-parser = { version = "0.18", default-features = false }
 serde = { version = "1.0.225", features = ["derive"], optional = true }
 reqwest = { version = "0.13.2", default-features = false, features = ["rustls-no-provider"], optional = true }

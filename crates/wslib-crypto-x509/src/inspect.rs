@@ -12,9 +12,9 @@ use x509_parser::extensions::GeneralName;
 use x509_parser::prelude::FromDer;
 use x509_parser::public_key::PublicKey;
 use x509_parser::time::ASN1Time;
-use x509_parser::x509::{AttributeTypeAndValue, X509Name};
+use x509_parser::x509::{AttributeTypeAndValue, SubjectPublicKeyInfo, X509Name};
 
-use crate::{Error, SubjectAltName, pem};
+use crate::{Error, SubjectAltName, pem, signature};
 
 /// What a certificate says, copied out of it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,6 +32,8 @@ pub struct CertificateView {
     pub not_after: SystemTime,
     /// Of the whole certificate's DER.
     pub fingerprint: Fingerprint,
+    /// As [`signature::algorithm_name`] spells it.
+    pub signature_algorithm: String,
     pub key: KeyDescription,
     /// The DER SubjectPublicKeyInfo, for [`wslib_crypto::key_matches`].
     pub spki: Vec<u8>,
@@ -75,6 +77,27 @@ impl fmt::Display for KeyDescription {
     }
 }
 
+impl KeyDescription {
+    /// Describes the key of a DER SubjectPublicKeyInfo.
+    pub fn of_spki(spki: &[u8]) -> Result<Self, Error> {
+        whole(spki, "key").map(|spki| describe(&spki))
+    }
+
+    /// An RSA modulus's bits, or the curve's for P-256, P-384 and P-521.
+    pub fn bits(&self) -> Option<u32> {
+        match self {
+            Self::Rsa { bits } => *bits,
+            Self::Ecdsa { curve: Some(curve) } => match curve.as_str() {
+                "P-256" => Some(256),
+                "P-384" => Some(384),
+                "P-521" => Some(521),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum KeyUsage {
     DigitalSignature,
@@ -103,15 +126,7 @@ pub enum ExtendedKeyUsage {
 
 /// Reads a certificate's DER.
 pub fn inspect(der: &[u8]) -> Result<CertificateView, Error> {
-    let certificate = match X509Certificate::from_der(der) {
-        Ok(([], certificate)) => certificate,
-        Ok(_) => {
-            return Err(Error::Malformed(
-                "trailing bytes after the certificate".into(),
-            ));
-        }
-        Err(e) => return Err(Error::Malformed(e.to_string())),
-    };
+    let certificate: X509Certificate<'_> = whole(der, "certificate")?;
     let subject = rfc_4514_of(certificate.subject());
     let issuer = rfc_4514_of(certificate.issuer());
     let validity = certificate.validity();
@@ -124,7 +139,10 @@ pub fn inspect(der: &[u8]) -> Result<CertificateView, Error> {
         not_before: instant(validity.not_before)?,
         not_after: instant(validity.not_after)?,
         fingerprint: Fingerprint::of(der),
-        key: key_description(&certificate),
+        signature_algorithm: signature::algorithm_name(
+            &certificate.signature_algorithm.algorithm.to_id_string(),
+        ),
+        key: describe(certificate.public_key()),
         spki: certificate.public_key().raw.to_vec(),
         ca: matches!(certificate.basic_constraints(), Ok(Some(basic)) if basic.value.ca),
         key_usages: key_usages(&certificate).ok().flatten(),
@@ -193,9 +211,13 @@ fn text(attribute: &AttributeTypeAndValue<'_>) -> Option<String> {
 }
 
 fn parse_name(name: &[u8]) -> Result<X509Name<'_>, Error> {
-    match X509Name::from_der(name) {
-        Ok(([], name)) => Ok(name),
-        Ok(_) => Err(Error::Malformed("trailing bytes after the name".into())),
+    whole(name, "name")
+}
+
+fn whole<'a, T: FromDer<'a, X509Error>>(der: &'a [u8], what: &str) -> Result<T, Error> {
+    match T::from_der(der) {
+        Ok(([], parsed)) => Ok(parsed),
+        Ok(_) => Err(Error::Malformed(format!("trailing bytes after the {what}"))),
         Err(e) => Err(Error::Malformed(e.to_string())),
     }
 }
@@ -279,8 +301,7 @@ fn sans(certificate: &X509Certificate<'_>) -> Vec<SubjectAltName> {
         .collect()
 }
 
-fn key_description(certificate: &X509Certificate<'_>) -> KeyDescription {
-    let spki = certificate.public_key();
+fn describe(spki: &SubjectPublicKeyInfo<'_>) -> KeyDescription {
     match spki.algorithm.algorithm.to_id_string().as_str() {
         "1.2.840.113549.1.1.1" => KeyDescription::Rsa {
             bits: match spki.parsed() {
@@ -556,6 +577,50 @@ mod tests {
             let pem = crate::testing::certificate_by(&signer(algorithm), |_| {});
             assert_eq!(inspect_pem(&pem).unwrap().key.to_string(), described);
         }
+    }
+
+    #[test]
+    fn the_signature_algorithm_reads_by_its_openssl_name() {
+        for (algorithm, name) in [
+            (KeyAlgorithm::EcP256, "ecdsa-with-SHA256"),
+            (KeyAlgorithm::EcP384, "ecdsa-with-SHA384"),
+            (KeyAlgorithm::Rsa2048, "sha256WithRSAEncryption"),
+        ] {
+            let pem = crate::testing::certificate_by(&signer(algorithm), |_| {});
+            assert_eq!(inspect_pem(&pem).unwrap().signature_algorithm, name);
+        }
+        assert_eq!(signature::algorithm_name("1.3.101.112"), "ED25519");
+        assert_eq!(signature::algorithm_name("1.2.3.4"), "1.2.3.4");
+    }
+
+    #[test]
+    fn a_key_reads_from_its_spki_with_its_bits() {
+        for (algorithm, bits) in [
+            (KeyAlgorithm::EcP256, 256),
+            (KeyAlgorithm::EcP384, 384),
+            (KeyAlgorithm::Rsa2048, 2048),
+        ] {
+            let key = KeyDescription::of_spki(signer(algorithm).spki()).unwrap();
+            assert_eq!(key.bits(), Some(bits));
+        }
+        assert_eq!(
+            KeyDescription::Ecdsa {
+                curve: Some("P-521".into())
+            }
+            .bits(),
+            Some(521)
+        );
+        assert_eq!(
+            KeyDescription::Ecdsa {
+                curve: Some("1.3.132.0.10".into())
+            }
+            .bits(),
+            None
+        );
+        assert_eq!(KeyDescription::Ed25519.bits(), None);
+        let spki = signer(KeyAlgorithm::EcP256).spki().to_vec();
+        assert!(KeyDescription::of_spki(&spki[..spki.len() - 1]).is_err());
+        assert!(KeyDescription::of_spki(&[&spki[..], &[0]].concat()).is_err());
     }
 
     #[test]

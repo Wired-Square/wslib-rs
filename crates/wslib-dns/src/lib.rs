@@ -13,6 +13,7 @@ mod logging;
 mod lookup;
 mod name;
 mod resolver;
+pub mod txt;
 
 #[cfg(any(test, feature = "testing"))]
 mod fake;

@@ -27,6 +27,10 @@ match dns.txt("_dmarc.example.com").await {
   MX's exchange) stays `.`.
 - **`Txt`** keeps the raw character-strings. `joined()` concatenates them with
   no separator and no escaping, as SPF and DMARC require (RFC 7208 §3.3).
+- **`txt::split`** and **`txt::quote`**: the other way, for publishing. A long
+  value split into character-strings of at most 255 octets, never inside a
+  character, and those written as a zone file (and Route 53) takes them:
+  `"a" "b"`, with `"` and `\` escaped. No feature needed.
 - **`HickoryResolver`** (feature `hickory`): hickory 0.26 with its TTL cache.
   `from_system` reads `/etc/resolv.conf` (the VPC resolver on Lambda) and falls
   back to Cloudflare. `from_nameservers` takes explicit socket addresses.

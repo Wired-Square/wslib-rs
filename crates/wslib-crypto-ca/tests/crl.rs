@@ -202,6 +202,7 @@ fn an_openssl_crl_reads_and_verifies() {
     let view = CrlView::from_pem(include_str!("data/openssl.crl")).unwrap();
     view.verify(issuer, algorithms()).unwrap();
     assert_eq!(view.number, Some(4096));
+    assert_eq!(view.signature_algorithm(), "sha256WithRSAEncryption");
     assert_eq!(
         view.authority_key_identifier.as_deref().map(hex).as_deref(),
         Some("8931c40c138f463602c2bff5e8bf10c0eb6c147d")
@@ -264,14 +265,16 @@ fn a_next_update_from_2050_is_a_generalized_time() {
 }
 
 #[test]
-fn the_issuer_reads_as_text() {
+fn the_issuer_and_signature_algorithm_read_as_text() {
     let (_, provider) = &providers()[0];
     let ca = ca(signer(provider, KeyAlgorithm::EcP256));
     let der = ca
         .revocation_list(1, at(1_810_000_000), at(1_810_864_000), &[])
         .unwrap();
+    let view = CrlView::from_der(&der).unwrap();
     assert_eq!(
-        CrlView::from_der(&der).unwrap().issuer_text,
+        view.issuer_text,
         "EMAIL=ops@example.com,OU=Ops,O=Wïdget Co,L=Melbourne,ST=Victoria,C=AU,CN=Spike Root CA"
     );
+    assert_eq!(view.signature_algorithm(), "ecdsa-with-SHA256");
 }

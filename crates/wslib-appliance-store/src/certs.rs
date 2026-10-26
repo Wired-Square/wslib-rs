@@ -32,7 +32,7 @@ const UPSERT: &str = concat!(
 impl Store {
     pub async fn trusted_certs(&self) -> Result<Vec<TrustedCert>, StoreError> {
         sqlx::query(ALL)
-            .fetch_all(&self.pool)
+            .fetch_all(self.pool())
             .await?
             .iter()
             .map(cert_from_row)
@@ -43,7 +43,7 @@ impl Store {
     /// rotated certificate is a re-pin.
     pub async fn pin_cert(&self, cert: &TrustedCert) -> Result<(), StoreError> {
         bind_cert(sqlx::query(UPSERT), cert)
-            .execute(&self.pool)
+            .execute(self.pool())
             .await?;
         Ok(())
     }
@@ -52,7 +52,7 @@ impl Store {
     pub async fn unpin_cert(&self, host: &str) -> Result<bool, StoreError> {
         let done = sqlx::query("DELETE FROM trusted_certs WHERE host = ?")
             .bind(host)
-            .execute(&self.pool)
+            .execute(self.pool())
             .await?;
         Ok(done.rows_affected() > 0)
     }
@@ -78,7 +78,7 @@ impl Store {
     /// Every authority this box trusts beside the OS's, oldest first.
     pub async fn trusted_cas(&self) -> Result<Vec<TrustedCa>, StoreError> {
         sqlx::query(CAS_ALL)
-            .fetch_all(&self.pool)
+            .fetch_all(self.pool())
             .await?
             .iter()
             .map(ca_from_row)
@@ -89,7 +89,7 @@ impl Store {
     /// record — who added it, and when — and nothing else.
     pub async fn trust_ca(&self, ca: &TrustedCa) -> Result<(), StoreError> {
         bind_ca(sqlx::query(CAS_UPSERT), ca)
-            .execute(&self.pool)
+            .execute(self.pool())
             .await?;
         Ok(())
     }
@@ -98,7 +98,7 @@ impl Store {
     pub async fn distrust_ca(&self, sha256: &str) -> Result<bool, StoreError> {
         let done = sqlx::query("DELETE FROM trusted_cas WHERE sha256 = ?")
             .bind(sha256)
-            .execute(&self.pool)
+            .execute(self.pool())
             .await?;
         Ok(done.rows_affected() > 0)
     }

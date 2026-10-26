@@ -149,7 +149,7 @@ impl Store {
     pub async fn totp(&self, user_id: &str) -> Result<Option<Totp>, StoreError> {
         sqlx::query("SELECT secret, confirmed, last_step FROM totp WHERE user_id = ?")
             .bind(user_id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(self.pool())
             .await?
             .map(|row| totp_from_row(&row))
             .transpose()
@@ -253,7 +253,7 @@ impl Store {
     pub async fn totp_required(&self, user_id: &str) -> Result<bool, StoreError> {
         let row = sqlx::query("SELECT 1 FROM totp_required WHERE user_id = ?")
             .bind(user_id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(self.pool())
             .await?;
         Ok(row.is_some())
     }
@@ -274,7 +274,7 @@ impl Store {
         .bind(id)
         .bind(!self.spares_host_admins)
         .bind(user_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.pool())
         .await?;
         match removed {
             Some(row) => passkey_from_row(&row).map(Some),
@@ -297,7 +297,7 @@ impl Store {
         )
         .bind(step_value(step))
         .bind(user_id)
-        .execute(&self.pool)
+        .execute(self.pool())
         .await?;
         Ok(done.rows_affected() > 0)
     }
@@ -349,7 +349,7 @@ impl Store {
         )
         .bind(user_id)
         .bind(sha256)
-        .execute(&self.pool)
+        .execute(self.pool())
         .await?;
         Ok(done.rows_affected() > 0)
     }
@@ -358,7 +358,7 @@ impl Store {
         let count: i64 =
             sqlx::query_scalar("SELECT count(*) FROM recovery_codes WHERE user_id = ?")
                 .bind(user_id)
-                .fetch_one(&self.pool)
+                .fetch_one(self.pool())
                 .await?;
         Ok(count.max(0) as u64)
     }
@@ -386,7 +386,7 @@ impl Store {
             )),
             &passkey,
         )
-        .execute(&self.pool)
+        .execute(self.pool())
         .await
         .map_err(|e| match &e {
             sqlx::Error::Database(db) if db.is_unique_violation() => StoreError::PasskeyTaken,
@@ -407,7 +407,7 @@ impl Store {
             " FROM passkeys WHERE user_id = ? ORDER BY created_at, id"
         ))
         .bind(user_id)
-        .fetch_all(&self.pool)
+        .fetch_all(self.pool())
         .await?
         .iter()
         .map(passkey_from_row)
@@ -424,7 +424,7 @@ impl Store {
             " FROM passkeys WHERE credential_id = ?"
         ))
         .bind(credential_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.pool())
         .await?
         .map(|row| passkey_from_row(&row))
         .transpose()
@@ -440,7 +440,7 @@ impl Store {
              WHERE ?1 IS NULL OR user_id = ?1 GROUP BY rp_id ORDER BY rp_id",
         )
         .bind(user_id)
-        .fetch_all(&self.pool)
+        .fetch_all(self.pool())
         .await?;
         rows.iter()
             .map(|row| {
@@ -463,7 +463,7 @@ impl Store {
             .bind(name)
             .bind(id)
             .bind(user_id)
-            .execute(&self.pool)
+            .execute(self.pool())
             .await?;
         Ok(done.rows_affected() > 0)
     }
@@ -480,7 +480,7 @@ impl Store {
         ))
         .bind(id)
         .bind(user_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.pool())
         .await?
         .map(|row| passkey_from_row(&row))
         .transpose()
@@ -498,14 +498,14 @@ impl Store {
         .bind(i64::from(sign_count))
         .bind(stamp(now()))
         .bind(id)
-        .execute(&self.pool)
+        .execute(self.pool())
         .await?;
         if done.rows_affected() > 0 {
             return Ok(PasskeyUse::Used);
         }
         let there: Option<i64> = sqlx::query_scalar("SELECT 1 FROM passkeys WHERE id = ?")
             .bind(id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(self.pool())
             .await?;
         Ok(match there {
             Some(_) => PasskeyUse::CounterDidNotMove,
@@ -529,13 +529,13 @@ impl Store {
                 })
         }
         for row in sqlx::query("SELECT user_id, secret, confirmed, last_step FROM totp")
-            .fetch_all(&self.pool)
+            .fetch_all(self.pool())
             .await?
         {
             entry(&mut by_user, row.try_get("user_id")?).totp = Some(totp_from_row(&row)?);
         }
         for row in sqlx::query("SELECT user_id, sha256 FROM recovery_codes ORDER BY sha256")
-            .fetch_all(&self.pool)
+            .fetch_all(self.pool())
             .await?
         {
             entry(&mut by_user, row.try_get("user_id")?)
@@ -547,7 +547,7 @@ impl Store {
             passkey_columns!(),
             " FROM passkeys ORDER BY created_at, id"
         ))
-        .fetch_all(&self.pool)
+        .fetch_all(self.pool())
         .await?
         {
             let passkey = passkey_from_row(&row)?;
@@ -556,7 +556,7 @@ impl Store {
                 .push(passkey);
         }
         for row in sqlx::query("SELECT user_id FROM totp_required")
-            .fetch_all(&self.pool)
+            .fetch_all(self.pool())
             .await?
         {
             entry(&mut by_user, row.try_get("user_id")?).totp_required = true;

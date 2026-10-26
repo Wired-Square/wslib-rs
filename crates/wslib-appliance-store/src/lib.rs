@@ -3,15 +3,9 @@
 //!
 //! Every query uses sqlx's runtime API, never the `query!` macros.
 //!
-//! What [`Store::open`] and [`Store::open_existing`] do that a plain `connect`
-//! does not:
-//!
-//! - **WAL is entered once, on a connection of its own**, because it takes an
-//!   exclusive lock that `busy_timeout` cannot wait on.
-//! - **The file is restricted to its owner on every open**, because a service
-//!   manager only restricts a directory it created itself.
-//! - **Write transactions take the write lock up front, and check foreign keys
-//!   at the commit.** See [`Store::begin`].
+//! Opening, closing and write transactions are `wslib_db_sqlite::Database`'s:
+//! WAL, owner-only files, and [`Store::open`] applies every pending migration,
+//! the platform's and the product's, in one transaction.
 //!
 //! Every instant is stored through [`stamp`], whose fixed width lets SQLite
 //! order and compare the columns as text.
@@ -20,22 +14,22 @@
 //!
 //! Tables, indexes and views share one namespace in SQLite. A product's
 //! migrations must not create, alter or drop these tables:
-//! `_sqlx_migrations`, `app_roles`, `asserted_roles`, `audit`, `passkeys`,
-//! `recovery_codes`, `settings`, `totp`, `totp_required`, `trusted_cas`,
-//! `trusted_certs`, `users`; nor these indexes: `audit_at`, `passkeys_user`.
+//! `_migration_chains`, `_sqlx_migrations`, `app_migrations`, `app_roles`,
+//! `asserted_roles`, `audit`, `passkeys`, `recovery_codes`, `settings`, `totp`,
+//! `totp_required`, `trusted_cas`, `trusted_certs`, `users`; nor these
+//! indexes: `audit_at`, `passkeys_user`.
 //!
 //! Every platform object not listed above is named `platform_…`, so a
 //! product's own must not start with it.
 
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
-use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::migrate::MigrateError;
+use sqlx::sqlite::SqlitePool;
 use sqlx::{Sqlite, Transaction};
-use tokio::sync::watch;
 use wslib_auth::{SqliteSessionStore, TableName};
+use wslib_db_sqlite::{Database, Settings};
 
 /// The account a guarded write names, unless it is a host admin's and the store
 /// spares them: binds `!spares_host_admins`, then the id.
@@ -71,8 +65,6 @@ pub use sqlx::migrate::Migrator;
 /// The table the sessions are rows of, for the session store; never in a backup.
 pub const SESSIONS_TABLE: &str = "platform_sessions";
 
-const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-
 /// Why a store operation could not be completed.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -90,7 +82,7 @@ pub enum StoreError {
     Reserved(String),
 
     #[error("migration: {0}")]
-    Migrate(#[from] sqlx::migrate::MigrateError),
+    Migrate(#[from] MigrateError),
 
     /// [`Store::open_existing`] found no file.
     #[error(
@@ -99,8 +91,7 @@ pub enum StoreError {
     )]
     NoDatabase(PathBuf),
 
-    /// [`Store::open_existing`] found a database this build's chain has not
-    /// finished with.
+    /// [`Store::open_existing`] found a migration of this build's not applied.
     #[error(
         "the database is behind this build (migration {version} is not applied) — start, \
          or restart, the appliance, which migrates it"
@@ -153,6 +144,33 @@ pub enum StoreError {
     /// mistake, where [`StoreError::Unreadable`] is the box's.
     #[error("that cursor did not come from this appliance: {0:?}")]
     BadCursor(String),
+
+    /// What the migration chains refuse beyond the variants above.
+    #[error(transparent)]
+    Database(wslib_db_sqlite::Error),
+}
+
+impl From<wslib_db_sqlite::Error> for StoreError {
+    fn from(e: wslib_db_sqlite::Error) -> Self {
+        use wslib_db_sqlite::Error as E;
+        match e {
+            E::Db(e) => Self::Db(e),
+            E::Migrate { source, .. } => Self::Migrate(source),
+            E::Unclaimed { version } => Self::Migrate(MigrateError::VersionMissing(version)),
+            E::NoDatabase(path) => Self::NoDatabase(path),
+            E::SchemaBehind { version, .. } => Self::SchemaBehind { version },
+            E::Reserved(key) => Self::Reserved(key),
+            E::Unreadable {
+                table,
+                what,
+                because,
+            } => Self::unreadable(table, what, because),
+            E::Serialise { key, source } => {
+                Self::unreadable("settings", "document", format!("{key}: {source}"))
+            }
+            other => Self::Database(other),
+        }
+    }
 }
 
 impl StoreError {
@@ -189,24 +207,18 @@ pub fn row_stamp(
 /// The appliance's database.
 #[derive(Debug, Clone)]
 pub struct Store {
-    pool: SqlitePool,
+    db: Database,
+    settings: Settings,
     sessions: SqliteSessionStore<String>,
-    app_schema: u32,
     spares_host_admins: bool,
-    settings: Arc<watch::Sender<u64>>,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum Schema {
-    Migrate,
-    Verify,
 }
 
 impl Store {
     /// Open (creating if absent), migrate, and restrict the file to its owner;
     /// `app`, the product's own chain, runs after the platform's.
     pub async fn open(path: impl AsRef<Path>, app: Option<Migrator>) -> Result<Self, StoreError> {
-        Self::open_at(path.as_ref(), app, Schema::Migrate).await
+        let chains = migrate::chains(app.as_ref())?;
+        Ok(Self::over(Database::open(path, &chains).await?))
     }
 
     /// [`open`](Self::open) for a process beside the daemon, run as its
@@ -217,108 +229,35 @@ impl Store {
         path: impl AsRef<Path>,
         app: Option<Migrator>,
     ) -> Result<Self, StoreError> {
-        let path = path.as_ref();
-        let there = path
-            .try_exists()
-            .map_err(|e| StoreError::Db(sqlx::Error::Io(e)))?;
-        if !there {
-            return Err(StoreError::NoDatabase(path.to_path_buf()));
-        }
-        Self::open_at(path, app, Schema::Verify).await
+        let chains = migrate::chains(app.as_ref())?;
+        Ok(Self::over(Database::open_existing(path, &chains).await?))
     }
 
-    async fn open_at(
-        path: &Path,
-        app: Option<Migrator>,
-        schema: Schema,
-    ) -> Result<Self, StoreError> {
-        let opts = SqliteConnectOptions::new()
-            .filename(path)
-            .create_if_missing(matches!(schema, Schema::Migrate))
-            .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
-            .foreign_keys(true)
-            .busy_timeout(BUSY_TIMEOUT);
+    /// An in-memory database with the same tables, for tests, on one
+    /// connection: a [`Store::pool`] query while a [`Store::begin`] is held
+    /// waits for it, and in the same task fails with `PoolTimedOut`.
+    pub async fn open_in_memory(app: Option<Migrator>) -> Result<Self, StoreError> {
+        let chains = migrate::chains(app.as_ref())?;
+        Ok(Self::over(Database::open_in_memory(&chains).await?))
+    }
 
-        enter_wal(&opts).await?;
-        restrict_to_owner(path);
-        let store = Self::pooled(opts, 5, app, schema).await?;
-        restrict_to_owner(path);
-        Ok(store)
+    fn over(db: Database) -> Self {
+        let settings = Settings::new(&db)
+            .local_prefix(settings::BOX_PREFIX)
+            .expect("box. is a local prefix");
+        Self {
+            sessions: SqliteSessionStore::new(db.pool().clone(), TableName::new(SESSIONS_TABLE)),
+            db,
+            settings,
+            spares_host_admins: false,
+        }
     }
 
     /// Close every connection, for a process that exits after its last query;
     /// it leaves no `-wal` or `-shm` once no connection, in this process or
-    /// another, has the database open. One still checked out is waited for up
-    /// to five seconds, then left open with a warning.
+    /// another, has the database open.
     pub async fn close(&self) {
-        use sqlx::{ConnectOptions, Connection};
-
-        close_once_returned(&self.pool).await;
-        let alone = self
-            .pool
-            .connect_options()
-            .as_ref()
-            .clone()
-            .create_if_missing(false);
-        // Closed alone, as SQLite removes `-wal` and `-shm` only at the last close.
-        if let Ok(mut conn) = alone.connect().await {
-            // A read, so the WAL is open to remove at the close.
-            sqlx::query("PRAGMA schema_version")
-                .execute(&mut conn)
-                .await
-                .ok();
-            conn.close().await.ok();
-            #[cfg(windows)]
-            wait_for_removal(alone.get_filename()).await;
-        }
-    }
-
-    /// An in-memory database with the same tables, for tests, on **one
-    /// connection**: a query while a [`Store::begin`] is held waits for it, and
-    /// in the same task fails with `PoolTimedOut` after 30 seconds.
-    pub async fn open_in_memory(app: Option<Migrator>) -> Result<Self, StoreError> {
-        let opts = SqliteConnectOptions::from_str("sqlite::memory:")
-            .expect("a literal in-memory URL parses")
-            .foreign_keys(true);
-        Self::pooled(opts, 1, app, Schema::Migrate).await
-    }
-
-    async fn pooled(
-        opts: SqliteConnectOptions,
-        max_connections: u32,
-        app: Option<Migrator>,
-        schema: Schema,
-    ) -> Result<Self, StoreError> {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(max_connections)
-            .min_connections(1)
-            .idle_timeout(None)
-            .max_lifetime(None)
-            .connect_with(opts)
-            .await?;
-
-        let app_schema = app
-            .iter()
-            .flat_map(|app| app.iter())
-            .map(|m| u32::try_from(m.version).unwrap_or(u32::MAX))
-            .max()
-            .unwrap_or(0);
-        let chain = migrate::compose(app).await?;
-        let ready = match schema {
-            Schema::Migrate => chain.run(&pool).await.map_err(StoreError::from),
-            Schema::Verify => migrate::verify_applied(&chain, &pool).await,
-        };
-        if let Err(e) = ready {
-            close_once_returned(&pool).await;
-            return Err(e);
-        }
-        Ok(Self {
-            sessions: SqliteSessionStore::new(pool.clone(), TableName::new(SESSIONS_TABLE)),
-            pool,
-            app_schema,
-            spares_host_admins: false,
-            settings: Arc::new(watch::Sender::new(0)),
-        })
+        self.db.close().await;
     }
 
     /// This store, whose account writes leave a host admin's account untouched
@@ -333,92 +272,21 @@ impl Store {
     /// The version of the newest migration in the product's own chain, `0`
     /// for none: what a backup is stamped with.
     pub fn app_schema_version(&self) -> u32 {
-        self.app_schema
+        self.db
+            .chain_version(migrate::APP)
+            .map_or(0, |v| u32::try_from(v).unwrap_or(u32::MAX))
     }
 
     /// The pool, for a product's own queries against the same file.
     pub fn pool(&self) -> &SqlitePool {
-        &self.pool
+        self.db.pool()
     }
 
-    /// Begin a write transaction with `BEGIN IMMEDIATE`, **taking the write
-    /// lock up front** so a read-then-write waits through the busy timeout
-    /// rather than failing `SQLITE_BUSY`.
-    ///
-    /// Foreign keys are checked at the commit, so a restore or a reset replaces
-    /// the platform's rows and a product's in any order; `ON DELETE RESTRICT`
-    /// acts at the commit too, `SET NULL` and `CASCADE` at the statement.
+    /// Begin a write transaction that takes the write lock up front and checks
+    /// foreign keys at the commit, so a restore or a reset replaces the
+    /// platform's rows and a product's in any order.
     pub async fn begin(&self) -> Result<Transaction<'_, Sqlite>, StoreError> {
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        // Per transaction: SQLite switches it back off at the commit or rollback.
-        sqlx::query("PRAGMA defer_foreign_keys = ON")
-            .execute(&mut *tx)
-            .await?;
-        Ok(tx)
-    }
-}
-
-async fn enter_wal(opts: &SqliteConnectOptions) -> Result<(), StoreError> {
-    use sqlx::{ConnectOptions, Connection};
-
-    let conn = opts
-        .clone()
-        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
-        .connect()
-        .await?;
-    conn.close().await?;
-    Ok(())
-}
-
-async fn close_once_returned(pool: &SqlitePool) {
-    // Shuts out `acquire` at the call; awaited, it waits on checked-out
-    // connections without limit, so it is awaited only once every one is idle.
-    let close_idle = pool.close();
-    let all_returned = async {
-        while pool.num_idle() < pool.size() as usize {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-    };
-    if tokio::time::timeout(std::time::Duration::from_secs(5), all_returned)
-        .await
-        .is_err()
-    {
-        tracing::warn!(
-            open = pool.size(),
-            "closing the store with database connections open"
-        );
-        return;
-    }
-    close_idle.await;
-}
-
-/// On Windows `-wal` and `-shm` inherit the directory's ACL, so the directory
-/// must itself be private.
-fn restrict_to_owner(path: &Path) {
-    for file in ["", "-wal", "-shm"].map(|suffix| sibling(path, suffix)) {
-        match wslib_file_atomic::owner_only(&file) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => tracing::warn!(
-                error = %e, path = %file.display(),
-                "could not restrict the database to its owner"
-            ),
-        }
-    }
-}
-
-fn sibling(db: &Path, suffix: &str) -> PathBuf {
-    let mut name = db.as_os_str().to_os_string();
-    name.push(suffix);
-    PathBuf::from(name)
-}
-
-#[cfg(windows)]
-async fn wait_for_removal(db: &Path) {
-    let [wal, shm] = ["-wal", "-shm"].map(|suffix| sibling(db, suffix));
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
-    while (wal.exists() || shm.exists()) && tokio::time::Instant::now() < deadline {
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        Ok(self.db.begin().await?)
     }
 }
 
@@ -447,7 +315,7 @@ mod tests {
         .expect("list tables")
     }
 
-    pub(crate) async fn schema_objects(store: &Store) -> Vec<String> {
+    async fn schema_objects(store: &Store) -> Vec<String> {
         sqlx::query_scalar(
             "SELECT name FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' ORDER BY name",
         )
@@ -469,20 +337,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn in_memory_a_pool_query_waits_until_the_transaction_ends() {
-        let store = store().await;
-        let tx = store.begin().await.expect("begin");
-        let query = || sqlx::query("SELECT 1").execute(store.pool());
-        let waited = tokio::time::timeout(std::time::Duration::from_millis(200), query()).await;
-        assert!(
-            waited.is_err(),
-            "still waiting while the transaction is held"
-        );
-        drop(tx);
-        query().await.expect("answered once the transaction ends");
-    }
-
-    #[tokio::test]
     async fn the_reserved_names_in_the_crate_doc_are_the_platforms_schema_objects() {
         let doc = include_str!("lib.rs").replace("\r\n", "\n");
         let list = doc
@@ -492,19 +346,47 @@ mod tests {
             .expect("the reserved list in the crate doc");
         let mut documented: Vec<&str> = list.split('`').skip(1).step_by(2).collect();
         documented.sort_unstable();
-        let platform_only = Store::open_in_memory(None).await.expect("store");
-        let unprefixed: Vec<String> = schema_objects(&platform_only)
+        let unprefixed: Vec<String> = schema_objects(&store().await)
             .await
             .into_iter()
             .filter(|name| !name.starts_with("platform_"))
+            .filter(|name| !["app_notes", "app_widgets"].contains(&name.as_str()))
             .collect();
         assert_eq!(documented, unprefixed);
+
+        // Frozen: every later platform object is named `platform_…`.
+        let frozen = [
+            "_migration_chains",
+            "_sqlx_migrations",
+            "app_migrations",
+            "app_roles",
+            "asserted_roles",
+            "audit",
+            "audit_at",
+            "passkeys",
+            "passkeys_user",
+            "recovery_codes",
+            "settings",
+            "totp",
+            "totp_required",
+            "trusted_cas",
+            "trusted_certs",
+            "users",
+        ];
+        assert_eq!(documented, frozen);
     }
 
     #[tokio::test]
     async fn the_platforms_tables_and_an_apps_share_one_database() {
         let store = store().await;
-        let mut expected = vec!["_sqlx_migrations", "app_notes", "app_widgets"];
+        let mut expected = vec![
+            "_migration_chains",
+            "_sqlx_migrations",
+            "app_migrations",
+            "app_notes",
+            "app_widgets",
+            "platform_migrations",
+        ];
         expected.extend(crate::reset::PLATFORM_TABLES);
         expected.sort_unstable();
         assert_eq!(tables(&store).await, expected);
@@ -610,15 +492,22 @@ mod tests {
             .expect("set");
         first.close().await;
 
-        let ahead = Store::open_existing(&path, None).await;
+        let no_app = Store::open_existing(&path, None).await;
         assert!(
             matches!(
-                ahead,
-                Err(StoreError::Migrate(
-                    sqlx::migrate::MigrateError::VersionMissing(1000)
-                ))
+                &no_app,
+                Err(StoreError::Database(wslib_db_sqlite::Error::UnknownChain(chain)))
+                    if chain == "app"
             ),
-            "{ahead:?}"
+            "{no_app:?}"
+        );
+        let shorter = Store::open_existing(&path, Some(Migrator::DEFAULT)).await;
+        assert!(
+            matches!(
+                shorter,
+                Err(StoreError::Migrate(MigrateError::VersionMissing(1000)))
+            ),
+            "{shorter:?}"
         );
 
         let second = Store::open_existing(&path, Some(app_migrations()))
@@ -628,95 +517,6 @@ mod tests {
             second.setting("branding.app_name").await.expect("get"),
             Some("Widget Monitor".to_string())
         );
-
-        let mode: String = sqlx::query_scalar("PRAGMA journal_mode")
-            .fetch_one(second.pool())
-            .await
-            .expect("journal_mode");
-        assert_eq!(mode.to_lowercase(), "wal");
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            for name in ["appliance.db", "appliance.db-wal", "appliance.db-shm"] {
-                let file = std::fs::metadata(dir.path().join(name)).expect(name);
-                let mode = file.permissions().mode();
-                assert_eq!(mode & 0o777, 0o600, "{name} is owner-only");
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn a_closed_store_leaves_nothing_beside_the_database() {
-        let dir = TempDir::new().expect("temp dir");
-        let store = Store::open(dir.path().join("appliance.db"), None)
-            .await
-            .expect("open");
-        store
-            .set_setting("branding.app_name", "Widget Monitor")
-            .await
-            .expect("set");
-        store.close().await;
-        for name in ["appliance.db-wal", "appliance.db-shm"] {
-            assert!(!dir.path().join(name).exists(), "{name}");
-        }
-    }
-
-    /// A file store whose pool has every connection checked out, at least two.
-    async fn every_connection_held(
-        dir: &TempDir,
-    ) -> (Store, PathBuf, Vec<sqlx::pool::PoolConnection<Sqlite>>) {
-        let path = dir.path().join("appliance.db");
-        let store = Store::open(&path, None).await.expect("open");
-        let pool = store.pool();
-        while pool.num_idle() < pool.size() as usize {
-            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-        }
-        let mut held = Vec::new();
-        for _ in 0..pool.size().max(2) {
-            held.push(pool.acquire().await.expect("acquire"));
-        }
-        (store, sibling(&path, "-wal"), held)
-    }
-
-    #[tokio::test]
-    async fn closing_removes_the_wal_though_a_connection_was_mid_return() {
-        let dir = TempDir::new().expect("temp dir");
-        let (store, wal, mut held) = every_connection_held(&dir).await;
-        let returning = held.pop().expect("two held");
-        for conn in held {
-            conn.close().await.expect("close");
-        }
-        drop(returning);
-        tokio::task::yield_now().await;
-        store.close().await;
-        assert!(!wal.exists());
-    }
-
-    #[tokio::test]
-    async fn closing_waits_for_a_connection_still_checked_out() {
-        let dir = TempDir::new().expect("temp dir");
-        let (store, wal, mut held) = every_connection_held(&dir).await;
-        let out = held.pop().expect("two held");
-        drop(held);
-        while store.pool().num_idle() == 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-        }
-        tokio::join!(store.close(), async {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            drop(out);
-        });
-        assert!(!wal.exists());
-    }
-
-    #[tokio::test]
-    async fn closing_gives_up_on_a_connection_never_returned() {
-        let dir = TempDir::new().expect("temp dir");
-        let (store, _, held) = every_connection_held(&dir).await;
-        tokio::time::timeout(std::time::Duration::from_secs(10), store.close())
-            .await
-            .expect("close waits five seconds, not for ever");
-        drop(held);
     }
 
     #[cfg(windows)]

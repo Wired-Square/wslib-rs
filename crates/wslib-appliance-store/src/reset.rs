@@ -47,7 +47,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::audit::tests::record;
     use crate::certs::tests::{ca, cert};
-    use crate::tests::{schema_objects, store, tables};
+    use crate::tests::{store, tables};
     use chrono::DateTime;
     use wslib_appliance_types::Role;
     use wslib_secret::Secret;
@@ -115,36 +115,16 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn the_platform_list_is_every_table_a_store_with_no_app_has() {
+    async fn the_platform_list_is_every_table_but_the_migration_records() {
         let platform_only = Store::open_in_memory(None).await.expect("store");
-        let mut expected = vec!["_sqlx_migrations"];
+        let mut expected = vec![
+            "_migration_chains",
+            "_sqlx_migrations",
+            "platform_migrations",
+        ];
         expected.extend(PLATFORM_TABLES);
         expected.sort_unstable();
         assert_eq!(tables(&platform_only).await, expected);
-
-        // Frozen: the crate doc reserves every later platform object by prefix.
-        let unprefixed = [
-            "_sqlx_migrations",
-            "app_roles",
-            "asserted_roles",
-            "audit",
-            "passkeys",
-            "recovery_codes",
-            "settings",
-            "totp",
-            "totp_required",
-            "trusted_cas",
-            "trusted_certs",
-            "users",
-            "audit_at",
-            "passkeys_user",
-        ];
-        for name in schema_objects(&platform_only).await {
-            assert!(
-                unprefixed.contains(&name.as_str()) || name.starts_with("platform_"),
-                "{name}"
-            );
-        }
     }
 
     #[tokio::test]

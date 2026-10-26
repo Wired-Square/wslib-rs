@@ -61,7 +61,7 @@ impl Store {
         )
         .bind(source)
         .bind(id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.pool())
         .await?;
         if let Some(row) = kept {
             let role = kept_role(&row)?;
@@ -83,7 +83,7 @@ impl Store {
         .bind(display_name)
         .bind(first_sight.map(|role| role.min(Role::Admin).as_str()))
         .bind(stamp(now()))
-        .fetch_one(&self.pool)
+        .fetch_one(self.pool())
         .await?;
         kept_role(&row)
     }
@@ -95,7 +95,7 @@ impl Store {
              WHERE source = ? ORDER BY username, id",
         )
         .bind(source)
-        .fetch_all(&self.pool)
+        .fetch_all(self.pool())
         .await?
         .iter()
         .map(|row| {
@@ -123,7 +123,7 @@ impl Store {
             .bind(role.min(Role::Admin).as_str())
             .bind(source)
             .bind(id)
-            .execute(&self.pool)
+            .execute(self.pool())
             .await?
             .rows_affected();
         Ok(changed > 0)
@@ -135,7 +135,7 @@ impl Store {
         let forgotten = sqlx::query("DELETE FROM asserted_roles WHERE source = ? AND id = ?")
             .bind(source)
             .bind(id)
-            .execute(&self.pool)
+            .execute(self.pool())
             .await?
             .rows_affected();
         Ok(forgotten > 0)

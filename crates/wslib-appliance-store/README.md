@@ -28,9 +28,11 @@ commit, and `close` leaves no `-wal` or `-shm` once no connection, in this
 process or another, has the database open.
 
 The platform's migrations are numbered below `APP_FLOOR` (1000) and a
-product's from it, run as one sqlx `Migrator`. The platform's `.sql` files are
-frozen byte for byte, and its table and index names are reserved (the crate
-doc lists them); later platform objects are named `platform_…`.
+product's from it. They are two `wslib-db-sqlite` chains, applied in one
+transaction and mirrored into `_sqlx_migrations`, so a build on sqlx's own
+runner still opens the database. The platform's `.sql` files are frozen byte
+for byte, and its table and index names are reserved (the crate doc lists
+them); later platform objects are named `platform_…`.
 
 ## The tables
 

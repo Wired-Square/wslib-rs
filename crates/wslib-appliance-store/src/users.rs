@@ -116,7 +116,7 @@ impl Store {
         };
 
         bind_user(sqlx::query(INSERT), &user, password_hash, now)
-            .execute(&self.pool)
+            .execute(self.pool())
             .await
             .map_err(|e| match &e {
                 sqlx::Error::Database(db) if db.is_unique_violation() => {
@@ -148,7 +148,7 @@ impl Store {
         };
 
         let written = bind_user(sqlx::query(INSERT_FIRST), &user, password_hash, now)
-            .execute(&self.pool)
+            .execute(self.pool())
             .await?
             .rows_affected();
 
@@ -167,7 +167,7 @@ impl Store {
     async fn account(&self, sql: &str, value: &str) -> Result<Option<Account>, StoreError> {
         sqlx::query(sql)
             .bind(value)
-            .fetch_optional(&self.pool)
+            .fetch_optional(self.pool())
             .await?
             .map(|row| account_from_row(&row))
             .transpose()
@@ -176,7 +176,7 @@ impl Store {
     /// Every account, by username, unpaged.
     pub async fn users(&self) -> Result<Vec<User>, StoreError> {
         sqlx::query(ALL)
-            .fetch_all(&self.pool)
+            .fetch_all(self.pool())
             .await?
             .iter()
             .map(user_from_row)
@@ -186,7 +186,7 @@ impl Store {
     /// [`Store::users`], each with its second factors, for the accounts screen.
     pub async fn listed_users(&self) -> Result<Vec<ListedUser>, StoreError> {
         sqlx::query(LISTED)
-            .fetch_all(&self.pool)
+            .fetch_all(self.pool())
             .await?
             .iter()
             .map(|row| {
@@ -208,7 +208,7 @@ impl Store {
             account_columns!(),
             " FROM users ORDER BY username"
         ))
-        .fetch_all(&self.pool)
+        .fetch_all(self.pool())
         .await?
         .iter()
         .map(account_from_row)
@@ -294,7 +294,7 @@ impl Store {
     }
 
     pub async fn user_count(&self) -> Result<u64, StoreError> {
-        let count: i64 = sqlx::query_scalar(COUNT).fetch_one(&self.pool).await?;
+        let count: i64 = sqlx::query_scalar(COUNT).fetch_one(self.pool()).await?;
         Ok(count.max(0) as u64)
     }
 
@@ -385,7 +385,7 @@ impl Store {
                 .bind(rehashed)
                 .bind(id)
                 .bind(verified_hash)
-                .execute(&self.pool)
+                .execute(self.pool())
                 .await?
                 .rows_affected();
         Ok(affected == 1)
@@ -454,7 +454,7 @@ impl Store {
     /// Every account's role in every app it has one in, by app then account.
     pub async fn app_roles(&self) -> Result<Vec<AppRole>, StoreError> {
         sqlx::query("SELECT user_id, app, role FROM app_roles ORDER BY app, user_id")
-            .fetch_all(&self.pool)
+            .fetch_all(self.pool())
             .await?
             .iter()
             .map(|row| {
@@ -516,7 +516,7 @@ impl Store {
         )
         .bind(app)
         .bind(id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(self.pool())
         .await?
         else {
             return Ok(None);
@@ -551,7 +551,7 @@ impl Store {
         query: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>>,
         id: &'q str,
     ) -> Result<(), StoreError> {
-        let affected = query.bind(id).execute(&self.pool).await?.rows_affected();
+        let affected = query.bind(id).execute(self.pool()).await?.rows_affected();
         if affected == 0 {
             return Err(StoreError::NoSuchUser(id.to_string()));
         }
@@ -601,7 +601,7 @@ impl Store {
         Ok(query
             .bind(!self.spares_host_admins)
             .bind(id)
-            .execute(&self.pool)
+            .execute(self.pool())
             .await?
             .rows_affected())
     }

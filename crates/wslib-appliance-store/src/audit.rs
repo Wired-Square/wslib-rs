@@ -32,7 +32,7 @@ impl Store {
         .bind(&record.target)
         .bind(&record.message)
         .bind(fields)
-        .execute(&self.pool)
+        .execute(self.pool())
         .await?;
         Ok(())
     }
@@ -72,7 +72,7 @@ impl Store {
             }
             None => sqlx::query(FIRST).bind(fetch),
         }
-        .fetch_all(&self.pool)
+        .fetch_all(self.pool())
         .await?;
 
         let mut next = None;
@@ -96,7 +96,7 @@ impl Store {
     pub async fn sweep_audit(&self, before: DateTime<Utc>) -> Result<u64, StoreError> {
         Ok(sqlx::query("DELETE FROM audit WHERE at < ?")
             .bind(stamp(before))
-            .execute(&self.pool)
+            .execute(self.pool())
             .await?
             .rows_affected())
     }

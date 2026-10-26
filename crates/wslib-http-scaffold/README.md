@@ -27,7 +27,10 @@ let app = standard_layers(app);
   immutable` and a missing asset there is a 404, never the page; everything
   else is `no-store`. A `.gz` beside a file is sent to a client taking gzip.
   `index.html` is read once, when the `Spa` is built, and served from memory
-  with a gzip made then; a bundle without one answers the page with a 500.
+  with a gzip made then; a bundle without one answers the page with a 404,
+  and `has_page` says so.
+  `from_dir_with_page(dir, page)` serves `page` in place of the
+  `index.html` on disk, for an app that read it already.
   `first_segment_is(path, "api")` is the reserved-prefix rule on its own.
 - **`Spa::base(base)`**: the page rendered once with `<base href="{base}">`,
   its gzip stored, so it passes the encoder cap.
@@ -54,5 +57,7 @@ let app = standard_layers(app);
   A handler serving a body stored compressed calls `restore_accept_encoding`
   first and returns through `mark_stored`, so it passes the cap with no
   permit.
+- **`accepts_gzip(headers)`**: whether a request takes gzip, by RFC 9110:
+  `gzip` or `x-gzip` above `q=0`, else `*` above it when gzip is not named.
 - **`BasePath` alone**: `default-features = false` drops the `server`
   feature and with it every HTTP dependency.

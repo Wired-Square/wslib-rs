@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.2
+
+- `accepts_gzip(headers)`, now public, follows RFC 9110: `gzip` or `x-gzip`
+  at a q-value above zero, else `*` above zero when gzip is not named. A
+  malformed q-value is no acceptance. It was `gzip` alone, refused only at
+  exactly `q=0`.
+- `Spa::from_dir_with_page(dir, page)`: the bundle in `dir` with `page` as its
+  `index.html`, for an app that read the page itself and needs the page
+  served to be that one.
+- A bundle with no `index.html` answers the page with a 404,
+  `the bundle has no index.html`, where it was a 500 logged as an error on
+  every request. `Spa::has_page` says so, to warn once at startup.
+
 ## 0.1.1
 
 - `BasePath`: `/` or slash-separated URL-safe segments ending in `/`, parsed

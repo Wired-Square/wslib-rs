@@ -74,7 +74,7 @@ fn if_none_match(headers: &HeaderMap, tag: &HeaderValue) -> bool {
 mod tests {
     use super::*;
     use crate::spa::tests::{
-        a_bundle_without_its_page_is_a_server_error, a_stored_copy_passes_the_cap, get_from,
+        a_bundle_without_its_page_answers_it_404, a_stored_copy_passes_the_cap, get_from,
         rules_hold, the_base_is_the_hooks, the_static_base_is_made_once_and_the_hook_overrides_it,
     };
 
@@ -92,8 +92,8 @@ mod tests {
     struct Pageless;
 
     #[tokio::test]
-    async fn an_embedded_bundle_without_its_page_is_a_server_error() {
-        a_bundle_without_its_page_is_a_server_error(Spa::embedded::<Pageless>()).await;
+    async fn an_embedded_bundle_without_its_page_answers_it_404() {
+        a_bundle_without_its_page_answers_it_404(Spa::embedded::<Pageless>()).await;
     }
 
     #[tokio::test]

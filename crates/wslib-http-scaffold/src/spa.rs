@@ -54,6 +54,16 @@ pub(crate) enum Files {
     Embedded(crate::embed::Lookup),
 }
 
+impl Files {
+    fn disk(dir: &Path) -> Self {
+        Self::Disk(
+            ServeDir::new(dir)
+                .precompressed_gzip()
+                .append_index_html_on_directories(false),
+        )
+    }
+}
+
 /// `index.html` as read, and as served without a per-request base: its gzip
 /// kept only when smaller.
 #[derive(Clone)]
@@ -95,14 +105,14 @@ impl Spa {
     /// The bundle in `dir`, with a `.gz` beside a file sent to a client taking gzip.
     pub fn from_dir(dir: impl AsRef<Path>) -> Self {
         let dir = dir.as_ref();
-        Self::of(
-            Files::Disk(
-                ServeDir::new(dir)
-                    .precompressed_gzip()
-                    .append_index_html_on_directories(false),
-            ),
-            std::fs::read(dir.join(INDEX)).ok().map(Bytes::from),
-        )
+        let page = std::fs::read(dir.join(INDEX)).ok().map(Bytes::from);
+        Self::of(Files::disk(dir), page)
+    }
+
+    /// The bundle in `dir` as [`from_dir`](Self::from_dir) serves it, with
+    /// `page` as its `index.html` in place of the file there.
+    pub fn from_dir_with_page(dir: impl AsRef<Path>, page: impl Into<Bytes>) -> Self {
+        Self::of(Files::disk(dir.as_ref()), Some(page.into()))
     }
 
     pub(crate) fn of(files: Files, page: Option<Bytes>) -> Self {
@@ -112,6 +122,11 @@ impl Spa {
             page: page.map(|page| Page::new(page, None)),
             base_from: None,
         }
+    }
+
+    /// Whether the bundle has an `index.html`; without one the page is a 404.
+    pub fn has_page(&self) -> bool {
+        self.page.is_some()
     }
 
     /// The first path segments that belong to routes and never to the bundle,
@@ -204,10 +219,7 @@ impl Spa {
 
     fn page(&self, parts: &Parts) -> Result<Response, ApiError> {
         let Some(page) = &self.page else {
-            return Err(ApiError::internal(
-                "serve the page",
-                format!("the bundle has no {INDEX}"),
-            ));
+            return Err(ApiError::not_found(format!("the bundle has no {INDEX}")));
         };
         let named = match &self.base_from {
             Some(hook) => hook(parts)?,
@@ -673,6 +685,19 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn a_page_given_is_served_in_place_of_the_one_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(INDEX), "<head>on disk</head>").unwrap();
+        let spa = Spa::from_dir_with_page(dir.path(), "<head>given</head>");
+        for path in ["/", "/index.html", "/settings"] {
+            assert_eq!(
+                get_from(spa.clone(), path, &[]).await.1,
+                b"<head>given</head>"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn a_page_its_gzip_would_not_shrink_is_sent_plain_for_the_compression_layer() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(INDEX), "<p>").unwrap();
@@ -700,25 +725,23 @@ pub(crate) mod tests {
         the_base_is_the_hooks(Spa::from_dir(BUNDLE)).await;
     }
 
-    pub(crate) async fn a_bundle_without_its_page_is_a_server_error(spa: Spa) {
+    pub(crate) async fn a_bundle_without_its_page_answers_it_404(spa: Spa) {
+        assert!(!spa.has_page());
         for spa in [spa.clone(), based_on_header(spa)] {
             for path in ["/", "/settings"] {
                 let (response, body) = get_from(spa.clone(), path, &[("x-base", "/x/")]).await;
-                assert_eq!(
-                    response.status(),
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "{path}"
-                );
+                assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+                assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
                 let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-                assert_eq!(body["error"], "could not serve the page");
+                assert_eq!(body["error"], "the bundle has no index.html");
             }
         }
     }
 
     #[tokio::test]
-    async fn a_bundle_on_disk_without_its_page_is_a_server_error() {
-        a_bundle_without_its_page_is_a_server_error(Spa::from_dir(format!("{BUNDLE}/assets")))
-            .await;
+    async fn a_bundle_on_disk_without_its_page_answers_it_404() {
+        a_bundle_without_its_page_answers_it_404(Spa::from_dir(format!("{BUNDLE}/assets"))).await;
+        assert!(Spa::from_dir(BUNDLE).has_page());
     }
 
     /// Every encoder held by a route, then every stored copy out at once.

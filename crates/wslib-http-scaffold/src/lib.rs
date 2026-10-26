@@ -18,7 +18,7 @@ mod spa;
 
 pub use base_path::BasePath;
 #[cfg(feature = "server")]
-pub use compress::{Capped, EncoderCap, mark_stored, restore_accept_encoding};
+pub use compress::{Capped, EncoderCap, accepts_gzip, mark_stored, restore_accept_encoding};
 #[cfg(feature = "server")]
 pub use layers::standard_layers;
 #[cfg(feature = "server")]

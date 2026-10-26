@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
-use wslib_crypto::Fingerprint;
 use wslib_secret::Secret;
 
 use crate::{AuthError, random_bytes};
@@ -100,7 +100,7 @@ impl Drop for Pending {
 }
 
 fn hashed(password_hash: &str) -> [u8; 32] {
-    *Fingerprint::of(password_hash.as_bytes()).as_bytes()
+    Sha256::digest(password_hash.as_bytes()).into()
 }
 
 impl PendingSignIns {
@@ -197,11 +197,6 @@ mod tests {
     const HASH: &str = "$argon2id$v=19$the-hash";
     const CODE: Awaiting = Awaiting::Code;
 
-    fn sign_ins() -> PendingSignIns {
-        crate::tests::with_provider();
-        PendingSignIns::default()
-    }
-
     fn begin(pending: &PendingSignIns, user_id: &str) -> Secret {
         pending.begin(user_id, HASH, CODE).unwrap().token
     }
@@ -214,7 +209,7 @@ mod tests {
 
     #[test]
     fn a_sign_in_is_taken_only_for_what_it_awaits() {
-        let pending = sign_ins();
+        let pending = PendingSignIns::default();
         let token = pending
             .begin("u1", HASH, Awaiting::Enrolment)
             .unwrap()
@@ -228,7 +223,7 @@ mod tests {
 
     #[test]
     fn a_sign_in_is_named_by_its_token_and_gone_once_spent() {
-        let pending = sign_ins();
+        let pending = PendingSignIns::default();
         let token = begin(&pending, "u1");
         let taken = pending.code(&token).expect("waiting");
         assert_eq!(taken.user_id(), "u1");
@@ -239,7 +234,7 @@ mod tests {
 
     #[test]
     fn a_step_that_issues_nothing_gives_the_sign_in_back() {
-        let pending = sign_ins();
+        let pending = PendingSignIns::default();
         let token = begin(&pending, "u1");
         drop(pending.code(&token).expect("waiting"));
         assert_eq!(pending.code(&token).expect("back").user_id(), "u1");
@@ -247,7 +242,7 @@ mod tests {
 
     #[test]
     fn a_second_sign_in_leaves_the_first_and_says_it_is_there() {
-        let pending = sign_ins();
+        let pending = PendingSignIns::default();
         let first = pending.begin("u1", HASH, CODE).unwrap();
         assert_eq!(first.others, 0);
         let second = pending.begin("u1", HASH, CODE).unwrap();
@@ -262,7 +257,7 @@ mod tests {
 
     #[test]
     fn past_eight_for_one_account_its_oldest_goes() {
-        let pending = sign_ins();
+        let pending = PendingSignIns::default();
         let now = Instant::now();
         let oldest = pending.begin_at("u1", HASH, CODE, now).unwrap().token;
         for n in 1..=MAX_PER_ACCOUNT {
@@ -275,7 +270,7 @@ mod tests {
 
     #[test]
     fn a_sign_in_knows_the_password_it_was_proved_against() {
-        let pending = sign_ins();
+        let pending = PendingSignIns::default();
         let token = begin(&pending, "u1");
         let taken = pending.code(&token).expect("waiting");
         assert!(taken.began_under(HASH));
@@ -284,7 +279,7 @@ mod tests {
 
     #[test]
     fn an_expired_or_made_up_token_names_nothing() {
-        let pending = sign_ins();
+        let pending = PendingSignIns::default();
         let now = Instant::now();
         let token = pending.begin_at("u1", HASH, CODE, now).unwrap().token;
         assert!(pending.take_at(&token, CODE, now + LIFETIME).is_none());
@@ -296,7 +291,7 @@ mod tests {
 
     #[test]
     fn past_the_cap_the_oldest_goes() {
-        let pending = sign_ins();
+        let pending = PendingSignIns::default();
         let now = Instant::now();
         let oldest = pending.begin_at("u0", HASH, CODE, now).unwrap().token;
         for n in 1..=MAX_PENDING {

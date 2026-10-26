@@ -15,10 +15,6 @@
 //! An unknown username, a wrong password and a disabled account are one
 //! [`AuthError::Refused`]. Each is logged with its cause as a `tracing` event
 //! named `audit` whose `actor` is the username tried.
-//!
-//! No crypto provider is enabled here: a pending sign-in's token is drawn from
-//! the process's default rustls `CryptoProvider`, and is
-//! [`AuthError::NoProvider`] while none is installed.
 
 use std::time::Duration;
 
@@ -118,10 +114,6 @@ pub enum AuthError {
     #[error("the system's random source failed")]
     Random,
 
-    /// The process has no default rustls `CryptoProvider` to draw a token from.
-    #[error("no default crypto provider is installed")]
-    NoProvider,
-
     #[error("hashing: {0}")]
     Hash(String),
 
@@ -137,10 +129,9 @@ fn in_minutes(wait: Duration) -> String {
 }
 
 fn random_bytes<const N: usize>() -> Result<[u8; N], AuthError> {
-    wslib_crypto::random_default().map_err(|e| match e {
-        wslib_crypto::Error::NoProvider => AuthError::NoProvider,
-        _ => AuthError::Random,
-    })
+    let mut bytes = [0; N];
+    getrandom::fill(&mut bytes).map_err(|_| AuthError::Random)?;
+    Ok(bytes)
 }
 
 async fn off_thread<T, F>(f: F) -> Result<T, AuthError>
@@ -176,10 +167,6 @@ mod tests {
     pub(crate) const STRONG_HASH: &str = "$argon2id$v=19$m=19456,t=3,p=1$c3Ryb25nZXJwYXJhbXM$\
                                           //tTmM90bHi9H6olo2K4JJvH1yXpwVIYxzDXx2YgNVY";
 
-    pub(crate) fn with_provider() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
-    }
-
     pub(crate) async fn store() -> Store {
         Store::open_in_memory(None).await.expect("in-memory store")
     }
@@ -214,7 +201,6 @@ mod tests {
 
     #[test]
     fn two_tokens_are_never_the_same() {
-        with_provider();
         assert_ne!(random_bytes::<32>().unwrap(), random_bytes::<32>().unwrap());
     }
 }

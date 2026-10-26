@@ -14,6 +14,8 @@ publish = ["wired-square"]
 argon2 = { version = "0.6", default-features = false, features = ["password-hash"] }
 base64 = { version = "0.23", default-features = false, features = ["alloc"] }
 chrono = { version = "0.4.38", default-features = false }
+getrandom = "0.3"
+sha2 = "0.10.9"
 subtle = { version = "2.5", default-features = false }
 thiserror = "2"
 tokio = { version = "1.47", default-features = false, features = ["rt"] }
@@ -24,11 +26,9 @@ wslib-auth = { path = "../wslib-auth", version = "0.1.0", registry = "wired-squa
 wslib-auth-passkey = { path = "../wslib-auth-passkey", version = "0.1.0", registry = "wired-square", default-features = false, features = ["ceremonies"] }
 wslib-auth-password = { path = "../wslib-auth-password", version = "0.1.1", registry = "wired-square", default-features = false }
 wslib-auth-totp = { path = "../wslib-auth-totp", version = "0.1.1", registry = "wired-square", default-features = false, features = ["codes"] }
-wslib-crypto = { path = "../wslib-crypto", version = "0.1.1", registry = "wired-square" }
 wslib-secret = { path = "../wslib-secret", version = "0.1.0", registry = "wired-square" }
 
 [dev-dependencies]
-rustls = { version = "0.23.27", default-features = false, features = ["ring", "std"] }
 tempfile = "3.10.1"
 tokio = { version = "1.47", features = ["macros", "rt-multi-thread", "time"] }
 wslib-auth-passkey = { path = "../wslib-auth-passkey", version = "0.1.0", registry = "wired-square", features = ["testing"] }

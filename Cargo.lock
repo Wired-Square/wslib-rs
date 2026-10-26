@@ -6977,7 +6977,8 @@ dependencies = [
  "argon2",
  "base64 0.23.1",
  "chrono",
- "rustls",
+ "getrandom 0.3.4",
+ "sha2 0.10.9",
  "subtle",
  "tempfile",
  "thiserror 2.0.21",
@@ -6989,7 +6990,6 @@ dependencies = [
  "wslib-auth-passkey",
  "wslib-auth-password",
  "wslib-auth-totp",
- "wslib-crypto",
  "wslib-secret",
 ]
 

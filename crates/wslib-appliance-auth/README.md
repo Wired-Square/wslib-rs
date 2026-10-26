@@ -20,21 +20,6 @@ if totp_is_on {
 }
 ```
 
-## The crypto provider
-
-The crate enables no rustls provider. A pending sign-in's token is drawn
-from the process's default `CryptoProvider`, through `wslib-crypto`, so the
-consumer installs one before the first sign-in:
-
-```rust
-rustls::crypto::ring::default_provider().install_default().ok();
-```
-
-A missing provider is not caught at startup: it shows up at the first
-sign-in that reaches a second step (TOTP or enrolment), as
-`AuthError::NoProvider` from `PendingSignIns::begin`. A startup check
-belongs to whatever builds the server.
-
 ## What it holds
 
 - **Passwords**: argon2id through `wslib-auth-password`. `authenticate` runs

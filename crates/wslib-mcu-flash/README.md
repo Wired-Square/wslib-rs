@@ -104,4 +104,3 @@ tokio::task::spawn_blocking(move || {
   only renames the program (`esptool.py` on a PlatformIO install, say); an
   esptool 4 install wants underscored flags and is not supported.
 - **`--all-features` to test.** The crate defaults to no backends.
-- **`espflash` sets the floor at Rust 1.88.**

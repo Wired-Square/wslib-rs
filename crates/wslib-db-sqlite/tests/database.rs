@@ -6,6 +6,7 @@ use std::time::Duration;
 use common::chain;
 use wslib_db_sqlite::sqlx::{self, Sqlite};
 use wslib_db_sqlite::{Chain, Database, Error};
+use wslib_file_atomic::testing::assert_owner_only;
 
 async fn parents_and_children() -> Chain {
     chain(
@@ -130,17 +131,32 @@ async fn a_second_open_of_one_file_finds_what_the_first_wrote() {
         .await
         .unwrap();
     assert_eq!(mode.to_lowercase(), "wal");
+    second.close().await;
+}
+
+#[tokio::test]
+async fn every_open_restricts_the_file_and_its_wal_and_shm_to_their_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.db");
+    let app = [parents_and_children().await];
+    let owner_only = || {
+        for name in ["app.db", "app.db-wal", "app.db-shm"] {
+            assert_owner_only(&dir.path().join(name));
+        }
+    };
+
+    let db = Database::open(&path, &app).await.expect("open");
+    owner_only();
+    db.close().await;
 
     #[cfg(unix)]
-    for name in ["app.db", "app.db-wal", "app.db-shm"] {
+    {
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(dir.path().join(name))
-            .expect(name)
-            .permissions()
-            .mode();
-        assert_eq!(mode & 0o777, 0o600, "{name} is its owner's alone");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
     }
-    second.close().await;
+    let db = Database::open_existing(&path, &app).await.expect("reopen");
+    owner_only();
+    db.close().await;
 }
 
 #[tokio::test]
@@ -176,6 +192,15 @@ async fn a_chain_name_that_is_not_plain_or_is_repeated_is_refused_before_the_fil
         "{refused:?}"
     );
     assert!(!path.exists());
+}
+
+#[tokio::test]
+async fn a_chain_whose_table_would_be_the_crates_own_is_refused() {
+    let refused = Database::open_in_memory(&[chain("sqlx", &[]).await]).await;
+    assert!(
+        matches!(&refused, Err(Error::ReservedChain(name)) if name == "sqlx"),
+        "{refused:?}"
+    );
 }
 
 #[tokio::test]

@@ -65,10 +65,12 @@ own, from anywhere. A chain named `sqlx`, whose table would be
 - Every pending migration of every chain applies in **one transaction**, in
   the order the chains are given: a failure anywhere leaves the database as
   it was. A pending migration marked `-- no-transaction` is refused.
-- Foreign keys are deferred as in `begin`, but a reference a migration
-  leaves dangling fails that migration, as under sqlx's runner: an
-  `ExecuteMigration` with a foreign-key violation, naming its version. One
-  dangling before the open is not blamed.
+- Migrations run with foreign keys off, as SQLite's table-rebuild recipe
+  asks, so a referenced table can be rebuilt; `ON DELETE CASCADE` and the
+  other actions do not fire in them. A reference a migration leaves dangling
+  still fails that migration, as under sqlx's runner: an `ExecuteMigration`
+  with a foreign-key violation, naming its version. One dangling before the
+  open is not blamed.
 - A modified applied migration is refused, and so is an applied version its
   chain no longer has, naming the chain and version. A registered chain the
   open isn't given is `UnknownChain`, from `open` and `open_existing` alike.

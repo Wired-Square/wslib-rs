@@ -36,9 +36,10 @@
 //! [`Database::open_existing`](crate::Database::open_existing) verifies by the
 //! same rules, and writes nothing.
 //!
-//! Migrations run with foreign keys deferred, as in
-//! [`Database::begin`](crate::Database::begin), but a reference one leaves
-//! dangling fails that migration, as under sqlx's runner.
+//! Migrations run with foreign keys off, as SQLite's table-rebuild recipe
+//! asks, so their actions such as `ON DELETE CASCADE` do not fire; a reference
+//! one leaves dangling still fails that migration, as under sqlx's runner.
+//! The connection goes back to the pool with foreign keys on, or is closed.
 //!
 //! The tables this module keeps, `_<name>_migrations`, `_migration_chains` and
 //! `_sqlx_migrations`, are not an app's to create, alter or drop.
@@ -47,10 +48,10 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Instant;
 
-use sqlx::SqliteConnection;
 use sqlx::error::{DatabaseError, ErrorKind};
 use sqlx::migrate::{MigrateError, Migration, Migrator};
 use sqlx::sqlite::SqlitePool;
+use sqlx::{Connection, SqliteConnection};
 
 use crate::{Error, is_plain_name, stamp};
 
@@ -164,7 +165,25 @@ pub(crate) async fn verify(pool: &SqlitePool, chains: &[Chain]) -> Result<(), Er
 }
 
 pub(crate) async fn apply(pool: &SqlitePool, chains: &[Chain]) -> Result<(), Error> {
-    let mut tx = crate::begin(pool).await?;
+    let mut conn = pool.acquire().await?;
+    let applied = apply_with_foreign_keys_off(&mut conn, chains).await;
+    if let Err(e) = restore_foreign_keys(&mut conn).await {
+        conn.close().await.ok();
+        return applied.and(Err(e));
+    }
+    applied
+}
+
+async fn apply_with_foreign_keys_off(
+    conn: &mut SqliteConnection,
+    chains: &[Chain],
+) -> Result<(), Error> {
+    // Before BEGIN, where it is a no-op: SQLite's table-rebuild recipe, since a
+    // dropped parent counts against the commit even once its rows are restored.
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&mut *conn)
+        .await?;
+    let mut tx = conn.begin_with("BEGIN IMMEDIATE").await?;
     let conn = &mut *tx;
 
     let legacy = legacy_rows(conn).await?;
@@ -305,6 +324,21 @@ pub(crate) async fn apply(pool: &SqlitePool, chains: &[Chain]) -> Result<(), Err
         }
     }
     tx.commit().await?;
+    Ok(())
+}
+
+/// A no-op still inside a transaction, so read back rather than trusted.
+async fn restore_foreign_keys(conn: &mut SqliteConnection) -> Result<(), Error> {
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&mut *conn)
+        .await?;
+    let on: bool = sqlx::query_scalar("PRAGMA foreign_keys")
+        .fetch_one(conn)
+        .await?;
+    if !on {
+        let stuck = "foreign keys stayed off after the migrations";
+        return Err(sqlx::Error::Protocol(stuck.into()).into());
+    }
     Ok(())
 }
 
@@ -593,4 +627,91 @@ async fn table_exists(conn: &mut SqliteConnection, name: &str) -> Result<bool, E
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+
+    use sqlx::migrate::MigrationType;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+
+    use super::*;
+
+    fn app(migrations: &[(i64, &str)]) -> Chain {
+        Chain {
+            name: "app".into(),
+            migrations: migrations
+                .iter()
+                .map(|&(version, sql)| {
+                    Migration::new(
+                        version,
+                        Cow::Owned(format!("migration {version}")),
+                        MigrationType::Simple,
+                        Cow::Owned(sql.to_string()),
+                        false,
+                    )
+                })
+                .collect(),
+            mirrored: false,
+        }
+    }
+
+    const PARENTS_AND_CHILDREN: &str = "CREATE TABLE parents (id INTEGER PRIMARY KEY);
+         CREATE TABLE children (id INTEGER PRIMARY KEY, parent INTEGER REFERENCES parents (id));";
+
+    /// One connection, so the next query runs on the one that migrated.
+    async fn one_connection() -> SqlitePool {
+        let opts = SqliteConnectOptions::new()
+            .in_memory(true)
+            .foreign_keys(true);
+        SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await
+            .unwrap()
+    }
+
+    async fn enforces_foreign_keys(pool: &SqlitePool) -> bool {
+        sqlx::query("INSERT INTO children (parent) VALUES (9)")
+            .execute(pool)
+            .await
+            .is_err()
+    }
+
+    #[tokio::test]
+    async fn the_pool_enforces_foreign_keys_after_a_successful_run() {
+        let pool = one_connection().await;
+        apply(&pool, &[app(&[(1, PARENTS_AND_CHILDREN)])])
+            .await
+            .expect("applies");
+        assert!(enforces_foreign_keys(&pool).await);
+    }
+
+    #[tokio::test]
+    async fn the_pool_enforces_foreign_keys_after_a_failed_run() {
+        let pool = one_connection().await;
+        apply(&pool, &[app(&[(1, PARENTS_AND_CHILDREN)])])
+            .await
+            .expect("applies");
+        let failed = apply(
+            &pool,
+            &[app(&[
+                (1, PARENTS_AND_CHILDREN),
+                (2, "INSERT INTO children (parent) VALUES (9)"),
+            ])],
+        )
+        .await;
+        assert!(
+            matches!(
+                &failed,
+                Err(Error::Migrate {
+                    source: MigrateError::ExecuteMigration(_, 2),
+                    ..
+                })
+            ),
+            "{failed:?}"
+        );
+        assert!(enforces_foreign_keys(&pool).await);
+    }
 }

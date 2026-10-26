@@ -285,7 +285,12 @@ impl Database {
     /// `ON DELETE RESTRICT` acts at the commit too; `SET NULL`, `SET DEFAULT` and
     /// `CASCADE` still act at the statement.
     pub async fn begin(&self) -> Result<Transaction<'_, Sqlite>, Error> {
-        begin(&self.pool).await
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        // Per transaction: SQLite switches it back off at the commit or rollback.
+        sqlx::query("PRAGMA defer_foreign_keys = ON")
+            .execute(&mut *tx)
+            .await?;
+        Ok(tx)
     }
 
     /// Close every connection and wait for it, for a process that exits after
@@ -317,15 +322,6 @@ impl Database {
             wait_for_removal(alone.get_filename()).await;
         }
     }
-}
-
-async fn begin(pool: &SqlitePool) -> Result<Transaction<'static, Sqlite>, Error> {
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    // Per transaction: SQLite switches it back off at the commit or rollback.
-    sqlx::query("PRAGMA defer_foreign_keys = ON")
-        .execute(&mut *tx)
-        .await?;
-    Ok(tx)
 }
 
 fn is_plain_name(name: &str) -> bool {

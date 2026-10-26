@@ -7489,6 +7489,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-tauri"
+version = "0.1.0"
+dependencies = [
+ "tauri",
+]
+
+[[package]]
 name = "wslib-telemetry"
 version = "0.1.9"
 dependencies = [

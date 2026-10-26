@@ -34,7 +34,9 @@ CrlView::from_der(&crl)?.verify(ca.certificate(), provider.signature_verificatio
   first common name, the public key, and the DNS names, addresses, emails
   and URIs it asks for. Every other requested extension is dropped: the
   profile decides those. `has_rsa_key` tells a caller whether key
-  encipherment may be claimed. `CsrView` reads one without checking the
+  encipherment may be claimed. For display, `subject_text` is the subject
+  in RFC 4514 form, `key` the `wslib_crypto_x509::KeyDescription`, and
+  `signature_algorithm` OpenSSL's name for it (`ecdsa-with-SHA256`). `CsrView` reads one without checking the
   signature, so a stored request needs no provider and a SHA-1-signed one
   still reads; its `verify(algorithms)` gives the `Csr` that `issue`
   takes, and a `Csr` has the view's accessors.
@@ -82,7 +84,8 @@ CrlView::from_der(&crl)?.verify(ca.certificate(), provider.signature_verificatio
   point and no deltas.
 - **`CrlView`**: what a CRL says, read without trusting it: issuer (DER,
   and `issuer_text` in RFC 4514 form),
-  number, this and next update, authority key identifier and entries.
+  number, this and next update, authority key identifier and entries, and
+  `signature_algorithm()` by OpenSSL's name.
   `verify(issuer, algorithms)` checks that the certificate's subject is the
   CRL's issuer, byte for byte, and that its key signed it.
 

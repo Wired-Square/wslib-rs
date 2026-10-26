@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1
+
+- `CsrView::subject_text`: the subject in RFC 4514 form, as
+  `wslib_crypto_x509::rfc_4514` writes it.
+- `CsrView::key`: the requested key's `wslib_crypto_x509::KeyDescription`.
+- `CsrView::signature_algorithm` and `CrlView::signature_algorithm`: the
+  signature algorithm by OpenSSL's long name, or its dotted OID.
+- Needs `wslib-crypto-x509` 0.1.2.
+
 ## 0.1.0
 
 - `Csr`: a certificate signing request parsed and its signature verified

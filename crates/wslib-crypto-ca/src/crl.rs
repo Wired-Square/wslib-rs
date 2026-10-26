@@ -153,6 +153,7 @@ pub struct CrlView {
     pub revoked: Vec<Revocation>,
     signed: Vec<u8>,
     signature_algorithm: Vec<u8>,
+    signature_algorithm_name: String,
     signature: Vec<u8>,
 }
 
@@ -194,7 +195,7 @@ impl CrlView {
         Ok(Self {
             issuer: crl.issuer().as_raw().to_vec(),
             issuer_text: wslib_crypto_x509::rfc_4514(crl.issuer().as_raw())
-                .map_err(|e| Error::Malformed(e.to_string()))?,
+                .map_err(der::malformed)?,
             number,
             this_update: instant(crl.last_update()),
             next_update: crl.next_update().map(instant),
@@ -202,6 +203,9 @@ impl CrlView {
             revoked,
             signed: signed.to_vec(),
             signature_algorithm: signature_algorithm.to_vec(),
+            signature_algorithm_name: signature::algorithm_name(
+                &crl.signature_algorithm.algorithm.to_id_string(),
+            ),
             signature: crl.signature_value.data.to_vec(),
         })
     }
@@ -211,6 +215,11 @@ impl CrlView {
         let der = CertificateRevocationListDer::from_pem_slice(pem.as_bytes())
             .map_err(|e| Error::Malformed(e.to_string()))?;
         Self::from_der(&der)
+    }
+
+    /// As [`signature::algorithm_name`] spells it.
+    pub fn signature_algorithm(&self) -> &str {
+        &self.signature_algorithm_name
     }
 
     /// Checks that `issuer` issued this CRL: its subject is the CRL's issuer byte for byte, and its key signed it.

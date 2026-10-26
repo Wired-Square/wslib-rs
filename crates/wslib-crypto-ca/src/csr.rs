@@ -7,7 +7,7 @@ use rcgen::CertificateParams;
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::{CertificateSigningRequestDer, SignatureVerificationAlgorithm};
 use wslib_crypto::{KeyAlgorithm, Signer};
-use wslib_crypto_x509::{SubjectAltName, signature};
+use wslib_crypto_x509::{KeyDescription, SubjectAltName, rfc_4514, signature};
 use x509_parser::prelude::{FromDer, GeneralName, ParsedExtension, X509CertificationRequest};
 use x509_parser::x509::X509Name;
 
@@ -17,8 +17,6 @@ use crate::der::{self, SEQUENCE, tlv};
 /// The PEM label of a certificate signing request.
 pub const CERTIFICATE_REQUEST: &str = "CERTIFICATE REQUEST";
 
-const RSA_ENCRYPTION: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1");
-
 /// A certificate signing request as read, its self-signature not yet checked.
 ///
 /// Only its subject, public key and requested subject alternative names are
@@ -27,11 +25,14 @@ const RSA_ENCRYPTION: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.1
 pub struct CsrView {
     der: Vec<u8>,
     subject: Vec<u8>,
+    subject_text: String,
     common_name: Option<String>,
     spki: Vec<u8>,
+    key: KeyDescription,
     names: Vec<SubjectAltName>,
     signed: Vec<u8>,
     signature_algorithm: Vec<u8>,
+    signature_algorithm_name: String,
     signature: Vec<u8>,
 }
 
@@ -73,14 +74,20 @@ impl CsrView {
             return Err(Error::Malformed("not a certificate signing request".into()));
         };
         let info = &request.certification_request_info;
+        let spki = info.subject_pki.raw;
         Ok(Self {
             der: der.to_vec(),
             subject: info.subject.as_raw().to_vec(),
+            subject_text: rfc_4514(info.subject.as_raw()).map_err(der::malformed)?,
             common_name: common_name(&info.subject),
-            spki: info.subject_pki.raw.to_vec(),
+            spki: spki.to_vec(),
+            key: KeyDescription::of_spki(spki).map_err(der::malformed)?,
             names: requested_names(&request),
             signed: signed.to_vec(),
             signature_algorithm: signature_algorithm.to_vec(),
+            signature_algorithm_name: signature::algorithm_name(
+                &request.signature_algorithm.algorithm.to_id_string(),
+            ),
             signature: request.signature_value.data.to_vec(),
         })
     }
@@ -117,6 +124,11 @@ impl CsrView {
         &self.subject
     }
 
+    /// The subject in RFC 4514 form, as [`wslib_crypto_x509::rfc_4514`] writes it.
+    pub fn subject_text(&self) -> &str {
+        &self.subject_text
+    }
+
     /// The first common name, when it is a string.
     pub fn common_name(&self) -> Option<&str> {
         self.common_name.as_deref()
@@ -127,6 +139,10 @@ impl CsrView {
         &self.spki
     }
 
+    pub fn key(&self) -> &KeyDescription {
+        &self.key
+    }
+
     /// The key's algorithm, when it is one `wslib-crypto` signs with.
     pub fn key_algorithm(&self) -> Option<KeyAlgorithm> {
         KeyAlgorithm::of_spki(&self.spki)
@@ -134,13 +150,17 @@ impl CsrView {
 
     /// Whether the key is RSA, of any size: only RSA keys may claim key encipherment.
     pub fn has_rsa_key(&self) -> bool {
-        x509_parser::x509::SubjectPublicKeyInfo::from_der(&self.spki)
-            .is_ok_and(|(_, info)| info.algorithm.algorithm.as_bytes() == RSA_ENCRYPTION.as_bytes())
+        matches!(self.key, KeyDescription::Rsa { .. })
     }
 
     /// The DNS names, addresses, emails and URIs asked for; other kinds are dropped.
     pub fn names(&self) -> &[SubjectAltName] {
         &self.names
+    }
+
+    /// The self-signature's algorithm, as [`signature::algorithm_name`] spells it.
+    pub fn signature_algorithm(&self) -> &str {
+        &self.signature_algorithm_name
     }
 }
 

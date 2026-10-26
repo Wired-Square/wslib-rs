@@ -143,6 +143,10 @@ pub(crate) fn encode(e: rcgen::Error) -> Error {
     Error::Encode(e.to_string())
 }
 
+pub(crate) fn malformed(e: wslib_crypto_x509::Error) -> Error {
+    Error::Malformed(e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

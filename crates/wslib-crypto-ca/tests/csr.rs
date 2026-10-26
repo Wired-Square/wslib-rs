@@ -3,8 +3,8 @@ mod common;
 use common::{OPENSSL_P256_CSR, OPENSSL_RSA3072_CSR, algorithms, names, providers, signer};
 use wslib_crypto::KeyAlgorithm;
 use wslib_crypto_ca::{CERTIFICATE_REQUEST, Csr, CsrView, Error, Subject, build_csr};
-use wslib_crypto_x509::pem;
 use wslib_crypto_x509::signature::SignatureError;
+use wslib_crypto_x509::{KeyDescription, pem};
 
 #[test]
 fn a_built_request_reads_back_on_every_provider_and_key() {
@@ -74,6 +74,27 @@ fn an_rsa_key_of_a_size_we_do_not_generate_is_still_rsa() {
     let csr = Csr::from_pem(OPENSSL_RSA3072_CSR, algorithms()).unwrap();
     assert_eq!(csr.key_algorithm(), None);
     assert!(csr.has_rsa_key());
+    assert_eq!(csr.key().bits(), Some(3072));
+}
+
+#[test]
+fn a_request_reads_its_subject_key_and_signature_algorithm_as_text() {
+    let csr = CsrView::from_pem(OPENSSL_P256_CSR).unwrap();
+    assert_eq!(
+        csr.subject_text(),
+        "EMAIL=ops@example.com,OU=Ops,O=Wïdget Co,L=Melbourne,ST=Victoria,C=AU,CN=host.example.com"
+    );
+    assert_eq!(
+        csr.subject_text(),
+        wslib_crypto_x509::rfc_4514(csr.subject()).unwrap()
+    );
+    assert_eq!(
+        csr.key(),
+        &KeyDescription::Ecdsa {
+            curve: Some("P-256".into())
+        }
+    );
+    assert_eq!(csr.signature_algorithm(), "ecdsa-with-SHA256");
 }
 
 #[test]
@@ -167,6 +188,7 @@ fn a_sha1_request_reads_but_does_not_verify_without_a_sha1_algorithm() {
     assert_eq!(view.common_name(), Some("legacy.example.com"));
     assert_eq!(view.names(), names(&["legacy.example.com"]));
     assert!(view.has_rsa_key());
+    assert_eq!(view.signature_algorithm(), "sha1WithRSAEncryption");
     assert!(matches!(
         view.verify(algorithms()),
         Err(Error::Signature(SignatureError::NoAlgorithm))

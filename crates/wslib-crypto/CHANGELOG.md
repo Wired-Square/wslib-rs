@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+- `random::<N>(provider)` for `N` bytes from the provider's randomness, and
+  `random_default::<N>()` from the process's default provider, with the new
+  `Error::NoProvider` when none is installed. `random_serial` is built on
+  `random`.
+
 ## 0.1.0
 
 - `KeyAlgorithm`: P-256, P-384, RSA-2048 and RSA-4096, each with one

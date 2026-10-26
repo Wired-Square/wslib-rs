@@ -16,10 +16,12 @@ use rustls::SignatureScheme;
 use rustls_pki_types::PrivatePkcs8KeyDer;
 
 mod fingerprint;
+mod random;
 mod signer;
 
 pub use fingerprint::Fingerprint;
-pub use signer::{Signer, key_identifier, key_matches, random_serial};
+pub use random::{random, random_default, random_serial};
+pub use signer::{Signer, key_identifier, key_matches};
 
 const EC_PUBLIC_KEY: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
 const SECP256R1: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.3.1.7");
@@ -138,6 +140,8 @@ pub enum Error {
     NoPublicKey,
     /// The provider's random number generator failed.
     Random,
+    /// No process-default provider is installed.
+    NoProvider,
     UnknownAlgorithm(String),
     NotAFingerprint,
 }
@@ -157,6 +161,7 @@ impl fmt::Display for Error {
                 f.write_str("neither the crypto provider nor the key gives its public key")
             }
             Self::Random => f.write_str("the crypto provider's random number generator failed"),
+            Self::NoProvider => f.write_str("no default crypto provider is installed"),
             Self::UnknownAlgorithm(s) => write!(
                 f,
                 "unknown key algorithm {s:?}; expected ec-p256, ec-p384, rsa-2048 or rsa-4096"

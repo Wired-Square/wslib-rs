@@ -1,7 +1,7 @@
 [package]
 name = "wslib-crypto"
-version = "0.1.0"
-description = "Keys for X.509 through a rustls CryptoProvider: P-256, P-384 and RSA generation to PKCS#8, an rcgen signer, key identifiers, serials and SHA-256 fingerprints."
+version = "0.1.1"
+description = "Keys for X.509 through a rustls CryptoProvider: P-256, P-384 and RSA generation to PKCS#8, an rcgen signer, key identifiers, serials, random bytes and SHA-256 fingerprints."
 readme = "README.md"
 edition.workspace = true
 rust-version.workspace = true

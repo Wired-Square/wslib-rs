@@ -7109,7 +7109,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-dns"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "hickory-resolver",
  "idna",
@@ -7241,7 +7241,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-mcp"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "axum",
  "ipnet",
@@ -7373,7 +7373,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-tauri"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "tauri",
 ]

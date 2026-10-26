@@ -1,6 +1,6 @@
 [package]
 name = "wslib-tauri"
-version = "0.1.0"
+version = "0.1.1"
 description = "Tauri desktop-app pieces: a quit that waits for in-flight work before exiting."
 readme = "README.md"
 edition.workspace = true

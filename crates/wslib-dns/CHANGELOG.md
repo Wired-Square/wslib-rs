@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.2
+
+- Rust 1.99 floor.
+
 ## 0.2.1
 
 - `txt::split`: a long value as TXT character-strings of at most 255

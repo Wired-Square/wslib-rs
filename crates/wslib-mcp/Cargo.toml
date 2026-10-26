@@ -1,6 +1,6 @@
 [package]
 name = "wslib-mcp"
-version = "0.2.0"
+version = "0.2.1"
 description = "Hosting layer over rmcp 3.x for Wired Square MCP tool servers: identity, tool-list cache hints, result helpers, and the Streamable-HTTP and stdio transports."
 readme = "README.md"
 edition.workspace = true

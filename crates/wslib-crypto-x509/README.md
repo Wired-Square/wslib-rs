@@ -44,9 +44,11 @@ signature::verify(&inspect(&leaf)?.spki, &algorithm_identifier, message, signed,
 - **`inspect` and `inspect_pem`**: a `CertificateView` copied out of the
   certificate: subject and issuer in RFC 4514 form (`CN=R3,O=Let's
   Encrypt,C=US`), serial, subject alternative names, validity,
-  the key (`RSA 2048`, `ECDSA P-256`), SHA-256 fingerprint, the
-  SubjectPublicKeyInfo for `wslib_crypto::key_matches`, and the CA flag, key
-  usages and extended key usages.
+  the key (`RSA 2048`, `ECDSA P-256`; `KeyDescription::of_spki` reads one
+  from any SubjectPublicKeyInfo, and `bits` gives its size), the signature
+  algorithm by OpenSSL's name (`sha256WithRSAEncryption`), SHA-256
+  fingerprint, the SubjectPublicKeyInfo for `wslib_crypto::key_matches`,
+  and the CA flag, key usages and extended key usages.
 - **`rfc_4514(name)`**: any DER Name in that same form, such as a CRL's
   issuer.
 - **`name_attributes(name)`**: a DER Name's attributes in the order the DER
@@ -74,6 +76,8 @@ signature::verify(&inspect(&leaf)?.spki, &algorithm_identifier, message, signed,
   SubjectPublicKeyInfo, by the AlgorithmIdentifier the signature names, with
   whichever of the caller's algorithms fits both. `SignatureError` tells no
   fitting algorithm from a signature that does not verify.
+  `signature::algorithm_name(oid)` is OpenSSL's name for a signature
+  algorithm, or the OID when unknown.
 - **`mint(signer, names)`**: a self-signed serving certificate. The first
   name is the common name; valid from 1 July 2026 into the year 4096;
   `CA:FALSE`, digital signature and server authentication, each stated;

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.2
+
+- `CertificateView::signature_algorithm`: the certificate's signature
+  algorithm by OpenSSL's long name (`sha256WithRSAEncryption`,
+  `ecdsa-with-SHA256`, `ED25519`), or its dotted OID when unknown;
+  `signature::algorithm_name` maps an OID the same way.
+- `KeyDescription::of_spki`: the description of a DER
+  SubjectPublicKeyInfo's key, outside a certificate.
+- `KeyDescription::bits`: an RSA modulus's bits, or 256, 384 or 521 for
+  the NIST curves.
+
 ## 0.1.1
 
 - `rfc_4514`: a DER Name in the RFC 4514 form `CertificateView` gives

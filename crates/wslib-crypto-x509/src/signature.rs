@@ -76,6 +76,30 @@ pub fn verify(
     }
 }
 
+/// A signature algorithm's name as OpenSSL spells it, such as
+/// `sha256WithRSAEncryption`, from its dotted OID; an unknown one stays the OID.
+pub fn algorithm_name(oid: &str) -> String {
+    match oid {
+        "1.2.840.113549.1.1.4" => "md5WithRSAEncryption",
+        "1.2.840.113549.1.1.5" => "sha1WithRSAEncryption",
+        "1.2.840.113549.1.1.10" => "rsassaPss",
+        "1.2.840.113549.1.1.11" => "sha256WithRSAEncryption",
+        "1.2.840.113549.1.1.12" => "sha384WithRSAEncryption",
+        "1.2.840.113549.1.1.13" => "sha512WithRSAEncryption",
+        "1.2.840.113549.1.1.14" => "sha224WithRSAEncryption",
+        "1.2.840.10045.4.1" => "ecdsa-with-SHA1",
+        "1.2.840.10045.4.3.1" => "ecdsa-with-SHA224",
+        "1.2.840.10045.4.3.2" => "ecdsa-with-SHA256",
+        "1.2.840.10045.4.3.3" => "ecdsa-with-SHA384",
+        "1.2.840.10045.4.3.4" => "ecdsa-with-SHA512",
+        "1.2.840.10040.4.3" => "dsaWithSHA1",
+        "1.3.101.112" => "ED25519",
+        "1.3.101.113" => "ED448",
+        other => other,
+    }
+    .to_string()
+}
+
 /// The contents of the DER SEQUENCE at the start of `der`, and what follows it.
 fn sequence(der: &[u8]) -> Option<(&[u8], &[u8])> {
     let (rest, any) = Any::from_der(der).ok()?;

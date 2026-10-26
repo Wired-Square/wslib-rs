@@ -40,8 +40,10 @@ let view = wslib_crypto_x509::inspect(&presented.end_entity)?;
   (nothing), `anchor` for an authority's certificate (refused unless it is
   `CA:TRUE`, so a leaf cannot anchor itself), `anchor_pem` for one or more
   in PEM, all anchored or none, `anchors()` to read them back as DER (for
-  a Docker daemon's CA file, say), and `pin` for a host and a
-  `wslib_crypto::Fingerprint`. Hosts are keyed as `normalise_host` spells
+  a Docker daemon's CA file, say), `pin` for a host and a
+  `wslib_crypto::Fingerprint`, and `pin_key` for a host and a
+  `KeyFingerprint`, the SHA-256 of a certificate's SubjectPublicKeyInfo,
+  which holds while a certificate is re-minted over the same key. Hosts are keyed as `normalise_host` spells
   them: an address in canonical form, a name in lowercase without a
   trailing dot.
 - **`Outbound::new(provider, trust)`**: fails only when the provider cannot
@@ -50,7 +52,7 @@ let view = wslib_crypto_x509::inspect(&presented.end_entity)?;
   comes back whole and non-empty, then kept. `SSL_CERT_FILE` and
   `SSL_CERT_DIR` replace it.
 - **The verifier**: a pinned host is trusted for exactly that certificate,
-  its name and expiry unchecked; any other host is checked by webpki
+  or any over its pinned key, its name and expiry unchecked; any other host is checked by webpki
   against the OS roots and the anchors with the provider's algorithms. An
   unpinned handshake waits up to 30 s for the first OS read, handing a
   multi-threaded runtime's worker on while it waits. An authority's own
@@ -62,15 +64,19 @@ let view = wslib_crypto_x509::inspect(&presented.end_entity)?;
   removal bite at once.
 - **`client_config()`**: on the caller's provider, session resumption off
   (rustls does not verify a resumed handshake), ALPN left to the caller.
+  `client_config_presenting(chain, key)` is the same, presenting a client
+  certificate to a server that asks; one config per identity, as rustls
+  picks a client certificate without the server's name.
 - **`Rejection` and `cause`**: the verifier's own refusals (`PinMismatch`
-  with both fingerprints, `OsRootsNotRead`, `NoAuthority`) travel as
+  and `KeyPinMismatch` with both fingerprints, `OsRootsNotRead`, `NoAuthority`) travel as
   `rustls::Error::Other`; `cause` walks an error's sources, through
   `std::io::Error`, to one of them or to rustls's `CertificateError`.
 - **`Outbound::inspect(target)`**: an `https://` URL or `host[:port]`
   (443 by default); connects within 5 s, trusting nothing, and returns the
-  presented chain. Offers ALPN `h2` and `http/1.1`. `ProbeError` says
+  presented chain and its `key_fingerprint`. Offers ALPN `h2` and `http/1.1`. `ProbeError` says
   which part failed.
-- **`testing`** (feature): an `Authority` that signs, a `self_signed` pair
+- **`testing`** (feature): an `Authority` that signs servers and
+  `sign_client`s, a `self_signed` pair
   and a loopback `TlsPeer` answering 204, each on the provider passed in;
   `outbound_with_os_roots` for an `Outbound` whose OS store holds the
   roots given, or none, rather than the machine's.
@@ -149,6 +155,11 @@ for warning in &installed.report.warnings { /* expired, host not covered, ... */
 - **`with_alpn(protocols)`**: the ALPN list, set once on the `Serving`
   after `load_or_mint`; `config()`, `watch()` and every install and
   regenerate carry it.
+- **`with_client_auth(authorities)`**: every client must present a
+  certificate one of the authorities signed, checked by rustls's
+  `WebPkiClientVerifier` on the caller's provider; `config()`, `watch()`
+  and every install and regenerate carry it. A handler behind
+  `wslib_http_server` reads it from `PeerCertificates`.
 - **`watch()`**: a `tokio::sync::watch::Receiver<Arc<ServerConfig>>` sent
   each configuration a write puts in place, in the order written, for a
   listener's reload. The listener reloads some time after the write

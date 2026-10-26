@@ -3,8 +3,10 @@ use std::sync::Arc;
 use std::time::SystemTime;
 use std::{fs, io};
 
-use rustls::ServerConfig;
 use rustls::crypto::CryptoProvider;
+use rustls::server::WebPkiClientVerifier;
+use rustls::server::danger::ClientCertVerifier;
+use rustls::{RootCertStore, ServerConfig};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::sync::watch;
 use wslib_crypto::{KeyAlgorithm, Signer};
@@ -12,6 +14,9 @@ use wslib_crypto_x509::pem::{self, CERTIFICATE, PRIVATE_KEY};
 use wslib_crypto_x509::{CertificateView, Report, SubjectAltName};
 use wslib_file_atomic::{CommitError, Options, RecordIdentity, Refused, Transaction};
 use wslib_secret::Secret;
+
+use crate::AnchorError;
+use crate::trust::authority;
 
 const DISPLACED: &str = "unusable";
 const PROBE: &str = ".wslib-tls-write-probe";
@@ -128,6 +133,7 @@ pub struct Serving {
     location: Location,
     configs: watch::Sender<Arc<ServerConfig>>,
     alpn: Vec<Vec<u8>>,
+    clients: Arc<dyn ClientCertVerifier>,
     cannot_replace: Option<(PathBuf, io::ErrorKind)>,
     /// Taken for each install, holding the record a failed commit left.
     installing: tokio::sync::Mutex<Option<RecordIdentity>>,
@@ -185,6 +191,7 @@ impl Serving {
             location,
             configs: watch::Sender::new(config),
             alpn: Vec::new(),
+            clients: WebPkiClientVerifier::no_client_auth(),
             cannot_replace,
             installing: tokio::sync::Mutex::new(None),
         }
@@ -206,17 +213,41 @@ impl Serving {
     /// being served included; none until then.
     pub fn with_alpn(mut self, protocols: Vec<Vec<u8>>) -> Self {
         self.alpn = protocols;
-        self.configs.send_replace(self.with_own_alpn(self.config()));
+        self.configs.send_replace(self.dressed(self.config()));
         self
     }
 
-    fn with_own_alpn(&self, mut config: Arc<ServerConfig>) -> Arc<ServerConfig> {
-        Arc::make_mut(&mut config).alpn_protocols = self.alpn.clone();
-        config
+    /// Requires every client to present a certificate one of `authorities`
+    /// signed, in every configuration from here on, the one being served included.
+    pub fn with_client_auth(
+        mut self,
+        authorities: &[CertificateDer<'_>],
+    ) -> Result<Self, AnchorError> {
+        let mut roots = RootCertStore::empty();
+        for certificate in authorities {
+            roots.roots.push(authority(certificate)?.1);
+        }
+        self.clients =
+            WebPkiClientVerifier::builder_with_provider(Arc::new(roots), self.provider.clone())
+                .build()
+                .map_err(|_| AnchorError::NoneGiven)?;
+        self.configs.send_replace(self.dressed(self.config()));
+        Ok(self)
+    }
+
+    fn dressed(&self, config: Arc<ServerConfig>) -> Arc<ServerConfig> {
+        let mut dressed = ServerConfig::builder_with_provider(self.provider.clone())
+            .with_safe_default_protocol_versions()
+            .expect("the pair's own configuration was built on this provider")
+            .with_client_cert_verifier(self.clients.clone())
+            .with_cert_resolver(config.cert_resolver.clone());
+        dressed.alpn_protocols = self.alpn.clone();
+        Arc::new(dressed)
     }
 
     /// The configuration being served, built on the caller's provider with the
-    /// ALPN of [`with_alpn`](Self::with_alpn).
+    /// ALPN of [`with_alpn`](Self::with_alpn) and the client authentication of
+    /// [`with_client_auth`](Self::with_client_auth).
     pub fn config(&self) -> Arc<ServerConfig> {
         self.configs.borrow().clone()
     }
@@ -291,7 +322,7 @@ impl Serving {
         pair: ServingPair,
         config: Arc<ServerConfig>,
     ) -> Result<Arc<ServerConfig>, ServingError> {
-        let config = self.with_own_alpn(config);
+        let config = self.dressed(config);
         let mut left = self.installing.lock().await;
         self.replaceable()?;
         self.after_recovery(&mut left, move |location| {
@@ -841,7 +872,12 @@ mod tests {
     use wslib_crypto_x509::Warning;
 
     use super::*;
-    use crate::testing::{TlsPeer, providers, self_signed};
+    use rustls::ClientConfig;
+    use rustls_pki_types::ServerName;
+    use tokio::net::{TcpListener, TcpStream};
+    use tokio_rustls::{TlsAcceptor, TlsConnector};
+
+    use crate::testing::{Authority, Pair, TlsPeer, providers, self_signed};
     use crate::{Outbound, Trust};
 
     struct Scratch(PathBuf);
@@ -1603,6 +1639,119 @@ mod tests {
             .unwrap();
         assert_eq!(regenerated.alpn_protocols, alpn);
         assert!(Arc::ptr_eq(&configs.borrow(), &serving.config()));
+    }
+
+    /// One handshake from `client` to `config` over loopback, and the leaf the server verified.
+    async fn admitted(
+        config: Arc<ServerConfig>,
+        client: ClientConfig,
+    ) -> io::Result<Option<CertificateDer<'static>>> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let accepting = async {
+            let (tcp, _) = listener.accept().await?;
+            let stream = TlsAcceptor::from(config).accept(tcp).await?;
+            Ok(stream
+                .get_ref()
+                .1
+                .peer_certificates()
+                .map(|chain| chain[0].clone()))
+        };
+        let dialling = async {
+            let tcp = TcpStream::connect(addr).await?;
+            let name = ServerName::try_from("127.0.0.1").expect("an address");
+            TlsConnector::from(Arc::new(client))
+                .connect(name, tcp)
+                .await
+        };
+        tokio::join!(accepting, dialling).0
+    }
+
+    #[tokio::test]
+    async fn a_server_requiring_client_auth_admits_only_what_its_authority_signed_and_sees_who() {
+        for (name, provider) in providers() {
+            let dir = Scratch::new(&format!("client-auth-{name}"));
+            let clients = Authority::new(provider.clone(), "Client Root");
+            let serving = start(&provider, dir.managed())
+                .unwrap()
+                .with_client_auth(std::slice::from_ref(&clients.certificate))
+                .unwrap();
+            let mut trust = Trust::default();
+            trust.pin(
+                "127.0.0.1",
+                fingerprint(&serving.pair().await.unwrap().cert_pem),
+            );
+            let outbound = Arc::new(Outbound::new(provider.clone(), trust).unwrap());
+            let presenting = |pair: Pair| {
+                outbound
+                    .client_config_presenting(pair.chain, pair.key)
+                    .unwrap()
+            };
+
+            let none = admitted(serving.config(), outbound.client_config()).await;
+            assert!(none.is_err(), "{name}: no certificate");
+            let stranger = Authority::new(provider.clone(), "Client Root").sign_client("Session");
+            let foreign = admitted(serving.config(), presenting(stranger)).await;
+            assert!(foreign.is_err(), "{name}: another authority's");
+
+            let client = clients.sign_client("Session");
+            let presented = client.chain[0].clone();
+            let seen = admitted(serving.config(), presenting(client))
+                .await
+                .expect(name)
+                .expect("a client certificate");
+            assert_eq!(seen, presented, "{name}");
+            let (seen, presented) = (
+                wslib_crypto_x509::inspect(&seen).unwrap(),
+                wslib_crypto_x509::inspect(&presented).unwrap(),
+            );
+            assert_eq!(seen.subject, "CN=Session", "{name}");
+            assert_eq!(seen.serial, presented.serial, "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn client_auth_holds_in_every_configuration_written_after_it() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("client-auth-kept");
+        let clients = Authority::new(provider.clone(), "Client Root");
+        let serving = start(provider, dir.managed())
+            .unwrap()
+            .with_client_auth(std::slice::from_ref(&clients.certificate))
+            .unwrap()
+            .with_alpn(vec![b"h2".to_vec()]);
+        let regenerated = serving
+            .regenerate(&["127.0.0.1".parse().unwrap()], KeyAlgorithm::EcP256)
+            .await
+            .unwrap();
+        assert_eq!(regenerated.alpn_protocols, [b"h2".to_vec()]);
+
+        let mut trust = Trust::default();
+        trust.pin(
+            "127.0.0.1",
+            fingerprint(&serving.pair().await.unwrap().cert_pem),
+        );
+        let outbound = Arc::new(Outbound::new(provider.clone(), trust).unwrap());
+        let mut anonymous = outbound.client_config();
+        anonymous.alpn_protocols = vec![b"h2".to_vec()];
+        assert!(admitted(regenerated, anonymous).await.is_err());
+    }
+
+    #[test]
+    fn client_auth_takes_one_authority_or_more_and_no_leaf() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("client-auth-refused");
+        let serving = start(provider, dir.managed()).unwrap();
+        assert!(matches!(
+            serving.with_client_auth(&[]),
+            Err(AnchorError::NoneGiven)
+        ));
+        let serving = start(provider, dir.managed()).unwrap();
+        let leaf = self_signed(provider.clone(), &["127.0.0.1"]).chain;
+        assert!(matches!(
+            serving.with_client_auth(&leaf),
+            Err(AnchorError::NotAnAuthority { .. })
+        ));
     }
 
     #[tokio::test]

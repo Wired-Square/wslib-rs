@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.1
+
+- `Serving::with_client_auth(authorities)`: every client must present a
+  certificate one of the authorities signed, checked by rustls's
+  `WebPkiClientVerifier` on the caller's provider, in every configuration
+  from then on. Each must be `CA:TRUE`; none at all is
+  `AnchorError::NoneGiven`.
+- `Outbound::client_config_presenting(chain, key)`: `client_config()`,
+  presenting a client certificate to a server that asks for one.
+- `testing`: `Authority::sign_client(common_name)`, a client's leaf.
+- `Trust::pin_key(host, KeyFingerprint)`: trusts any certificate over the
+  pinned key, so a self-signed certificate re-minted over the same key keeps
+  its pin. `KeyFingerprint` is the SHA-256 of the DER SubjectPublicKeyInfo,
+  spelt and parsed as `Fingerprint` is. Another key is
+  `Rejection::KeyPinMismatch`, with both.
+- `Presented::key_fingerprint`: the key fingerprint `inspect` saw, to pin.
+
 ## 0.2.0
 
 - `Serving::pair()` finishes an interrupted write and reads the pair off the

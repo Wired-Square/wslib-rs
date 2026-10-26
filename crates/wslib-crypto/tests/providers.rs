@@ -1,10 +1,12 @@
 use std::sync::{Arc, OnceLock};
 
-use rustls::crypto::{CryptoProvider, KeyProvider};
+use rustls::crypto::{CryptoProvider, GetRandomFailed, KeyProvider, SecureRandom};
 use rustls::sign::SigningKey;
 use rustls::{SignatureAlgorithm, SignatureScheme};
 use rustls_pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer, PrivateSec1KeyDer};
-use wslib_crypto::{Error, KeyAlgorithm, Signer, key_identifier, key_matches, random_serial};
+use wslib_crypto::{
+    Error, KeyAlgorithm, Signer, key_identifier, key_matches, random, random_serial,
+};
 
 fn providers() -> [(&'static str, Arc<CryptoProvider>); 2] {
     [
@@ -152,4 +154,32 @@ fn key_identifiers_and_serials_come_out_the_size_certificates_want() {
             .all(|serial| (0x40..0x80).contains(&serial[0]))
     );
     assert!(serials.windows(2).all(|pair| pair[0] != pair[1]));
+}
+
+#[test]
+fn both_providers_give_distinct_non_zero_random_bytes() {
+    for (name, provider) in providers() {
+        let [first, second] = [(); 2].map(|_| random::<32>(&provider).unwrap());
+        assert_ne!(first, [0; 32], "{name}");
+        assert_ne!(first, second, "{name}");
+    }
+}
+
+#[test]
+fn a_failing_random_number_generator_is_an_error() {
+    #[derive(Debug)]
+    struct Failing;
+    impl SecureRandom for Failing {
+        fn fill(&self, _: &mut [u8]) -> Result<(), GetRandomFailed> {
+            Err(GetRandomFailed)
+        }
+    }
+
+    let (_, provider) = &providers()[0];
+    let failing = CryptoProvider {
+        secure_random: &Failing,
+        ..CryptoProvider::clone(provider)
+    };
+    assert!(matches!(random::<32>(&failing), Err(Error::Random)));
+    assert!(matches!(random_serial(&failing), Err(Error::Random)));
 }

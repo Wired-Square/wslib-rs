@@ -39,6 +39,9 @@ let signer = Signer::new(provider, &key.into())?;
   identifiers.
 - **`random_serial(provider)`**: a 16-byte positive serial from the
   provider's randomness.
+- **`random::<N>(provider)`**: `N` bytes from the provider's randomness.
+  `random_default::<N>()` takes them from the process's default provider,
+  and returns `Error::NoProvider` when none is installed.
 - **`Fingerprint`**: the SHA-256 of some DER. `Display` is lowercase hex,
   `colons()` is `AB:CD:…` as browsers show it, and `FromStr` reads either.
 

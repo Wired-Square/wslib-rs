@@ -1,6 +1,6 @@
 [package]
 name = "wslib-dns"
-version = "0.2.1"
+version = "0.2.2"
 description = "DNS lookups that keep NXDOMAIN, NODATA, SERVFAIL, REFUSED and timeout apart, with hostname, IDNA and Public Suffix List helpers."
 readme = "README.md"
 edition.workspace = true

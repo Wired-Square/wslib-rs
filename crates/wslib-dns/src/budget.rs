@@ -50,7 +50,7 @@ impl<R: Resolver> BudgetResolver<R> {
         let spent = !late
             && self.max_queries.is_some_and(|max| {
                 self.sent
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |sent| {
+                    .try_update(Ordering::Relaxed, Ordering::Relaxed, |sent| {
                         (sent < max).then_some(sent + 1)
                     })
                     .is_err()

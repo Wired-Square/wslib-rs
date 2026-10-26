@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1
+
+- Rust 1.99 floor.
+- tauri 2.12.1 floor, behind `tauri-bridge`.
+
 ## 0.2.0
 
 - **Breaking:** `js/`, `dom::OPS_TS` and `tauri_bridge::BRIDGE_TS` are gone.

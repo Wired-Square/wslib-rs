@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- Rust 1.99 floor.
+- tauri 2.12.1 floor.
+
 ## 0.1.0
 
 - `quit_guard::init(busy)`: a plugin that prevents `ExitRequested` and a

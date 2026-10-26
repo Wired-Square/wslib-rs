@@ -1,6 +1,6 @@
 [package]
 name = "wslib-tauri"
-version = "0.1.0"
+version = "0.1.1"
 description = "Tauri desktop-app pieces: a quit that waits for in-flight work before exiting."
 readme = "README.md"
 edition.workspace = true
@@ -11,10 +11,10 @@ repository.workspace = true
 publish = ["wired-square"]
 
 [dependencies]
-tauri = { version = "2.10", default-features = false }
+tauri = { version = "2.12.1", default-features = false }
 
 [dev-dependencies]
-tauri = { version = "2.10", default-features = false, features = ["test"] }
+tauri = { version = "2.12.1", default-features = false, features = ["test"] }
 
 [[test]]
 name = "macos_quit_menu"

@@ -1,6 +1,6 @@
 [package]
 name = "wslib-mcp"
-version = "0.2.0"
+version = "0.2.1"
 description = "Hosting layer over rmcp 3.x for Wired Square MCP tool servers: identity, tool-list cache hints, result helpers, and the Streamable-HTTP and stdio transports."
 readme = "README.md"
 edition.workspace = true
@@ -19,7 +19,7 @@ tracing = "0.1.25"
 
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"], optional = true }
 ipnet = { version = "2.9", optional = true }
-tauri = { version = "2.11", default-features = false, optional = true }
+tauri = { version = "2.12.1", default-features = false, optional = true }
 tokio = { version = "1.38", default-features = false, optional = true }
 tokio-util = { version = "0.7.9", optional = true }
 
@@ -36,7 +36,7 @@ rmcp = { version = "3.4", features = ["client", "transport-streamable-http-clien
 reqwest = { version = "0.13.2", default-features = false, features = ["json"] }
 schemars = "1"
 serde = { version = "1.0.228", features = ["derive"] }
-tauri = { version = "2.11", default-features = false, features = ["test"] }
+tauri = { version = "2.12.1", default-features = false, features = ["test"] }
 tokio = { version = "1.38", features = ["full"] }
 
 [[test]]

@@ -6962,7 +6962,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "wslib-appliance-config",
  "wslib-appliance-store",
@@ -6971,7 +6971,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-config"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "clap",
  "serde",
@@ -6984,7 +6984,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-store"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "chrono",
  "serde",
@@ -7004,7 +7004,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-types"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "chrono",
  "serde",

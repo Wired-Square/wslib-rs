@@ -1,6 +1,6 @@
 [package]
 name = "wslib-appliance-store"
-version = "0.1.0"
+version = "0.0.1"
 description = "An appliance's database: the tables every appliance has, in one SQLite file a product's own tables share."
 readme = "README.md"
 edition.workspace = true
@@ -19,7 +19,7 @@ thiserror = "2"
 tokio = { version = "1.47", default-features = false, features = ["sync", "time"] }
 tracing = "0.1.41"
 uuid = { version = "1", features = ["v4"] }
-wslib-appliance-types = { path = "../wslib-appliance-types", version = "0.1.0", registry = "wired-square" }
+wslib-appliance-types = { path = "../wslib-appliance-types", version = "0.0.1", registry = "wired-square" }
 wslib-auth = { path = "../wslib-auth", version = "0.1.1", registry = "wired-square", default-features = false, features = ["sqlite"] }
 wslib-db-sqlite = { path = "../wslib-db-sqlite", version = "0.1.0", registry = "wired-square" }
 wslib-file-atomic = { path = "../wslib-file-atomic", version = "0.1", registry = "wired-square" }

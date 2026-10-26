@@ -90,7 +90,11 @@ if $all; then
     name=$(basename "$dir")
     sed -i.bak "s|^members = .*|members = [\"crates/$name\"]|" "$floors/Cargo.toml"
     rm -f "$floors/Cargo.lock"
+    pins=$(sed -n "s/^$name \([^ ]*\)@\([^ ]*\)$/\1 \2/p" scripts/floor-pins.txt 2>/dev/null)
     (cd "$floors" && cargo +nightly update -Z direct-minimal-versions -q \
+      && while read -r package version; do
+           [[ -z $package ]] || cargo +nightly update -q -p "$package" --precise "$version"
+         done <<<"$pins" \
       && cargo +nightly check --workspace --all-features --all-targets -q) \
       || die "$name does not build at its dependency floors"
   done

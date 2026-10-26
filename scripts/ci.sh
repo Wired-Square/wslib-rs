@@ -85,7 +85,9 @@ if $all; then
   step "Dependency floors"
   floors=$(mktemp -d)
   trap 'rm -rf "$floors"' EXIT
-  git ls-files -z -co --exclude-standard | tar -c --null -T - | tar -x -C "$floors"
+  git ls-files -z -co --exclude-standard \
+    | while IFS= read -r -d '' f; do [[ -e $f ]] && printf '%s\0' "$f"; done \
+    | tar -c --null -T - | tar -x -C "$floors"
   for dir in crates/*/; do
     name=$(basename "$dir")
     sed -i.bak "s|^members = .*|members = [\"crates/$name\"]|" "$floors/Cargo.toml"

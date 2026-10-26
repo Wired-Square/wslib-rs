@@ -56,14 +56,19 @@ own manifest, pinned to the same version as this crate's.
 ## Migration chains
 
 A `Chain` is a name (`[a-z][a-z0-9_]*`) and an sqlx `Migrator`, recorded in
-its own table `<name>_migrations` (`version`, `description`, `checksum` in
+its own table `_<name>_migrations` (`version`, `description`, `checksum` in
 hex, `installed_on`) and registered in `_migration_chains` (`name`,
 `mirrored`, `created_on`) when that table is made. Versions are each chain's
-own, from anywhere.
+own, from anywhere. A chain named `sqlx`, whose table would be
+`_sqlx_migrations`, is `ReservedChain`.
 
 - Every pending migration of every chain applies in **one transaction**, in
   the order the chains are given: a failure anywhere leaves the database as
   it was. A pending migration marked `-- no-transaction` is refused.
+- Foreign keys are deferred as in `begin`, but a reference a migration
+  leaves dangling fails that migration, as under sqlx's runner: an
+  `ExecuteMigration` with a foreign-key violation, naming its version. One
+  dangling before the open is not blamed.
 - A modified applied migration is refused, and so is an applied version its
   chain no longer has, naming the chain and version. A registered chain the
   open isn't given is `UnknownChain`, from `open` and `open_existing` alike.
@@ -73,18 +78,20 @@ own, from anywhere.
   registry keeps that for good: asking later is `MirroredTooLate`, and a
   mirrored chain stays mirrored without asking. Mirrored chains share one
   version space, as sqlx's runner has only one, even on a fresh database:
-  a version that table already holds, or that two mirrored chains would
-  both write, is a `Collision` before anything applies.
-- **The import from sqlx's runner** happens once, on the open that creates
-  the registry, if `_sqlx_migrations` has rows: each row goes to the chain
-  whose `Migrator` has its version, checksum checked, in the same
-  transaction, and every chain made then is mirrored, even one with no rows
-  yet. A row no chain has is `Unclaimed`, one two chains have is
-  `Ambiguous`. Once the registry exists `_sqlx_migrations` is never imported
-  from again, so a stray one made later is ignored.
-- Before the import, `open_existing` checks `_sqlx_migrations` by the same
-  rules and writes nothing: current by sqlx's rules is current, a missing
-  migration is `SchemaBehind`.
+  a version that two mirrored chains would both write is a `Collision`
+  before anything applies.
+- **The import from sqlx's runner** happens on the open that creates the
+  registry, if `_sqlx_migrations` has rows, and every chain made then is
+  mirrored, even one with no rows yet. While any chain is mirrored it
+  happens again on every open, so a migration an older build applied after
+  a rollback is adopted, not run again. Each row no mirrored chain has
+  recorded goes to the mirrored chain whose `Migrator` has its version,
+  checksum checked, in the same transaction. A row no mirrored chain has is
+  `Unclaimed`, as sqlx's runner refuses a version it lacks; one two have is
+  `Ambiguous`; a failed one is `Dirty`. With no chain mirrored,
+  `_sqlx_migrations` is ignored.
+- `open_existing` checks by the same rules and writes nothing: current by
+  sqlx's rules is current, a missing migration is `SchemaBehind`.
 
 **What an older build on sqlx's runner does**, given the same chains
 concatenated:
@@ -99,7 +106,7 @@ concatenated:
   the chains of a product whose installs might be rolled back to such a
   build.
 
-`<name>_migrations`, `_migration_chains` and `_sqlx_migrations` are the
+`_<name>_migrations`, `_migration_chains` and `_sqlx_migrations` are the
 crate's; an app's migrations leave them alone.
 
 ## Settings

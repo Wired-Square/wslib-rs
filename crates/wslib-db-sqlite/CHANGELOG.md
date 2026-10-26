@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0
+
+- While a chain is mirrored, every open adopts the `_sqlx_migrations` rows
+  an older build wrote after a rollback, and refuses one no mirrored chain
+  has (`Unclaimed`); `open_existing` agrees. `Collision::other` is now a
+  `String`.
+- A reference a migration leaves dangling fails that migration
+  (`ExecuteMigration`, a foreign-key violation), not the commit.
+- Breaking: chain tables are `_<name>_migrations`, under the reserved
+  prefix. A chain whose table would be the crate's own is `ReservedChain`.
+- A test pins the file, `-wal` and `-shm` as owner-only on every platform,
+  Windows included.
+
 ## 0.1.0
 
 - `Database`: `open` (creating, migrating), `open_existing` (neither, and

@@ -1,6 +1,6 @@
 [package]
 name = "wslib-db-sqlite"
-version = "0.1.0"
+version = "0.2.0"
 description = "One SQLite database for an app: WAL and owner-only on open, write transactions that lock up front, migration chains applied in one transaction, and a settings table with secrets and local state kept out of exports."
 readme = "README.md"
 edition.workspace = true
@@ -25,3 +25,4 @@ wslib-secret = { path = "../wslib-secret", version = "0.1.1", registry = "wired-
 serde = { version = "1.0.225", features = ["derive"] }
 tempfile = "3.10.1"
 tokio = { version = "1.47", features = ["macros", "rt"] }
+wslib-file-atomic = { version = "0.1.5", path = "../wslib-file-atomic", registry = "wired-square", features = ["testing"] }

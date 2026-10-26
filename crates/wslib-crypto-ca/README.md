@@ -53,7 +53,9 @@ CrlView::from_der(&crl)?.verify(ca.certificate(), provider.signature_verificatio
   an optional path length), key usage and extended key usage, each as an
   `Extension` with its criticality; a `SanPolicy` of none, the request's
   names, or the common name (an address when it parses as one) followed by
-  the request's names not already there; CRL distribution point URLs (one
+  the request's names not already there; name constraints, permitted and
+  excluded DNS and address subtrees (`wslib_crypto_x509::NameConstraints`,
+  as `inspect` reads them back); CRL distribution point URLs (one
   distribution point) and CA issuers URLs. Subject and authority key
   identifiers are always written, and every extension goes in the order
   OpenSSL writes them, so its text of two certificates lines up.
@@ -93,5 +95,5 @@ CrlView::from_der(&crl)?.verify(ca.certificate(), provider.signature_verificatio
 
 Policy: which profile a kind of certificate gets, validity caps, serial
 and CRL number counters, renewal, and when CRLs are made and published are
-the application's. OCSP, delta CRLs, name constraints and policy
-extensions are not here.
+the application's. OCSP, delta CRLs, policy extensions and name
+constraints other than DNS and address subtrees are not here.

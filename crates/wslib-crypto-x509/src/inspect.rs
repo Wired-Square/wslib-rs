@@ -9,12 +9,13 @@ use x509_parser::asn1_rs::{Tag, ToDer};
 use x509_parser::certificate::X509Certificate;
 use x509_parser::error::X509Error;
 use x509_parser::extensions::GeneralName;
+use x509_parser::oid_registry::OID_X509_EXT_NAME_CONSTRAINTS;
 use x509_parser::prelude::FromDer;
 use x509_parser::public_key::PublicKey;
 use x509_parser::time::ASN1Time;
 use x509_parser::x509::{AttributeTypeAndValue, SubjectPublicKeyInfo, X509Name};
 
-use crate::{Error, SubjectAltName, pem, signature};
+use crate::{Error, NameConstraints, SubjectAltName, constraints, pem, signature};
 
 /// What a certificate says, copied out of it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -45,6 +46,8 @@ pub struct CertificateView {
     pub key_usages: Option<Vec<KeyUsage>>,
     /// `None` without the extension, which allows any purpose.
     pub extended_key_usages: Option<Vec<ExtendedKeyUsage>>,
+    /// `None` without the extension.
+    pub name_constraints: Option<NameConstraints>,
 }
 
 /// The public key, as `RSA 2048`, `ECDSA P-256`, `Ed25519` or the algorithm's OID.
@@ -147,6 +150,7 @@ pub fn inspect(der: &[u8]) -> Result<CertificateView, Error> {
         ca: matches!(certificate.basic_constraints(), Ok(Some(basic)) if basic.value.ca),
         key_usages: key_usages(&certificate).ok().flatten(),
         extended_key_usages: extended_key_usages(&certificate),
+        name_constraints: name_constraints(&certificate),
     })
 }
 
@@ -262,7 +266,7 @@ fn escaped(value: &str) -> String {
     out
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
@@ -299,6 +303,13 @@ fn sans(certificate: &X509Certificate<'_>) -> Vec<SubjectAltName> {
             _ => None,
         })
         .collect()
+}
+
+fn name_constraints(certificate: &X509Certificate<'_>) -> Option<NameConstraints> {
+    let extension = certificate
+        .get_extension_unique(&OID_X509_EXT_NAME_CONSTRAINTS)
+        .ok()??;
+    constraints::read(extension.value)
 }
 
 fn describe(spki: &SubjectPublicKeyInfo<'_>) -> KeyDescription {
@@ -650,6 +661,41 @@ mod tests {
             .map(ToString::to_string)
             .collect();
         assert_eq!(sans, ["192.168.1.10", "::1"]);
+    }
+
+    #[test]
+    fn name_constraints_read_as_rcgen_wrote_them() {
+        use rcgen::{CidrSubnet, GeneralSubtree};
+        let pem = certificate(|params| {
+            params.name_constraints = Some(rcgen::NameConstraints {
+                permitted_subtrees: vec![
+                    GeneralSubtree::DnsName("example.com".into()),
+                    GeneralSubtree::IpAddress("10.20.0.0/16".parse().unwrap()),
+                    GeneralSubtree::Rfc822Name("example.com".into()),
+                ],
+                excluded_subtrees: vec![GeneralSubtree::IpAddress(CidrSubnet::from_v6_prefix(
+                    [0; 16], 0,
+                ))],
+            });
+        });
+        let read = inspect_pem(&pem).unwrap().name_constraints.unwrap();
+        let shown: Vec<String> = read.permitted.iter().map(ToString::to_string).collect();
+        assert_eq!(
+            shown,
+            [
+                "example.com",
+                "10.20.0.0/16",
+                "#300d810b6578616d706c652e636f6d"
+            ]
+        );
+        assert_eq!(
+            read.excluded,
+            ["::/0".parse::<crate::NameSubtree>().unwrap()]
+        );
+        assert_eq!(
+            inspect_pem(&certificate(|_| {})).unwrap().name_constraints,
+            None
+        );
     }
 
     #[test]

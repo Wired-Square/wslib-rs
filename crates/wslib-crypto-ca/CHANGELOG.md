@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0
+
+- `Profile::name_constraints`: an RFC 5280 name constraints extension of
+  permitted and excluded DNS and address subtrees, as
+  `wslib_crypto_x509::NameConstraints`, written after the subject
+  alternative names in OpenSSL's encoding. Empty constraints are
+  `Error::EmptyExtension`, and a `NameSubtree::Other` is `Error::Name`.
+- Breaking: `Profile` has a new public field, so a struct literal without
+  `..Profile::default()` needs it.
+- Needs `wslib-crypto-x509` 0.1.3.
+
 ## 0.1.1
 
 - `CsrView::subject_text`: the subject in RFC 4514 form, as

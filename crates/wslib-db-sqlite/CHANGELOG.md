@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1
+
+- Migrations run with foreign keys off, so a rebuild of a referenced table
+  commits, and a reference one leaves dangling fails that migration.
+
 ## 0.2.0
 
 - While a chain is mirrored, every open adopts the `_sqlx_migrations` rows

@@ -1,3 +1,0 @@
-# tauri before 2.12 takes its own runtime crates by caret, so minimal versions
-# pairs the 2.10 floor with a newer runtime that tauri 2.10 doesn't build against.
-wslib-tauri tauri-runtime@2.10.0

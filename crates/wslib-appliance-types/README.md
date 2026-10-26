@@ -34,8 +34,8 @@ let page: Page<User> = serde_json::from_str(&body)?;
 
 ## The `ts` feature
 
-Every type a browser reads or sends derives ts-rs 11's `TS`. ts-rs writes a type, and each
-type it references, into `TS_RS_EXPORT_DIR` when an `export` test runs, this
-crate's or a consumer's; set the variable in the consumer's
+Every type a browser reads or sends derives ts-rs 11's `TS`. ts-rs writes a
+type, and each type it references, into `TS_RS_EXPORT_DIR` when an `export`
+test runs, this crate's or a consumer's; set the variable in the consumer's
 `.cargo/config.toml`. `constants.ts` comes only from this crate's own tests.
 A field wider than 32 bits is `number`, never `bigint`.

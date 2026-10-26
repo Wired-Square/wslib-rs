@@ -4,7 +4,8 @@
 /// How often the live feed says `heartbeat` when it has nothing else to say.
 pub const FEED_HEARTBEAT_S: u64 = 15;
 
-/// `#[ts(export)]` writes only from the defining crate's tests, so these are written here.
+/// `#[ts(export)]` writes only from the defining crate's tests, so these are
+/// written here.
 #[cfg(all(test, feature = "ts"))]
 mod export {
     use ts_rs::TS;

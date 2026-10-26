@@ -1,7 +1,6 @@
 //! The wire contract: types shared by the daemon, the browser and any other
 //! client of an appliance, both what a client reads and the request bodies it
-//! sends. Serde only. A request body carrying a `Secret` has no `PartialEq` and derives both serde
-//! halves; an integer wider than 32 bits is `#[ts(type = "number")]`.
+//! sends. Serde only.
 //!
 //! With `ts`, every type a browser reads or sends derives `ts_rs::TS`, and a
 //! test run writes each, and `constants.ts`, into `TS_RS_EXPORT_DIR`.
@@ -55,7 +54,8 @@ pub fn is_app_name(name: &str) -> bool {
     name.len() <= MAX_APP_LEN && is_segment(name)
 }
 
-/// Letters, digits, `-`, `.`, `_` and `~`, not `.` or `..`: no escaping needed in a URL or a path.
+/// Letters, digits, `-`, `.`, `_` and `~`, not `.` or `..`: no escaping needed
+/// in a URL or a path.
 pub(crate) fn is_segment(segment: &str) -> bool {
     !segment.is_empty() && segment != "." && segment != ".." && segment.bytes().all(unreserved)
 }

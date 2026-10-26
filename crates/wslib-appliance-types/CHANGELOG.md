@@ -12,5 +12,5 @@
 - `ThemeError::Name` reads "only tokens the appliance defines can be themed".
 - `ApiErrorBody` is `wslib-http-error`'s, `ClockSkew` `wslib-auth-totp`'s and
   the passkey JSON `wslib-auth-passkey`'s, re-exported.
-- `ts` feature: every type a browser reads or sends derives ts-rs 11's `TS`; a test run
-  writes them and `constants.ts` into `TS_RS_EXPORT_DIR`.
+- `ts` feature: every type a browser reads or sends derives ts-rs 11's `TS`; a
+  test run writes them and `constants.ts` into `TS_RS_EXPORT_DIR`.

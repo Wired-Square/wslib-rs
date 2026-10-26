@@ -214,6 +214,16 @@ pub struct AppRole {
     pub role: Role,
 }
 
+/// One entry of an app switcher; `href` is an origin-absolute path, `/` for
+/// the console and `/apps/<name>/` for an app.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct AppLink {
+    pub name: String,
+    pub href: String,
+}
+
 /// One page of a cursor-paged listing; `next` is present exactly when there is more.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -391,5 +401,19 @@ mod tests {
     #[test]
     fn a_ready_capability_has_no_reason_to_give() {
         assert_eq!(Availability::ready("NetworkManager").because(), None);
+    }
+
+    #[test]
+    fn an_app_link_is_a_name_and_an_href() {
+        let json = r#"{"name":"pump","href":"/apps/pump/"}"#;
+        let link: AppLink = serde_json::from_str(json).expect("the wire form");
+        assert_eq!(
+            link,
+            AppLink {
+                name: "pump".to_string(),
+                href: "/apps/pump/".to_string(),
+            }
+        );
+        assert_eq!(serde_json::to_string(&link).unwrap(), json);
     }
 }

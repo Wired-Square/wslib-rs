@@ -2,6 +2,7 @@
 
 ## 0.1.0
 
+- `AppLink { name, href }`, one entry of an app switcher's listing.
 - Moved from `appliance-types` 0.17.1 in wslib-appliance-rs, wire shapes
   unchanged, and the TypeScript generated for them unchanged but for its doc
   comments and `constants.ts`'s generated-by line: `Role` and its ladder,

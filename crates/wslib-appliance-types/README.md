@@ -15,6 +15,7 @@ let page: Page<User> = serde_json::from_str(&body)?;
 
 - **`Role`**: `Viewer < Operator < Admin < HostAdmin`, a ladder; `allows`
   is "at least", `as_str` and `FromStr` the stored slug, `LADDER` every role.
+- **`AppLink`**: one entry of an app switcher, `href` an origin-absolute path.
 - **Accounts and sessions**: `User`, `ListedUser`, `AppRole`, and the bodies
   in `account` and `session`. Every password or code is a
   `wslib_secret::Secret`, and no request body in `session` carries an account id.

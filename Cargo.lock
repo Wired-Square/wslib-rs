@@ -7372,6 +7372,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-pairing"
+version = "0.1.0"
+dependencies = [
+ "rustls",
+ "subtle",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "wslib-crypto",
+ "wslib-crypto-x509",
+ "wslib-file-atomic",
+ "wslib-secret",
+ "wslib-tls",
+]
+
+[[package]]
 name = "wslib-secret"
 version = "0.1.2"
 dependencies = [

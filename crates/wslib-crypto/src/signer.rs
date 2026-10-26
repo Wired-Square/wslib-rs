@@ -127,14 +127,3 @@ pub fn key_identifier(spki: &[u8]) -> [u8; 20] {
     identifier.copy_from_slice(&Sha256::digest(spki)[..20]);
     identifier
 }
-
-/// A certificate serial number from the provider's randomness: 16 bytes, positive, with no leading zero byte.
-pub fn random_serial(provider: &CryptoProvider) -> Result<[u8; 16], Error> {
-    let mut serial = [0; 16];
-    provider
-        .secure_random
-        .fill(&mut serial)
-        .map_err(|_| Error::Random)?;
-    serial[0] = serial[0] & 0x7f | 0x40;
-    Ok(serial)
-}

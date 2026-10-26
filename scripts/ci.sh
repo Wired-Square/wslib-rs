@@ -36,6 +36,11 @@ step "wslib-telemetry's setup-core has no regex engine"
 ! cargo tree -p wslib-telemetry --no-default-features --features setup-core -e normal --prefix none \
   | grep -qE '^(regex|regex-automata|matchers) ' || die "setup-core pulls in a regex engine"
 
+step "The appliance family is at one version"
+[[ $(cargo metadata --format-version 1 --no-deps --locked \
+  | jq '[.packages[] | select(.name | startswith("wslib-appliance")) | .version] | unique | length') -le 1 ]] \
+  || die "the wslib-appliance crates are not at one version"
+
 step "Format"
 cargo fmt --all --check
 

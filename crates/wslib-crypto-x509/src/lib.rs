@@ -12,6 +12,7 @@
 use std::fmt;
 
 pub mod chain;
+mod constraints;
 mod examine;
 mod inspect;
 mod mint;
@@ -21,6 +22,7 @@ pub mod signature;
 #[cfg(test)]
 mod testing;
 
+pub use constraints::{IpSubtree, NameConstraints, NameSubtree};
 pub use examine::{Report, Warning, examine};
 pub use inspect::{
     AttributeValue, CertificateView, ExtendedKeyUsage, KeyDescription, KeyUsage, NameAttribute,

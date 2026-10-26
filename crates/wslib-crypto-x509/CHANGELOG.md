@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.3
+
+- `CertificateView::name_constraints`: the RFC 5280 name constraints, as
+  `NameConstraints` with permitted and excluded `NameSubtree`s. A DNS
+  subtree keeps its optional leading dot; an address subtree is an
+  `IpSubtree`, a network with no host bits set. A subtree of another kind,
+  or with a minimum or maximum, is kept as its DER in `NameSubtree::Other`.
+- `NameSubtree` parses `example.com`, `.example.com`, `10.0.0.0/8` and
+  `fd00::/8`, and displays the same way.
+
 ## 0.1.2
 
 - `CertificateView::signature_algorithm`: the certificate's signature

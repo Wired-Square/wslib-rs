@@ -8,6 +8,9 @@ The appliance family in one dependency:
   the bootstrap settings.
 - `wslib_appliance::store` is [`wslib-appliance-store`](../wslib-appliance-store),
   the database, behind the `store` feature (off by default).
+- `wslib_appliance::auth` is [`wslib-appliance-auth`](../wslib-appliance-auth),
+  the sign-in, behind the `auth` feature (off by default), which turns on
+  `store`.
 
 ```toml
 [dependencies]

@@ -6964,9 +6964,33 @@ dependencies = [
 name = "wslib-appliance"
 version = "0.0.1"
 dependencies = [
+ "wslib-appliance-auth",
  "wslib-appliance-config",
  "wslib-appliance-store",
  "wslib-appliance-types",
+]
+
+[[package]]
+name = "wslib-appliance-auth"
+version = "0.0.1"
+dependencies = [
+ "argon2",
+ "base64 0.23.1",
+ "chrono",
+ "rustls",
+ "subtle",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "wslib-appliance-store",
+ "wslib-appliance-types",
+ "wslib-auth",
+ "wslib-auth-passkey",
+ "wslib-auth-password",
+ "wslib-auth-totp",
+ "wslib-crypto",
+ "wslib-secret",
 ]
 
 [[package]]

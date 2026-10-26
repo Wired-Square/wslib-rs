@@ -109,6 +109,11 @@ pub fn verify(stored: &str, password: &str) -> bool {
             .is_ok()
 }
 
+/// Why `stored` is not a readable PHC string, for a log line; `None` when it is.
+pub fn why_unreadable(stored: &str) -> Option<String> {
+    PasswordHash::new(stored).err().map(|e| e.to_string())
+}
+
 /// Costs what [`verify`] costs and is always false: call it when no account
 /// has the name tried, so an unknown name answers no faster. **Blocks.**
 pub fn verify_absent(password: &str) -> bool {
@@ -172,6 +177,12 @@ mod tests {
     const PASSWORD: &str = "correct horse battery staple";
     /// Made by argon2 0.5.3's `Argon2::default()`.
     const FROM_ARGON2_0_5: &str = "$argon2id$v=19$m=19456,t=2,p=1$7NwfKUJiyl5Q9n5qDUNBpA$RoDGU/g7McH81MkS6LuwU23Wue3fKpTDIW4Ydv9PNXg";
+
+    #[test]
+    fn only_an_unreadable_hash_says_why() {
+        assert_eq!(why_unreadable(FROM_ARGON2_0_5), None);
+        assert!(why_unreadable("not a hash").is_some_and(|why| !why.is_empty()));
+    }
 
     #[test]
     fn a_password_verifies_against_its_own_hash_and_nothing_else() {

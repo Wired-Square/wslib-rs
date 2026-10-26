@@ -520,3 +520,83 @@ fn redirect_hands_over_to_the_target_record() {
         ["example.com", "_spf.example.net"]
     );
 }
+
+fn flat(record: &str) -> Flattened {
+    let dns = FakeResolver::new().with_txt("example.com", [record]);
+    tree(&dns, "example.com").flatten()
+}
+
+fn missing(vendor: &str, published: &str) -> Vec<String> {
+    flat(vendor)
+        .missing_from(&flat(published))
+        .into_iter()
+        .map(|netblock| netblock.cidr.clone())
+        .collect()
+}
+
+#[test]
+fn a_vendor_block_inside_a_wider_published_block_is_covered() {
+    assert!(
+        missing(
+            "v=spf1 ip4:192.0.2.0/25 -all",
+            "v=spf1 ip4:192.0.2.0/24 -all"
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn a_vendor_block_spanning_adjacent_published_blocks_is_covered() {
+    assert!(
+        missing(
+            "v=spf1 ip4:192.0.2.0/24 -all",
+            "v=spf1 ip4:192.0.2.128/25 ip4:192.0.2.0/25 -all"
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn a_partly_covered_vendor_block_is_missing() {
+    assert_eq!(
+        missing(
+            "v=spf1 ip4:192.0.2.0/24 ip6:2001:db8::/32 -all",
+            "v=spf1 ip4:192.0.2.0/25 ip6:2001:db8::/48 -all"
+        ),
+        ["192.0.2.0/24", "2001:db8::/32"]
+    );
+}
+
+#[test]
+fn coverage_counts_only_pass_netblocks() {
+    assert_eq!(
+        missing(
+            "v=spf1 ip4:192.0.2.0/24 ~ip4:198.51.100.0/24 -all",
+            "v=spf1 -ip4:192.0.2.0/24 -all"
+        ),
+        ["192.0.2.0/24"]
+    );
+}
+
+#[test]
+fn coverage_does_not_cross_address_families() {
+    assert_eq!(
+        missing(
+            "v=spf1 ip6:::ffff:192.0.2.0/120 -all",
+            "v=spf1 ip4:0.0.0.0/0 -all"
+        ),
+        ["::ffff:192.0.2.0/120"]
+    );
+}
+
+#[test]
+fn a_missing_network_reached_twice_is_listed_once() {
+    let dns = FakeResolver::new()
+        .with_txt(
+            "vendor.example",
+            ["v=spf1 ip4:192.0.2.1 include:example.net -all"],
+        )
+        .with_txt("example.net", ["v=spf1 ip4:192.0.2.1/32 -all"]);
+    let vendor = tree(&dns, "vendor.example").flatten();
+    assert_eq!(vendor.missing_from(&flat("v=spf1 -all")).len(), 1);
+}

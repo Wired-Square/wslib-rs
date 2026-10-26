@@ -70,6 +70,47 @@ impl SpfTree {
     }
 }
 
+impl Flattened {
+    /// This tree's `pass` netblocks that `published`'s `pass` netblocks don't
+    /// wholly authorise, each network once. A block counts as covered when
+    /// it lies inside one wider block or across several adjacent ones.
+    pub fn missing_from(&self, published: &Flattened) -> Vec<&Netblock> {
+        let mut authorised: Vec<(bool, u128, u128)> = pass(&published.netblocks)
+            .filter_map(|netblock| range(&netblock.cidr))
+            .collect();
+        authorised.sort_unstable();
+        let mut missing: Vec<&Netblock> = Vec::new();
+        for netblock in pass(&self.netblocks) {
+            let covered = range(&netblock.cidr).is_some_and(|wanted| spans(&authorised, wanted));
+            if !covered && !missing.iter().any(|seen| seen.cidr == netblock.cidr) {
+                missing.push(netblock);
+            }
+        }
+        missing
+    }
+}
+
+fn pass(netblocks: &[Netblock]) -> impl Iterator<Item = &Netblock> {
+    netblocks
+        .iter()
+        .filter(|netblock| netblock.qualifier == Qualifier::Pass)
+}
+
+/// Whether sorted ranges leave no gap in `wanted`.
+fn spans(sorted: &[(bool, u128, u128)], (is_ipv6, start, end): (bool, u128, u128)) -> bool {
+    let mut next = start;
+    for &(_, s, e) in sorted.iter().filter(|(v6, ..)| *v6 == is_ipv6) {
+        if s > next {
+            break;
+        }
+        if e >= end {
+            return true;
+        }
+        next = next.max(e + 1);
+    }
+    false
+}
+
 fn collect(node: &SpfNode, source: &mut Vec<String>, out: &mut Vec<Netblock>) {
     let Some(record) = node.record().map(|parsed| &parsed.record) else {
         return;
@@ -254,9 +295,7 @@ fn summarise(netblocks: Vec<Netblock>) -> Flattened {
         }
     }
 
-    let mut authorised: Vec<(bool, u128, u128)> = netblocks
-        .iter()
-        .filter(|netblock| netblock.qualifier == Qualifier::Pass)
+    let mut authorised: Vec<(bool, u128, u128)> = pass(&netblocks)
         .filter_map(|netblock| range(&netblock.cidr))
         .collect();
     authorised.sort_unstable();

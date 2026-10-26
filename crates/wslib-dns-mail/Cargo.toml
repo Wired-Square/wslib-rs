@@ -1,6 +1,6 @@
 [package]
 name = "wslib-dns-mail"
-version = "0.5.1"
+version = "0.5.2"
 description = "Email-authentication records in DNS: lenient parsers with byte-span faults for SPF, DMARC, DKIM keys, BIMI, MTA-STS and TLS-RPT, and record editors."
 readme = "README.md"
 edition.workspace = true

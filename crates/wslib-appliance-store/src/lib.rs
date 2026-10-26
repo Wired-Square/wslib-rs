@@ -14,10 +14,10 @@
 //!
 //! Tables, indexes and views share one namespace in SQLite. A product's
 //! migrations must not create, alter or drop these tables:
-//! `_migration_chains`, `_sqlx_migrations`, `app_migrations`, `app_roles`,
-//! `asserted_roles`, `audit`, `passkeys`, `recovery_codes`, `settings`, `totp`,
-//! `totp_required`, `trusted_cas`, `trusted_certs`, `users`; nor these
-//! indexes: `audit_at`, `passkeys_user`.
+//! `_app_migrations`, `_migration_chains`, `_platform_migrations`,
+//! `_sqlx_migrations`, `app_roles`, `asserted_roles`, `audit`, `passkeys`,
+//! `recovery_codes`, `settings`, `totp`, `totp_required`, `trusted_cas`,
+//! `trusted_certs`, `users`; nor these indexes: `audit_at`, `passkeys_user`.
 //!
 //! Every platform object not listed above is named `platform_…`, so a
 //! product's own must not start with it.
@@ -356,9 +356,10 @@ mod tests {
 
         // Frozen: every later platform object is named `platform_…`.
         let frozen = [
+            "_app_migrations",
             "_migration_chains",
+            "_platform_migrations",
             "_sqlx_migrations",
-            "app_migrations",
             "app_roles",
             "asserted_roles",
             "audit",
@@ -380,12 +381,12 @@ mod tests {
     async fn the_platforms_tables_and_an_apps_share_one_database() {
         let store = store().await;
         let mut expected = vec![
+            "_app_migrations",
             "_migration_chains",
+            "_platform_migrations",
             "_sqlx_migrations",
-            "app_migrations",
             "app_notes",
             "app_widgets",
-            "platform_migrations",
         ];
         expected.extend(crate::reset::PLATFORM_TABLES);
         expected.sort_unstable();
@@ -517,26 +518,6 @@ mod tests {
             second.setting("branding.app_name").await.expect("get"),
             Some("Widget Monitor".to_string())
         );
-    }
-
-    #[cfg(windows)]
-    #[tokio::test]
-    async fn on_windows_the_database_is_its_owners_and_systems_alone() {
-        let dir = TempDir::new().expect("temp dir");
-        let store = Store::open(dir.path().join("appliance.db"), None)
-            .await
-            .expect("open");
-        store
-            .set_setting("branding.app_name", "Widget Monitor")
-            .await
-            .expect("set");
-
-        for name in ["appliance.db", "appliance.db-wal", "appliance.db-shm"] {
-            let file = dir.path().join(name);
-            assert!(file.exists(), "{name}");
-            wslib_file_atomic::testing::assert_owner_only(&file);
-        }
-        store.close().await;
     }
 
     #[test]

@@ -7021,7 +7021,6 @@ dependencies = [
  "wslib-appliance-types",
  "wslib-auth",
  "wslib-db-sqlite",
- "wslib-file-atomic",
  "wslib-secret",
 ]
 

@@ -128,12 +128,12 @@ async fn a_previous_database_is_imported_with_its_rows_checksums_and_app_schema_
 
     let platform = rows(
         &path,
-        "SELECT version, checksum FROM platform_migrations ORDER BY version",
+        "SELECT version, checksum FROM _platform_migrations ORDER BY version",
     )
     .await;
     let app_rows = rows(
         &path,
-        "SELECT version, checksum FROM app_migrations ORDER BY version",
+        "SELECT version, checksum FROM _app_migrations ORDER BY version",
     )
     .await;
     assert_eq!(
@@ -182,7 +182,7 @@ async fn a_database_before_0007_gains_it_in_both_records_in_the_importing_open()
         .await;
     let platform = rows(
         &path,
-        "SELECT version, checksum FROM platform_migrations ORDER BY version",
+        "SELECT version, checksum FROM _platform_migrations ORDER BY version",
     )
     .await;
     assert_eq!(versions(&platform), [1, 2, 3, 4, 5, 6, 7]);
@@ -285,6 +285,113 @@ async fn a_build_with_fewer_app_migrations_is_refused_alike_before_and_after_the
     assert!(is_1001_missing(&refused), "after: {refused:?}");
 }
 
+async fn with_gadgets() -> Migrator {
+    app_and(&[migration(
+        1001,
+        "CREATE TABLE gadgets (id TEXT); INSERT INTO gadgets VALUES ('ran')",
+    )])
+    .await
+}
+
+/// Imported by this build, then rolled back to the previous one, which applies 1001.
+async fn rolled_back_and_1001_applied(dir: &TempDir) -> PathBuf {
+    let path = previous_database(dir, &app()).await;
+    Store::open(&path, Some(app()))
+        .await
+        .expect("imports")
+        .close()
+        .await;
+    previous_build(&path, &with_gadgets().await)
+        .await
+        .expect("the previous build applies 1001");
+    path
+}
+
+#[tokio::test]
+async fn a_migration_the_previous_build_applied_after_the_import_is_adopted_not_rerun() {
+    let dir = TempDir::new().expect("temp dir");
+    let path = rolled_back_and_1001_applied(&dir).await;
+    let legacy_before = legacy(&path).await;
+
+    let store = Store::open(&path, Some(with_gadgets().await))
+        .await
+        .expect("adopts 1001");
+    assert_eq!(store.app_schema_version(), 1001);
+    let runs: Vec<String> = sqlx::query_scalar("SELECT id FROM gadgets")
+        .fetch_all(store.pool())
+        .await
+        .expect("gadgets");
+    assert_eq!(runs, ["ran"], "1001's SQL ran once");
+    store.close().await;
+
+    let app_rows = rows(
+        &path,
+        "SELECT version, checksum FROM _app_migrations ORDER BY version",
+    )
+    .await;
+    assert_eq!(
+        app_rows,
+        legacy_before[legacy_before.len() - 2..],
+        "recorded with the previous build's checksum"
+    );
+    assert_eq!(legacy(&path).await, legacy_before);
+    Store::open_existing(&path, Some(with_gadgets().await))
+        .await
+        .expect("an offline open sees it current")
+        .close()
+        .await;
+}
+
+#[tokio::test]
+async fn a_migration_the_previous_build_applied_after_the_import_refuses_a_build_without_it() {
+    let dir = TempDir::new().expect("temp dir");
+    let path = rolled_back_and_1001_applied(&dir).await;
+    let before = everything(&path).await;
+
+    for refused in [
+        Store::open(&path, Some(app())).await,
+        Store::open_existing(&path, Some(app())).await,
+    ] {
+        assert!(
+            matches!(
+                refused,
+                Err(StoreError::Migrate(MigrateError::VersionMissing(1001)))
+            ),
+            "{refused:?}"
+        );
+    }
+    assert_eq!(everything(&path).await, before);
+}
+
+#[tokio::test]
+async fn a_failed_row_after_the_import_is_dirty_and_changes_nothing() {
+    let dir = TempDir::new().expect("temp dir");
+    let path = previous_database(&dir, &app()).await;
+    Store::open(&path, Some(app()))
+        .await
+        .expect("imports")
+        .close()
+        .await;
+    let pool = pool(&path).await;
+    sqlx::query("UPDATE _sqlx_migrations SET success = FALSE WHERE version = 1000")
+        .execute(&pool)
+        .await
+        .expect("a failed row");
+    pool.close().await;
+    let before = everything(&path).await;
+
+    for refused in [
+        Store::open(&path, Some(app())).await,
+        Store::open_existing(&path, Some(app())).await,
+    ] {
+        assert!(
+            matches!(refused, Err(StoreError::Migrate(MigrateError::Dirty(1000)))),
+            "{refused:?}"
+        );
+    }
+    assert_eq!(everything(&path).await, before);
+}
+
 #[tokio::test]
 async fn an_interrupted_import_leaves_the_database_exactly_as_it_was_and_retries_cleanly() {
     let dir = TempDir::new().expect("temp dir");
@@ -340,7 +447,7 @@ async fn a_version_the_other_chain_holds_refuses_with_a_collision_before_anythin
         matches!(
             &refused,
             Err(DatabaseError::Collision { version: 7, chain, other })
-                if chain == "app" && other.as_deref() == Some("platform")
+                if chain == "app" && other == "platform"
         ),
         "{refused:?}"
     );
@@ -376,7 +483,7 @@ async fn a_factory_reset_and_a_settings_restore_leave_the_migration_records_alon
     let store = Store::open(&path, Some(app())).await.expect("imports");
     let records = |path| async move {
         let mut all = Vec::new();
-        for table in ["platform_migrations", "app_migrations"] {
+        for table in ["_platform_migrations", "_app_migrations"] {
             all.extend(rows(path, &format!("SELECT version, checksum FROM {table}")).await);
         }
         all.extend(legacy(path).await);

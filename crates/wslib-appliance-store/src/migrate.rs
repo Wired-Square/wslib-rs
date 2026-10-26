@@ -3,9 +3,10 @@
 //! product's from it.
 //!
 //! Both are mirrored into `_sqlx_migrations`, so a build on sqlx's own runner
-//! over the two concatenated still opens the database, and refuses a newer one.
-//! That is why the two share one numbering. A platform migration added after a
-//! product's applies at the next start.
+//! over the two concatenated still opens the database, and refuses a newer one;
+//! what it applies after a rollback is adopted at the next open. That is why
+//! the two share one numbering. A platform migration added after a product's
+//! applies at the next start.
 //!
 //! **The `.sql` files under `migrations/` are frozen byte for byte**: their
 //! checksums are recorded on every box, and a database refuses a changed one.

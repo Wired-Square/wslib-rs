@@ -10,12 +10,13 @@ Moved from `appliance-store` 0.17.1 in wslib-appliance-rs; what differs:
   `replace_accounts` takes `&self`.
 - Opened through `wslib-db-sqlite`'s `Database`, with the platform's and the
   product's migrations as two chains, `platform` and `app`. The database gains
-  `_migration_chains` and `platform_migrations`, and `app_migrations` once an
-  app chain is passed; `_migration_chains` and `app_migrations` are reserved
-  names. Both chains are mirrored into `_sqlx_migrations`, so
-  `appliance-store` 0.17.1 still opens a database this crate has migrated and
-  refuses a newer one. A database 0.17.1 made is imported from
-  `_sqlx_migrations` at the first `open`; `open_existing` never imports.
+  `_migration_chains` and `_platform_migrations`, and `_app_migrations` once
+  an app chain is passed; all three are reserved names. Both chains are
+  mirrored into `_sqlx_migrations`, so `appliance-store` 0.17.1 still opens a
+  database this crate has migrated and refuses a newer one. A database 0.17.1
+  made is imported from `_sqlx_migrations` at the first `open`, and a
+  migration 0.17.1 applies after a rollback is adopted at the next `open`, not
+  run again; `open_existing` checks the same rows and writes nothing.
 - Every pending migration applies in one transaction, and the write lock is
   held for the whole upgrade: the import, 0007 where it is pending, and every
   pending app migration, in one `BEGIN IMMEDIATE`.
@@ -23,12 +24,22 @@ Moved from `appliance-store` 0.17.1 in wslib-appliance-rs; what differs:
   crate), opened without one, is refused as `StoreError::Database`
   (`UnknownChain`), where 0.17.1 answered `Migrate(VersionMissing)`. Before the
   import it is still `Migrate(VersionMissing)`, as is an applied app version
-  this build lacks, before or after.
+  this build lacks, before or after the import, including one 0.17.1 applied
+  after a rollback.
 - A pending `-- no-transaction` migration is refused as
   `StoreError::Database` (`NoTransaction`).
-- `open_existing` refuses a `success = 0` row before the import as
+- Migrations run with foreign keys deferred and checked at the end of each
+  one, where 0.17.1 enforced them per statement. A migration that drops a
+  referenced parent and rebuilds it is still refused, but at the commit as
+  `StoreError::Db` (a foreign-key violation), where 0.17.1 answered
+  `Migrate(ExecuteMigration)` for that migration.
+- `open_existing` refuses a `success = 0` row of a version this build has as
   `Migrate(Dirty)`, and a modified applied migration as
   `Migrate(VersionMismatch)`, before and after the import.
+- `open_existing` checks the `_sqlx_migrations` rows no chain has recorded
+  (before the import, or 0.17.1's after a rollback) before anything pending:
+  `VersionMissing`, `Dirty` or `VersionMismatch` comes before `SchemaBehind`,
+  where 0.17.1 answered `SchemaBehind` first.
 - `StoreError::Database` is new: what `wslib-db-sqlite` refuses beyond the
   existing variants.
 - Settings are `wslib-db-sqlite`'s `Settings`, with local state under `box.`.

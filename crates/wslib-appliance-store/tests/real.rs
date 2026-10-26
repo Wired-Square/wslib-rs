@@ -25,8 +25,8 @@ use wslib_appliance_store::{APP_FLOOR, Store, sqlx};
 const RECORDS: [&str; 4] = [
     "_sqlx_migrations",
     "_migration_chains",
-    "platform_migrations",
-    "app_migrations",
+    "_platform_migrations",
+    "_app_migrations",
 ];
 
 /// What a sign-in reads: the accounts and every factor.
@@ -177,7 +177,7 @@ async fn legacy(path: &Path) -> Vec<LegacyRow> {
 async fn chain_rows(path: &Path) -> Vec<(i64, String)> {
     let pool = pool(path).await;
     let mut rows: Vec<(i64, String)> = Vec::new();
-    for table in ["platform_migrations", "app_migrations"] {
+    for table in ["_platform_migrations", "_app_migrations"] {
         rows.extend(
             sqlx::query_as::<_, (i64, String)>(&format!("SELECT version, checksum FROM {table}"))
                 .fetch_all(&pool)
@@ -257,7 +257,7 @@ async fn a_deployed_database() {
     let mirrored: Vec<(i64, String)> = after_legacy.iter().map(|r| (r.0, r.4.clone())).collect();
     let chains = chain_rows(&path).await;
     println!(
-        "platform_migrations + app_migrations: {:?}",
+        "_platform_migrations + _app_migrations: {:?}",
         chains.iter().map(|r| r.0).collect::<Vec<_>>()
     );
     assert_eq!(

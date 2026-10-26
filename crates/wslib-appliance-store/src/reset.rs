@@ -119,8 +119,8 @@ pub(crate) mod tests {
         let platform_only = Store::open_in_memory(None).await.expect("store");
         let mut expected = vec![
             "_migration_chains",
+            "_platform_migrations",
             "_sqlx_migrations",
-            "platform_migrations",
         ];
         expected.extend(PLATFORM_TABLES);
         expected.sort_unstable();
@@ -141,6 +141,7 @@ pub(crate) mod tests {
             assert_eq!(rows(&store, table).await, 0, "{table} is empty");
         }
         assert_eq!(tables(&store).await, before, "the schema is untouched");
+        assert_eq!(rows(&store, "_migration_chains").await, 2, "nor the chains");
         assert!(
             store
                 .secret("sample_secret")

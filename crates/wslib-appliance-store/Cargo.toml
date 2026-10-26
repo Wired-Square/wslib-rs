@@ -20,7 +20,7 @@ tokio = { version = "1.47", default-features = false, features = ["sync"] }
 uuid = { version = "1", features = ["v4"] }
 wslib-appliance-types = { path = "../wslib-appliance-types", version = "0.0.1", registry = "wired-square" }
 wslib-auth = { path = "../wslib-auth", version = "0.1.1", registry = "wired-square", default-features = false, features = ["sqlite"] }
-wslib-db-sqlite = { path = "../wslib-db-sqlite", version = "0.2.0", registry = "wired-square" }
+wslib-db-sqlite = { path = "../wslib-db-sqlite", version = "0.2.1", registry = "wired-square" }
 wslib-secret = { path = "../wslib-secret", version = "0.1.0", registry = "wired-square" }
 
 [dev-dependencies]

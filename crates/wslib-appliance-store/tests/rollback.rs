@@ -417,6 +417,66 @@ async fn an_interrupted_import_leaves_the_database_exactly_as_it_was_and_retries
         .expect("and the previous build still opens it");
 }
 
+fn parents_and_kids() -> Migration {
+    migration(
+        1001,
+        "CREATE TABLE parents (id TEXT PRIMARY KEY); \
+         CREATE TABLE kids (parent TEXT NOT NULL REFERENCES parents (id)); \
+         INSERT INTO parents VALUES ('a'); INSERT INTO kids VALUES ('a');",
+    )
+}
+
+/// SQLite's table rebuild of `parents`, copying the rows `copied` selects.
+fn rebuild_parents(copied: &str) -> Migration {
+    migration(
+        1002,
+        &format!(
+            "CREATE TABLE parents_new (id TEXT PRIMARY KEY, extra TEXT); \
+             INSERT INTO parents_new SELECT id, NULL FROM parents WHERE {copied}; \
+             DROP TABLE parents; ALTER TABLE parents_new RENAME TO parents;"
+        ),
+    )
+}
+
+#[tokio::test]
+async fn a_migration_may_rebuild_a_referenced_table() {
+    let dir = TempDir::new().expect("temp dir");
+    let path = dir.path().join("appliance.db");
+    let rebuilt = app_and(&[parents_and_kids(), rebuild_parents("TRUE")]).await;
+    let store = Store::open(&path, Some(rebuilt)).await.expect("rebuilds");
+    assert_eq!(store.app_schema_version(), 1002);
+    let joined: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT parent, extra FROM kids JOIN parents ON parents.id = kids.parent")
+            .fetch_all(store.pool())
+            .await
+            .expect("kids and their parents");
+    assert_eq!(joined, [("a".to_string(), None)]);
+    store.close().await;
+}
+
+#[tokio::test]
+async fn a_migration_that_leaves_a_reference_dangling_is_refused_and_changes_nothing() {
+    let dir = TempDir::new().expect("temp dir");
+    let path = dir.path().join("appliance.db");
+    Store::open(&path, Some(app_and(&[parents_and_kids()]).await))
+        .await
+        .expect("1001")
+        .close()
+        .await;
+    let before = everything(&path).await;
+
+    let losing = app_and(&[parents_and_kids(), rebuild_parents("FALSE")]).await;
+    let refused = Store::open(&path, Some(losing)).await;
+    assert!(
+        matches!(
+            &refused,
+            Err(StoreError::Migrate(MigrateError::ExecuteMigration(_, 1002)))
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(everything(&path).await, before);
+}
+
 #[tokio::test]
 async fn a_version_the_other_chain_holds_refuses_with_a_collision_before_anything_applies() {
     let dir = TempDir::new().expect("temp dir");

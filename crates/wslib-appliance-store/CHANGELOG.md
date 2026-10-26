@@ -28,11 +28,12 @@ Moved from `appliance-store` 0.17.1 in wslib-appliance-rs; what differs:
   after a rollback.
 - A pending `-- no-transaction` migration is refused as
   `StoreError::Database` (`NoTransaction`).
-- Migrations run with foreign keys deferred and checked at the end of each
-  one, where 0.17.1 enforced them per statement. A migration that drops a
-  referenced parent and rebuilds it is still refused, but at the commit as
-  `StoreError::Db` (a foreign-key violation), where 0.17.1 answered
-  `Migrate(ExecuteMigration)` for that migration.
+- Migrations run with foreign keys off and checked at the end of each one,
+  where 0.17.1 enforced them per statement. A reference one leaves dangling
+  is still that migration's `Migrate(ExecuteMigration)`, but a rebuild of a
+  referenced table, which 0.17.1 refused, applies. `ON DELETE CASCADE` and
+  the other actions do not fire inside a migration, where under 0.17.1 they
+  did.
 - `open_existing` refuses a `success = 0` row of a version this build has as
   `Migrate(Dirty)`, and a modified applied migration as
   `Migrate(VersionMismatch)`, before and after the import.

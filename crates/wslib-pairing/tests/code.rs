@@ -1,13 +1,12 @@
 use std::num::NonZeroU32;
 use std::path::Path;
 
-use rustls::crypto::ring::default_provider;
 use wslib_pairing::{OneTimeCode, PairingCode, Redemption};
 
 const THREE: NonZeroU32 = NonZeroU32::new(3).unwrap();
 
 fn issue(path: &Path) -> (OneTimeCode, PairingCode) {
-    OneTimeCode::issue(path, &default_provider(), THREE).unwrap()
+    OneTimeCode::issue(path, THREE).unwrap()
 }
 
 fn wrong(code: &PairingCode) -> PairingCode {

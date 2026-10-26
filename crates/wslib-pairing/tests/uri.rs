@@ -1,10 +1,9 @@
-use wslib_pairing::{PairingCode, PairingUri, UriError};
-use wslib_tls::KeyFingerprint;
+use wslib_pairing::{PairingCode, PairingUri, SpkiSha256, UriError};
 
 const PIN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const CODE: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
-fn pin() -> KeyFingerprint {
+fn pin() -> SpkiSha256 {
     PIN.parse().unwrap()
 }
 
@@ -40,7 +39,12 @@ fn each_host_form_round_trips() {
 
 #[test]
 fn a_colon_hex_pin_and_either_order_of_keys_are_read() {
-    let colons = pin().0.colons();
+    let colons = PIN
+        .as_bytes()
+        .chunks(2)
+        .map(|pair| std::str::from_utf8(pair).unwrap().to_uppercase())
+        .collect::<Vec<_>>()
+        .join(":");
     let uri = parse(&format!(
         "EXAMPLE-ENROL://host:1#code={}&pin={colons}",
         CODE.to_lowercase()
@@ -115,4 +119,18 @@ fn new_refuses_a_bracketed_host_and_a_bad_scheme() {
     assert!(PairingUri::new("example-enrol", "[::1]", 1, pin(), code()).is_err());
     assert!(PairingUri::new("1enrol", "h", 1, pin(), code()).is_err());
     assert!(PairingUri::new("example-enrol", "h", 0, pin(), code()).is_err());
+}
+
+#[test]
+fn a_pin_is_spelt_as_a_wslib_crypto_fingerprint_is() {
+    let fingerprint = wslib_crypto::Fingerprint::of(b"spki");
+    let pin = SpkiSha256::from(*fingerprint.as_bytes());
+    assert_eq!(pin.to_string(), fingerprint.to_string());
+    assert_eq!(
+        pin.to_string()
+            .parse::<wslib_crypto::Fingerprint>()
+            .unwrap(),
+        fingerprint
+    );
+    assert_eq!(fingerprint.colons().parse::<SpkiSha256>().unwrap(), pin);
 }

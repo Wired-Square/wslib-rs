@@ -11,17 +11,11 @@ repository.workspace = true
 publish = ["wired-square"]
 
 [dependencies]
-# No provider: the caller's supplies the code's randomness.
-rustls = { version = "0.23.27", default-features = false }
-subtle = { version = "2.5", default-features = false }
+getrandom = { version = "0.3", features = ["std"] }
 thiserror = "2"
-wslib-crypto = { version = "0.1.1", path = "../wslib-crypto", registry = "wired-square" }
 wslib-file-atomic = { version = "0.1.5", path = "../wslib-file-atomic", registry = "wired-square" }
-wslib-secret = { version = "0.1", path = "../wslib-secret", registry = "wired-square" }
-wslib-tls = { version = "0.2.1", path = "../wslib-tls", registry = "wired-square" }
+wslib-secret = { version = "0.1.2", path = "../wslib-secret", registry = "wired-square", features = ["token"] }
 
 [dev-dependencies]
-rustls = { version = "0.23.27", default-features = false, features = ["ring", "std"] }
 tempfile = "3.10.1"
-tokio = { version = "1.47", features = ["macros", "rt"] }
-wslib-crypto-x509 = { version = "0.1", path = "../wslib-crypto-x509", registry = "wired-square" }
+wslib-crypto = { version = "0.1.1", path = "../wslib-crypto", registry = "wired-square" }

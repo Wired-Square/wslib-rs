@@ -1,16 +1,15 @@
 use std::net::{IpAddr, Ipv6Addr};
 
-use wslib_tls::KeyFingerprint;
-
 use crate::code::{NotACode, PairingCode};
+use crate::pin::{NotAPin, SpkiSha256};
 
-/// `<scheme>://host:port#pin=<key fingerprint>&code=<code>`, its `Debug` redacting the code.
+/// `<scheme>://host:port#pin=<SPKI SHA-256>&code=<code>`, its `Debug` redacting the code.
 #[derive(Clone, Debug)]
 pub struct PairingUri {
     scheme: String,
     host: String,
     port: u16,
-    pin: KeyFingerprint,
+    pin: SpkiSha256,
     code: PairingCode,
 }
 
@@ -20,7 +19,7 @@ impl PairingUri {
         scheme: &str,
         host: &str,
         port: u16,
-        pin: KeyFingerprint,
+        pin: SpkiSha256,
         code: PairingCode,
     ) -> Result<Self, UriError> {
         if !is_scheme(scheme) {
@@ -69,13 +68,7 @@ impl PairingUri {
         }
         let pin = pin.ok_or(UriError::Missing("pin"))?;
         let code = code.ok_or(UriError::Missing("code"))?;
-        Self::new(
-            scheme,
-            host,
-            port,
-            pin.parse().map_err(UriError::Pin)?,
-            code.parse()?,
-        )
+        Self::new(scheme, host, port, pin.parse()?, code.parse()?)
     }
 
     /// The URI in full, code and all, for the person who is to pair.
@@ -107,7 +100,7 @@ impl PairingUri {
         self.port
     }
 
-    pub fn pin(&self) -> KeyFingerprint {
+    pub fn pin(&self) -> SpkiSha256 {
         self.pin
     }
 
@@ -177,8 +170,8 @@ pub enum UriError {
     DuplicateKey(String),
     #[error("no {0} in the fragment")]
     Missing(&'static str),
-    #[error("not a key fingerprint: {0}")]
-    Pin(wslib_crypto::Error),
+    #[error(transparent)]
+    Pin(#[from] NotAPin),
     #[error(transparent)]
     Code(#[from] NotACode),
 }

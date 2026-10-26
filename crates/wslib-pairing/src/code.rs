@@ -3,32 +3,18 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::{fs, io};
 
-use rustls::crypto::CryptoProvider;
-use subtle::ConstantTimeEq;
-use wslib_crypto::Fingerprint;
-use wslib_secret::Secret;
+use wslib_secret::{Encoding, Secret, TokenHash};
 
-const BASE32: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-const CODE_BYTES: usize = 16;
-const CODE_LEN: usize = (CODE_BYTES * 8).div_ceil(5);
+const CODE_LEN: usize = 26;
 
 /// A pairing code: 128 random bits as unpadded base32, redacted in `Debug`.
 #[derive(Clone, Debug)]
 pub struct PairingCode(Secret);
 
 impl PairingCode {
-    fn generate(provider: &CryptoProvider) -> Result<Self, wslib_crypto::Error> {
-        let bytes = wslib_crypto::random::<CODE_BYTES>(provider)?;
-        Ok(Self(Secret::new(base32(&bytes))))
-    }
-
     /// The code as a person copies it.
     pub fn expose(&self) -> &str {
         self.0.expose()
-    }
-
-    fn hash(&self) -> Fingerprint {
-        Fingerprint::of(self.expose().as_bytes())
     }
 }
 
@@ -38,7 +24,7 @@ impl FromStr for PairingCode {
 
     fn from_str(s: &str) -> Result<Self, NotACode> {
         let code = s.trim().to_ascii_uppercase();
-        if code.len() != CODE_LEN || !code.bytes().all(|b| BASE32.contains(&b)) {
+        if code.len() != CODE_LEN || !code.bytes().all(|b| matches!(b, b'A'..=b'Z' | b'2'..=b'7')) {
             return Err(NotACode);
         }
         Ok(Self(Secret::new(code)))
@@ -49,24 +35,7 @@ impl FromStr for PairingCode {
 #[error("not a pairing code: {CODE_LEN} characters of A-Z and 2-7")]
 pub struct NotACode;
 
-fn base32(bytes: &[u8]) -> String {
-    let mut out = String::new();
-    let (mut buffer, mut bits) = (0u32, 0);
-    for &byte in bytes {
-        buffer = buffer << 8 | u32::from(byte);
-        bits += 8;
-        while bits >= 5 {
-            bits -= 5;
-            out.push(BASE32[(buffer >> bits & 31) as usize].into());
-        }
-    }
-    if bits > 0 {
-        out.push(BASE32[(buffer << (5 - bits) & 31) as usize].into());
-    }
-    out
-}
-
-/// A one-time code's state file, owner-only, holding the code's SHA-256 and
+/// A one-time code's state file, owner-only, holding the code's hash and
 /// never the code: spent by its first right use, or when wrong attempts
 /// reach the limit.
 ///
@@ -77,10 +46,10 @@ pub struct OneTimeCode {
     state: State,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 enum State {
     Pending {
-        hash: Fingerprint,
+        hash: TokenHash,
         wrong: u32,
         limit: u32,
     },
@@ -103,14 +72,13 @@ impl OneTimeCode {
     /// Writes a fresh code over whatever is at `path`, allowing `attempts` wrong ones.
     pub fn issue(
         path: impl Into<PathBuf>,
-        provider: &CryptoProvider,
         attempts: NonZeroU32,
     ) -> Result<(Self, PairingCode), CodeError> {
-        let code = PairingCode::generate(provider)?;
+        let code = PairingCode(Secret::random::<16>(Encoding::Base32)?);
         let issued = Self {
             path: path.into(),
             state: State::Pending {
-                hash: code.hash(),
+                hash: code.0.hash(),
                 wrong: 0,
                 limit: attempts.get(),
             },
@@ -137,23 +105,20 @@ impl OneTimeCode {
     ///
     /// A failed save leaves the code refusing in memory as well, so an error never admits.
     pub fn redeem(&mut self, offered: &PairingCode) -> Result<Redemption, CodeError> {
-        let State::Pending { hash, wrong, limit } = self.state else {
+        let State::Pending { hash, wrong, limit } = &mut self.state else {
             return Ok(Redemption::Spent);
         };
-        let right = bool::from(hash.as_bytes().ct_eq(offered.hash().as_bytes()));
-        let wrong = wrong + u32::from(!right);
-        self.state = if right || wrong >= limit {
-            State::Spent
-        } else {
-            State::Pending { hash, wrong, limit }
-        };
+        let right = *hash == offered.0.hash();
+        *wrong += u32::from(!right);
+        let remaining = *limit - *wrong;
+        if right || remaining == 0 {
+            self.state = State::Spent;
+        }
         self.save()?;
         Ok(if right {
             Redemption::Accepted
         } else {
-            Redemption::Refused {
-                remaining: limit - wrong,
-            }
+            Redemption::Refused { remaining }
         })
     }
 
@@ -172,9 +137,11 @@ impl OneTimeCode {
 }
 
 impl State {
-    fn render(self) -> String {
+    fn render(&self) -> String {
         match self {
-            Self::Pending { hash, wrong, limit } => format!("pending {wrong} {limit} {hash}\n"),
+            Self::Pending { hash, wrong, limit } => {
+                format!("pending {wrong} {limit} {}\n", hash.as_str())
+            }
             Self::Spent => "spent\n".into(),
         }
     }
@@ -186,7 +153,7 @@ impl State {
             ["pending", wrong, limit, hash] => {
                 let (wrong, limit) = (wrong.parse().ok()?, limit.parse().ok()?);
                 (wrong < limit).then_some(Self::Pending {
-                    hash: hash.parse().ok()?,
+                    hash: TokenHash::from_stored(hash),
                     wrong,
                     limit,
                 })
@@ -200,7 +167,7 @@ impl State {
 #[non_exhaustive]
 pub enum CodeError {
     #[error("no randomness for a pairing code: {0}")]
-    Random(#[from] wslib_crypto::Error),
+    Random(#[from] getrandom::Error),
     #[error("the pairing code's state at {}: {source}", path.display())]
     Io { path: PathBuf, source: io::Error },
     #[error("the pairing code's state at {} is not one this crate wrote", path.display())]
@@ -210,22 +177,6 @@ pub enum CodeError {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn base32_is_rfc_4648_without_padding() {
-        let cases = [
-            ("", ""),
-            ("f", "MY"),
-            ("fo", "MZXQ"),
-            ("foo", "MZXW6"),
-            ("foob", "MZXW6YQ"),
-            ("fooba", "MZXW6YTB"),
-            ("foobar", "MZXW6YTBOI"),
-        ];
-        for (plain, encoded) in cases {
-            assert_eq!(base32(plain.as_bytes()), encoded);
-        }
-    }
 
     #[test]
     fn a_code_reads_in_either_case_and_nothing_else() {
@@ -240,8 +191,8 @@ mod tests {
         for text in [
             "",
             "spent",
-            "pending 0 5 abc\n",
-            "pending 5 5 0000000000000000000000000000000000000000000000000000000000000000\n",
+            "pending 0 5\n",
+            "pending 5 5 ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0\n",
             "spent\nspent\n",
         ] {
             assert!(State::parse(text).is_none(), "{text:?}");

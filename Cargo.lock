@@ -7375,16 +7375,12 @@ dependencies = [
 name = "wslib-pairing"
 version = "0.1.0"
 dependencies = [
- "rustls",
- "subtle",
+ "getrandom 0.3.4",
  "tempfile",
  "thiserror 2.0.21",
- "tokio",
  "wslib-crypto",
- "wslib-crypto-x509",
  "wslib-file-atomic",
  "wslib-secret",
- "wslib-tls",
 ]
 
 [[package]]

@@ -6,8 +6,9 @@ otherwise repeat — who it is, which protocol revisions it speaks, how a tool
 answers, how the listener is guarded — so an application writes its tools and
 nothing else.
 
-**Not pure Rust.** `js/` holds TypeScript, the page halves of the `dom` and
-`tauri-bridge` features, which an app copies into its frontend unchanged.
+The page halves of the `dom` and `tauri-bridge` features are the npm package
+`@wired-square/mcp-bridge`, from
+[wslib-ts](https://github.com/Wired-Square/wslib-ts).
 
 ## What's here
 
@@ -36,20 +37,21 @@ nothing else.
 - **`dom`** (feature `dom`) — tools that drive a webview's DOM by CSS
   selector. `read_router()` holds `query`, `wait_for` and `console`, stamped read-only;
   `drive_router()` holds `click`, `type` and `press`. Each call reaches the
-  page through your `DomBridge` impl, and `js/dom-ops.ts` answers it there.
+  page through your `DomBridge` impl, and `@wired-square/mcp-bridge/dom-ops`
+  answers it there.
 - **`bridge`** (feature `bridge`) — `Pending`, the correlator under such a
   bridge: `open` an id, `settle` it (or `settle_json` from the page's
   `{ id, ok }` / `{ id, error }`), and `wait` for it with a timeout. Knows
   nothing of the transport.
 - **`tauri_bridge`** (feature `tauri-bridge`) — `TauriBridge`, a `DomBridge`
-  over Tauri events, and `js/tauri-bridge.ts`, its page half.
+  over Tauri events, answered by `@wired-square/mcp-bridge/tauri-bridge`.
 
 ## Using it
 
 From the `wired-square` registry (see the workspace README for its setup):
 
 ```toml
-wslib-mcp = { version = "0.1", registry = "wired-square", features = ["http"] }
+wslib-mcp = { version = "0.2", registry = "wired-square", features = ["http"] }
 ```
 
 rmcp's macros emit `rmcp::` paths into your crate, and the re-export satisfies
@@ -110,20 +112,18 @@ a `type` can be read back. All six carry `openWorldHint: false`. `wait_for` gets
 `BRIDGE_TIMEOUT`; every other op gets `BRIDGE_TIMEOUT` (10 s). A bridge `Err`
 reaches the agent as a tool failure.
 
-On the page, copy [`js/dom-ops.ts`](js/dom-ops.ts) into your frontend unchanged
-and hand each request to `runDomOp(op, args)` (or register `DOM_OPS` one by
-one). Importing it wraps `console.error` and `console.warn` and listens for
+On the page, add `"@wired-square/mcp-bridge": "^0.1.0"` from the wired-square
+npm registry, the same setup as `@wired-square/kit` (see wslib-ts's
+[Install](https://github.com/Wired-Square/wslib-ts#install)). Hand each request
+to `runDomOp(op, args)` from `@wired-square/mcp-bridge/dom-ops` (or register
+`DOM_OPS` one by one). `DOM_OPS` matches `dom::OPS` in order, and `DOM_OP_CLASS`
+marks each op `read` or `drive` as `read_router` and `drive_router` split them.
+Importing it wraps `console.error` and `console.warn` and listens for
 `window` `error` and `unhandledrejection`, keeping the last 200 for the `console`
 tool, so import it before anything that can fail — a release webview has no
 inspector, and an error boundary that logs and renders a fallback is otherwise
-invisible. It has no framework imports and typechecks under `strict`,
-`noUnusedLocals` and `noUnusedParameters` against ES2020 (`npx -p typescript
-tsc -p js`). `type` writes through the native `value` setter, so React's
-controlled inputs see the change. Keep your copy honest with a test:
-
-```rust
-assert_eq!(include_str!("../frontend/src/harness/dom-ops.ts"), wslib_mcp::dom::OPS_TS);
-```
+invisible. It has no framework imports. `type` writes through the native `value`
+setter, so React's controlled inputs see the change.
 
 ## Over Tauri events (`tauri-bridge`)
 
@@ -157,11 +157,15 @@ app.add_capability(r#"{
 }"#)?;
 ```
 
-On the page, copy [`js/tauri-bridge.ts`](js/tauri-bridge.ts) unchanged into
-the same directory as your copy of `dom-ops.ts`, which it imports as
-`./dom-ops`, and start it after that import:
+On the page, start `startHarnessBridge` from
+`@wired-square/mcp-bridge/tauri-bridge` after importing `dom-ops`. Only this
+entry point needs `@tauri-apps/api`, the package's optional peer dependency.
+Its `REQUEST_EVENT` and `REPLY_EVENT` match the consts of the same names here:
 
 ```ts
+import "@wired-square/mcp-bridge/dom-ops";
+import { startHarnessBridge } from "@wired-square/mcp-bridge/tauri-bridge";
+
 const stop = startHarnessBridge({
   navigate: ({ path }) => (navigate(String(path)), {}),
 });
@@ -171,11 +175,7 @@ import.meta.hot?.dispose(() => stop.then((unlisten) => unlisten()));
 The ops you pass are tried before the DOM ops, and a thrown error becomes the
 reply's `error`. `answer(request, appOps)` is the same handling without the
 events, for a test. Under hot reload, stop the old listener as above or every
-request is answered twice. Keep the copy honest beside the `dom-ops.ts` one:
-
-```rust
-assert_eq!(include_str!("../frontend/src/harness/tauri-bridge.ts"), wslib_mcp::tauri_bridge::BRIDGE_TS);
-```
+request is answered twice.
 
 ## Things to get right
 

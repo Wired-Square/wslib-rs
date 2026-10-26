@@ -1,9 +1,9 @@
 //! Tools that drive a webview's DOM by CSS selector: `query` and `wait_for`
 //! read, `click`, `type` and `press` act, and `console` reads what the page
 //! logged. Each call goes to the page as
-//! `(op, args)` over the consumer's own [`DomBridge`], and [`OPS_TS`] is the
-//! page half that answers it. Ops fire synthetic events, so the window needs
-//! no focus.
+//! `(op, args)` over the consumer's own [`DomBridge`], and the npm package
+//! `@wired-square/mcp-bridge` answers it on the page. Ops fire synthetic
+//! events, so the window needs no focus.
 
 use std::future::Future;
 use std::time::Duration;
@@ -22,8 +22,8 @@ use crate::router::{dyn_tool, mark_read_only};
 /// How long an op may take to answer, beyond any wait it was asked to make.
 pub const BRIDGE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The page half, to be vendored byte-for-byte into the consumer's frontend.
-pub const OPS_TS: &str = include_str!("../js/dom-ops.ts");
+/// Must match `DOM_OPS` exported by `@wired-square/mcp-bridge`.
+pub const OPS: &[&str] = &["query", "click", "type", "press", "wait_for", "console"];
 
 /// Carries an op to the page and its reply back; `Err` reaches the agent as
 /// a tool failure.
@@ -241,13 +241,22 @@ mod tests {
         assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
     }
 
-    #[test]
-    fn the_page_half_answers_every_op() {
-        for op in ["query", "click", "type", "press", "wait_for", "console"] {
-            assert!(
-                OPS_TS.contains(&format!("  {op},")) || OPS_TS.contains(&format!("  {op}:")),
-                "{op}"
-            );
+    #[derive(Clone)]
+    struct Unreachable;
+
+    impl DomBridge for Unreachable {
+        async fn call(&self, _: &str, _: Value, _: Duration) -> Result<Value, String> {
+            unreachable!()
         }
+    }
+
+    #[test]
+    fn the_routers_register_exactly_ops() {
+        let router = read_router::<Unreachable>() + drive_router();
+        let mut registered: Vec<_> = router.list_all().into_iter().map(|t| t.name).collect();
+        registered.sort();
+        let mut ops = OPS.to_vec();
+        ops.sort();
+        assert_eq!(registered, ops);
     }
 }

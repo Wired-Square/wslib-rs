@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2
+
+- `PeerCertificates`: the certificates a TLS client presented, as the
+  config's client verifier passed them, an extension on each request
+  `serve_https` and `Https` serve; empty when it presented none. Needs
+  `tokio-rustls` 0.26, already under `axum-server`.
+
 ## 0.1.1
 
 - Accept errors are no longer silent. A peer gone before its accept is

@@ -28,10 +28,11 @@ use tower::util::MapResponse;
 
 pub use bounded::{Bounds, Listener};
 pub use redirect::{redirect_router, serve_redirect};
-pub use tls::{Tls, server_config_from_pem, server_config_from_pem_files};
+pub use tls::{PeerCertificates, Tls, server_config_from_pem, server_config_from_pem_files};
 
 use bounded::Peer;
 use deciding::Deciding;
+use tls::Identifying;
 
 const H2_STREAMS: u32 = 32;
 // hyper's default is 400 KB per stream, so an unread response could cost a
@@ -55,7 +56,7 @@ pub async fn serve_http(
 }
 
 /// Serve `router` over TLS on `listener` until `stop` completes and it has
-/// drained.
+/// drained. Handlers get [`PeerCertificates`] as an extension.
 pub async fn serve_https(
     listener: Listener,
     router: Router,
@@ -65,7 +66,7 @@ pub async fn serve_https(
     let bounds = listener.bounds;
     tracing::info!(address = %listener.local_addr(), "listening");
     let handle = Handle::new();
-    let acceptor = RustlsAcceptor::new(tls.config()).handshake_timeout(bounds.head);
+    let acceptor = Identifying(RustlsAcceptor::new(tls.config()).handshake_timeout(bounds.head));
     let server = bound(
         Server::from_listener(listener).acceptor(acceptor),
         bounds.head,

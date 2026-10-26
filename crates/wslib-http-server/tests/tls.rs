@@ -2,20 +2,37 @@ mod support;
 
 use std::net::SocketAddr;
 
-use axum::Router;
+use std::sync::Arc;
+
 use axum::http::{Request, StatusCode, header};
 use axum::routing::get;
+use axum::{Extension, Router};
 use axum_server::tls_rustls::RustlsConfig;
-use rustls::pki_types::CertificateDer;
-use support::{Pair, dial_tls, exchange, listener};
+use rcgen::{CertificateParams, DnType, IsCa, Issuer, KeyPair};
+use rustls::RootCertStore;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
+use rustls::server::WebPkiClientVerifier;
+use support::{Pair, dial, dial_tls, exchange, listener, provider};
+use tokio_rustls::TlsConnector;
 use wslib_http_server::{
-    Bounds, Tls, serve_https, server_config_from_pem, server_config_from_pem_files,
+    Bounds, PeerCertificates, Tls, serve_https, server_config_from_pem,
+    server_config_from_pem_files,
 };
 
 fn app() -> Router {
     Router::new()
         .route("/", get(|| async { "hello" }))
         .route("/empty", get(|| async { StatusCode::NO_CONTENT }))
+        .route("/peer", get(peer_leaf))
+}
+
+async fn peer_leaf(Extension(peer): Extension<PeerCertificates>) -> String {
+    peer.end_entity()
+        .map_or_else(|| "none".into(), |leaf| hex(leaf))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 async fn serving(tls: Tls) -> SocketAddr {
@@ -160,4 +177,80 @@ async fn a_shared_config_reloaded_by_its_owner_reaches_the_listener() {
         None,
         "the owner's reload sets no ALPN, and the listener does not patch it"
     );
+}
+
+/// A client's certificate and key, and the authority that signed it.
+struct Client {
+    authority: CertificateDer<'static>,
+    cert: CertificateDer<'static>,
+    key: PrivateKeyDer<'static>,
+}
+
+impl Client {
+    fn new() -> Self {
+        let authority_key = KeyPair::generate().expect("a key");
+        let mut authority = CertificateParams::default();
+        authority.is_ca = IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        let authority_cert = authority.self_signed(&authority_key).expect("signs");
+        let issuer = Issuer::new(authority, authority_key);
+
+        let key = KeyPair::generate().expect("a key");
+        let mut leaf = CertificateParams::default();
+        leaf.distinguished_name.push(DnType::CommonName, "Session");
+        let cert = leaf.signed_by(&key, &issuer).expect("signs");
+        Self {
+            authority: authority_cert.der().clone(),
+            cert: cert.der().clone(),
+            key: PrivateKeyDer::try_from(key.serialize_der()).expect("a key"),
+        }
+    }
+
+    fn requiring_me(&self, pair: &Pair) -> Arc<rustls::ServerConfig> {
+        let mut roots = RootCertStore::empty();
+        roots.add(self.authority.clone()).expect("a root");
+        let verifier = WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider())
+            .build()
+            .expect("a verifier");
+        let mut config = rustls::ServerConfig::builder_with_provider(provider())
+            .with_safe_default_protocol_versions()
+            .expect("versions")
+            .with_client_cert_verifier(verifier)
+            .with_cert_resolver(pair.server_config().cert_resolver.clone());
+        config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        Arc::new(config)
+    }
+}
+
+#[tokio::test]
+async fn a_handler_sees_the_certificate_a_client_presented() {
+    let (pair, client) = (Pair::new(), Client::new());
+    let address = serving(Tls::new(client.requiring_me(&pair))).await;
+
+    let mut roots = RootCertStore::empty();
+    roots.add(pair.cert.clone()).expect("a root");
+    let config = rustls::ClientConfig::builder_with_provider(provider())
+        .with_safe_default_protocol_versions()
+        .expect("versions")
+        .with_root_certificates(roots)
+        .with_client_auth_cert(vec![client.cert.clone()], client.key.clone_key())
+        .expect("a client certificate");
+    let mut stream = TlsConnector::from(Arc::new(config))
+        .connect(
+            ServerName::try_from("localhost").expect("a name"),
+            dial(address).await,
+        )
+        .await
+        .expect("handshake");
+
+    let answer = exchange(&mut stream, "/peer").await.expect("an answer");
+    assert!(answer.ends_with(&hex(&client.cert)), "{answer}");
+}
+
+#[tokio::test]
+async fn a_handler_sees_no_certificate_from_a_client_that_presented_none() {
+    let pair = Pair::new();
+    let address = serving(Tls::new(pair.server_config())).await;
+    let mut stream = dial_tls(address, &pair.cert, &[b"http/1.1"]).await;
+    let answer = exchange(&mut stream, "/peer").await.expect("an answer");
+    assert!(answer.ends_with("none"), "{answer}");
 }

@@ -155,18 +155,51 @@ pub(crate) fn listed(headers: &HeaderMap, name: header::HeaderName) -> impl Iter
         .map(str::trim)
 }
 
-pub(crate) fn accepts_gzip(headers: &HeaderMap) -> bool {
-    listed(headers, header::ACCEPT_ENCODING).any(|coding| {
+/// Whether `headers` take gzip, by RFC 9110 §12.5.3: `gzip` or `x-gzip` at a
+/// q-value above zero, else `*` at one when neither is named; a malformed
+/// q-value is zero.
+pub fn accepts_gzip(headers: &HeaderMap) -> bool {
+    let (mut named, mut any) = (None, None);
+    for coding in listed(headers, header::ACCEPT_ENCODING) {
         let mut parts = coding.split(';');
-        parts
-            .next()
-            .is_some_and(|name| name.trim().eq_ignore_ascii_case("gzip"))
-            && !parts.any(|parameter| {
-                parameter.split_once('=').is_some_and(|(name, value)| {
-                    name.trim().eq_ignore_ascii_case("q") && value.trim().parse::<f32>() == Ok(0.0)
-                })
-            })
-    })
+        let name = parts.next().unwrap_or_default().trim();
+        let slot = if name.eq_ignore_ascii_case("gzip") || name.eq_ignore_ascii_case("x-gzip") {
+            &mut named
+        } else if name == "*" {
+            &mut any
+        } else {
+            continue;
+        };
+        *slot = (*slot).max(Some(weight(parts)));
+    }
+    named.or(any).is_some_and(|q| q > 0)
+}
+
+/// A coding's q-value in thousandths: 1000 when it has none, 0 when malformed.
+fn weight<'a>(mut parameters: impl Iterator<Item = &'a str>) -> u16 {
+    parameters
+        .find_map(|parameter| {
+            let (name, value) = parameter.split_once('=')?;
+            name.trim().eq_ignore_ascii_case("q").then(|| value.trim())
+        })
+        .map_or(1000, |q| thousandths(q).unwrap_or(0))
+}
+
+fn thousandths(q: &str) -> Option<u16> {
+    let (whole, fraction) = q.split_once('.').unwrap_or((q, ""));
+    if fraction.len() > 3 || !fraction.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let fraction = fraction
+        .bytes()
+        .chain(std::iter::repeat(b'0'))
+        .take(3)
+        .fold(0, |n, digit| n * 10 + u16::from(digit - b'0'));
+    match whole {
+        "0" => Some(fraction),
+        "1" if fraction == 0 => Some(1000),
+        _ => None,
+    }
 }
 
 /// A body that gives its permit back when it is dropped.
@@ -218,6 +251,87 @@ mod tests {
             .header(header::ACCEPT_ENCODING, "gzip")
             .body(Body::empty())
             .unwrap()
+    }
+
+    fn accepts(values: &[&'static str]) -> bool {
+        let mut headers = HeaderMap::new();
+        for value in values {
+            headers.append(header::ACCEPT_ENCODING, HeaderValue::from_static(value));
+        }
+        accepts_gzip(&headers)
+    }
+
+    #[test]
+    fn gzip_or_x_gzip_named_at_a_q_value_above_zero_is_taken() {
+        for yes in [
+            &["gzip"][..],
+            &["GZip"],
+            &["x-gzip"],
+            &["X-GZIP;q=0.5"],
+            &["br, gzip;q=0.001"],
+            &["gzip;q=1"],
+            &["gzip;q=1.000"],
+            &["gzip;q=0.5", "br"],
+        ] {
+            assert!(accepts(yes), "{yes:?}");
+        }
+        for no in [
+            &[][..],
+            &["br"],
+            &["identity"],
+            &["gzipped"],
+            &["br, deflate"],
+        ] {
+            assert!(!accepts(no), "{no:?}");
+        }
+    }
+
+    #[test]
+    fn a_q_value_of_zero_refuses() {
+        for no in [&["gzip;q=0"][..], &["gzip;q=0.000"], &["x-gzip;q=0."]] {
+            assert!(!accepts(no), "{no:?}");
+        }
+    }
+
+    #[test]
+    fn a_star_covers_gzip_only_when_gzip_is_not_named() {
+        assert!(accepts(&["*"]));
+        assert!(accepts(&["br;q=0.9, *;q=0.1"]));
+        assert!(!accepts(&["*;q=0"]));
+        assert!(!accepts(&["gzip;q=0, *"]));
+        assert!(!accepts(&["*", "x-gzip;q=0"]));
+        assert!(accepts(&["*;q=0, gzip"]));
+    }
+
+    #[test]
+    fn a_malformed_q_value_is_no_acceptance() {
+        for no in [
+            &["gzip;q=nonsense"][..],
+            &["gzip;q=1.5"],
+            &["gzip;q=2"],
+            &["gzip;q=-1"],
+            &["gzip;q=0.0001"],
+            &["gzip;q=1.001"],
+            &["gzip;q=.5"],
+            &["gzip;q="],
+            &["*;q=1.5"],
+            &["gzip;q=0.5x, *"],
+        ] {
+            assert!(!accepts(no), "{no:?}");
+        }
+    }
+
+    #[test]
+    fn names_q_and_whitespace_are_read_loosely() {
+        for yes in [
+            &["gzip ; Q = 0.5"][..],
+            &["  br ,gzip;q=0.5  "],
+            &["br", "deflate, gzip"],
+            &["br,,gzip"],
+            &["gzip;level=9"],
+        ] {
+            assert!(accepts(yes), "{yes:?}");
+        }
     }
 
     #[tokio::test]

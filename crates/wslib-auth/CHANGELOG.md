@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- `SqlSessionStore::remove_user_in`: a user's sessions removed inside the
+  caller's transaction.
+
 ## 0.1.0
 
 - `Sessions` over a `SessionStore`: issue, look up, re-stamp, end one, end a

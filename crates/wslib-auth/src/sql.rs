@@ -196,6 +196,29 @@ where
 
 macro_rules! session_store_for {
     ($db:ty) => {
+        impl<U: fmt::Display> SqlSessionStore<$db, U> {
+            /// [`SessionStore::remove_user`] inside the caller's transaction.
+            pub async fn remove_user_in(
+                &self,
+                tx: &mut sqlx::Transaction<'_, $db>,
+                user_id: &U,
+            ) -> Result<bool, sqlx::Error> {
+                self.remove_user_on(&mut **tx, user_id).await
+            }
+
+            async fn remove_user_on<'e>(
+                &self,
+                executor: impl sqlx::Executor<'e, Database = $db>,
+                user_id: &U,
+            ) -> Result<bool, sqlx::Error> {
+                let done = sqlx::query(&self.queries.remove_user)
+                    .bind(user_id.to_string())
+                    .execute(executor)
+                    .await?;
+                Ok(done.rows_affected() > 0)
+            }
+        }
+
         impl<U> SessionStore for SqlSessionStore<$db, U>
         where
             U: fmt::Display + FromStr + Send + Sync,
@@ -257,11 +280,7 @@ macro_rules! session_store_for {
             }
 
             async fn remove_user(&self, user_id: &U) -> Result<bool, sqlx::Error> {
-                let done = sqlx::query(&self.queries.remove_user)
-                    .bind(user_id.to_string())
-                    .execute(&self.pool)
-                    .await?;
-                Ok(done.rows_affected() > 0)
+                self.remove_user_on(&self.pool, user_id).await
             }
 
             async fn remove_expired(&self, now: DateTime<Utc>) -> Result<(), sqlx::Error> {
@@ -459,6 +478,27 @@ mod sqlite_tests {
         assert!(sessions.end_all(&"a".to_owned()).await.unwrap());
         assert!(!sessions.end_all(&"a".to_owned()).await.unwrap());
         assert_eq!(sessions.lookup(&a2).await.unwrap(), None);
+        assert!(sessions.lookup(&b).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn removing_a_users_sessions_in_a_transaction_rolls_back_with_it() {
+        let sessions = sessions().await;
+        let a = issue(&sessions, "a").await;
+        let b = issue(&sessions, "b").await;
+        let store = sessions.store();
+        let user_a = "a".to_owned();
+
+        let mut tx = store.pool().begin().await.unwrap();
+        assert!(store.remove_user_in(&mut tx, &user_a).await.unwrap());
+        tx.rollback().await.unwrap();
+        assert!(sessions.lookup(&a).await.unwrap().is_some());
+
+        let mut tx = store.pool().begin().await.unwrap();
+        assert!(store.remove_user_in(&mut tx, &user_a).await.unwrap());
+        assert!(!store.remove_user_in(&mut tx, &user_a).await.unwrap());
+        tx.commit().await.unwrap();
+        assert_eq!(sessions.lookup(&a).await.unwrap(), None);
         assert!(sessions.lookup(&b).await.unwrap().is_some());
     }
 

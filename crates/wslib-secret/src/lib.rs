@@ -18,6 +18,11 @@ use std::{fmt, fs, io};
 
 use subtle::ConstantTimeEq;
 
+#[cfg(feature = "token")]
+mod token;
+#[cfg(feature = "token")]
+pub use token::{Encoding, TokenHash};
+
 /// A string whose `Debug` and `Display` render `set` or `unset`, never the value.
 #[derive(Clone)]
 pub struct Secret(String);

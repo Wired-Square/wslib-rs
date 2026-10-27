@@ -1,0 +1,211 @@
+# The one place a product's system identity is written.
+#
+# Copy to `appliance.toml` in the consuming repo and replace `myappliance`
+# throughout. `wslib-appliance-xtask` renders `scaffold/` from it — for a
+# package the systemd unit, the maintainer scripts and `make-deb.sh` with its
+# cross-file assertions, for an image the Dockerfile and `make-image.sh` — so a
+# name appears here once rather than in forty places. A prior appliance spells
+# its own name into paths, a group, an environment prefix, a cookie name, a unit
+# file, two drop-in filenames and the backup format string; renaming it is a
+# day's work and a fleet outage.
+#
+# ---------------------------------------------------------------------------
+# This file is SYSTEM identity: paths, user, group, sandbox — what the machine
+# calls the product — and the package or image under [targets] that deploys it.
+# PRODUCT identity — the name a human reads, the logo, the palette — is not
+# here. That lives in the app's own code and stylesheet, so a product can be
+# renamed on screen without migrating a state directory, and so two appliances
+# can share a state directory layout without sharing a look.
+# ---------------------------------------------------------------------------
+
+# The system name. Lowercase, no spaces. Becomes the unit name, the state and
+# config directory names, the group, and the package's name unless
+# [targets.deb] sets `package`.
+name = "myappliance"
+
+# The binary this unit runs. `make-deb.sh` asserts the unit's ExecStart names
+# `/usr/bin/<binary>` before it compiles anything, because discovering that
+# after a cross-build is discovering it slowly.
+binary = "myappliance-server"
+
+# The account the daemon runs as.
+user = "myappliance"
+group = "myappliance"
+
+config_dir = "/etc/myappliance"
+state_dir = "/var/lib/myappliance"
+runtime_dir = "/run/myappliance"
+socket = "/run/myappliance/myappliance.sock"
+
+# Prefix for environment overrides: MYAPPLIANCE_DB, MYAPPLIANCE_BIND_ADDRESS,
+# and so on.
+env_prefix = "MYAPPLIANCE"
+
+# ---------------------------------------------------------------------------
+# The sandbox
+# ---------------------------------------------------------------------------
+# Merged with the mandatory set, never replacing it. The mandatory set is
+# AF_UNIX, AF_INET, AF_INET6 and AF_NETLINK — and AF_NETLINK is the one that
+# gets left off. Without it `getifaddrs` returns *nothing*, so an interface list
+# comes back empty and reads as a missing NIC rather than as a sandbox hiding
+# it. A prior appliance's comment records that the omission cost a deploy to find.
+#
+# Add only what the product genuinely opens: AF_CAN for a SocketCAN capture
+# daemon, AF_PACKET for raw-Ethernet discovery.
+address_families = []
+
+# Merged with the mandatory set, never replacing it, then granted and bounded:
+# rendered into the unit's `AmbientCapabilities=` and `CapabilityBoundingSet=`.
+#
+# The mandatory set is CAP_NET_BIND_SERVICE, whatever the port says: a unit
+# drop-in can move it below 1024 without the unit being rendered again.
+#
+# Add only what the product genuinely needs — CAP_NET_RAW, say, for raw-socket
+# discovery in a product's own code. What a product does when it cannot get
+# one is that product's decision.
+capabilities = []
+
+# ---------------------------------------------------------------------------
+# Packaging
+# ---------------------------------------------------------------------------
+[package]
+section = "admin"
+
+# Debian requires both of these and neither has anywhere else to live. They are
+# packaging metadata rather than the product identity this file otherwise keeps
+# out: `maintainer` is who `dpkg -s` names, and `description` is what `apt show`
+# prints — an operator reading a package list, not a person reading the UI.
+#
+# `Name <address>`, and the brackets are not optional: the changelog the build
+# writes carries this on its ` -- ` line, which does not parse without them. A
+# placeholder here, deliberately — the product's own maintainer goes in the
+# product's copy, and the copyright file beside the rendered maintainer scripts
+# is the product's to write in the same way.
+maintainer = "Maintainer <support@example.invalid>"
+# The synopsis. Debian convention is no leading article and no full stop — it is
+# rendered as a phrase after the package name, not as a sentence.
+description = "Wired Square appliance daemon"
+
+# Static musl, so the *binary* has nothing to depend on. Building against glibc
+# on a modern runner produces one that dies on Raspberry Pi OS with
+# `GLIBC_2.x not found`, and CI cannot catch it.
+#
+# What is left is what the maintainer scripts run. A maintainer script may
+# assume only Essential packages, and neither of these is one:
+#
+#  - `init-system-helpers` for `deb-systemd-helper` and `deb-systemd-invoke`.
+#  - `adduser` for the `addgroup`/`adduser` calls in `postinst`. It is Priority
+#    important rather than Essential, so a minbase or container rootfs may not
+#    have it — and those calls are unguarded, so the install would fail there.
+#    (`postrm` guards its `deluser` with `command -v`, because a *postrm* has to
+#    work on a box where this dependency has already gone.)
+#  - `ca-certificates` for the daemon's outbound connections: the chassis reads
+#    the OS trust store, and without the package a box trusts only what an
+#    administrator pins or installs. A bare Debian may not carry it.
+#
+# `run-parts`, `install`, `getent` and `hostname` are all Essential and need no
+# entry.
+#
+# `suggests` under [targets.deb], when set, replaces this one. Both are the
+# package's, so without [targets.deb] each is `[]`.
+depends = ["init-system-helpers (>= 1.54)", "adduser", "ca-certificates"]
+suggests = []
+
+# The product's built browser bundle, relative to this repository's root.
+# `make-deb.sh` stages it into /usr/share/<name>/ui, which is where
+# `wslib-appliance-config` looks by default — so the unit's ExecStart= still
+# passes no arguments and you never write that path down.
+#
+# **This is the directory your bundler writes, not the one it reads.** A vite
+# root has an index.html too, so naming it would stage `.env`, `.env.local` and
+# every source file into a directory the appliance serves to anyone who can reach
+# the port, with no credential. make-deb.sh refuses a directory holding `.git`,
+# `node_modules` or a `.env` for exactly that reason, and refuses one with
+# symlinks in it because the daemon's file server follows them.
+#
+# **make-deb.sh does not run npm.** Build the bundle with the product's own vite
+# before running make-deb.sh, which refuses rather than shipping a package whose
+# interface is missing.
+#
+# **Remove this key entirely for a headless appliance.** Absent means there is no
+# browser half, which is a shape a product can have rather than a mistake: the
+# daemon then serves its API and answers the one error body for everything else.
+ui_dist = "ui/dist"
+
+# The floor `make-deb.sh` refuses to ship below. It exists because a 1.6 MB
+# build once meant SQLite had been dead-code-eliminated: nothing in the binary
+# reached the cache, so the linker dropped it, and the package looked fine.
+# Set it just under a known-good build, and raise it when the real size moves.
+min_binary_bytes = 2_500_000
+
+# What the package ships beyond the binary, the unit and the bundle.
+# Both are off here; `debian/hooks.README` in the rendered scaffold says how each
+# is used, and `scaffold/systemd/<name>.service.d/*.conf` ships with no knob at
+# all.
+#
+# A directory of maintainer-script hooks, relative to this repository's root:
+# `<hooks_dir>/postinst.d/*` and `<hooks_dir>/prerm.d/*`, shipped 0755 to the
+# directories the maintainer scripts run `run-parts` over. Names take run-parts'
+# own rule — letters, digits, `_` and `-`, so no `.sh` — and `make-deb.sh`
+# refuses a hook that would silently never run.
+# hooks_dir = "scaffold/hooks"
+#
+# Files to ship, destination on the box = source relative to this repository's
+# root, each 0644. Under `/etc/` or `/usr/share/<name>/` only; one under `/etc`
+# is a conffile, so dpkg keeps an operator's edit and asks before replacing one
+# an upgrade changed. `config.toml` under `config_dir` is refused, because the
+# package renders that conffile itself, and so is `/etc/systemd/system`, which
+# is the operator's.
+# [package.files]
+# "/etc/myappliance/config.toml.example" = "scaffold/files/config.toml.example"
+
+
+# ---------------------------------------------------------------------------
+# Targets
+# ---------------------------------------------------------------------------
+# The package, for a Debian or Ubuntu host, rendered into
+# `scaffold/targets/deb/` and built with
+# `CARGO_BUILD_TARGET=<triple> scaffold/packaging/make-deb.sh --target deb` into
+# `target/debian/deb/`.
+#
+# It is called `name` unless `package` says otherwise, as in
+# `package = "myappliance-generic"`; it then conflicts with and replaces `name`,
+# so installing it in place of a system-named package keeps the configuration,
+# the state, the account and whether the unit is enabled. Only the package's
+# name changes: the binary, the unit, the account and the directories keep
+# `name`. A `package` is permanent once shipped. Either way it conflicts with
+# and replaces `<name>-image`: an earlier release's image package under the
+# system name or `<name>-image` is displaced, and one named anything else must
+# be removed before installing this one.
+#
+# These two go into `/usr/share/<name>/config.toml`, beneath the
+# `<config_dir>/config.toml` conffile, which ships every listener and `[tls]`
+# key commented; an operator moves either by uncommenting it there, or sets
+# `redirect_port` there for a redirect listener, which is off by default. The
+# chassis fixes the rest of it: the daemon runs
+# unprivileged, the first account is made over the control socket only, and
+# journald is left alone.
+[targets.deb]
+bind_address = "0.0.0.0"
+https_port = 8443
+# suggests = []
+
+# The image, for a console that runs the app as a container behind its proxy,
+# rendered into `scaffold/targets/docker/` and built, one architecture per run,
+# with `CARGO_BUILD_TARGET=<triple> scaffold/packaging/make-image.sh` into
+# `target/docker/<name>-<version>-<arch>.tar` for `docker load`.
+#
+# Its label is `manifest.json` beside this file: the manifest without `image`,
+# which the console fills from the image it loaded. Its `name` is this file's,
+# its `version` tags the image and is the binary's crate version, it declares
+# `app.sock` (an image may also serve `hooks.sock`, which the console finds by
+# connecting), and its volume named `data` is where the app keeps its state. The
+# image carries the binary and the browser bundle and nothing else from
+# [package] — `hooks_dir`, `[package.files]`, `depends` and `suggests` need
+# [targets.deb] — and runs as any uid in group 0.
+#
+# `repository` is the image's name without a tag, `source` its `https://` source
+# URL.
+# [targets.docker]
+# repository = "ghcr.io/example/myappliance"
+# source = "https://github.com/example/myappliance"

@@ -65,9 +65,11 @@ for graph in "-p wslib-appliance-client" "-p wslib-appliance --no-default-featur
     || die "cargo tree $graph pulls in axum, sqlx or rustls"
 done
 
-step "The appliance facade pins each member at its version"
+step "The appliance facade pins each library member at its version"
 metadata=$(cargo metadata --format-version 1 --no-deps --locked)
-jq -e '(.packages | map({key: .name, value: .version}) | from_entries) as $version
+jq -e '(.packages
+  | map(select(all(.targets[].kind[]; IN("bin", "test", "bench", "example", "custom-build")) | not))
+  | map({key: .name, value: .version}) | from_entries) as $version
   | .packages[] | select(.name == "wslib-appliance") | .dependencies as $pins
   | $version | keys | map(select(startswith("wslib-appliance-")))
   | all(. as $member | any($pins[]; .name == $member and .req == "=" + $version[$member]))' \

@@ -1,0 +1,14 @@
+Package: {{package}}
+Version: @VERSION@
+Architecture: @ARCH@
+Maintainer: {{maintainer}}
+Section: {{section}}
+Priority: optional
+Installed-Size: @INSTALLED_SIZE@
+{{relations}}Description: {{description}}
+ Built on the Wired Square appliance chassis. Serves its interface over TLS.
+ .
+ It keeps a control socket for an operator in the {{group}} group, which is the
+ way in when nobody can sign in:
+ .
+   {{socket}}

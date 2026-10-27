@@ -8,6 +8,7 @@ use axum::response::{IntoResponse, Response};
 use axum_server::{Handle, Server};
 use tokio::sync::watch;
 
+use crate::bounded::Peer;
 use crate::{Listener, head_within, until_stopped};
 
 /// Answer every request on `listener` with a 307 to the same host, path and
@@ -20,7 +21,7 @@ pub async fn serve_redirect(
 ) -> io::Result<()> {
     let bounds = listener.bounds;
     tracing::info!(address = %listener.local_addr(), "redirecting to https");
-    let handle = Handle::new();
+    let handle = Handle::<Peer>::new();
     // Cleartext h2 would let an unauthenticated peer hold streams open on a
     // listener with nothing to stream; an axum-server `map` after this would
     // clear `http1_only`.

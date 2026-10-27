@@ -79,7 +79,7 @@ impl Listener {
 pub struct Peer(SocketAddr);
 
 impl Address for Peer {
-    type Stream = Permitted;
+    type Stream = Permitted<TcpStream>;
     type Listener = Listener;
 }
 
@@ -91,19 +91,13 @@ impl axum::extract::connect_info::Connected<Peer> for SocketAddr {
 
 // The permit is taken before `accept`, so at the cap the connections waiting
 // cost the kernel's backlog and not this process's descriptors.
-impl AddrListener<Permitted, Peer> for Listener {
+impl AddrListener<Permitted<TcpStream>, Peer> for Listener {
     async fn bind_to(_: Peer) -> io::Result<Self> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "a bounded listener is made from one already bound",
-        ))
+        Err(made_bound())
     }
 
-    async fn accept_stream(&self) -> io::Result<(Permitted, Peer)> {
-        let permit = Arc::clone(&self.permits)
-            .acquire_owned()
-            .await
-            .map_err(io::Error::other)?;
+    async fn accept_stream(&self) -> io::Result<(Permitted<TcpStream>, Peer)> {
+        let permit = permit(&self.permits).await?;
         loop {
             match self.tcp.accept().await {
                 Ok((stream, peer)) => return Ok((Permitted { stream, permit }, Peer(peer))),
@@ -117,9 +111,23 @@ impl AddrListener<Permitted, Peer> for Listener {
     }
 }
 
+pub(crate) fn made_bound() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Unsupported,
+        "a bounded listener is made from one already bound",
+    )
+}
+
+pub(crate) async fn permit(permits: &Arc<Semaphore>) -> io::Result<OwnedSemaphorePermit> {
+    Arc::clone(permits)
+        .acquire_owned()
+        .await
+        .map_err(io::Error::other)
+}
+
 // As axum's own `serve`: a peer gone before its accept is retried at once, and
 // anything else, such as EMFILE, is logged and waited out rather than spun on.
-async fn backed_off(e: io::Error) {
+pub(crate) async fn backed_off(e: io::Error) {
     if matches!(
         e.kind(),
         io::ErrorKind::ConnectionRefused
@@ -133,13 +141,13 @@ async fn backed_off(e: io::Error) {
 }
 
 /// A connection that gives its permit back when it ends.
-pub struct Permitted {
-    stream: TcpStream,
+pub struct Permitted<S> {
+    pub(crate) stream: S,
     #[expect(dead_code, reason = "held for the connection's life; dropped with it")]
-    permit: OwnedSemaphorePermit,
+    pub(crate) permit: OwnedSemaphorePermit,
 }
 
-impl AsyncRead for Permitted {
+impl<S: AsyncRead + Unpin> AsyncRead for Permitted<S> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -149,7 +157,7 @@ impl AsyncRead for Permitted {
     }
 }
 
-impl AsyncWrite for Permitted {
+impl<S: AsyncWrite + Unpin> AsyncWrite for Permitted<S> {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,

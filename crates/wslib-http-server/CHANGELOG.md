@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.4
+
+- On Unix, `LocalSocket` and `serve_local`: an axum `Router` over http/1.1
+  on a Unix socket, held to the same `Bounds` and drained the same way as
+  `serve_http`. Handlers get `ConnectInfo<PeerCredentials>`, read at accept;
+  a peer whose credentials can't be read is closed. `LocalSocket::bind`
+  removes a socket nobody answers on, refuses anything else at the path or a
+  live server, and links the socket into place with its mode already set; it
+  is unlinked when serving ends, unless the path has been replaced since.
+  `LocalSocket::from_listener` holds one the caller bound and never unlinks
+  it. `PeerCredentials` is re-exported from `wslib-host` (>= 0.1.1), now a
+  dependency on Unix.
+
 ## 0.1.3
 
 - Dependency floors raised to match the crates it shares a graph with:

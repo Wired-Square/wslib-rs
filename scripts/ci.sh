@@ -83,6 +83,11 @@ jq -e '[.packages[].dependencies[] | select(.name == "wslib-appliance-core") | .
   | all(startswith("="))' <<<"$metadata" >/dev/null \
   || die "a dependency on wslib-appliance-core is not an = pin"
 
+# SessionAdmin and HostAdmin refuse a control socket, so it satisfies every role, never every rung.
+step "No control socket reaches every rung"
+! git grep -nIiE --untracked 'satisf[a-z_]*[ _]every[ _]rung' -- 'crates/wslib-appliance*' \
+  || die "the claim that a control socket meets every rung is false; see wslib-appliance-core's extract.rs"
+
 step "Format"
 cargo fmt --all --check
 

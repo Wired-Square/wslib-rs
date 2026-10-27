@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- Dependency floor raised to match the crates it shares a graph with:
+  sha2 0.10.9 (was 0.10.1). No change to the API.
+
 ## 0.1.1
 
 - On Unix, `peer_credentials(socket)`: the uid, gid and, on Linux and macOS,

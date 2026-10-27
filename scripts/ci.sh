@@ -46,6 +46,11 @@ names=scripts/forbidden-names.txt
 step "No reference to the project dossier"
 ! git grep -nIE --untracked '\[\[[A-Za-z][^]]*\]\]' -- ':!scripts/ci.sh' ':!*.toml' ':!*.lock' || die "the dossier is cited; state the constraint here"
 
+# A consumer's clean checkout has neither a live database nor a .sqlx cache.
+step "No compile-time-checked sqlx query"
+! git grep -nE --untracked 'sqlx::(query|query_as|query_scalar|query_file)[a-z_]*!' -- '*.rs' \
+  || die "a sqlx query! macro needs a database to build; use the runtime sqlx::query API"
+
 # Shared crates take no rustls provider; the app installs one.
 step "No rustls provider by default"
 graph=$(cargo tree --workspace -e normal --prefix none)
@@ -79,6 +84,11 @@ step "The appliance family pins core exactly"
 jq -e '[.packages[].dependencies[] | select(.name == "wslib-appliance-core") | .req]
   | all(startswith("="))' <<<"$metadata" >/dev/null \
   || die "a dependency on wslib-appliance-core is not an = pin"
+
+# SessionAdmin and HostAdmin refuse a control socket, so it satisfies every role, never every rung.
+step "No control socket reaches every rung"
+! git grep -nIiE --untracked 'satisf[a-z_]*[ _]every[ _]rung' -- 'crates/wslib-appliance*' \
+  || die "the claim that a control socket meets every rung is false; see wslib-appliance-core's extract.rs"
 
 step "Format"
 cargo fmt --all --check

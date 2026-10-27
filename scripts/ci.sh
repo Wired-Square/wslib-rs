@@ -22,6 +22,12 @@ fi
 
 command -v cargo-hack >/dev/null || die "cargo-hack missing: cargo install cargo-hack"
 ! $all || cargo +nightly --version >/dev/null 2>&1 || die "nightly missing: rustup toolchain install nightly"
+win=x86_64-pc-windows-msvc
+cross_windows=false
+[[ $(rustc -vV | sed -n 's/^host: //p') == *windows* ]] || cross_windows=true
+! $cross_windows || rustup target list --installed | grep -qx $win || die "$win missing: rustup target add $win"
+! $cross_windows || ! $all || rustup +nightly target list --installed | grep -qx $win \
+  || die "nightly $win missing: rustup +nightly target add $win"
 
 step "No consumer is named"
 names=scripts/forbidden-names.txt
@@ -87,6 +93,20 @@ for crate in $selected; do
   cargo hack check -p "$crate" --each-feature --locked
 done
 
+windows_only() {
+  cargo metadata --format-version 1 --no-deps --locked \
+    | jq -r --arg among "$*" '.packages[] | select(.name | IN($among | split(" ")[]))
+        | select(any(.dependencies[]; .target // "" | test("windows"))) | .name'
+}
+
+# A Windows-only dependency means Windows-only code, which a build on this host skips.
+windows=
+! $cross_windows || windows=$(windows_only $selected)
+if [[ -n $windows ]]; then
+  step "Clippy for $win:" $windows
+  cargo clippy $(printf -- ' -p %s' $windows) --target $win --all-features --locked -- -D warnings
+fi
+
 if $all; then
   step "Docs"
   RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
@@ -110,7 +130,9 @@ if $all; then
       && while read -r package version; do
            [[ -z $package ]] || cargo +nightly update -q -p "$package" --precise "$version"
          done <<<"$pins" \
-      && cargo +nightly check --workspace --all-features --all-targets -q) \
+      && cargo +nightly check --workspace --all-features --all-targets -q \
+      && { ! grep -qx "$name" <<<"$windows" \
+           || cargo +nightly check --target $win --workspace --all-features -q; }) \
       || die "$name does not build at its dependency floors"
   done
 fi

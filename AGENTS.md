@@ -7,9 +7,10 @@ publishing them.
 ## Layout
 
 - One workspace, `crates/*`, edition 2024, MSRV 1.99, MIT.
-- Each crate keeps its own `version` and `CHANGELOG.md`. Only the
-  `wslib-appliance-*` family moves in lockstep; a new member joins at the
-  family's version.
+- Each crate keeps its own `version` and `CHANGELOG.md`; nothing is lockstep.
+  The `wslib-appliance` facade pins every family member with `=` at its
+  current version, so it is bumped with any member. A family crate pins
+  `wslib-appliance-core` with `=`.
 - A dependency on a sibling names `path`, `version` and
   `registry = "wired-square"`. The dependency is published before its
   dependant.
@@ -63,7 +64,7 @@ publishing them.
   only when the why needs one.
 - The version bump and its CHANGELOG entry move in the PR. The CHANGELOG
   heading is the version itself, with no "unreleased" marker. A new crate
-  starts at 0.1.0, except a new appliance-family member.
+  starts at 0.1.0.
 - A release runs from `main` after the merge. `scripts/release.sh -p <crate>
   --execute` publishes and tags. Then run `git push origin
   <crate>-v<version>` and `scripts/mirror.sh`.

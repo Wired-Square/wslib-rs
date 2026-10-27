@@ -17,13 +17,15 @@ use std::path::{Path, PathBuf};
 use std::{fmt, fs, io};
 
 use subtle::ConstantTimeEq;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 #[cfg(feature = "token")]
 mod token;
 #[cfg(feature = "token")]
 pub use token::{Encoding, TokenHash};
 
-/// A string whose `Debug` and `Display` render `set` or `unset`, never the value.
+/// A string whose `Debug` and `Display` render `set` or `unset`, never the value,
+/// and whose buffer is zeroed on drop.
 #[derive(Clone)]
 pub struct Secret(String);
 
@@ -96,6 +98,14 @@ impl Secret {
         }
     }
 }
+
+impl Drop for Secret {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+impl ZeroizeOnDrop for Secret {}
 
 impl From<String> for Secret {
     fn from(value: String) -> Self {

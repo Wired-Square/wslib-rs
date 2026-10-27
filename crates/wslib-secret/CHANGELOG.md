@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- `Secret` zeroes its buffer on drop and implements `zeroize::ZeroizeOnDrop`.
+
 ## 0.1.2
 
 - `token` feature, off by default: `Secret::random` draws bytes from the OS as

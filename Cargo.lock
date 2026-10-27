@@ -7722,7 +7722,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-secret"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "getrandom 0.3.4",
  "serde",
@@ -7730,6 +7730,7 @@ dependencies = [
  "sha2 0.10.9",
  "subtle",
  "ts-rs",
+ "zeroize",
 ]
 
 [[package]]

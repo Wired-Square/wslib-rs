@@ -2,8 +2,9 @@
 
 A `Secret`: a string whose `Debug` and `Display` render `set` or `unset`,
 never the value. `expose()` names every place it becomes an ordinary string,
-and `matches` compares two in constant time. `Secret::from_env("NAME")` reads
-`NAME`, or the file named by `NAME_FILE`, and refuses both being set.
+`matches` compares two in constant time, and the buffer is zeroed on drop.
+`Secret::from_env("NAME")` reads `NAME`, or the file named by `NAME_FILE`, and
+refuses both being set.
 
 The `serde` and `ts` features are opt-in. In TypeScript a secret is `string`.
 

@@ -13,11 +13,12 @@
 //! credential it was handed.
 
 use std::ffi::OsString;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::{fmt, fs, io};
+use std::{fmt, fs, io, mem};
 
 use subtle::ConstantTimeEq;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 #[cfg(feature = "token")]
 mod token;
@@ -58,15 +59,28 @@ impl Secret {
     /// reads one.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, LoadError> {
         let path = path.as_ref();
-        let raw = fs::read_to_string(path).map_err(|source| LoadError::Read {
+        let read_error = |source| LoadError::Read {
             path: path.to_path_buf(),
             source,
-        })?;
-        let value = raw.trim_end_matches(['\r', '\n']);
-        if value.is_empty() {
+        };
+        let mut raw = Zeroizing::new(Vec::new());
+        fs::File::open(path)
+            .and_then(|mut file| file.read_to_end(&mut raw))
+            .map_err(read_error)?;
+        let len = raw
+            .iter()
+            .rposition(|byte| !matches!(byte, b'\r' | b'\n'))
+            .map_or(0, |last| last + 1);
+        if len == 0 {
             return Err(LoadError::Empty(path.to_path_buf()));
         }
-        Ok(Self::new(value))
+        raw.truncate(len);
+        Self::from_utf8(raw).ok_or_else(|| {
+            read_error(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "stream did not contain valid UTF-8",
+            ))
+        })
     }
 
     /// The secret in environment variable `name`, or in the file named by
@@ -84,18 +98,25 @@ impl Secret {
     ) -> Result<Option<Self>, LoadError> {
         let file_var = format!("{name}_FILE");
         let set = |var: &str| lookup(var).filter(|v| !v.is_empty());
-        match (set(name), set(&file_var)) {
+        let value = set(name).map(|v| Zeroizing::new(v.into_encoded_bytes()));
+        match (value, set(&file_var)) {
             (Some(_), Some(_)) => Err(LoadError::BothSet {
                 var: name.to_string(),
                 file_var,
             }),
-            (Some(value), None) => value
-                .into_string()
-                .map(|v| Some(Self(v)))
-                .map_err(|_| LoadError::NotUnicode(name.to_string())),
+            (Some(value), None) => Self::from_utf8(value)
+                .map(Some)
+                .ok_or_else(|| LoadError::NotUnicode(name.to_string())),
             (None, Some(path)) => Self::from_file(PathBuf::from(path)).map(Some),
             (None, None) => Ok(None),
         }
+    }
+
+    fn from_utf8(mut bytes: Zeroizing<Vec<u8>>) -> Option<Self> {
+        String::from_utf8(mem::take(&mut *bytes))
+            .map(Self)
+            .map_err(|invalid| invalid.into_bytes().zeroize())
+            .ok()
     }
 }
 
@@ -142,9 +163,39 @@ impl serde::Serialize for Secret {
 impl<'de> serde::Deserialize<'de> for Secret {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         // The format's own error can quote the input.
-        String::deserialize(deserializer)
-            .map(Self)
+        deserializer
+            .deserialize_string(SecretVisitor)
             .map_err(|_| serde::de::Error::custom("a secret must be a string"))
+    }
+}
+
+#[cfg(feature = "serde")]
+struct SecretVisitor;
+
+#[cfg(feature = "serde")]
+impl serde::de::Visitor<'_> for SecretVisitor {
+    type Value = Secret;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a string")
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Secret, E> {
+        Ok(Secret::new(value))
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Secret, E> {
+        Ok(Secret(value))
+    }
+
+    fn visit_bytes<E: serde::de::Error>(self, value: &[u8]) -> Result<Secret, E> {
+        std::str::from_utf8(value)
+            .map(Secret::new)
+            .map_err(|_| E::custom("not UTF-8"))
+    }
+
+    fn visit_byte_buf<E: serde::de::Error>(self, value: Vec<u8>) -> Result<Secret, E> {
+        Secret::from_utf8(Zeroizing::new(value)).ok_or_else(|| E::custom("not UTF-8"))
     }
 }
 

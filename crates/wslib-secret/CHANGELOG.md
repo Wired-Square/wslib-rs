@@ -3,6 +3,8 @@
 ## 0.1.3
 
 - `Secret` zeroes its buffer on drop and implements `zeroize::ZeroizeOnDrop`.
+- Loading or generating a secret leaves no plaintext in memory it frees:
+  `from_file`, `from_env`, deserialising and `random` zero their intermediates.
 
 ## 0.1.2
 

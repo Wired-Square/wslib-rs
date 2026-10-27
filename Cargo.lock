@@ -7163,7 +7163,6 @@ dependencies = [
  "wslib-auth",
  "wslib-auth-passkey",
  "wslib-auth-totp",
- "wslib-backoff",
  "wslib-crypto",
  "wslib-crypto-x509",
  "wslib-file-atomic",

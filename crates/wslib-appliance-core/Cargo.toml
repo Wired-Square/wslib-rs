@@ -45,7 +45,6 @@ wslib-appliance-store = { path = "../wslib-appliance-store", version = "0.1.1", 
 wslib-appliance-types = { path = "../wslib-appliance-types", version = "0.1.1", registry = "wired-square" }
 wslib-auth = { path = "../wslib-auth", version = "0.1.1", registry = "wired-square", default-features = false }
 wslib-auth-passkey = { path = "../wslib-auth-passkey", version = "0.1.0", registry = "wired-square", default-features = false, optional = true }
-wslib-backoff = { path = "../wslib-backoff", version = "0.1.1", registry = "wired-square" }
 wslib-crypto = { path = "../wslib-crypto", version = "0.1.0", registry = "wired-square" }
 wslib-crypto-x509 = { path = "../wslib-crypto-x509", version = "0.1.1", registry = "wired-square" }
 wslib-file-atomic = { path = "../wslib-file-atomic", version = "0.1.6", registry = "wired-square" }

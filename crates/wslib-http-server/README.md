@@ -1,7 +1,7 @@
 # wslib-http-server
 
-The listeners under an axum app: plain HTTP, TLS with h1 and h2 by ALPN, and
-a redirect to the TLS port, each held to its own bounds and drained once a
+The listeners under an axum app: plain HTTP, TLS with h1 and h2 by ALPN, a
+redirect to the TLS port, and on Unix a local socket, each held to its own bounds and drained once a
 stop future completes. The routes are the app's; this crate owns the sockets.
 
 ```rust
@@ -63,3 +63,15 @@ filters by target has to include it.
 - **`Https`**: the TLS listener and an optional redirect, served together.
   `port()` is the TLS port bound as a `watch::Receiver<u16>`. Either listener
   failing drains the other.
+- **`LocalSocket`** and **`serve_local`**, on Unix: the router over http/1.1
+  on a Unix socket, bounded and drained as `serve_http`. Handlers get
+  `ConnectInfo<PeerCredentials>` and `Extension<PeerCredentials>`, the
+  peer's uid, gid and pid as the kernel recorded them at `connect()`; a
+  router also served over TCP takes `Option<Extension<PeerCredentials>>`.
+  `LocalSocket::bind(path, mode, bounds)` removes a socket nobody answers
+  on, refuses a live one or anything that is not a socket, and puts the socket at `path` with `mode` already set; it is
+  unlinked when serving ends, unless something else is at `path` by then.
+  `mode` is only the file's permissions: who can connect also turns on the
+  socket's group and its directory, which are the app's to arrange.
+  `LocalSocket::from_listener` holds a socket the caller bound, and leaves
+  its path alone.

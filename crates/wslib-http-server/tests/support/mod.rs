@@ -100,7 +100,7 @@ pub async fn exchange(
 }
 
 /// Whether the server answers a request on `peer` within `within`.
-pub async fn answered(peer: &mut TcpStream, within: Duration) -> bool {
+pub async fn answered(peer: &mut (impl AsyncRead + AsyncWrite + Unpin), within: Duration) -> bool {
     if peer
         .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
         .await

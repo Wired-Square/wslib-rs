@@ -1,12 +1,14 @@
-//! The listeners under an axum app: plain HTTP, TLS with h1 and h2, and a
-//! redirect to the TLS port, each held to its own [`Bounds`] and drained once a
-//! stop future completes.
+//! The listeners under an axum app: plain HTTP, TLS with h1 and h2, a redirect
+//! to the TLS port, and on Unix a local socket that names each peer's account,
+//! each held to its own [`Bounds`] and drained once a stop future completes.
 //!
 //! The crate enables no rustls crypto provider and never reads the process
 //! default: the app builds its `ServerConfig` on the provider it chose.
 
 mod bounded;
 mod deciding;
+#[cfg(unix)]
+mod local;
 mod redirect;
 mod tls;
 
@@ -19,7 +21,7 @@ use axum::extract::connect_info::IntoMakeServiceWithConnectInfo;
 use axum::http::{Request, StatusCode, header};
 use axum::response::Response;
 use axum_server::tls_rustls::RustlsAcceptor;
-use axum_server::{Handle, Server};
+use axum_server::{Address, Handle, Server};
 use hyper_util::rt::{TokioExecutor, TokioTimer};
 use hyper_util::server::conn::auto::{Builder, Http1Builder};
 use tokio::sync::watch;
@@ -27,8 +29,12 @@ use tokio_util::sync::CancellationToken;
 use tower::util::MapResponse;
 
 pub use bounded::{Bounds, Listener};
+#[cfg(unix)]
+pub use local::{LocalSocket, serve_local};
 pub use redirect::{redirect_router, serve_redirect};
 pub use tls::{PeerCertificates, Tls, server_config_from_pem, server_config_from_pem_files};
+#[cfg(unix)]
+pub use wslib_host::PeerCredentials;
 
 use bounded::Peer;
 use deciding::Deciding;
@@ -50,9 +56,10 @@ pub async fn serve_http(
 ) -> io::Result<()> {
     let bounds = listener.bounds;
     tracing::info!(address = %listener.local_addr(), "listening");
-    let handle = Handle::new();
+    let handle = Handle::<Peer>::new();
     let server = bound(Server::from_listener(listener), bounds.head).handle(handle.clone());
-    until_stopped(server.serve(app(router)), handle, stop, bounds.grace).await
+    let serving = server.serve(app::<SocketAddr>(router));
+    until_stopped(serving, handle, stop, bounds.grace).await
 }
 
 /// Serve `router` over TLS on `listener` until `stop` completes and it has
@@ -65,14 +72,15 @@ pub async fn serve_https(
 ) -> io::Result<()> {
     let bounds = listener.bounds;
     tracing::info!(address = %listener.local_addr(), "listening");
-    let handle = Handle::new();
+    let handle = Handle::<Peer>::new();
     let acceptor = Identifying(RustlsAcceptor::new(tls.config()).handshake_timeout(bounds.head));
     let server = bound(
         Server::from_listener(listener).acceptor(acceptor),
         bounds.head,
     )
     .handle(handle.clone());
-    until_stopped(server.serve(app(router)), handle, stop, bounds.grace).await
+    let serving = server.serve(app::<SocketAddr>(router));
+    until_stopped(serving, handle, stop, bounds.grace).await
 }
 
 /// A TLS listener and, if asked for, the redirect to it, served together.
@@ -149,10 +157,9 @@ impl Https {
     }
 }
 
-type App =
-    IntoMakeServiceWithConnectInfo<MapResponse<Router, fn(Response) -> Response>, SocketAddr>;
+type App<C> = IntoMakeServiceWithConnectInfo<MapResponse<Router, fn(Response) -> Response>, C>;
 
-fn app(router: Router) -> App {
+fn app<C>(router: Router) -> App<C> {
     let service = tower::ServiceExt::<Request<axum::body::Body>>::map_response(
         router,
         bodiless_unlengthed as fn(Response) -> Response,
@@ -196,9 +203,9 @@ fn head_within(
     http1
 }
 
-async fn until_stopped(
+async fn until_stopped<A: Address>(
     serving: impl Future<Output = io::Result<()>>,
-    handle: Handle<Peer>,
+    handle: Handle<A>,
     stop: impl Future<Output = ()>,
     grace: Duration,
 ) -> io::Result<()> {

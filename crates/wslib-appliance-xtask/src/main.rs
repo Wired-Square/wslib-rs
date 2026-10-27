@@ -3,13 +3,15 @@
 //! Every file it writes is rewritten unconditionally; a product's own additions
 //! live in files it never writes. `--version` names this tool's version (and
 //! commit, from a checkout), `build-id` the commit of the product being built.
-//! Exit codes: `0` clean, `1` drift or an unpatched erratum site, `2` could not run.
+//! Exit codes: `0` clean, `1` drift, an unpatched erratum site or a failed gate,
+//! `2` could not run.
 
 mod debian;
 #[cfg(unix)]
 mod dev_console;
 mod docker;
 mod erratum;
+mod gates;
 mod model;
 mod packaging;
 mod render;
@@ -44,6 +46,12 @@ enum Command {
         #[command(subcommand)]
         command: Packaging,
     },
+    /// Check the repository in this directory against the rules of this version.
+    Gates {
+        /// Add the builds: clippy for aarch64-unknown-linux-musl and the host, and the tests.
+        #[arg(long)]
+        release: bool,
+    },
     /// The identity of the build happening in this directory.
     BuildId(Identity),
     /// Refuse an aarch64 binary with a Cortex-A53 erratum 843419 site its linker left unpatched.
@@ -73,6 +81,8 @@ enum Packaging {
 
 const CONFIG: &str = "appliance.toml";
 const SCAFFOLD: &str = "scaffold";
+const RENDER_AGAIN: &str =
+    "run `wslib-appliance-xtask packaging render`, then read the diff in git";
 
 /// `ExitCode` rather than `Result`, which would print the error with `Debug`.
 fn main() -> ExitCode {
@@ -201,6 +211,7 @@ fn identity(id: &wslib_build_id::BuildId, base: Option<&str>) -> Result<String, 
 fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let command = match Cli::parse().command {
         Command::Packaging { command } => command,
+        Command::Gates { release } => return Ok(gates::run(Path::new("."), release)),
         Command::BuildId(args) => {
             let id = wslib_build_id::BuildId::detect();
             println!("{}", identity(&id, args.deb_version.as_deref())?);
@@ -230,13 +241,11 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             return Ok(ExitCode::SUCCESS);
         }
     };
-    let scaffold = Path::new(SCAFFOLD);
-
-    let (checked, warnings) = Appliance::load(Path::new(CONFIG))?;
-    for warning in warnings.iter().chain(&retired(scaffold, &checked)) {
+    let (artefacts, warnings) = owned(Path::new(""))?;
+    for warning in &warnings {
         eprintln!("warning: {warning}");
     }
-    let artefacts = chassis_owned(&checked)?;
+    let scaffold = Path::new(SCAFFOLD);
 
     Ok(match command {
         Packaging::Render => {
@@ -247,25 +256,36 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             ExitCode::SUCCESS
         }
         Packaging::Diff => {
-            let compared = render::compare(scaffold, &artefacts);
-            let mut drifted = 0usize;
-            for (path, state) in &compared {
-                if !state.is_drift() {
-                    continue;
-                }
-                drifted += 1;
-                println!("{} {}", scaffold.join(path).display(), state.because());
+            let drifted = drifted(scaffold, &artefacts);
+            for line in &drifted {
+                println!("{line}");
             }
-
-            if drifted == 0 {
-                println!("{} files this tool owns, all in step", compared.len());
+            if drifted.is_empty() {
+                println!("{} files this tool owns, all in step", artefacts.len());
                 ExitCode::SUCCESS
             } else {
-                println!("run `wslib-appliance-xtask packaging render`, then read the diff in git");
+                println!("{RENDER_AGAIN}");
                 ExitCode::from(FOUND)
             }
         }
     })
+}
+
+/// The files this tool owns under `root`, rendered from its `appliance.toml`,
+/// and every warning about either.
+fn owned(root: &Path) -> Result<(Vec<Artefact>, Vec<String>), Box<dyn std::error::Error>> {
+    let (checked, mut warnings) = Appliance::load(&root.join(CONFIG))?;
+    warnings.extend(retired(&root.join(SCAFFOLD), &checked));
+    Ok((chassis_owned(&checked)?, warnings))
+}
+
+/// Each owned file under `scaffold` that is not what renders, and why.
+fn drifted(scaffold: &Path, artefacts: &[Artefact]) -> Vec<String> {
+    render::compare(scaffold, artefacts)
+        .into_iter()
+        .filter(|(_, state)| state.is_drift())
+        .map(|(path, state)| format!("{} {}", scaffold.join(path).display(), state.because()))
+        .collect()
 }
 
 #[cfg(test)]

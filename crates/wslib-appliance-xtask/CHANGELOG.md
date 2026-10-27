@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.1
+
+- `gates`: the rules a product's CI checks with the version of this tool it
+  installs; a failed gate exits `1`, and a warning never fails. The default
+  run compiles nothing: the product's own forbidden names, no `sqlx::query!`,
+  every `wslib-appliance*` crate in `Cargo.lock` from a registry (a warning
+  when one is not at the version this tool renders for), exactly one rustls
+  provider where rustls is in the graph, and `packaging diff`. `--release`
+  adds clippy for `aarch64-unknown-linux-musl` and the host with
+  `-D warnings`, and the tests.
+
 ## 0.1.0
 
 Moved from `appliance-xtask` 0.17.1 in wslib-appliance-rs; what differs:

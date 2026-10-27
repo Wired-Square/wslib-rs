@@ -11,8 +11,9 @@ Moved from `appliance-core` 0.17.1 in wslib-appliance-rs; what differs:
   `backend::install_crypto_provider` is gone. `tls::pair_at` needs one too: an offline backup in its own
   process without one fails as `TlsError::Internal`. So do `testing`'s TLS
   peers, `Authority` and `self_signed`.
-- `box_id` takes its HMAC-SHA256 from `hmac` and `sha2` instead of `ring`:
-  the same id for the same machine.
+- `hostname`, `boottime`, `box_id` and the About page's OS and kernel are
+  read through `wslib-host`, without `ring`: the same box id for the same
+  machine. `hostname` is `wslib_host::hostname` re-exported.
 - The log ring captures `wslib_appliance_*`, `wslib_db_sqlite`,
   `wslib_http_server` and `wslib_tls`, and no longer `appliance_*`. This
   crate's own events, the `audit` ones included, are under the

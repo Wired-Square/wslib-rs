@@ -7,7 +7,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 
 use crate::state::ApplianceState;
-use crate::{ApiError, compress, procfs};
+use crate::{ApiError, compress};
 
 pub(crate) fn routes() -> Router<ApplianceState> {
     Router::new()
@@ -20,7 +20,7 @@ pub(crate) fn routes() -> Router<ApplianceState> {
 /// and, where the backend names the box, the hostname it already gives its
 /// network. A matching `If-None-Match` is answered 304.
 async fn branding(State(app): State<ApplianceState>, headers: HeaderMap) -> Response {
-    let hostname = app.assets.names_the_box.then(procfs::hostname).flatten();
+    let hostname = app.assets.names_the_box.then(crate::hostname).flatten();
     let branding = app.assets.branding.naming(hostname);
     let caching = [
         (header::ETAG, branding.etag.clone()),

@@ -17,7 +17,6 @@ mod ingress;
 mod logs;
 #[cfg(test)]
 mod probe;
-mod procfs;
 mod reached;
 mod reauth;
 mod redact;
@@ -71,7 +70,6 @@ pub use feed::{feed, sse};
 pub use hooks::{BackupHooks, Notes};
 pub use ingress::{INGRESS_SOURCE, RequestBase};
 pub use logs::{Logs, logs};
-pub use procfs::{boottime, box_id, hostname};
 pub use reached::{Reached, ServingPort};
 pub use reauth::{Proved, REAUTHENTICATION_WINDOW, reauthenticate};
 pub use retention::{Clock, spawn_sweeper};
@@ -79,6 +77,7 @@ pub use routes::clean_name;
 pub use state::ApplianceState;
 pub use tasks::{Reconciled, TaskTable};
 pub use wslib_auth::Proof;
+pub use wslib_host::hostname;
 
 use state::{Assets, BrandingBody, Listening, Logo};
 
@@ -229,6 +228,22 @@ pub mod backend {
     pub async fn minted_in(dir: impl AsRef<std::path::Path>) -> Tls {
         Tls::minted_in(dir).await
     }
+}
+
+/// How long the box has been up, sleep included, on a clock that does not jump
+/// when the wall clock is set.
+pub fn boottime() -> Option<std::time::Duration> {
+    wslib_host::uptime()
+}
+
+/// `systemd-id128 machine-id --app-specific=6e882fe490034dc4973989aa7425c9b9 -u`
+/// prints a Linux box's [`box_id`].
+const BOX_ID_APP: uuid::Uuid = uuid::Uuid::from_u128(0x6e882fe4_9003_4dc4_9739_89aa7425c9b9);
+
+/// This box's identity, which a rename does not change, keyed on `/etc/machine-id`
+/// or, on macOS, `IOPlatformUUID`; `None` without a valid one, and on Windows.
+pub fn box_id() -> Option<String> {
+    wslib_host::machine_id(BOX_ID_APP).map(|id| id.to_string())
 }
 
 /// The key `/healthz` reads. It need not exist; reading it is a real query, so a
@@ -709,6 +724,14 @@ async fn healthz(State(app): State<ApplianceState>) -> Result<impl IntoResponse,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_box_id_keeps_the_app_id_it_was_issued_under() {
+        assert_eq!(
+            BOX_ID_APP.simple().to_string(),
+            "6e882fe490034dc4973989aa7425c9b9"
+        );
+    }
 
     #[test]
     fn a_build_id_follows_the_page_as_well_as_the_version() {

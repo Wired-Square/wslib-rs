@@ -12,6 +12,7 @@ publish = ["wired-square"]
 
 [features]
 testing = [
+    "dep:libc",
     "dep:wslib-auth-passkey",
     "wslib-auth-passkey/testing",
     "wslib-telemetry/test-support",
@@ -25,7 +26,6 @@ axum-server = { version = "0.8", default-features = false, features = ["tls-rust
 chrono = { version = "0.4.39", default-features = false, features = ["clock", "std"] }
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 futures-util = { version = "0.3", default-features = false }
-hmac = "0.12.1"
 hyper-util = { version = "0.1.18", default-features = false, features = ["tokio"] }
 rustls = { version = "0.23.27", default-features = false, features = ["logging", "std", "tls12"] }
 serde = { version = "1.0.225", features = ["derive", "rc"] }
@@ -59,7 +59,7 @@ wslib-telemetry = { path = "../wslib-telemetry", version = "0.1.9", registry = "
 wslib-tls = { path = "../wslib-tls", version = "0.2.0", registry = "wired-square" }
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2.174"
+libc = { version = "0.2.174", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
@@ -69,8 +69,6 @@ windows-sys = { version = "0.61", features = [
     "Win32_Security_Authorization",
     "Win32_Storage_FileSystem",
     "Win32_System_Pipes",
-    "Win32_System_Registry",
-    "Win32_System_SystemInformation",
     "Win32_System_SystemServices",
 ] }
 
@@ -83,6 +81,9 @@ wslib-auth-passkey = { path = "../wslib-auth-passkey", version = "0.1.0", regist
 wslib-auth-totp = { path = "../wslib-auth-totp", version = "0.1.1", registry = "wired-square", features = ["codes"] }
 wslib-telemetry = { path = "../wslib-telemetry", version = "0.1.9", registry = "wired-square", default-features = false, features = ["test-support"] }
 wslib-tls = { path = "../wslib-tls", version = "0.2.0", registry = "wired-square", features = ["testing"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2.174"
 
 [target.'cfg(windows)'.dev-dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_Threading"] }

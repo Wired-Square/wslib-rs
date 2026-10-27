@@ -244,10 +244,10 @@ fn start(
 }
 
 fn box_name() -> Option<String> {
-    let host = crate::procfs::hostname();
+    let host = wslib_host::hostname();
     if host.is_none() {
         tracing::warn!(
-            source = crate::procfs::HOSTNAME,
+            source = wslib_host::HOSTNAME_SOURCE,
             "could not read this box's name; the certificate made now covers no name of its own, \
              only loopback and any alias, and a browser reaching it by name will report a mismatch"
         );

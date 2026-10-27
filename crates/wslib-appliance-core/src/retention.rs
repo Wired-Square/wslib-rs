@@ -77,8 +77,8 @@ where
 {
     let trust = Trust {
         clock,
-        up: crate::procfs::boottime,
-        boot: crate::procfs::boot_id,
+        up: wslib_host::uptime,
+        boot: wslib_host::boot_id,
         recheck: RECHECK,
         said_unsynced: false,
     };

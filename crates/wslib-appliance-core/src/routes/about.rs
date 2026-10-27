@@ -7,7 +7,6 @@ use axum::{Json, Router};
 use wslib_appliance_types::about::AboutView;
 
 use crate::extract::Admin;
-use crate::procfs;
 use crate::state::ApplianceState;
 
 /// `now − uptime`, to the second, as the log ring's own `started_at` is.
@@ -31,11 +30,11 @@ async fn view(Admin(_): Admin, State(app): State<ApplianceState>) -> Json<AboutV
     view.version = app.about.version.clone();
     view.daemon_uptime_s = uptime.as_secs();
     view.daemon_started_at = started_at(uptime);
-    view.host_uptime_s = procfs::boottime().map(|up| up.as_secs());
-    view.hostname = procfs::hostname();
-    view.box_id = procfs::box_id();
-    view.os = procfs::os_pretty_name();
-    view.kernel = procfs::kernel_release();
+    view.host_uptime_s = wslib_host::uptime().map(|up| up.as_secs());
+    view.hostname = wslib_host::hostname();
+    view.box_id = crate::box_id();
+    view.os = wslib_host::os_name();
+    view.kernel = wslib_host::kernel_release();
     view.architecture = std::env::consts::ARCH.to_string();
     view.facts = product.facts;
     view.subsystems = product.subsystems;

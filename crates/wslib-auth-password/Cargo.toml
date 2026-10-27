@@ -16,7 +16,7 @@ tokio = ["dep:tokio"]
 
 [dependencies]
 argon2 = { version = "0.6", default-features = false, features = ["alloc", "getrandom", "password-hash"] }
-tokio = { version = "1.37", default-features = false, features = ["rt"], optional = true }
+tokio = { version = "1.47", default-features = false, features = ["rt"], optional = true }
 
 [dev-dependencies]
-tokio = { version = "1.37", features = ["macros", "rt"] }
+tokio = { version = "1.47", features = ["macros", "rt"] }

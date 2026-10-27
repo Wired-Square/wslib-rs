@@ -145,6 +145,24 @@ fn a_failed_stage_rolls_the_transaction_back() {
 }
 
 #[test]
+fn a_directory_at_a_staged_path_fails_the_stage_but_not_its_roll_back() {
+    let dir = pair("txn-stage-dir");
+    fs::create_dir(dir.join(STAGED_CERT)).unwrap();
+    let mut transaction = Transaction::begin(&dir.0, "tls").unwrap();
+    transaction
+        .stage(&dir.join(KEY), b"new key", &Options::new())
+        .unwrap();
+    assert!(
+        transaction
+            .stage(&dir.join(CERT), b"new cert", &Options::new())
+            .is_err()
+    );
+    assert_old_pair(&dir);
+    assert_only(&dir, &[KEY, CERT, STAGED_CERT]);
+    assert_eq!(recover(&dir.0, "tls").unwrap(), Recovered::Nothing);
+}
+
+#[test]
 fn abort_removes_the_staged_files_and_the_record() {
     let dir = pair("txn-abort");
     stage_pair(&dir).abort().unwrap();

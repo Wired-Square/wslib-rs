@@ -491,10 +491,14 @@ fn plain_line(text: &str) -> bool {
 }
 
 /// The staged files go, and are synced gone, before the record: a record
-/// lost first would strand a staged secret with nothing naming it.
+/// lost first would strand a staged secret with nothing naming it. A directory
+/// under a staged name was never staged, so it is left.
 fn roll_back(record: &Path, suffix: &str, targets: &[PathBuf]) -> io::Result<()> {
     for target in targets {
-        remove_if_there(&beside(target, suffix))?;
+        let staged = beside(target, suffix);
+        if !fs::symlink_metadata(&staged).is_ok_and(|metadata| metadata.is_dir()) {
+            remove_if_there(&staged)?;
+        }
     }
     sync_parents(targets)?;
     remove_if_there(record)

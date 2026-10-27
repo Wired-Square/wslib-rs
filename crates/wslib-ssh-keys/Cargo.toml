@@ -12,6 +12,6 @@ publish = ["wired-square"]
 
 [dependencies]
 base64 = { version = "0.23", default-features = false, features = ["alloc"] }
-chrono = { version = "0.4.20", default-features = false, features = ["alloc"] }
+chrono = { version = "0.4.39", default-features = false, features = ["alloc"] }
 sha2 = "0.10.1"
 wslib-file-atomic = { path = "../wslib-file-atomic", version = "0.1", registry = "wired-square" }

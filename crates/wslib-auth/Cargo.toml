@@ -17,7 +17,7 @@ postgres = ["dep:sqlx", "sqlx/postgres"]
 
 [dependencies]
 base64 = { version = "0.23", default-features = false, features = ["alloc"] }
-chrono = { version = "0.4.38", default-features = false, features = ["clock", "std"] }
+chrono = { version = "0.4.39", default-features = false, features = ["clock", "std"] }
 getrandom = { version = "0.3", features = ["std"] }
 http = "1.1"
 sha2 = "0.10.9"

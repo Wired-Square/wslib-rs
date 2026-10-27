@@ -46,6 +46,11 @@ names=scripts/forbidden-names.txt
 step "No reference to the project dossier"
 ! git grep -nIE --untracked '\[\[[A-Za-z][^]]*\]\]' -- ':!scripts/ci.sh' ':!*.toml' ':!*.lock' || die "the dossier is cited; state the constraint here"
 
+# A consumer's clean checkout has neither a live database nor a .sqlx cache.
+step "No compile-time-checked sqlx query"
+! git grep -nE --untracked 'sqlx::(query|query_as|query_scalar|query_file)[a-z_]*!' -- '*.rs' \
+  || die "a sqlx query! macro needs a database to build; use the runtime sqlx::query API"
+
 # Shared crates take no rustls provider; the app installs one.
 step "No rustls provider by default"
 graph=$(cargo tree --workspace -e normal --prefix none)

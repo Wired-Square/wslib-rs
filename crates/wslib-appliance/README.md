@@ -37,5 +37,5 @@ The appliance family in one dependency:
 wslib-appliance = { version = "0.1", registry = "wired-square" }
 ```
 
-Every `wslib-appliance*` crate is released at one version, and this crate
-pins each exactly, so naming it is naming a matched set.
+Each `wslib-appliance-*` crate keeps its own version, and this crate pins
+each exactly, so naming it is naming a matched set.

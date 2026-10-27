@@ -2,19 +2,21 @@
 
 ## 0.1.1
 
-- `core`: `wslib-appliance-core` 0.1.1, pinned exactly, behind the `core`
+- `core`: `wslib-appliance-core` 0.1.0, pinned exactly, behind the `core`
   feature, off by default, which turns on `auth`.
-- `server`: `wslib-appliance-server` 0.1.1, pinned exactly, behind the
+- `server`: `wslib-appliance-server` 0.1.0, pinned exactly, behind the
   `server` feature, off by default, which turns on `core`.
-- `https`: `wslib-appliance-https` 0.1.1, pinned exactly, behind the `https`
+- `https`: `wslib-appliance-https` 0.1.0, pinned exactly, behind the `https`
   feature, off by default, which turns on `core`.
-- `service`: `wslib-appliance-service` 0.1.1, pinned exactly, behind the
+- `service`: `wslib-appliance-service` 0.1.0, pinned exactly, behind the
   `service` feature, off by default, which turns on `core`.
-- `backup`: `wslib-appliance-backup` 0.1.1, pinned exactly, behind the
+- `backup`: `wslib-appliance-backup` 0.1.0, pinned exactly, behind the
   `backup` feature, off by default, which turns on `core`.
-- `client`: `wslib-appliance-client` 0.1.1, pinned exactly, behind the
+- `client`: `wslib-appliance-client` 0.1.0, pinned exactly, behind the
   `client` feature, off by default.
-- Every other crate of the family moves to 0.1.1 with them, pinned exactly.
+- `wslib-appliance-types`, `-config`, `-store` and `-auth` 0.1.1, pinned
+  exactly.
+- Each member now keeps its own version, and this crate pins each exactly.
 
 ## 0.1.0
 

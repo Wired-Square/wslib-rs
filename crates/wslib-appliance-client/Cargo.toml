@@ -1,6 +1,6 @@
 [package]
 name = "wslib-appliance-client"
-version = "0.1.1"
+version = "0.1.0"
 description = "Connects a Windows client to an appliance's control pipe, refusing one its service does not own."
 readme = "README.md"
 edition.workspace = true

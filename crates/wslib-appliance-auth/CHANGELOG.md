@@ -2,10 +2,9 @@
 
 ## 0.1.1
 
-- Released in lockstep with the rest of the `wslib-appliance` family; no
-  change to the API.
-- Dependency floor: `wslib-secret` 0.1.1, the floor the rest of the family
-  takes.
+- Dependency floors: `wslib-secret`, `wslib-appliance-store` and
+  `wslib-appliance-types` 0.1.1 (were 0.1.0), the floors the rest of the
+  family takes. No change to the API.
 
 ## 0.1.0
 

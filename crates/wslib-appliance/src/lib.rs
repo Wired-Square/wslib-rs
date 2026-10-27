@@ -1,5 +1,5 @@
-//! The appliance family in one dependency. Every `wslib-appliance*` crate is
-//! released at this crate's version, and this one pins each exactly.
+//! The appliance family in one dependency. Each `wslib-appliance-*` crate
+//! keeps its own version, and this one pins each exactly at it.
 
 #[cfg(feature = "auth")]
 pub use wslib_appliance_auth as auth;

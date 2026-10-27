@@ -7078,7 +7078,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-backup"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "argon2",
  "axum",
@@ -7109,7 +7109,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-client"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "thiserror 2.0.21",
  "tokio",
@@ -7132,7 +7132,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-core"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "axum",
  "axum-server",
@@ -7179,7 +7179,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-https"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "axum",
  "axum-server",
@@ -7208,7 +7208,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-server"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "axum",
  "chrono",
@@ -7231,7 +7231,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-service"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "axum",
  "libc",

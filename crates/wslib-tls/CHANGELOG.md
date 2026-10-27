@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.3
+
+- `Serving::with_client_auth_pinned(authorities, KeyFingerprint)`:
+  `with_client_auth`, admitting only the client certificate over the pinned
+  key, for an authority that signs other clients too. Another key is
+  `CertificateError::ApplicationVerificationFailure`.
+
 ## 0.2.2
 
 - `Serving::key_fingerprint()`: the served key's `KeyFingerprint`, to pin,

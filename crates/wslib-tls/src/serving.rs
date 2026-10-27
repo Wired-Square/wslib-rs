@@ -3,11 +3,15 @@ use std::sync::Arc;
 use std::time::SystemTime;
 use std::{fs, io};
 
+use rustls::client::danger::HandshakeSignatureValid;
 use rustls::crypto::CryptoProvider;
 use rustls::server::WebPkiClientVerifier;
-use rustls::server::danger::ClientCertVerifier;
-use rustls::{RootCertStore, ServerConfig};
-use rustls_pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
+use rustls::{
+    CertificateError, DigitallySignedStruct, DistinguishedName, RootCertStore, ServerConfig,
+    SignatureScheme,
+};
+use rustls_pki_types::{CertificateDer, PrivateKeyDer, UnixTime};
 use tokio::sync::watch;
 use wslib_crypto::{KeyAlgorithm, Signer};
 use wslib_crypto_x509::pem::{self, CERTIFICATE, PRIVATE_KEY};
@@ -221,20 +225,39 @@ impl Serving {
 
     /// Requires every client to present a certificate one of `authorities`
     /// signed, in every configuration from here on, the one being served included.
-    pub fn with_client_auth(
-        mut self,
+    pub fn with_client_auth(self, authorities: &[CertificateDer<'_>]) -> Result<Self, AnchorError> {
+        let signed = self.signed_by(authorities)?;
+        Ok(self.requiring(signed))
+    }
+
+    /// [`with_client_auth`](Self::with_client_auth), admitting only the client
+    /// certificate over the key `pin` names.
+    pub fn with_client_auth_pinned(
+        self,
         authorities: &[CertificateDer<'_>],
+        pin: KeyFingerprint,
     ) -> Result<Self, AnchorError> {
+        let signed = self.signed_by(authorities)?;
+        Ok(self.requiring(Arc::new(PinnedClient { signed, pin })))
+    }
+
+    fn signed_by(
+        &self,
+        authorities: &[CertificateDer<'_>],
+    ) -> Result<Arc<dyn ClientCertVerifier>, AnchorError> {
         let mut roots = RootCertStore::empty();
         for certificate in authorities {
             roots.roots.push(authority(certificate)?.1);
         }
-        self.clients =
-            WebPkiClientVerifier::builder_with_provider(Arc::new(roots), self.provider.clone())
-                .build()
-                .map_err(|_| AnchorError::NoneGiven)?;
+        WebPkiClientVerifier::builder_with_provider(Arc::new(roots), self.provider.clone())
+            .build()
+            .map_err(|_| AnchorError::NoneGiven)
+    }
+
+    fn requiring(mut self, clients: Arc<dyn ClientCertVerifier>) -> Self {
+        self.clients = clients;
         self.configs.send_replace(self.dressed(self.config()));
-        Ok(self)
+        self
     }
 
     fn dressed(&self, config: Arc<ServerConfig>) -> Arc<ServerConfig> {
@@ -370,6 +393,59 @@ impl Serving {
         .await;
         *left = still_left;
         done
+    }
+}
+
+#[derive(Debug)]
+struct PinnedClient {
+    signed: Arc<dyn ClientCertVerifier>,
+    pin: KeyFingerprint,
+}
+
+impl ClientCertVerifier for PinnedClient {
+    fn root_hint_subjects(&self) -> &[DistinguishedName] {
+        self.signed.root_hint_subjects()
+    }
+
+    fn verify_client_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        now: UnixTime,
+    ) -> Result<ClientCertVerified, rustls::Error> {
+        let verified = self
+            .signed
+            .verify_client_cert(end_entity, intermediates, now)?;
+        match KeyFingerprint::of(end_entity) {
+            Ok(key) if key == self.pin => Ok(verified),
+            _ => Err(rustls::Error::InvalidCertificate(
+                CertificateError::ApplicationVerificationFailure,
+            )),
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        certificate: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.signed
+            .verify_tls12_signature(message, certificate, dss)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        certificate: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.signed
+            .verify_tls13_signature(message, certificate, dss)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.signed.supported_verify_schemes()
     }
 }
 
@@ -1783,6 +1859,104 @@ mod tests {
         let mut anonymous = outbound.client_config();
         anonymous.alpn_protocols = vec![b"h2".to_vec()];
         assert!(admitted(regenerated, anonymous).await.is_err());
+    }
+
+    fn refused_by_pin(admission: io::Result<Option<CertificateDer<'static>>>) -> bool {
+        admission
+            .err()
+            .and_then(|error| error.into_inner())
+            .and_then(|inner| inner.downcast::<rustls::Error>().ok())
+            .is_some_and(|error| {
+                *error
+                    == rustls::Error::InvalidCertificate(
+                        CertificateError::ApplicationVerificationFailure,
+                    )
+            })
+    }
+
+    #[tokio::test]
+    async fn a_pinned_client_auth_admits_only_the_pinned_key_its_authority_signed() {
+        for (name, provider) in providers() {
+            let dir = Scratch::new(&format!("client-auth-pinned-{name}"));
+            let clients = Authority::new(provider.clone(), "Client Root");
+            let client = clients.sign_client("Session");
+            let presented = client.chain[0].clone();
+            let serving = start(&provider, dir.managed())
+                .unwrap()
+                .with_client_auth_pinned(
+                    std::slice::from_ref(&clients.certificate),
+                    KeyFingerprint::of(&presented).unwrap(),
+                )
+                .unwrap();
+            let mut trust = Trust::default();
+            trust.pin(
+                "127.0.0.1",
+                fingerprint(&serving.pair().await.unwrap().cert_pem),
+            );
+            let outbound = Arc::new(Outbound::new(provider.clone(), trust).unwrap());
+            let presenting = |pair: Pair| {
+                outbound
+                    .client_config_presenting(pair.chain, pair.key)
+                    .unwrap()
+            };
+
+            let sibling =
+                admitted(serving.config(), presenting(clients.sign_client("Session"))).await;
+            assert!(
+                refused_by_pin(sibling),
+                "{name}: another key the authority signed"
+            );
+            let stranger = Authority::new(provider.clone(), "Client Root").sign_client("Session");
+            let foreign = admitted(serving.config(), presenting(stranger)).await;
+            assert!(foreign.is_err(), "{name}: another authority's");
+            assert!(
+                !refused_by_pin(foreign),
+                "{name}: refused by the chain first"
+            );
+
+            let seen = admitted(serving.config(), presenting(client))
+                .await
+                .expect(name)
+                .expect("a client certificate");
+            assert_eq!(seen, presented, "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_client_pin_holds_in_every_configuration_written_after_it() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("client-auth-pinned-kept");
+        let clients = Authority::new(provider.clone(), "Client Root");
+        let client = clients.sign_client("Session");
+        let serving = start(provider, dir.managed())
+            .unwrap()
+            .with_client_auth_pinned(
+                std::slice::from_ref(&clients.certificate),
+                KeyFingerprint::of(&client.chain[0]).unwrap(),
+            )
+            .unwrap();
+        let regenerated = serving
+            .regenerate(&["127.0.0.1".parse().unwrap()], KeyAlgorithm::EcP256)
+            .await
+            .unwrap();
+
+        let mut trust = Trust::default();
+        trust.pin(
+            "127.0.0.1",
+            fingerprint(&serving.pair().await.unwrap().cert_pem),
+        );
+        let outbound = Arc::new(Outbound::new(provider.clone(), trust).unwrap());
+        let sibling = clients.sign_client("Session");
+        let presenting = outbound
+            .client_config_presenting(sibling.chain, sibling.key)
+            .unwrap();
+        assert!(refused_by_pin(
+            admitted(regenerated.clone(), presenting).await
+        ));
+        let presenting = outbound
+            .client_config_presenting(client.chain, client.key)
+            .unwrap();
+        assert!(admitted(regenerated, presenting).await.is_ok());
     }
 
     #[test]

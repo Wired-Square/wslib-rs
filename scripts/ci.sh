@@ -33,11 +33,8 @@ step "No reference to the project dossier"
 
 # Shared crates take no rustls provider; the app installs one.
 step "No rustls provider by default"
-# A package can be resolved without any edge to it, so look for a printed tree
-# rather than trusting the exit status.
-in_default_graph() { cargo tree --workspace -e normal -i "$1" 2>/dev/null | grep -q .; }
-! in_default_graph aws-lc-rs || die "aws-lc-rs is in the default graph"
-! in_default_graph ring || die "ring is in the default graph"
+graph=$(cargo tree --workspace -e normal --prefix none)
+! grep -E '^(aws-lc-rs|ring) ' <<<"$graph" || die "a rustls provider is in the default graph"
 
 step "wslib-telemetry's setup-core has no regex engine"
 ! cargo tree -p wslib-telemetry --no-default-features --features setup-core -e normal --prefix none \

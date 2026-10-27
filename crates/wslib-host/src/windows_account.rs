@@ -4,7 +4,9 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::ptr::{null, null_mut};
 use std::str::FromStr;
 
-use windows_sys::Win32::Foundation::{ERROR_NONE_MAPPED, HANDLE, LocalFree};
+use windows_sys::Win32::Foundation::{
+    ERROR_INSUFFICIENT_BUFFER, ERROR_NONE_MAPPED, HANDLE, LocalFree,
+};
 use windows_sys::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSidToSidW, GetSecurityInfo, SE_KERNEL_OBJECT,
 };
@@ -64,7 +66,7 @@ impl Sid {
         let name = wide(name);
         let (mut sid_len, mut domain_len, mut kind) = (0u32, 0u32, 0);
         // SAFETY: a sizing call, with no buffers.
-        unsafe {
+        sized(unsafe {
             LookupAccountNameW(
                 null(),
                 name.as_ptr(),
@@ -74,7 +76,7 @@ impl Sid {
                 &mut domain_len,
                 &mut kind,
             )
-        };
+        })?;
         let mut sid = vec![0u32; (sid_len as usize).div_ceil(4)];
         let mut domain = vec![0u16; domain_len as usize];
         // SAFETY: each buffer is at least as long as its length says; on
@@ -98,7 +100,7 @@ impl Sid {
     pub fn account(&self) -> io::Result<Account> {
         let (mut name_len, mut domain_len, mut kind) = (0u32, 0u32, 0);
         // SAFETY: a sizing call, with no buffers.
-        unsafe {
+        sized(unsafe {
             LookupAccountSidW(
                 null(),
                 self.as_psid(),
@@ -108,7 +110,7 @@ impl Sid {
                 &mut domain_len,
                 &mut kind,
             )
-        };
+        })?;
         let mut name = vec![0u16; name_len as usize];
         let mut domain = vec![0u16; domain_len as usize];
         // SAFETY: each buffer is as long as its length says.
@@ -206,7 +208,14 @@ pub fn owner(object: &impl AsRawHandle) -> io::Result<Sid> {
         if status != 0 {
             return Err(io::Error::from_raw_os_error(status as i32));
         }
-        let copied = Sid::from_psid(owner);
+        let copied = if owner.is_null() {
+            Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "the object has no owner",
+            ))
+        } else {
+            Sid::from_psid(owner)
+        };
         LocalFree(descriptor);
         copied
     }
@@ -272,6 +281,14 @@ fn succeeded(result: i32) -> io::Result<()> {
     match result {
         0 => Err(io::Error::last_os_error()),
         _ => Ok(()),
+    }
+}
+
+// A sizing call fails by design with `ERROR_INSUFFICIENT_BUFFER`; any other failure is the answer.
+fn sized(result: i32) -> io::Result<()> {
+    match succeeded(result) {
+        Err(e) if e.raw_os_error() == Some(ERROR_INSUFFICIENT_BUFFER as i32) => Ok(()),
+        other => other,
     }
 }
 

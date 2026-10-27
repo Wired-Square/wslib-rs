@@ -6,9 +6,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use axum::Router;
+use axum::body::Body;
+use axum::extract::ConnectInfo;
+use axum::http::Request;
 use axum_server::{AddrListener, Address, Handle, Server};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Semaphore;
+use tower::util::MapRequestLayer;
 use wslib_host::PeerCredentials;
 
 use crate::bounded::{Bounds, Permitted, backed_off, made_bound, permit};
@@ -29,6 +33,10 @@ impl LocalSocket {
     /// Bind `path` with permissions `mode`, first removing a socket there that
     /// nobody answers on. Anything else at `path`, or a live server, is refused.
     /// The socket is never at `path` with any other permissions.
+    ///
+    /// `mode` sets the socket file's permissions only; whether a uid or group
+    /// can connect also depends on the socket's group and its directory, which
+    /// are the caller's to arrange.
     pub fn bind(path: impl AsRef<Path>, mode: u32, bounds: Bounds) -> io::Result<Self> {
         let path = path.as_ref();
         if path.as_os_str().as_bytes().first().is_none_or(|&b| b == 0) {
@@ -44,6 +52,7 @@ impl LocalSocket {
         // rather than replace whatever got to `path` first.
         let staging = Staging::beside(path)?;
         let staged = staging.0.join("s");
+        fits_sun_path(&staged)?;
         let listener = UnixListener::bind(&staged)?;
         std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(mode))?;
         std::fs::hard_link(&staged, path)?;
@@ -55,7 +64,8 @@ impl LocalSocket {
         ))
     }
 
-    /// Hold a socket the caller bound at a path; it is never unlinked here.
+    /// Hold a socket the caller bound at a path. It is never unlinked, even
+    /// when serving ends.
     pub fn from_listener(listener: UnixListener, bounds: Bounds) -> io::Result<Self> {
         let path = listener
             .local_addr()?
@@ -97,6 +107,22 @@ impl Drop for LocalSocket {
             std::fs::remove_file(&self.path).ok();
         }
     }
+}
+
+fn fits_sun_path(staged: &Path) -> io::Result<()> {
+    const SUN_PATH: usize =
+        size_of::<libc::sockaddr_un>() - std::mem::offset_of!(libc::sockaddr_un, sun_path);
+    let length = staged.as_os_str().len();
+    if length < SUN_PATH {
+        return Ok(());
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!(
+            "staged beside its path, the socket's path is {length} bytes; sun_path holds at most {}",
+            SUN_PATH - 1
+        ),
+    ))
 }
 
 fn identity(path: &Path) -> Option<(u64, u64)> {
@@ -202,7 +228,9 @@ impl AddrListener<Permitted<UnixStream>, Credentialled> for LocalSocket {
 }
 
 /// Serve `router` over http/1.1 on `socket` until `stop` completes and it has
-/// drained. Handlers get `ConnectInfo<PeerCredentials>`.
+/// drained. Handlers get the peer's credentials as `ConnectInfo<PeerCredentials>`
+/// and as `Extension<PeerCredentials>`, which a router also served over TCP can
+/// take as `Option<Extension<PeerCredentials>>`.
 pub async fn serve_local(
     socket: LocalSocket,
     router: Router,
@@ -215,6 +243,14 @@ pub async fn serve_local(
         .http1_only()
         .handle(handle.clone());
     head_within(server.http_builder(), bounds.head);
+    let router = router.layer(MapRequestLayer::new(with_credentials));
     let serving = server.serve(app::<PeerCredentials>(router));
     until_stopped(serving, handle, stop, bounds.grace).await
+}
+
+fn with_credentials(mut request: Request<Body>) -> Request<Body> {
+    if let Some(&ConnectInfo(peer)) = request.extensions().get::<ConnectInfo<PeerCredentials>>() {
+        request.extensions_mut().insert(peer);
+    }
+    request
 }

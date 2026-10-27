@@ -6,22 +6,28 @@ use std::io::ErrorKind;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-use axum::Router;
 use axum::extract::ConnectInfo;
 use axum::routing::get;
+use axum::{Extension, Router};
 use support::{BRIEF, PATIENT, answered, closed, exchange};
 use tempfile::TempDir;
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use wslib_http_server::{Bounds, LocalSocket, PeerCredentials, serve_local};
+use wslib_http_server::{Bounds, LocalSocket, PeerCredentials, serve_http, serve_local};
 
 fn app() -> Router {
     Router::new()
         .route(
             "/peer",
             get(|ConnectInfo(peer): ConnectInfo<PeerCredentials>| async move { peer.uid.to_string() }),
+        )
+        .route(
+            "/extension",
+            get(|peer: Option<Extension<PeerCredentials>>| async move {
+                peer.map_or("none".to_owned(), |Extension(peer)| peer.uid.to_string())
+            }),
         )
         .route(
             "/slow",
@@ -87,6 +93,24 @@ async fn a_request_is_answered_and_sees_the_peers_uid() {
 }
 
 #[tokio::test]
+async fn the_credentials_are_an_extension_over_the_socket_and_absent_over_tcp() {
+    let (dir, path) = socket_in();
+    let _serving = Serving::on(bind(&path, Bounds::SERVING));
+    let own_uid = std::fs::metadata(dir.path()).expect("the tempdir").uid();
+    let answer = asked(&path, "/extension").await;
+    assert!(answer.ends_with(&format!("\r\n\r\n{own_uid}")), "{answer}");
+
+    let tcp = support::listener(Bounds::SERVING).await;
+    let address = tcp.local_addr();
+    tokio::spawn(serve_http(tcp, app(), std::future::pending()));
+    let answer = exchange(&mut support::dial(address).await, "/extension")
+        .await
+        .expect("an answer");
+    assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+    assert!(answer.ends_with("\r\n\r\nnone"), "{answer}");
+}
+
+#[tokio::test]
 async fn the_socket_has_the_mode_asked_for() {
     let (_dir, path) = socket_in();
     for mode in [0o600, 0o660] {
@@ -137,6 +161,28 @@ async fn an_empty_or_abstract_path_is_refused() {
             .expect("refused");
         assert_eq!(refused.kind(), ErrorKind::InvalidInput, "{path:?}");
     }
+}
+
+/// 103 bytes fits `sun_path` on macOS (104) and Linux (108); staged as
+/// `.<pid>.<n>/s` in place of the one-byte name, it fits neither.
+#[tokio::test]
+async fn a_path_too_long_once_staged_is_refused_by_name() {
+    let dir = tempfile::tempdir().expect("a tempdir");
+    let padding = 103 - dir.path().as_os_str().len() - "/".len() - "/s".len();
+    let parent = dir.path().join("p".repeat(padding));
+    std::fs::create_dir(&parent).expect("the parent");
+    let path = parent.join("s");
+    assert_eq!(path.as_os_str().len(), 103);
+
+    let refused = LocalSocket::bind(&path, 0o600, Bounds::SERVING)
+        .err()
+        .expect("too long");
+    assert_eq!(refused.kind(), ErrorKind::InvalidInput);
+    assert!(
+        refused.to_string().contains("sun_path holds at most"),
+        "{refused}"
+    );
+    assert_eq!(std::fs::read_dir(&parent).expect("the parent").count(), 0);
 }
 
 #[tokio::test]

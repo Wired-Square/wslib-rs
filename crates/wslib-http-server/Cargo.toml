@@ -24,6 +24,7 @@ tower = { version = "0.5.2", default-features = false, features = ["util"] }
 tracing = "0.1.41"
 
 [target.'cfg(unix)'.dependencies]
+libc = "0.2.174"
 wslib-host = { path = "../wslib-host", version = "0.1.1", registry = "wired-square" }
 
 [dev-dependencies]

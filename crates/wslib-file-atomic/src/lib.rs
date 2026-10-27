@@ -122,6 +122,28 @@ pub fn owner_only(path: &Path) -> io::Result<()> {
     windows::owner_only(path)
 }
 
+/// Put `dir`'s permission bits at `mode` only when they differ, handing back
+/// the ones it had if it changed them, so the caller can say it undid a mode
+/// somebody chose; a `chmod` that changes nothing still dirties the inode a
+/// later sync flushes. A no-op off Unix.
+pub fn keep_mode(dir: &Path, mode: u32) -> io::Result<Option<u32>> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let current = fs::metadata(dir)?.permissions().mode() & 0o777;
+        if current == mode {
+            return Ok(None);
+        }
+        fs::set_permissions(dir, fs::Permissions::from_mode(mode))?;
+        Ok(Some(current))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (dir, mode);
+        Ok(None)
+    }
+}
+
 /// Who may read a file.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

@@ -44,6 +44,7 @@ let signer = Signer::new(provider, &key.into())?;
   and returns `Error::NoProvider` when none is installed.
 - **`Fingerprint`**: the SHA-256 of some DER. `Display` is lowercase hex,
   `colons()` is `AB:CD:…` as browsers show it, and `FromStr` reads either.
+  `as_bytes()` and `From<[u8; 32]>` go to and from the digest.
 
 ## What isn't
 

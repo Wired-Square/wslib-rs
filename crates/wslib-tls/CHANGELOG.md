@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2
+
+- `Serving::key_fingerprint()`: the served key's `KeyFingerprint`, to pin,
+  kept from the last load or write; nothing is read for it.
+
 ## 0.2.1
 
 - `Serving::with_client_auth(authorities)`: every client must present a

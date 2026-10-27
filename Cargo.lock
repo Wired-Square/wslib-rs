@@ -7126,7 +7126,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-crypto"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "p256",
  "p384",
@@ -7372,6 +7372,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-pairing"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "thiserror 2.0.21",
+ "wslib-crypto",
+ "wslib-file-atomic",
+ "wslib-secret",
+]
+
+[[package]]
 name = "wslib-secret"
 version = "0.1.2"
 dependencies = [
@@ -7476,7 +7487,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-tls"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "http",
  "libc",

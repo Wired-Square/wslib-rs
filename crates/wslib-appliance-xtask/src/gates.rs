@@ -5,9 +5,9 @@
 //! the builds, for a tag.
 
 use std::collections::BTreeSet;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::Path;
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Output};
 
 use serde::Deserialize;
 
@@ -24,9 +24,13 @@ const SQLX_MACRO: &str = r"sqlx::(query|query_as|query_scalar|query_file)[a-z_]*
 
 const PROVIDERS: [&str; 2] = ["ring", "aws-lc-rs"];
 
+const CRATES_IO: [&str; 2] = [
+    "registry+https://github.com/rust-lang/crates.io-index",
+    "sparse+https://index.crates.io/",
+];
+
 const CROSS: &str = "aarch64-unknown-linux-musl";
 
-/// `CROSS` as it is spelt in `CC_<triple>` and `AR_<triple>`.
 const CROSS_VAR: &str = "aarch64_unknown_linux_musl";
 
 const CLIPPY: [&str; 4] = ["clippy", "--workspace", "--all-targets", "--locked"];
@@ -38,6 +42,7 @@ pub enum Outcome {
     Passed,
     Skipped(String),
     Failed { why: String, hits: Vec<String> },
+    CouldNotRun(String),
 }
 
 fn failed_with(why: impl Into<String>, hits: Vec<String>) -> Outcome {
@@ -67,8 +72,10 @@ impl From<Outcome> for Verdict {
 }
 
 /// Run every gate in `root`, reporting each as it finishes; warnings never fail.
+/// Exits `1` if a gate failed, else `2` if one could not run.
 pub fn run(root: &Path, release: bool) -> ExitCode {
     let mut any_failed = false;
+    let mut any_not_run = false;
     let mut report = |name: &str, verdict: Verdict| {
         for warning in &verdict.warnings {
             eprintln!("warning: {name}: {warning}");
@@ -82,6 +89,10 @@ pub fn run(root: &Path, release: bool) -> ExitCode {
                 for hit in hits {
                     println!("  {hit}");
                 }
+            }
+            Outcome::CouldNotRun(why) => {
+                any_not_run = true;
+                println!("{name}: could not run, {why}");
             }
         }
     };
@@ -111,30 +122,43 @@ pub fn run(root: &Path, release: bool) -> ExitCode {
 
     if any_failed {
         ExitCode::from(crate::FOUND)
+    } else if any_not_run {
+        ExitCode::from(crate::COULD_NOT_RUN)
     } else {
         ExitCode::SUCCESS
     }
 }
 
 fn could_not_run(what: &str, because: impl std::fmt::Display) -> Outcome {
-    failed(format!("{what} could not run: {because}"))
+    Outcome::CouldNotRun(format!("{what}: {because}"))
 }
 
-/// `git` that finds its repository from its own directory: under a git hook,
-/// `GIT_DIR` and its kin name the hook's repository instead.
-fn git() -> Command {
-    let mut git = Command::new("git");
+/// `program` with no `GIT_*` variable: under a git hook they name the hook's
+/// repository, and any git beneath `program` would act on it.
+fn scrubbed(program: impl AsRef<OsStr>) -> Command {
+    let mut command = Command::new(program);
     for (var, _) in std::env::vars_os() {
         if var.to_string_lossy().starts_with("GIT_") {
-            git.env_remove(var);
+            command.env_remove(var);
         }
     }
-    git
+    command
 }
 
 /// `git grep`, where a match is the failure.
 fn grep(root: &Path, args: &[&str], why: &str) -> Outcome {
-    match git().arg("grep").args(args).current_dir(root).output() {
+    grepped(
+        scrubbed("git")
+            .arg("grep")
+            .args(args)
+            .current_dir(root)
+            .output(),
+        why,
+    )
+}
+
+fn grepped(out: std::io::Result<Output>, why: &str) -> Outcome {
+    match out {
         Ok(out) if out.status.code() == Some(1) => Outcome::Passed,
         Ok(out) if out.status.success() => failed_with(
             why,
@@ -194,8 +218,8 @@ struct Locked {
     source: Option<String>,
 }
 
-/// Every family crate in `text`, a `Cargo.lock`, comes from a registry, and
-/// one this tool renders for at another version is a warning.
+/// Every family crate in `text`, a `Cargo.lock`, comes from a registry other
+/// than crates.io, and one this tool renders for at another version is a warning.
 pub fn lock(text: &str) -> Verdict {
     let lock: Lock = match toml::from_str(text) {
         Ok(lock) => lock,
@@ -209,6 +233,10 @@ pub fn lock(text: &str) -> Verdict {
     let unregistered: Vec<String> = family
         .iter()
         .filter_map(|p| match p.source.as_deref() {
+            Some(s) if CRATES_IO.contains(&s) => Some(format!(
+                "{} {} from crates.io, where a family crate is not ours",
+                p.name, p.version
+            )),
             Some(s) if s.starts_with("registry+") || s.starts_with("sparse+") => None,
             Some(s) => Some(format!("{} {} from {s}", p.name, p.version)),
             None => Some(format!("{} {} by path", p.name, p.version)),
@@ -233,7 +261,7 @@ pub fn lock(text: &str) -> Verdict {
             Outcome::Passed
         } else {
             failed_with(
-                "a family crate is not from a registry, so a tag of this product cannot be rebuilt",
+                "a family crate is not from the family's registry, so a tag of this product cannot be rebuilt",
                 unregistered,
             )
         },
@@ -252,8 +280,14 @@ fn rustls_provider(root: &Path) -> Outcome {
         "normal",
         "--prefix",
         "none",
+        "--manifest-path",
     ];
-    match Command::new("cargo").args(args).current_dir(root).output() {
+    match scrubbed("cargo")
+        .args(args)
+        .arg(root.join("Cargo.toml"))
+        .current_dir(root)
+        .output()
+    {
         Ok(out) if out.status.success() => providers(&String::from_utf8_lossy(&out.stdout)),
         Ok(out) => could_not_run("cargo tree", String::from_utf8_lossy(&out.stderr).trim()),
         Err(e) => could_not_run("cargo tree", e),
@@ -303,7 +337,7 @@ fn packaging(root: &Path) -> Verdict {
 }
 
 fn cargo(root: &Path, args: &[&str]) -> Outcome {
-    match Command::new("cargo").args(args).current_dir(root).status() {
+    match scrubbed("cargo").args(args).current_dir(root).status() {
         Ok(status) if status.success() => Outcome::Passed,
         Ok(status) => failed(format!("cargo {} {status}", args.join(" "))),
         Err(e) => could_not_run("cargo", e),
@@ -311,8 +345,13 @@ fn cargo(root: &Path, args: &[&str]) -> Outcome {
 }
 
 fn cross_clippy(root: &Path) -> Outcome {
-    let var = |tool: &str| std::env::var_os(format!("{tool}_{CROSS_VAR}"));
-    match cross_target(root).and_then(|()| cross_compiler(var("CC"), var("AR"))) {
+    let tool = |var, fallback| cc_rs_tool(var, fallback, |name| std::env::var_os(name));
+    match cross_target(root).and_then(|()| {
+        cross_compiler(
+            tool("CC", "aarch64-linux-musl-gcc"),
+            tool("AR", "aarch64-linux-musl-ar"),
+        )
+    }) {
         Ok(()) => cargo(
             root,
             &[&CLIPPY[..], &["--target", CROSS], &DENY_WARNINGS].concat(),
@@ -322,7 +361,7 @@ fn cross_clippy(root: &Path) -> Outcome {
 }
 
 fn cross_target(root: &Path) -> Result<(), String> {
-    let libdir = Command::new("rustc")
+    let libdir = scrubbed("rustc")
         .args(["--print", "target-libdir", "--target", CROSS])
         .current_dir(root)
         .output()
@@ -337,23 +376,35 @@ fn cross_target(root: &Path) -> Result<(), String> {
     }
 }
 
+/// The tool cc-rs takes for `CROSS` from `var`, in cc-rs's order.
+fn cc_rs_tool(var: &str, fallback: &str, env: impl Fn(&str) -> Option<OsString>) -> OsString {
+    [
+        format!("{var}_{CROSS}"),
+        format!("{var}_{CROSS_VAR}"),
+        format!("TARGET_{var}"),
+        var.to_owned(),
+    ]
+    .iter()
+    .find_map(|name| env(name))
+    .filter(|tool| !tool.to_string_lossy().trim().is_empty())
+    .unwrap_or_else(|| fallback.into())
+}
+
 /// A build script of a dependency compiles C for the target, so clippy needs
-/// a C compiler and an archiver for it: `cc` and `ar` are the
-/// `CC_`/`AR_<triple>` variables, as cc-rs reads them.
-fn cross_compiler(cc: Option<OsString>, ar: Option<OsString>) -> Result<(), String> {
-    let runs = |tool: Option<OsString>, fallback: &str| {
-        let tool = tool.unwrap_or_else(|| fallback.into());
+/// a C compiler and an archiver for it.
+fn cross_compiler(cc: OsString, ar: OsString) -> Result<(), String> {
+    let runs = |tool: OsString| {
         let tool = tool.to_string_lossy();
         let mut words = tool.split_whitespace();
         words.next().is_some_and(|program| {
-            Command::new(program)
+            scrubbed(program)
                 .args(words)
                 .arg("--version")
                 .output()
                 .is_ok_and(|out| out.status.success())
         })
     };
-    if runs(cc, "aarch64-linux-musl-gcc") && runs(ar, "aarch64-linux-musl-ar") {
+    if runs(cc) && runs(ar) {
         Ok(())
     } else {
         Err(format!(
@@ -385,7 +436,7 @@ mod tests {
 
     fn a_repository() -> TempDir {
         let dir = TempDir::new().expect("tempdir");
-        let init = git()
+        let init = scrubbed("git")
             .args(["init", "-q"])
             .current_dir(dir.path())
             .status()
@@ -449,6 +500,16 @@ mod tests {
     }
 
     #[test]
+    fn a_family_crate_from_crates_io_fails() {
+        let public =
+            lock_of(&CRATES_IO.map(|index| locked("wslib-appliance", "0.1.0", Some(index))));
+        assert_eq!(
+            hits(lock(&public).outcome),
+            ["wslib-appliance 0.1.0 from crates.io, where a family crate is not ours"; 2]
+        );
+    }
+
+    #[test]
     fn a_family_crate_at_another_version_warns_naming_both_and_passes() {
         let older = lock_of(&[
             locked("wslib-appliance-config", "0.1.0", Some(REGISTRY)),
@@ -495,11 +556,11 @@ mod tests {
     }
 
     #[test]
-    fn a_cargo_tree_that_fails_fails_rather_than_finding_no_rustls() {
+    fn a_cargo_tree_that_fails_could_not_run_rather_than_finding_no_rustls() {
         let dir = TempDir::new().expect("tempdir");
         assert!(matches!(
             rustls_provider(dir.path()),
-            Outcome::Failed { .. }
+            Outcome::CouldNotRun(_)
         ));
     }
 
@@ -541,9 +602,17 @@ mod tests {
     }
 
     #[test]
-    fn a_grep_outside_a_repository_fails_rather_than_passing() {
+    fn a_grep_outside_a_repository_could_not_run_rather_than_passing() {
         let dir = TempDir::new().expect("tempdir");
-        assert!(matches!(sqlx_macros(dir.path()), Outcome::Failed { .. }));
+        let out = scrubbed("git")
+            .env(
+                "GIT_CEILING_DIRECTORIES",
+                dir.path().parent().expect("a parent"),
+            )
+            .args(["grep", "-n", "anything"])
+            .current_dir(dir.path())
+            .output();
+        assert!(matches!(grepped(out, "found"), Outcome::CouldNotRun(_)));
     }
 
     #[test]
@@ -575,17 +644,36 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_cross_compiler_that_does_not_run_is_named_before_clippy_starts() {
-        assert_eq!(
-            cross_compiler(Some("true".into()), Some("true".into())),
-            Ok(())
-        );
+        assert_eq!(cross_compiler("true".into(), "true sh".into()), Ok(()));
 
-        let missing = cross_compiler(Some("/nonexistent/cc".into()), Some("true".into()))
-            .expect_err("no compiler");
+        let missing =
+            cross_compiler("/nonexistent/cc".into(), "true".into()).expect_err("no compiler");
         assert!(
             missing.contains("CC_aarch64_unknown_linux_musl"),
             "{missing}"
         );
-        assert!(cross_compiler(Some("true".into()), Some("false".into())).is_err());
+        assert!(cross_compiler("true".into(), "false".into()).is_err());
+    }
+
+    #[test]
+    fn the_cross_compiler_is_found_in_cc_rs_order() {
+        let order = [
+            "CC_aarch64-unknown-linux-musl",
+            "CC_aarch64_unknown_linux_musl",
+            "TARGET_CC",
+            "CC",
+        ];
+        for (i, winner) in order.iter().enumerate() {
+            let set = &order[i..];
+            let found = cc_rs_tool("CC", "fallback", |name| {
+                set.contains(&name).then(|| name.into())
+            });
+            assert_eq!(found, *winner);
+        }
+        assert_eq!(cc_rs_tool("CC", "fallback", |_| None), "fallback");
+        assert_eq!(
+            cc_rs_tool("CC", "fallback", |name| (name == "CC").then(|| " ".into())),
+            "fallback"
+        );
     }
 }

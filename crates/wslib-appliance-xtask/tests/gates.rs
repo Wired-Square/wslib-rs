@@ -12,8 +12,27 @@ fn put(dir: &Path, path: &str, body: &str) {
     std::fs::write(path, body).expect("write");
 }
 
+fn scrubbed(program: &str) -> Command {
+    let mut command = Command::new(program);
+    for (var, _) in std::env::vars_os() {
+        if var.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(var);
+        }
+    }
+    command
+}
+
+fn run(dir: &Path, program: &str, args: &[&str]) {
+    let ran = scrubbed(program)
+        .args(args)
+        .current_dir(dir)
+        .status()
+        .expect(program);
+    assert!(ran.success(), "{program}");
+}
+
 fn gates(dir: &Path) -> (Option<i32>, String) {
-    let Output { status, stdout, .. } = Command::new(EXE)
+    let Output { status, stdout, .. } = scrubbed(EXE)
         .arg("gates")
         .current_dir(dir)
         .output()
@@ -30,23 +49,8 @@ fn a_clean_product_passes_and_a_planted_macro_fails_it() {
         "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n",
     );
     put(dir.path(), "src/lib.rs", "");
-    for (program, args) in [
-        ("git", ["init", "-q"]),
-        ("cargo", ["generate-lockfile", "-q"]),
-    ] {
-        let mut command = Command::new(program);
-        for (var, _) in std::env::vars_os() {
-            if var.to_string_lossy().starts_with("GIT_") {
-                command.env_remove(var);
-            }
-        }
-        let ran = command
-            .args(args)
-            .current_dir(dir.path())
-            .status()
-            .expect(program);
-        assert!(ran.success(), "{program}");
-    }
+    run(dir.path(), "git", &["init", "-q"]);
+    run(dir.path(), "cargo", &["generate-lockfile", "-q"]);
 
     let (code, said) = gates(dir.path());
     assert_eq!(code, Some(0), "{said}");
@@ -68,4 +72,18 @@ fn a_clean_product_passes_and_a_planted_macro_fails_it() {
     assert_eq!(code, Some(1), "{said}");
     assert!(said.contains("sqlx query macros: failed"), "{said}");
     assert!(said.contains("  src/lib.rs:1:"), "{said}");
+}
+
+#[test]
+fn a_gate_that_could_not_run_exits_2() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    put(dir.path(), "Cargo.lock", "version = 4\n");
+    run(dir.path(), "git", &["init", "-q"]);
+
+    let (code, said) = gates(dir.path());
+    assert_eq!(code, Some(2), "{said}");
+    assert!(
+        said.contains("rustls provider: could not run, cargo tree: "),
+        "{said}"
+    );
 }

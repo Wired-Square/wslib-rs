@@ -160,6 +160,8 @@ for warning in &installed.report.warnings { /* expired, host not covered, ... */
   `WebPkiClientVerifier` on the caller's provider; `config()`, `watch()`
   and every install and regenerate carry it. A handler behind
   `wslib_http_server` reads it from `PeerCertificates`.
+- **`key_fingerprint()`**: the served key's `KeyFingerprint`, for a client
+  to `pin_key`, kept from the last load or write, so nothing is read for it.
 - **`watch()`**: a `tokio::sync::watch::Receiver<Arc<ServerConfig>>` sent
   each configuration a write puts in place, in the order written, for a
   listener's reload. The listener reloads some time after the write

@@ -355,3 +355,16 @@ fn beside_appends_to_the_whole_name() {
         PathBuf::from("token.next")
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn keep_mode_changes_only_a_mode_that_differs_and_says_what_it_was() {
+    use wslib_file_atomic::keep_mode;
+
+    let dir = Scratch::new("keep-mode");
+    keep_mode(&dir.0, 0o700).unwrap();
+    assert_eq!(keep_mode(&dir.0, 0o700).unwrap(), None);
+    assert_eq!(mode(&dir.0), 0o700);
+    assert_eq!(keep_mode(&dir.0, 0o755).unwrap(), Some(0o700));
+    assert_eq!(mode(&dir.0), 0o755);
+}

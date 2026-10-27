@@ -68,6 +68,9 @@ hidden.discard_staged(path)?;
   something else created. On Windows, **`administrators_read_and_delete`**
   does too and lets Administrators read and delete it; a file Administrators
   own stays theirs in full.
+- **`keep_mode(dir, mode)`** sets a directory's permission bits only when
+  they differ, since a `chmod` that changes nothing still dirties the inode,
+  and returns the bits it replaced for the caller to log. A no-op off Unix.
 - **Feature `testing`**: `testing::assert_owner_only(path)` checks `0600`, or
   on Windows reads the DACL back, for a consumer's own tests;
   `testing::assert_administrators_read_and_delete` is its Windows companion.

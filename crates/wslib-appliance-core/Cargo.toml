@@ -1,6 +1,6 @@
 [package]
 name = "wslib-appliance-core"
-version = "0.0.1"
+version = "0.1.0"
 description = "The router, the authority and the workers an appliance needs, beneath the backends that serve them behind a console, on their own TLS listener and as a desktop service."
 readme = "README.md"
 edition.workspace = true
@@ -39,10 +39,10 @@ tower-http = { version = "0.6", default-features = false, features = ["compressi
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", default-features = false, features = ["registry", "std"] }
 uuid = "1"
-wslib-appliance-auth = { path = "../wslib-appliance-auth", version = "0.0.1", registry = "wired-square" }
-wslib-appliance-config = { path = "../wslib-appliance-config", version = "0.0.1", registry = "wired-square" }
-wslib-appliance-store = { path = "../wslib-appliance-store", version = "0.0.1", registry = "wired-square" }
-wslib-appliance-types = { path = "../wslib-appliance-types", version = "0.0.1", registry = "wired-square" }
+wslib-appliance-auth = { path = "../wslib-appliance-auth", version = "0.1.0", registry = "wired-square" }
+wslib-appliance-config = { path = "../wslib-appliance-config", version = "0.1.0", registry = "wired-square" }
+wslib-appliance-store = { path = "../wslib-appliance-store", version = "0.1.0", registry = "wired-square" }
+wslib-appliance-types = { path = "../wslib-appliance-types", version = "0.1.0", registry = "wired-square" }
 wslib-auth = { path = "../wslib-auth", version = "0.1.1", registry = "wired-square", default-features = false }
 wslib-auth-passkey = { path = "../wslib-auth-passkey", version = "0.1.0", registry = "wired-square", default-features = false, optional = true }
 wslib-backoff = { path = "../wslib-backoff", version = "0.1.1", registry = "wired-square" }

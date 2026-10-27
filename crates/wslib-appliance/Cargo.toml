@@ -1,6 +1,6 @@
 [package]
 name = "wslib-appliance"
-version = "0.0.1"
+version = "0.1.0"
 description = "The appliance family in one dependency: its wire types and bootstrap settings, and each other crate behind a feature."
 readme = "README.md"
 edition.workspace = true
@@ -19,10 +19,10 @@ server = ["core", "dep:wslib-appliance-server"]
 https = ["core", "dep:wslib-appliance-https"]
 
 [dependencies]
-wslib-appliance-auth = { path = "../wslib-appliance-auth", version = "=0.0.1", registry = "wired-square", optional = true }
-wslib-appliance-core = { path = "../wslib-appliance-core", version = "=0.0.1", registry = "wired-square", optional = true }
-wslib-appliance-server = { path = "../wslib-appliance-server", version = "=0.0.1", registry = "wired-square", optional = true }
-wslib-appliance-https = { path = "../wslib-appliance-https", version = "=0.0.1", registry = "wired-square", optional = true }
-wslib-appliance-config = { path = "../wslib-appliance-config", version = "=0.0.1", registry = "wired-square" }
-wslib-appliance-store = { path = "../wslib-appliance-store", version = "=0.0.1", registry = "wired-square", optional = true }
-wslib-appliance-types = { path = "../wslib-appliance-types", version = "=0.0.1", registry = "wired-square" }
+wslib-appliance-auth = { path = "../wslib-appliance-auth", version = "=0.1.0", registry = "wired-square", optional = true }
+wslib-appliance-core = { path = "../wslib-appliance-core", version = "=0.1.0", registry = "wired-square", optional = true }
+wslib-appliance-server = { path = "../wslib-appliance-server", version = "=0.1.0", registry = "wired-square", optional = true }
+wslib-appliance-https = { path = "../wslib-appliance-https", version = "=0.1.0", registry = "wired-square", optional = true }
+wslib-appliance-config = { path = "../wslib-appliance-config", version = "=0.1.0", registry = "wired-square" }
+wslib-appliance-store = { path = "../wslib-appliance-store", version = "=0.1.0", registry = "wired-square", optional = true }
+wslib-appliance-types = { path = "../wslib-appliance-types", version = "=0.1.0", registry = "wired-square" }

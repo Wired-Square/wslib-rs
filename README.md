@@ -41,6 +41,7 @@ appliance chassis and every app beside it.
 | `wslib-mcu-flash`        | ESP32 and STM32 flashing: tty lookup, images, five backends   |
 | `wslib-service`          | A service under launchd, systemd or Windows, from one call    |
 | `wslib-tauri`            | Tauri desktop pieces: a quit that waits for in-flight work    |
+| `wslib-pairing`          | A one-time pairing code and the URI carrying the key pin      |
 | `wslib-appliance-types`  | An appliance's wire contract, shared by daemon and browser    |
 | `wslib-appliance-config` | An appliance's bootstrap settings: flags, env and files       |
 | `wslib-appliance-store`  | An appliance's tables, in one SQLite file its product shares  |

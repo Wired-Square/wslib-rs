@@ -77,7 +77,7 @@ pub use wslib_appliance_core::{
     About, Actor, Admin, ApiError, ApplianceState, Clock, HostAdmin, INGRESS_SOURCE, Identity,
     LOCAL_ACTOR, Logs, Mount, Operator, Principal, ProductAbout, REAUTHENTICATION_WINDOW, Reached,
     Reconciled, RequestBase, ResolveCaller, ServeError, SessionAdmin, TaskTable, Unclaimed, Viewer,
-    audit, boottime, box_id, clean_name, daemon, feed, files, host_admin_only, hostname, logs,
+    audit, boottime, box_id, clean_name, daemon, feed, host_admin_only, hostname, logs,
     reauthenticate, spawn_sweeper, sse, tls,
 };
 

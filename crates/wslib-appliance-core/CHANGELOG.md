@@ -26,3 +26,13 @@ Moved from `appliance-core` 0.17.1 in wslib-appliance-rs; what differs:
   user name reserved for the appliance" (was "for the chassis").
 - The `sessions` feature turns on nothing else: `wslib-appliance-auth`
   always carries `Sessions`.
+- `files` is gone. `keep_mode` is `wslib_file_atomic::keep_mode` (0.1.6),
+  which returns the bits it replaced and logs nothing, so the caller writes
+  the "was/now" line. `attachment` is `wslib_http_scaffold::attachment`
+  (0.1.3), which escapes `\` and `"` in the filename, where 0.17.1's sent
+  them as they were, so a `"` ended the quoted name early and a `\` escaped
+  what followed.
+- On Windows, serving an endpoint `owned_by_service` a name that is no
+  installed service's own account, such as `ALL SERVICES` or one containing
+  `\` or `/`, fails as "the socket at … could not be created: no service
+  account NT SERVICE\<name>: it is not one installed service's account".

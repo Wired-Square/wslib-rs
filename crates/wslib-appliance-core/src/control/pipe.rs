@@ -5,7 +5,7 @@
 use std::ffi::OsStr;
 use std::io;
 use std::os::windows::ffi::OsStrExt;
-use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
 use std::time::Duration;
@@ -24,25 +24,22 @@ use windows_sys::Win32::Security::Authentication::Identity::{
     PolicyAccountDomainInformation,
 };
 use windows_sys::Win32::Security::Authorization::{
-    ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo,
-    SDDL_REVISION_1, SE_KERNEL_OBJECT,
+    ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo, SDDL_REVISION_1,
+    SE_KERNEL_OBJECT,
 };
 use windows_sys::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACL, ACL_SIZE_INFORMATION, AclSizeInformation, DACL_SECURITY_INFORMATION,
-    GetAce, GetAclInformation, GetLengthSid, GetSecurityDescriptorControl, GetTokenInformation,
-    LookupAccountNameW, LookupAccountSidW, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
-    SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, SID_NAME_USE, SidTypeAlias, TOKEN_QUERY, TOKEN_USER,
-    TokenUser,
+    GetAce, GetAclInformation, GetSecurityDescriptorControl, LookupAccountNameW,
+    OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES,
+    SID_NAME_USE, SidTypeAlias,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     FILE_ALL_ACCESS, FILE_CREATE_PIPE_INSTANCE, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
 };
-use windows_sys::Win32::System::Pipes::{GetNamedPipeClientProcessId, WaitNamedPipeW};
+use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
 use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
-use windows_sys::Win32::System::Threading::{
-    GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
-};
 use wslib_appliance_types::Role;
+use wslib_host::Sid;
 
 use super::windows_account::{named_actor, one_rid_under};
 use super::{ControlEndpoint, ServeError, serve_bounded};
@@ -191,7 +188,7 @@ impl Listener for PipeListener {
             let name = self.name.display();
             match connected {
                 Ok(()) => {
-                    let peer = client_user(&pipe)
+                    let peer = wslib_host::pipe_client_user(&pipe)
                         .inspect_err(|e| tracing::debug!(pipe = %name, error = %e, "a control pipe client's account is unread"))
                         .ok();
                     return (pipe, peer);
@@ -221,11 +218,12 @@ impl Security {
         let owner = match service {
             Some(service) => {
                 let account = format!(r"NT SERVICE\{service}");
-                lookup_account(&account)
+                wslib_host::service_account(service)
                     .map_err(|e| format!("no service account {account}: {e}"))?
-                    .0
+                    .ok_or_else(|| format!("no service account {account}: it is not one installed service's account"))?
             }
-            None => process_user().map_err(|e| format!("reading this process's user: {e}"))?,
+            None => wslib_host::current_user()
+                .map_err(|e| format!("reading this process's user: {e}"))?,
         };
         let group = group.map(local_group).transpose()?;
         Self::granting(&owner, group.as_ref()).map_err(|e| e.to_string())
@@ -233,12 +231,13 @@ impl Security {
 
     /// SYSTEM and `owner` full control, and `group` [`CLIENT_ACCESS`].
     pub(super) fn granting(owner: &Sid, group: Option<&Sid>) -> io::Result<Self> {
+        let owner = owner.to_string();
         let mut aces = vec![(ALLOWED, FILE_ALL_ACCESS, LOCAL_SYSTEM.to_string())];
-        if owner.text != LOCAL_SYSTEM {
-            aces.push((ALLOWED, FILE_ALL_ACCESS, owner.text.clone()));
+        if owner != LOCAL_SYSTEM {
+            aces.push((ALLOWED, FILE_ALL_ACCESS, owner.clone()));
         }
-        aces.extend(group.map(|group| (ALLOWED, CLIENT_ACCESS, group.text.clone())));
-        Self::protected(owner.text.clone(), aces)
+        aces.extend(group.map(|group| (ALLOWED, CLIENT_ACCESS, group.to_string())));
+        Self::protected(owner, aces)
     }
 
     fn protected(owner: String, aces: Vec<Ace>) -> io::Result<Self> {
@@ -366,11 +365,11 @@ pub(super) fn read_security(handle: HANDLE) -> io::Result<Readback> {
                         return Ok((allowed.Header.AceType, 0, String::new()));
                     }
                     let sid = ace.byte_add(std::mem::offset_of!(ACCESS_ALLOWED_ACE, SidStart));
-                    Ok((ALLOWED, allowed.Mask, Sid::copied(sid)?.text))
+                    Ok((ALLOWED, allowed.Mask, Sid::from_psid(sid)?.to_string()))
                 })
                 .collect::<io::Result<_>>()?;
             Ok(Readback {
-                owner: Sid::copied(owner)?.text,
+                owner: Sid::from_psid(owner)?.to_string(),
                 protected: control & SE_DACL_PROTECTED != 0,
                 aces,
             })
@@ -380,45 +379,10 @@ pub(super) fn read_security(handle: HANDLE) -> io::Result<Readback> {
     }
 }
 
-/// A SID, and its `S-1-…` form.
-#[derive(Clone, Debug)]
-pub(super) struct Sid {
-    bytes: Vec<u32>,
-    pub(super) text: String,
-}
-
-impl Sid {
-    /// # Safety
-    ///
-    /// `sid` is a valid SID.
-    pub(super) unsafe fn copied(sid: PSID) -> io::Result<Self> {
-        let mut text = null_mut();
-        // SAFETY: `sid` is valid, per the contract; `text` is NUL-terminated
-        // and freed once read.
-        unsafe {
-            let len = GetLengthSid(sid) as usize;
-            let mut bytes = vec![0u32; len.div_ceil(4)];
-            std::ptr::copy_nonoverlapping(sid.cast::<u8>(), bytes.as_mut_ptr().cast::<u8>(), len);
-            succeeded(ConvertSidToStringSidW(sid, &mut text))?;
-            let chars = (0..).take_while(|&i| *text.add(i) != 0).count();
-            let rendered = String::from_utf16_lossy(std::slice::from_raw_parts(text, chars));
-            LocalFree(text.cast());
-            Ok(Self {
-                bytes,
-                text: rendered,
-            })
-        }
-    }
-
-    pub(super) fn as_psid(&self) -> PSID {
-        self.bytes.as_ptr().cast_mut().cast()
-    }
-}
-
 pub(super) fn rendered(sid: Sid, account: Option<String>) -> String {
     match account {
         Some(name) => format!("{LOCAL_ACTOR}:{name}"),
-        None => format!("{LOCAL_ACTOR}:sid={}", sid.text),
+        None => format!("{LOCAL_ACTOR}:sid={sid}"),
     }
 }
 
@@ -426,42 +390,8 @@ pub(super) fn rendered(sid: Sid, account: Option<String>) -> String {
 /// [actor's form](named_actor), or `None` when the lookup fails or the name has
 /// no such form.
 pub(super) fn account_name(sid: Sid) -> Option<String> {
-    let (domain, name) = domain_and_name(&sid)?;
-    named_actor(&sid.text, &domain, &name)
-}
-
-fn domain_and_name(sid: &Sid) -> Option<(String, String)> {
-    let (mut name_len, mut domain_len, mut kind) = (0u32, 0u32, 0);
-    // SAFETY: a sizing call, with no buffers.
-    unsafe {
-        LookupAccountSidW(
-            null(),
-            sid.as_psid(),
-            null_mut(),
-            &mut name_len,
-            null_mut(),
-            &mut domain_len,
-            &mut kind,
-        )
-    };
-    let mut name = vec![0u16; name_len as usize];
-    let mut domain = vec![0u16; domain_len as usize];
-    // SAFETY: each buffer is as long as its length says.
-    succeeded(unsafe {
-        LookupAccountSidW(
-            null(),
-            sid.as_psid(),
-            name.as_mut_ptr(),
-            &mut name_len,
-            domain.as_mut_ptr(),
-            &mut domain_len,
-            &mut kind,
-        )
-    })
-    .ok()?;
-    let name = String::from_utf16(name.get(..name_len as usize)?).ok()?;
-    let domain = String::from_utf16(domain.get(..domain_len as usize)?).ok()?;
-    Some((domain, name))
+    let account = sid.account().ok()?;
+    named_actor(&sid.to_string(), &account.domain, &account.name)
 }
 
 /// An alias one RID under this computer's account domain, as a product's
@@ -470,7 +400,7 @@ fn domain_and_name(sid: &Sid) -> Option<(String, String)> {
 fn local_group(name: &str) -> Result<Sid, String> {
     let (sid, kind) = lookup_account(name).map_err(|e| format!("no local group {name}: {e}"))?;
     let domain = account_domain().map_err(|e| format!("reading the account domain: {e}"))?;
-    if kind == SidTypeAlias && one_rid_under(&domain.text, &sid.text) {
+    if kind == SidTypeAlias && one_rid_under(&domain.to_string(), &sid.to_string()) {
         Ok(sid)
     } else {
         Err(format!("{name} is not a local group of this computer"))
@@ -508,7 +438,7 @@ fn account_domain() -> io::Result<Sid> {
         let copied = if sid.is_null() {
             Err(io::Error::other("no account domain SID"))
         } else {
-            Sid::copied(sid)
+            Sid::from_psid(sid)
         };
         LsaFreeMemory(info);
         copied
@@ -545,56 +475,7 @@ fn lookup_account(name: &str) -> io::Result<(Sid, SID_NAME_USE)> {
             &mut domain_len,
             &mut kind,
         ))?;
-        Ok((Sid::copied(sid.as_mut_ptr().cast())?, kind))
-    }
-}
-
-pub(super) fn process_user() -> io::Result<Sid> {
-    // SAFETY: the pseudo-handle is always valid and needs no closing.
-    token_user(unsafe { GetCurrentProcess() })
-}
-
-/// The client process's token user, not an impersonating thread's, read through
-/// its process id, which may be reused in between: audit, not authority. Only
-/// SYSTEM or the same user may open the process; otherwise it is unread.
-fn client_user(pipe: &NamedPipeServer) -> io::Result<Sid> {
-    let mut pid = 0;
-    // SAFETY: the handle is the pipe's own, live for the call.
-    succeeded(unsafe { GetNamedPipeClientProcessId(pipe.as_raw_handle(), &mut pid) })?;
-    // SAFETY: no pointers; a null handle is the failure, and a valid one is
-    // owned from here.
-    let process = unsafe {
-        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-        if process.is_null() {
-            return Err(io::Error::last_os_error());
-        }
-        OwnedHandle::from_raw_handle(process)
-    };
-    token_user(process.as_raw_handle())
-}
-
-fn token_user(process: HANDLE) -> io::Result<Sid> {
-    let mut token = null_mut();
-    // SAFETY: `process` is live for the call, and the token is owned from here.
-    let token = unsafe {
-        succeeded(OpenProcessToken(process, TOKEN_QUERY, &mut token))?;
-        OwnedHandle::from_raw_handle(token)
-    };
-    let mut len = 0u32;
-    // SAFETY: a sizing call, with no buffer.
-    unsafe { GetTokenInformation(token.as_raw_handle(), TokenUser, null_mut(), 0, &mut len) };
-    let mut buffer = vec![0u64; (len as usize).div_ceil(8)];
-    // SAFETY: `buffer` is `len` bytes and aligned for a `TOKEN_USER`, whose SID
-    // points into it and is copied out while it lives.
-    unsafe {
-        succeeded(GetTokenInformation(
-            token.as_raw_handle(),
-            TokenUser,
-            buffer.as_mut_ptr().cast(),
-            len,
-            &mut len,
-        ))?;
-        Sid::copied((*buffer.as_ptr().cast::<TOKEN_USER>()).User.Sid)
+        Ok((Sid::from_psid(sid.as_mut_ptr().cast())?, kind))
     }
 }
 
@@ -607,26 +488,6 @@ fn succeeded(result: i32) -> io::Result<()> {
 
 pub(super) fn wide(text: impl AsRef<OsStr>) -> Vec<u16> {
     text.as_ref().encode_wide().chain([0]).collect()
-}
-
-#[cfg(test)]
-impl Sid {
-    pub(super) fn parse(text: &str) -> Self {
-        use windows_sys::Win32::Security::Authorization::ConvertStringSidToSidW;
-
-        let mut sid: PSID = null_mut();
-        // SAFETY: the text is NUL-terminated; `sid` is freed once copied.
-        unsafe {
-            assert_ne!(
-                ConvertStringSidToSidW(wide(text).as_ptr(), &mut sid),
-                0,
-                "{text}"
-            );
-            let copied = Self::copied(sid).expect("copies");
-            LocalFree(sid);
-            copied
-        }
-    }
 }
 
 /// A client asking for `access`, as a member of an endpoint's group must.
@@ -676,7 +537,9 @@ mod tests {
 
     /// These tests run as an ordinary user: SYSTEM's own ACE grants it everything.
     fn user() -> String {
-        let user = process_user().expect("this process's user").text;
+        let user = wslib_host::current_user()
+            .expect("this process's user")
+            .to_string();
         assert_ne!(user, LOCAL_SYSTEM, "run these tests as an ordinary user");
         user
     }
@@ -704,8 +567,8 @@ mod tests {
 
     #[test]
     fn a_peer_with_no_name_is_audited_by_its_sid() {
-        let user = process_user().expect("this process's user");
-        let expected = format!("control-socket:sid={}", user.text);
+        let user = wslib_host::current_user().expect("this process's user");
+        let expected = format!("control-socket:sid={user}");
         assert_eq!(rendered(user, None), expected);
     }
 
@@ -715,11 +578,11 @@ mod tests {
     fn only_a_local_group_of_this_computer_is_granted() {
         let user = user();
         for sid in [user.as_str(), "S-1-1-0", "S-1-5-11", "S-1-5-32-545"] {
-            let (domain, name) = domain_and_name(&Sid::parse(sid)).expect("named");
-            let named = if domain.is_empty() {
-                name
+            let account = sid.parse::<Sid>().expect(sid).account().expect("named");
+            let named = if account.domain.is_empty() {
+                account.name
             } else {
-                format!(r"{domain}\{name}")
+                format!(r"{}\{}", account.domain, account.name)
             };
             let refused = Security::new(Some(&named), None).err().expect("refused");
             assert!(
@@ -731,8 +594,10 @@ mod tests {
 
     #[test]
     fn a_local_account_is_one_rid_under_the_account_domain() {
-        let domain = account_domain().expect("the account domain").text;
-        let user = process_user().expect("this process's user").text;
+        let domain = account_domain().expect("the account domain").to_string();
+        let user = wslib_host::current_user()
+            .expect("this process's user")
+            .to_string();
         assert!(
             one_rid_under(&domain, &user),
             "{user} is not a local account under {domain}: run the Windows tests as a local account"

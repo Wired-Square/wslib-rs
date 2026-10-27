@@ -12,7 +12,6 @@ mod error;
 mod extract;
 mod factors;
 mod feed;
-pub mod files;
 mod hooks;
 mod ingress;
 mod logs;

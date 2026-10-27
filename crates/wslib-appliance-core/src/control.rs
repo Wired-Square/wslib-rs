@@ -161,11 +161,11 @@ mod peer {
     use crate::bounded::Bounded;
 
     #[cfg(windows)]
-    pub(super) use super::pipe::Sid as Key;
-    #[cfg(windows)]
     use super::pipe::{account_name, rendered};
     #[cfg(unix)]
     use super::socket::{account_name, rendered};
+    #[cfg(windows)]
+    pub(super) use wslib_host::Sid as Key;
     #[cfg(unix)]
     pub(super) type Key = u32;
 
@@ -286,7 +286,8 @@ impl ControlEndpoint {
 
     /// Make the pipe's owner `NT SERVICE\<service>` rather than this process's
     /// user, so `wslib-appliance-client` can tell the service's pipe from another's;
-    /// serving fails if this process may not assign that owner.
+    /// serving fails if `service` is not one installed service's own account,
+    /// or this process may not assign that owner.
     pub fn owned_by_service(mut self, service: impl Into<String>) -> Self {
         self.service = Some(service.into());
         self
@@ -984,7 +985,7 @@ mod tests {
 
         use super::*;
         use crate::control::pipe::{
-            self, CLIENT_ACCESS, LOCAL_SYSTEM, Readback, Security, Sid, open_client, read_security,
+            self, CLIENT_ACCESS, LOCAL_SYSTEM, Readback, Security, open_client, read_security,
         };
         use crate::probe::{Probe, WHO, rung};
 
@@ -1033,8 +1034,10 @@ mod tests {
             ceiling: Role,
             stop: CancellationToken,
         ) -> tokio::task::JoinHandle<Result<(), ServeError>> {
-            let owner = pipe::process_user().expect("this process's user");
-            let group = Sid::parse(AUTHENTICATED_USERS);
+            let owner = wslib_host::current_user().expect("this process's user");
+            let group = AUTHENTICATED_USERS
+                .parse::<wslib_host::Sid>()
+                .expect(AUTHENTICATED_USERS);
             let security = Security::granting(&owner, Some(&group)).expect("the descriptor");
             tokio::spawn(pipe::serve_secured(
                 router.0,
@@ -1048,7 +1051,7 @@ mod tests {
         /// This process's token with its user SID made deny-only, so the owner's
         /// ACE and implicit rights grant it nothing.
         fn without_the_owner() -> OwnedHandle {
-            let user = pipe::process_user().expect("this process's user");
+            let user = wslib_host::current_user().expect("this process's user");
             let mut token = null_mut();
             let mut restricted = null_mut();
             // SAFETY: the pseudo-handle is always valid; each token is owned once
@@ -1097,7 +1100,7 @@ mod tests {
                 stop.clone(),
             );
 
-            let user = pipe::process_user().expect("this process's user");
+            let user = wslib_host::current_user().expect("this process's user");
             let account = pipe::account_name(user).expect("the user has a plain name");
             let answer = get_on(connected(&name).await, WHO).await;
             assert!(
@@ -1186,7 +1189,9 @@ mod tests {
                 stop.clone(),
             );
 
-            let user = pipe::process_user().expect("this process's user").text;
+            let user = wslib_host::current_user()
+                .expect("this process's user")
+                .to_string();
             let allowed = ACCESS_ALLOWED_ACE_TYPE as u8;
             let mut aces = vec![(allowed, FILE_ALL_ACCESS, LOCAL_SYSTEM.to_string())];
             if user != LOCAL_SYSTEM {

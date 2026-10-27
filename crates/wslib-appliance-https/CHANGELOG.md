@@ -12,7 +12,8 @@ Moved from `appliance-https` 0.17.1 in wslib-appliance-rs; what differs:
 - The `test-support` feature is `testing`. `testing::TempDir` is gone: use
   `tempfile`. The harness's directory is a `tempfile` one.
 - `testing`, `tls` and the other items re-exported from `wslib-appliance-core`
-  carry that crate's changes; see its changelog.
+  carry that crate's changes, and `files` is no longer re-exported; see its
+  changelog.
 - A harness that cannot assemble panics with "the harness assembles: " and
   the refusal (was "the trust tables and session keys load").
 - Audit rows carry the `wslib_appliance_https`, `wslib_appliance_core` and

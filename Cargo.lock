@@ -7062,6 +7062,7 @@ dependencies = [
  "wslib-crypto-x509",
  "wslib-file-atomic",
  "wslib-homeassistant",
+ "wslib-host",
  "wslib-http-error",
  "wslib-http-scaffold",
  "wslib-secret",

@@ -136,7 +136,7 @@ pub use wslib_appliance_core::{
     Identity, LOCAL_ACTOR, Logs, Mount, Notes, Operator, Principal, ProductAbout,
     REAUTHENTICATION_WINDOW, Reached, Reconciled, RequestBase, ResolveCaller, ServeError,
     SessionAdmin, TaskTable, Unclaimed, Viewer, audit, boottime, box_id, clean_name, daemon, feed,
-    files, host_admin_only, hostname, logs, reauthenticate, spawn_sweeper, sse, tls,
+    host_admin_only, hostname, logs, reauthenticate, spawn_sweeper, sse, tls,
 };
 
 #[doc(hidden)]

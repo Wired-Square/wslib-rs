@@ -326,6 +326,7 @@ fn describe(spki: &SubjectPublicKeyInfo<'_>) -> KeyDescription {
                 .algorithm
                 .parameters
                 .as_ref()
+                .filter(|parameters| parameters.tag() == Tag::Oid)
                 .and_then(|parameters| parameters.as_oid().ok())
                 .map(|curve| match curve.to_id_string().as_str() {
                     "1.2.840.10045.3.1.7" => "P-256".to_string(),
@@ -632,6 +633,15 @@ mod tests {
         let spki = signer(KeyAlgorithm::EcP256).spki().to_vec();
         assert!(KeyDescription::of_spki(&spki[..spki.len() - 1]).is_err());
         assert!(KeyDescription::of_spki(&[&spki[..], &[0]].concat()).is_err());
+    }
+
+    #[test]
+    fn a_curve_given_by_explicit_parameters_rather_than_by_name_is_unnamed() {
+        let spki = include_bytes!("../testdata/explicit-p256.spki.der");
+        assert_eq!(
+            KeyDescription::of_spki(spki).unwrap(),
+            KeyDescription::Ecdsa { curve: None }
+        );
     }
 
     #[test]

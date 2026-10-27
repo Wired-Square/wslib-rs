@@ -24,9 +24,9 @@ subtle = { version = "2.5", default-features = false }
 thiserror = "2"
 tokio = { version = "1.47", default-features = false, features = ["fs", "rt", "sync", "time"] }
 tracing = "0.1.41"
-wslib-appliance-core = { path = "../wslib-appliance-core", version = "0.1.1", registry = "wired-square" }
-wslib-appliance-store = { path = "../wslib-appliance-store", version = "0.1.1", registry = "wired-square" }
-wslib-appliance-types = { path = "../wslib-appliance-types", version = "0.1.1", registry = "wired-square" }
+wslib-appliance-core = { path = "../wslib-appliance-core", version = "=0.1.1", registry = "wired-square" }
+wslib-appliance-store = { path = "../wslib-appliance-store", version = "=0.1.1", registry = "wired-square" }
+wslib-appliance-types = { path = "../wslib-appliance-types", version = "=0.1.1", registry = "wired-square" }
 wslib-file-atomic = { path = "../wslib-file-atomic", version = "0.1.6", registry = "wired-square" }
 wslib-http-scaffold = { path = "../wslib-http-scaffold", version = "0.1.3", registry = "wired-square", default-features = false, features = ["server"] }
 wslib-secret = { path = "../wslib-secret", version = "0.1.1", registry = "wired-square" }
@@ -35,8 +35,8 @@ wslib-secret = { path = "../wslib-secret", version = "0.1.1", registry = "wired-
 rustls = { version = "0.23.27", default-features = false, features = ["ring"] }
 tempfile = "3.10.1"
 tokio = { version = "1.47", features = ["macros", "rt-multi-thread"] }
-wslib-appliance-auth = { path = "../wslib-appliance-auth", version = "0.1.1", registry = "wired-square" }
-wslib-appliance-core = { path = "../wslib-appliance-core", version = "0.1.1", registry = "wired-square", features = ["testing"] }
-wslib-appliance-https = { path = "../wslib-appliance-https", version = "0.1.1", registry = "wired-square", features = ["testing"] }
-wslib-appliance-server = { path = "../wslib-appliance-server", version = "0.1.1", registry = "wired-square", features = ["testing"] }
+wslib-appliance-auth = { path = "../wslib-appliance-auth", version = "=0.1.1", registry = "wired-square" }
+wslib-appliance-core = { path = "../wslib-appliance-core", version = "=0.1.1", registry = "wired-square", features = ["testing"] }
+wslib-appliance-https = { path = "../wslib-appliance-https", version = "=0.1.1", registry = "wired-square", features = ["testing"] }
+wslib-appliance-server = { path = "../wslib-appliance-server", version = "=0.1.1", registry = "wired-square", features = ["testing"] }
 wslib-auth-totp = { path = "../wslib-auth-totp", version = "0.1.1", registry = "wired-square", features = ["codes"] }

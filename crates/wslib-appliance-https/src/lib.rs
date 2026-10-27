@@ -41,16 +41,8 @@
 //! The TLS listener and the control socket mount the same `/api`, bar
 //! `/api/users…` (below). A request on the socket satisfies every role up to
 //! Admin, on a box with no accounts too: it is the way back in when nobody can
-//! sign in. [`SessionAdmin`] refuses it.
-//!
-//! `/api/users…` is always on the socket, and on the TLS listener only by
-//! [`Server::users_routes`]. Over HTTPS the last enabled administrator cannot
-//! be demoted, disabled or deleted, and a password reset aimed at the caller's
-//! own account is refused; over the socket, neither applies.
-//!
-//! Responses over TLS, bar images other than SVG, event streams, gzip files
-//! and bodies under 32 bytes, are gzipped when the client asks and an encoder
-//! is free; the control socket's are not.
+//! sign in. [`SessionAdmin`] refuses it. `/api/users…` is always on the
+//! socket, and on the TLS listener only by [`Server::users_routes`].
 
 mod routes;
 mod serve;
@@ -171,7 +163,10 @@ impl Server {
     }
 
     /// Serve the account routes, `/api/users…` at Admin, on the TLS listener
-    /// too; the control socket serves them either way.
+    /// too; the control socket serves them either way. Over HTTPS the last
+    /// enabled administrator cannot be demoted, disabled or deleted, and a
+    /// password reset aimed at the caller's own account is refused; over the
+    /// socket, neither applies.
     pub fn users_routes(self) -> Self {
         Self {
             users: true,

@@ -50,20 +50,9 @@
 //! # A route that changes something writes one line
 //!
 //! [`audit!`] is that line, in a consuming crate as in this one:
-//!
-//! ```ignore
-//! async fn restart(SessionAdmin(who): SessionAdmin, State(app): State<ApplianceState>)
-//!     -> Result<StatusCode, ApiError>
-//! {
-//!     do_the_thing().await.map_err(|e| ApiError::internal("restart the appliance", &e))?;
-//!     audit!(&app, &who, "asked for a restart").await;
-//!     Ok(StatusCode::NO_CONTENT)
-//! }
-//! ```
-//!
-//! Where there is no route, the line is a `tracing` event named `audit` with an
-//! `actor` field, and an `actor_id` field only where the actor is
-//! authenticated:
+//! `audit!(&app, &who, "asked for a restart").await`. Where there is no
+//! route, the line is a `tracing` event named `audit` with an `actor` field,
+//! and an `actor_id` field only where the actor is authenticated:
 //!
 //! ```
 //! # fn refuse(who: &wslib_appliance_server::Identity, device: &str) {
@@ -76,37 +65,6 @@
 //! );
 //! # }
 //! ```
-//!
-//! # The daemon's own log is in the browser
-//!
-//! The first lines of `main` build the ring `GET /api/logs` reads, with
-//! [`logs`], and install its subscriber; [`Server::new`] takes the ring. A
-//! product that composes its own subscriber still adds the ring's layer.
-//!
-//! # Two sockets, two audiences
-//!
-//! [`Server::serve`]'s app socket serves `/api`, the bundle and a product's
-//! routes to the caller the console asserts. Its hooks socket serves only the
-//! index, About, [`Server::notes`] and [`Server::backup_hooks`], to the
-//! console's uid alone. There is no network listener and no control socket.
-//!
-//! [`Server::serve_ingress`] serves the same routes on one TCP listener
-//! instead, to the trusted peers of Home Assistant's ingress proxy and the
-//! caller it asserts. It has no hooks.
-//!
-//! # Compression
-//!
-//! Every response on the app socket or the ingress listener is gzipped at
-//! level 1 when the client asks; encoders are capped, and past the cap a
-//! response is served plain. An event stream, an image other than an SVG, a
-//! gzip file, a body under 32 bytes and a range are left alone. A bundle file
-//! with a `.gz` beside it, and the logo, are sent as their stored copy and
-//! hold no encoder. The hooks socket is not compressed.
-//!
-//! # Branding is compiled in
-//!
-//! [`Branding`] and the logo are supplied at build time and served publicly.
-//! Nothing writes them.
 
 mod serve;
 #[cfg(any(test, feature = "testing"))]
@@ -149,7 +107,9 @@ pub struct Server {
 
 impl Server {
     /// `version` is the product's `wslib_build_id::build_version!()`,
-    /// expanded in its own crate; `logs` is the ring the subscriber fills.
+    /// expanded in its own crate; `logs` is the ring the subscriber fills, and
+    /// a subscriber of the product's own adds its [`layer`](Logs::layer).
+    /// `branding` is served to anybody, before sign-in.
     pub fn new(store: Store, branding: Branding, version: &str, logs: Logs) -> Self {
         Self {
             chassis: Chassis::new(store, branding, version, logs),
@@ -179,7 +139,7 @@ impl Server {
     /// The directory holding the built browser bundle, or `None` for none
     /// (a headless product, or one whose bundle a dev server serves), which
     /// leaves a [`root`](Self::root) page in place; `Some` beside `root`
-    /// panics.
+    /// panics. A file with a `.gz` beside it is sent as that stored copy.
     pub fn ui(self, dir: Option<PathBuf>) -> Self {
         self.with(|chassis| chassis.ui(dir))
     }
@@ -234,7 +194,9 @@ impl Server {
 
     /// Listen on `socket`'s app socket, and its hooks socket when it names
     /// one, until `stop` completes; `stop` is first polled once every socket
-    /// is listening. A socket that cannot bind fails the start.
+    /// is listening. A socket that cannot bind fails the start. The hooks
+    /// socket serves only the index, About, [`notes`](Self::notes) and
+    /// [`backup_hooks`](Self::backup_hooks), to the console's uid alone.
     ///
     /// Who calls is what the console asserts in `Appliance-Identity`
     /// ([`ConsoleIdentity`](wslib_appliance_types::console::ConsoleIdentity)),

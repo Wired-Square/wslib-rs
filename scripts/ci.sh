@@ -56,10 +56,18 @@ for graph in "-p wslib-appliance-client" "-p wslib-appliance --no-default-featur
     || die "cargo tree $graph pulls in axum, sqlx or rustls"
 done
 
-step "The appliance family is at one version"
-[[ $(cargo metadata --format-version 1 --no-deps --locked \
-  | jq '[.packages[] | select(.name | startswith("wslib-appliance")) | .version] | unique | length') -le 1 ]] \
-  || die "the wslib-appliance crates are not at one version"
+step "The appliance facade pins each member at its version"
+metadata=$(cargo metadata --format-version 1 --no-deps --locked)
+jq -e '(.packages | map({key: .name, value: .version}) | from_entries) as $version
+  | .packages[] | select(.name == "wslib-appliance") | .dependencies as $pins
+  | $version | keys | map(select(startswith("wslib-appliance-")))
+  | all(. as $member | any($pins[]; .name == $member and .req == "=" + $version[$member]))' \
+  <<<"$metadata" >/dev/null || die "wslib-appliance does not pin every member at its version"
+
+step "The appliance family pins core exactly"
+jq -e '[.packages[].dependencies[] | select(.name == "wslib-appliance-core") | .req]
+  | all(startswith("="))' <<<"$metadata" >/dev/null \
+  || die "a dependency on wslib-appliance-core is not an = pin"
 
 step "Format"
 cargo fmt --all --check

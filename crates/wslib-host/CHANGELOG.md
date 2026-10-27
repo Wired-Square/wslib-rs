@@ -6,6 +6,8 @@
   it read through a null SID. `Sid::of_account` and `Sid::account` return a
   failed sizing lookup's own error, such as `ERROR_NONE_MAPPED`, instead of
   retrying with empty buffers.
+- On Unix, `PeerCredentials::new(uid, gid, pid)`, for a test that hands a
+  handler credentials without a socket.
 
 ## 0.1.2
 

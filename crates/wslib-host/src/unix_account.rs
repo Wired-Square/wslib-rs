@@ -15,6 +15,13 @@ pub struct PeerCredentials {
     pub pid: Option<u32>,
 }
 
+impl PeerCredentials {
+    /// Credentials as given, for a test that cannot open a socket as another account.
+    pub fn new(uid: u32, gid: u32, pid: Option<u32>) -> Self {
+        Self { uid, gid, pid }
+    }
+}
+
 /// The [`PeerCredentials`] of a connected Unix socket, std's or tokio's.
 pub fn peer_credentials(socket: &impl AsFd) -> io::Result<PeerCredentials> {
     credentials(socket.as_fd().as_raw_fd())

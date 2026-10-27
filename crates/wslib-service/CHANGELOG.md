@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+- A stop of the service's own logs its `stopping, by the service itself`
+  line even when `main` returns at once: the teardown could drop the line
+  before it was written.
+
 ## 0.1.2
 
 - The grace runs from the later of the stop and the first poll of `Stop`, so a

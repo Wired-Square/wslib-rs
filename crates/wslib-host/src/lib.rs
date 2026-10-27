@@ -3,6 +3,10 @@
 //! [`machine_id`], [`kernel_release`] and [`os_name`] from libc and sysctl,
 //! and Windows all but [`machine_id`] of those from Win32 and the registry;
 //! every other reader is `None` off Linux.
+//!
+//! Beside them, who an account is: on Unix a socket peer's
+//! `PeerCredentials` and a uid's `account_name`, and on Windows the `Sid`
+//! of an account, a service, a process, a pipe's client or an object's owner.
 
 use std::path::Path;
 use std::time::Duration;
@@ -11,8 +15,19 @@ use uuid::Uuid;
 
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(unix)]
+mod unix_account;
 #[cfg(windows)]
 mod windows;
+#[cfg(windows)]
+mod windows_account;
+
+#[cfg(unix)]
+pub use unix_account::{PeerCredentials, account_name, peer_credentials};
+#[cfg(windows)]
+pub use windows_account::{
+    Account, Sid, current_user, owner, pipe_client_user, process_user, service_account,
+};
 
 /// Where [`hostname`] reads on this platform, for a log line when it fails.
 #[cfg(not(any(target_os = "macos", windows)))]

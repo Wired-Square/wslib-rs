@@ -197,3 +197,109 @@ fn a_windows_computers_name_is_its_dns_host_name() {
 fn windows_has_no_machine_id() {
     assert_eq!(machine_id(APP), None);
 }
+
+#[cfg(unix)]
+mod unix_account {
+    use std::os::unix::net::UnixStream;
+
+    use crate::{account_name, peer_credentials};
+
+    const NAMELESS_UID: u32 = 2_147_483_647;
+
+    #[test]
+    fn a_socket_peer_is_this_process_as_it_runs() {
+        let (ours, _theirs) = UnixStream::pair().unwrap();
+        let peer = peer_credentials(&ours).unwrap();
+        // SAFETY: each reads this process's own credentials and cannot fail.
+        let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+        assert_eq!((peer.uid, peer.gid), (uid, gid));
+        assert_eq!(peer.pid, Some(std::process::id()));
+    }
+
+    #[test]
+    fn a_uid_is_named_as_id_names_it_and_one_with_no_entry_is_none() {
+        let id = std::process::Command::new("id")
+            .arg("-un")
+            .output()
+            .unwrap();
+        let name = String::from_utf8(id.stdout).unwrap();
+        // SAFETY: `geteuid` reads this process's own credentials and cannot fail.
+        let uid = unsafe { libc::geteuid() };
+        assert_eq!(account_name(uid).unwrap().as_deref(), Some(name.trim()));
+        assert_eq!(account_name(NAMELESS_UID).unwrap(), None);
+    }
+}
+
+#[cfg(windows)]
+mod windows_account {
+    use std::fs::OpenOptions;
+    use std::os::windows::io::{FromRawHandle, OwnedHandle};
+
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+    use windows_sys::Win32::System::Pipes::{CreateNamedPipeW, PIPE_TYPE_BYTE};
+
+    use crate::{Sid, current_user, owner, pipe_client_user, service_account};
+
+    /// Installed on every Windows machine.
+    const SERVICE: &str = "EventLog";
+
+    #[test]
+    fn a_service_resolves_to_its_own_service_sid() {
+        let sid = service_account(SERVICE).unwrap().expect("installed");
+        let text = sid.to_string();
+        assert!(text.starts_with("S-1-5-80-"), "{text}");
+        assert_eq!(text.split('-').count(), 9, "{text}");
+    }
+
+    #[test]
+    fn a_name_that_is_not_one_service_has_no_account() {
+        for service in [
+            "wslib-host-test-not-installed",
+            "ALL SERVICES",
+            "",
+            r"NT SERVICE\EventLog",
+            "a/b",
+            "EventLog\0",
+        ] {
+            assert_eq!(service_account(service).unwrap(), None, "{service:?}");
+        }
+    }
+
+    #[test]
+    fn this_user_is_found_again_by_its_name_and_its_text() {
+        let user = current_user().unwrap();
+        let account = user.account().unwrap();
+        let by_name = Sid::of_account(&format!(r"{}\{}", account.domain, account.name));
+        assert_eq!(by_name.unwrap(), user);
+        assert_eq!(user.to_string().parse::<Sid>().unwrap(), user);
+    }
+
+    #[test]
+    fn a_pipe_names_its_client_and_both_ends_its_owner() {
+        let name = format!(r"\\.\pipe\wslib-host-test-{}", std::process::id());
+        let wide: Vec<u16> = name.encode_utf16().chain([0]).collect();
+        // SAFETY: `wide` is NUL-terminated; a valid handle is owned from here.
+        let server = unsafe {
+            let handle = CreateNamedPipeW(
+                wide.as_ptr(),
+                PIPE_ACCESS_DUPLEX,
+                PIPE_TYPE_BYTE,
+                1,
+                0,
+                0,
+                0,
+                std::ptr::null(),
+            );
+            assert_ne!(handle, INVALID_HANDLE_VALUE);
+            OwnedHandle::from_raw_handle(handle)
+        };
+        let client = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&name)
+            .unwrap();
+        assert_eq!(pipe_client_user(&server).unwrap(), current_user().unwrap());
+        assert_eq!(owner(&client).unwrap(), owner(&server).unwrap());
+    }
+}

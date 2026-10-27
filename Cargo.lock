@@ -7236,7 +7236,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-file-atomic"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -7257,7 +7257,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-host"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "hmac",
  "libc",
@@ -7284,7 +7284,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-http-scaffold"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "axum",
  "flate2",
@@ -7396,7 +7396,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-service"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "libc",
  "thiserror 2.0.21",

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.6
+
+- `keep_mode(dir, mode)`: sets `dir`'s permission bits to `mode` only when
+  they differ, and returns the bits it replaced, so the caller can log the
+  change. A no-op off Unix.
+
 ## 0.1.5
 
 - `Refused`: the source a refusal by `recover`, `recover_expecting` or

@@ -351,7 +351,7 @@ fn drive(
     let token = manager.child_token();
     let ran = std::panic::catch_unwind(AssertUnwindSafe(|| {
         runtime.block_on(async {
-            tokio::spawn({
+            let said_stopping = tokio::spawn({
                 let token = token.clone();
                 let manager = manager.clone();
                 async move {
@@ -373,11 +373,17 @@ fn drive(
                 }
                 tokio::time::sleep(grace).await;
             };
-            tokio::select! {
+            let ended = tokio::select! {
                 biased;
                 ended = main(stop) => Some(ended),
                 () = overran => None,
+            };
+            // A `main` that returns at once after cancelling the token would
+            // otherwise beat the line to the teardown, which drops it unsaid.
+            if token.is_cancelled() {
+                said_stopping.await.ok();
             }
+            ended
         })
     }));
     std::panic::set_hook(previous);

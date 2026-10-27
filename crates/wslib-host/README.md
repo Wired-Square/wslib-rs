@@ -34,6 +34,15 @@ logs nothing itself.
 - **`uptime`** counts sleep and doesn't jump when the wall clock is set.
 - **`os_name`** on Windows names Windows 11 for builds from 22000, which the
   registry's `ProductName` still calls Windows 10.
+- **`peer_credentials(socket)`** (Unix) is a Unix socket peer's effective
+  uid and gid at `connect()`, and its pid on Linux and macOS.
+  **`account_name(uid)`** looks the uid up in the passwd database; it blocks,
+  as a directory service may answer it.
+- **`Sid`** (Windows) is an account's SID by name or from its text, with the
+  `Account` it names. `current_user`, `process_user(pid)` and
+  `pipe_client_user(pipe)` read a process token's user, `owner(handle)` a
+  kernel object's owner, and `service_account(service)` the
+  `NT SERVICE\<service>` SID, `None` for a service that is not installed.
 - **`machine_id(app)`** is systemd's `sd_id128_get_app_specific`: an
   HMAC-SHA256 of `app` keyed by the machine id, as a v4 UUID. It survives a
   rename and tells another app nothing about the machine id or its own id. On

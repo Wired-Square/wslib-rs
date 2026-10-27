@@ -51,9 +51,6 @@ step "The appliance family is at one version"
 step "Format"
 cargo fmt --all --check
 
-step "Check"
-cargo check --workspace --all-targets --locked
-
 crates() {
   cargo metadata --format-version 1 --no-deps --locked \
     | jq -r --argjson all "$all" '
@@ -77,9 +74,15 @@ for dir in crates/*/; do
 done
 export CHANGED="${changed[*]:-}"
 
-for crate in $(crates); do
-  step "$crate: clippy"
-  cargo clippy -p "$crate" --all-targets --all-features --locked -- -D warnings
+selected=$(crates)
+if [[ -n $selected ]]; then
+  step Clippy: $selected
+  cargo clippy $(printf -- ' -p %s' $selected) --all-targets --all-features --locked -- -D warnings
+fi
+
+# Per crate: built together, features unify, so a sibling's can mask a missing one
+# or add a second rustls provider that a test's process default can't choose between.
+for crate in $selected; do
   step "$crate: test"
   cargo test -p "$crate" --all-features --locked
   step "$crate: each feature"

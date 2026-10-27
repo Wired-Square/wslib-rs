@@ -260,6 +260,7 @@ dependencies = [
  "tower",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -278,6 +279,7 @@ dependencies = [
  "sync_wrapper",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -4292,6 +4294,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "aws-lc-rs",
+ "log",
  "once_cell",
  "ring",
  "rustls-pki-types",
@@ -6966,6 +6969,7 @@ version = "0.0.1"
 dependencies = [
  "wslib-appliance-auth",
  "wslib-appliance-config",
+ "wslib-appliance-core",
  "wslib-appliance-store",
  "wslib-appliance-types",
 ]
@@ -7003,6 +7007,53 @@ dependencies = [
  "toml 1.1.8+spec-1.1.0",
  "tracing",
  "wslib-http-scaffold",
+]
+
+[[package]]
+name = "wslib-appliance-core"
+version = "0.0.1"
+dependencies = [
+ "axum",
+ "axum-server",
+ "chrono",
+ "flate2",
+ "futures-util",
+ "hmac",
+ "hyper-util",
+ "libc",
+ "rcgen",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "windows-sys 0.61.2",
+ "wslib-appliance-auth",
+ "wslib-appliance-config",
+ "wslib-appliance-store",
+ "wslib-appliance-types",
+ "wslib-auth",
+ "wslib-auth-passkey",
+ "wslib-auth-totp",
+ "wslib-backoff",
+ "wslib-crypto",
+ "wslib-crypto-x509",
+ "wslib-file-atomic",
+ "wslib-homeassistant",
+ "wslib-http-error",
+ "wslib-http-scaffold",
+ "wslib-secret",
+ "wslib-service",
+ "wslib-telemetry",
+ "wslib-tls",
 ]
 
 [[package]]

@@ -4,6 +4,8 @@
 #[cfg(feature = "auth")]
 pub use wslib_appliance_auth as auth;
 pub use wslib_appliance_config as config;
+#[cfg(feature = "core")]
+pub use wslib_appliance_core as core;
 #[cfg(feature = "store")]
 pub use wslib_appliance_store as store;
 pub use wslib_appliance_types as types;

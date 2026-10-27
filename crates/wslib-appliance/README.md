@@ -11,6 +11,10 @@ The appliance family in one dependency:
 - `wslib_appliance::auth` is [`wslib-appliance-auth`](../wslib-appliance-auth),
   the sign-in, behind the `auth` feature (off by default), which turns on
   `store`.
+- `wslib_appliance::core` is [`wslib-appliance-core`](../wslib-appliance-core),
+  the router, the authority and the workers, behind the `core` feature (off
+  by default), which turns on `auth`. `use wslib_appliance::core;` shadows
+  the built-in `core` crate in that module.
 
 ```toml
 [dependencies]

@@ -14,9 +14,11 @@ publish = ["wired-square"]
 ts = ["wslib-appliance-types/ts"]
 store = ["dep:wslib-appliance-store"]
 auth = ["store", "dep:wslib-appliance-auth"]
+core = ["auth", "dep:wslib-appliance-core"]
 
 [dependencies]
 wslib-appliance-auth = { path = "../wslib-appliance-auth", version = "=0.0.1", registry = "wired-square", optional = true }
+wslib-appliance-core = { path = "../wslib-appliance-core", version = "=0.0.1", registry = "wired-square", optional = true }
 wslib-appliance-config = { path = "../wslib-appliance-config", version = "=0.0.1", registry = "wired-square" }
 wslib-appliance-store = { path = "../wslib-appliance-store", version = "=0.0.1", registry = "wired-square", optional = true }
 wslib-appliance-types = { path = "../wslib-appliance-types", version = "=0.0.1", registry = "wired-square" }

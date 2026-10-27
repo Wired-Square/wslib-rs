@@ -21,6 +21,9 @@ The appliance family in one dependency:
 - `wslib_appliance::https` is [`wslib-appliance-https`](../wslib-appliance-https),
   the backend that serves its own browser over TLS, behind the `https`
   feature (off by default), which turns on `core`.
+- `wslib_appliance::service` is [`wslib-appliance-service`](../wslib-appliance-service),
+  the backend served on control endpoints as a desktop service, behind the
+  `service` feature (off by default), which turns on `core`.
 
 ```toml
 [dependencies]

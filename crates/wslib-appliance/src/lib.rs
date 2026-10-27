@@ -10,6 +10,8 @@ pub use wslib_appliance_core as core;
 pub use wslib_appliance_https as https;
 #[cfg(feature = "server")]
 pub use wslib_appliance_server as server;
+#[cfg(feature = "service")]
+pub use wslib_appliance_service as service;
 #[cfg(feature = "store")]
 pub use wslib_appliance_store as store;
 pub use wslib_appliance_types as types;

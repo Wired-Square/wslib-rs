@@ -8,6 +8,8 @@
   `server` feature, off by default, which turns on `core`.
 - `https`: `wslib-appliance-https` 0.1.1, pinned exactly, behind the `https`
   feature, off by default, which turns on `core`.
+- `service`: `wslib-appliance-service` 0.1.1, pinned exactly, behind the
+  `service` feature, off by default, which turns on `core`.
 - Every other crate of the family moves to 0.1.1 with them, pinned exactly.
 
 ## 0.1.0

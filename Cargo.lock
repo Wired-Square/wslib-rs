@@ -6984,6 +6984,7 @@ dependencies = [
  "wslib-appliance-core",
  "wslib-appliance-https",
  "wslib-appliance-server",
+ "wslib-appliance-service",
  "wslib-appliance-store",
  "wslib-appliance-types",
 ]
@@ -7119,6 +7120,26 @@ dependencies = [
  "wslib-appliance-store",
  "wslib-appliance-types",
  "wslib-homeassistant",
+ "wslib-service",
+ "wslib-telemetry",
+]
+
+[[package]]
+name = "wslib-appliance-service"
+version = "0.1.1"
+dependencies = [
+ "axum",
+ "libc",
+ "rustls",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "wslib-appliance-core",
+ "wslib-appliance-store",
+ "wslib-appliance-types",
+ "wslib-file-atomic",
  "wslib-service",
  "wslib-telemetry",
 ]

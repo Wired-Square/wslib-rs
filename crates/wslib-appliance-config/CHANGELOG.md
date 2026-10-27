@@ -3,7 +3,9 @@
 ## 0.1.1
 
 - Released in lockstep with the rest of the `wslib-appliance` family; no
-  change.
+  change to the API.
+- Dependency floor: `wslib-http-scaffold` 0.1.3 (was 0.1.1), the floor the
+  rest of the family takes.
 
 ## 0.1.0
 

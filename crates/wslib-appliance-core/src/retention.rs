@@ -51,9 +51,9 @@ impl Clock for () {
 /// `()` never does; otherwise the clock, but no later than the highest sweep
 /// time since the last synchronised round plus the uptime since it, or this
 /// boot's whole uptime if it was in an earlier boot, so a clock set years ahead
-/// deletes nothing early. `sweeps` must date
-/// what it deletes by it, never by `Utc::now()`. A round that cannot read the
-/// stored bound on its sweep time is skipped.
+/// deletes nothing early. `sweeps` must date what it deletes by it, never by
+/// `Utc::now()`. A round that cannot read the stored bound on its sweep time
+/// is skipped.
 ///
 /// The first round is a period after the last one this box recorded, or a
 /// period from now if it has none, so a restart does not sweep early. A

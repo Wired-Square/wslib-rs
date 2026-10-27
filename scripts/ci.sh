@@ -39,10 +39,11 @@ step "wslib-telemetry's setup-core has no regex engine"
 # A desktop app takes wslib-appliance-client alone, or the facade with only
 # `client`; --target all covers the Windows graph.
 step "wslib-appliance-client carries no server stack"
-for args in "-p wslib-appliance-client" "-p wslib-appliance --no-default-features --features client"; do
-  tree=$(cargo tree $args --target all -e normal --prefix none --locked)
+for graph in "-p wslib-appliance-client" "-p wslib-appliance --no-default-features --features client"; do
+  read -ra args <<<"$graph"
+  tree=$(cargo tree "${args[@]}" --target all -e normal --prefix none --locked)
   ! grep -qE '(^|[-_])(axum|sqlx|rustls)([-_][a-z0-9_]+)* v[0-9]' <<<"$tree" \
-    || die "cargo tree $args pulls in axum, sqlx or rustls"
+    || die "cargo tree $graph pulls in axum, sqlx or rustls"
 done
 
 step "The appliance family is at one version"

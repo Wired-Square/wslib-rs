@@ -8,9 +8,10 @@ Moved from `appliance-core` 0.17.1 in wslib-appliance-rs; what differs:
   one before serving. `Chassis::build`, and loading or minting the serving
   pair, refuse with the new `ServeError::NoCryptoProvider` when none is
   installed, where 0.17.1 installed ring itself.
-  `backend::install_crypto_provider` is gone. `tls::pair_at` needs one too: an offline backup in its own
-  process without one fails as `TlsError::Internal`. So do `testing`'s TLS
-  peers, `Authority` and `self_signed`.
+  `backend::install_crypto_provider` is gone. `tls::pair_at` needs one
+  too: an offline backup in its own process without one fails as
+  `TlsError::Internal`. So do `testing`'s TLS peers, `Authority` and
+  `self_signed`.
 - `hostname`, `boottime`, `box_id` and the About page's OS and kernel are
   read through `wslib-host`, without `ring`: the same box id for the same
   machine. `hostname` is `wslib_host::hostname` re-exported.

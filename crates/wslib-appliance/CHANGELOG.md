@@ -12,3 +12,5 @@
   feature, off by default, which turns on `auth`.
 - `server`: `wslib-appliance-server` 0.1.0, pinned exactly, behind the
   `server` feature, off by default, which turns on `core`.
+- `https`: `wslib-appliance-https` 0.1.0, pinned exactly, behind the `https`
+  feature, off by default, which turns on `core`.

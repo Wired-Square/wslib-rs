@@ -6982,6 +6982,7 @@ dependencies = [
  "wslib-appliance-auth",
  "wslib-appliance-config",
  "wslib-appliance-core",
+ "wslib-appliance-https",
  "wslib-appliance-server",
  "wslib-appliance-store",
  "wslib-appliance-types",
@@ -7067,6 +7068,35 @@ dependencies = [
  "wslib-service",
  "wslib-telemetry",
  "wslib-tls",
+]
+
+[[package]]
+name = "wslib-appliance-https"
+version = "0.0.1"
+dependencies = [
+ "axum",
+ "axum-server",
+ "chrono",
+ "h2",
+ "rustls",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-rustls",
+ "tokio-util",
+ "tracing",
+ "wslib-appliance-auth",
+ "wslib-appliance-config",
+ "wslib-appliance-core",
+ "wslib-appliance-server",
+ "wslib-appliance-store",
+ "wslib-appliance-types",
+ "wslib-auth",
+ "wslib-auth-totp",
+ "wslib-http-server",
+ "wslib-secret",
+ "wslib-service",
+ "wslib-telemetry",
 ]
 
 [[package]]

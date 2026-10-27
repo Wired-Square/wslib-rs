@@ -18,6 +18,9 @@ The appliance family in one dependency:
 - `wslib_appliance::server` is [`wslib-appliance-server`](../wslib-appliance-server),
   the backend behind a console or an ingress proxy, behind the `server`
   feature (off by default), which turns on `core`.
+- `wslib_appliance::https` is [`wslib-appliance-https`](../wslib-appliance-https),
+  the backend that serves its own browser over TLS, behind the `https`
+  feature (off by default), which turns on `core`.
 
 ```toml
 [dependencies]

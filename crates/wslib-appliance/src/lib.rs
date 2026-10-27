@@ -6,6 +6,8 @@ pub use wslib_appliance_auth as auth;
 pub use wslib_appliance_config as config;
 #[cfg(feature = "core")]
 pub use wslib_appliance_core as core;
+#[cfg(feature = "https")]
+pub use wslib_appliance_https as https;
 #[cfg(feature = "server")]
 pub use wslib_appliance_server as server;
 #[cfg(feature = "store")]

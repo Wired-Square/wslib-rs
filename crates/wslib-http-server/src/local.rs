@@ -32,7 +32,8 @@ pub struct LocalSocket {
 impl LocalSocket {
     /// Bind `path` with permissions `mode`, first removing a socket there that
     /// nobody answers on. Anything else at `path`, or a live server, is refused.
-    /// The socket is never at `path` with any other permissions.
+    /// The socket is never at `path` with any other permissions. Binding needs a
+    /// Tokio runtime; refusing a path does not.
     ///
     /// `mode` sets the socket file's permissions only; whether a uid or group
     /// can connect also depends on the socket's group and its directory, which
@@ -45,6 +46,7 @@ impl LocalSocket {
                 "a local socket is bound at a non-empty path, not in the abstract namespace",
             ));
         }
+        fits_sun_path(path)?;
         clear_stale_socket(path)?;
 
         // Bound in a private directory and linked into place, so the socket is
@@ -109,17 +111,18 @@ impl Drop for LocalSocket {
     }
 }
 
-fn fits_sun_path(staged: &Path) -> io::Result<()> {
+fn fits_sun_path(path: &Path) -> io::Result<()> {
     const SUN_PATH: usize =
         size_of::<libc::sockaddr_un>() - std::mem::offset_of!(libc::sockaddr_un, sun_path);
-    let length = staged.as_os_str().len();
+    let length = path.as_os_str().len();
     if length < SUN_PATH {
         return Ok(());
     }
     Err(io::Error::new(
         io::ErrorKind::InvalidInput,
         format!(
-            "staged beside its path, the socket's path is {length} bytes; sun_path holds at most {}",
+            "{} is {length} bytes; sun_path holds at most {}",
+            path.display(),
             SUN_PATH - 1
         ),
     ))

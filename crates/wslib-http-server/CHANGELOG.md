@@ -14,8 +14,9 @@
   `LocalSocket::from_listener` holds one the caller bound and never unlinks
   it. `PeerCredentials` is re-exported from `wslib-host` (>= 0.1.1), now a
   dependency on Unix.
-- A path too long for `sun_path` once staged beside it is refused as
-  `InvalidInput`, naming the limit and the staged length. `libc` (>= 0.2.174)
+- A path too long for `sun_path`, as given or once staged beside it, is
+  refused as `InvalidInput`, naming the limit and the length, before
+  anything needs a Tokio runtime. `libc` (>= 0.2.174)
   is now a dependency on Unix.
 
 ## 0.1.3

@@ -185,6 +185,25 @@ async fn a_path_too_long_once_staged_is_refused_by_name() {
     assert_eq!(std::fs::read_dir(&parent).expect("the parent").count(), 0);
 }
 
+#[test]
+fn a_file_name_too_long_for_a_client_to_reach_is_refused_outside_a_runtime() {
+    let dir = tempfile::tempdir().expect("a tempdir");
+    let path = dir.path().join("s".repeat(120));
+
+    let refused = LocalSocket::bind(&path, 0o600, Bounds::SERVING)
+        .err()
+        .expect("too long");
+    assert_eq!(refused.kind(), ErrorKind::InvalidInput);
+    assert!(
+        refused.to_string().contains("sun_path holds at most"),
+        "{refused}"
+    );
+    assert_eq!(
+        std::fs::read_dir(dir.path()).expect("the tempdir").count(),
+        0
+    );
+}
+
 #[tokio::test]
 async fn binding_leaves_only_the_socket_in_its_directory() {
     let (dir, path) = socket_in();

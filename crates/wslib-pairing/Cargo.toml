@@ -17,4 +17,4 @@ wslib-secret = { version = "0.1.2", path = "../wslib-secret", registry = "wired-
 
 [dev-dependencies]
 tempfile = "3.10.1"
-wslib-crypto = { version = "0.1.1", path = "../wslib-crypto", registry = "wired-square" }
+wslib-crypto = { version = "0.1.2", path = "../wslib-crypto", registry = "wired-square" }

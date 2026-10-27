@@ -73,7 +73,9 @@ trust.pin_key(uri.host(), KeyFingerprint(Fingerprint::from(*uri.pin().as_bytes()
   why it was spent; never the code. So a restart cannot revive a spent code
   or reset the count, and a leaked state file does not give the code away.
   Nor can the daemon print the URI again after a restart; it issues a new
-  code and prints a new one.
+  code and prints a new one. Being owner-only, the state and its lock serve
+  only their owner: a tool that issues as root for a daemon running as
+  another user drops to that user first.
 - **`PairingCode`**: 26 characters of unpadded RFC 4648 base32, read in
   either case; `Debug` redacts it and `expose()` gives it.
 - **`PairingUri`**: `<scheme>://host:port#pin=<hex>&code=<code>`. The host is

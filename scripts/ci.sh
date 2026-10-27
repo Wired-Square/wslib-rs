@@ -36,6 +36,15 @@ step "wslib-telemetry's setup-core has no regex engine"
 ! cargo tree -p wslib-telemetry --no-default-features --features setup-core -e normal --prefix none \
   | grep -qE '^(regex|regex-automata|matchers) ' || die "setup-core pulls in a regex engine"
 
+# A desktop app takes wslib-appliance-client alone, or the facade with only
+# `client`; --target all covers the Windows graph.
+step "wslib-appliance-client carries no server stack"
+for args in "-p wslib-appliance-client" "-p wslib-appliance --no-default-features --features client"; do
+  tree=$(cargo tree $args --target all -e normal --prefix none --locked)
+  ! grep -qE '(^|[-_])(axum|sqlx|rustls)([-_][a-z0-9_]+)* v[0-9]' <<<"$tree" \
+    || die "cargo tree $args pulls in axum, sqlx or rustls"
+done
+
 step "The appliance family is at one version"
 [[ $(cargo metadata --format-version 1 --no-deps --locked \
   | jq '[.packages[] | select(.name | startswith("wslib-appliance")) | .version] | unique | length') -le 1 ]] \

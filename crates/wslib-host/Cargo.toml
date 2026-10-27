@@ -1,6 +1,6 @@
 [package]
 name = "wslib-host"
-version = "0.1.2"
+version = "0.1.3"
 description = "What a host says about itself: name, uptime, boot id, kernel, OS, an app-specific machine id, and who its local accounts are."
 readme = "README.md"
 edition.workspace = true

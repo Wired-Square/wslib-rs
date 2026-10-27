@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.3
+
+- On Windows, `owner` returns `NotFound` for an object with no owner, where
+  it read through a null SID. `Sid::of_account` and `Sid::account` return a
+  failed sizing lookup's own error, such as `ERROR_NONE_MAPPED`, instead of
+  retrying with empty buffers.
+
 ## 0.1.2
 
 - Dependency floor raised to match the crates it shares a graph with:

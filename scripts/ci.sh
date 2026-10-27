@@ -43,8 +43,8 @@ graph=$(cargo tree --workspace -e normal --prefix none)
 ! grep -E '^(aws-lc-rs|ring) ' <<<"$graph" || die "a rustls provider is in the default graph"
 
 step "wslib-telemetry's setup-core has no regex engine"
-! cargo tree -p wslib-telemetry --no-default-features --features setup-core -e normal --prefix none \
-  | grep -qE '^(regex|regex-automata|matchers) ' || die "setup-core pulls in a regex engine"
+graph=$(cargo tree -p wslib-telemetry --no-default-features --features setup-core -e normal --prefix none)
+! grep -E '^(regex|regex-automata|matchers) ' <<<"$graph" || die "setup-core pulls in a regex engine"
 
 step "The appliance family is at one version"
 [[ $(cargo metadata --format-version 1 --no-deps --locked \

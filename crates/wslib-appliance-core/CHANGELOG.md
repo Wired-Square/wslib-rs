@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0
+## 0.1.1
 
 Moved from `appliance-core` 0.17.1 in wslib-appliance-rs; what differs:
 

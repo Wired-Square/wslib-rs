@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- Released in lockstep with the rest of the `wslib-appliance` family; no
+  change.
+
 ## 0.1.0
 
 Moved from `appliance-store` 0.17.1 in wslib-appliance-rs; what differs:

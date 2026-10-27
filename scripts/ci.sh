@@ -28,6 +28,15 @@ cross_windows=false
 ! $cross_windows || rustup target list --installed | grep -qx $win || die "$win missing: rustup target add $win"
 ! $cross_windows || ! $all || rustup +nightly target list --installed | grep -qx $win \
   || die "nightly $win missing: rustup +nightly target add $win"
+# Clippy and check need no object code, and sqlite3.c cannot be cross-compiled for msvc off Windows.
+stubs=
+if $cross_windows; then
+  stubs=$(mktemp -d)
+  trap 'rm -rf "$stubs"' EXIT
+  printf '#!/bin/sh\nfor a; do case $a in -out:*) touch "${a#-out:}";; esac; done\n' >"$stubs/ar"
+  chmod +x "$stubs/ar"
+  export CC_x86_64_pc_windows_msvc=true AR_x86_64_pc_windows_msvc="$stubs/ar"
+fi
 
 step "No consumer is named"
 names=scripts/forbidden-names.txt
@@ -45,6 +54,16 @@ graph=$(cargo tree --workspace -e normal --prefix none)
 step "wslib-telemetry's setup-core has no regex engine"
 graph=$(cargo tree -p wslib-telemetry --no-default-features --features setup-core -e normal --prefix none)
 ! grep -E '^(regex|regex-automata|matchers) ' <<<"$graph" || die "setup-core pulls in a regex engine"
+
+# A desktop app takes wslib-appliance-client alone, or the facade with only
+# `client`; --target all covers the Windows graph.
+step "wslib-appliance-client carries no server stack"
+for graph in "-p wslib-appliance-client" "-p wslib-appliance --no-default-features --features client"; do
+  read -ra args <<<"$graph"
+  tree=$(cargo tree "${args[@]}" --target all -e normal --prefix none --locked)
+  ! grep -qE '(^|[-_])(axum|sqlx|rustls)([-_][a-z0-9_]+)* v[0-9]' <<<"$tree" \
+    || die "cargo tree $graph pulls in axum, sqlx or rustls"
+done
 
 step "The appliance facade pins each member at its version"
 metadata=$(cargo metadata --format-version 1 --no-deps --locked)
@@ -125,7 +144,7 @@ if $all; then
   # Per crate: one lock can't hold every crate's floors at once.
   step "Dependency floors"
   floors=$(mktemp -d)
-  trap 'rm -rf "$floors"' EXIT
+  trap 'rm -rf "$floors" ${stubs:+"$stubs"}' EXIT
   git ls-files -z -co --exclude-standard \
     | while IFS= read -r -d '' f; do [[ -e $f ]] && printf '%s\0' "$f"; done \
     | tar -c --null -T - | tar -x -C "$floors"

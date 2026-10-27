@@ -9,6 +9,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "aead"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1973cfbc1a2daf9cf550e74e1f088c28e7f7d8c1e1418fb6c9dc5184b7e84c99"
+dependencies = [
+ "crypto-common 0.2.2",
+ "inout",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -237,6 +247,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "31b698c5f9a010f6573133b09e0de5408834d0c82f8d7475a89fc1867a71cd90"
 dependencies = [
  "axum-core",
+ "axum-macros",
  "bytes",
  "form_urlencoded",
  "futures-util",
@@ -260,6 +271,7 @@ dependencies = [
  "tower",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -278,6 +290,18 @@ dependencies = [
  "sync_wrapper",
  "tower-layer",
  "tower-service",
+ "tracing",
+]
+
+[[package]]
+name = "axum-macros"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7aa268c23bfbbd2c4363b9cd302a4f504fb2a9dfe7e3451d66f35dd392e20aca"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -586,8 +610,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06"
 dependencies = [
  "cfg-if",
+ "cipher",
  "cpufeatures 0.3.1",
  "rand_core 0.10.1",
+]
+
+[[package]]
+name = "chacha20poly1305"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b89e1c441e926b9c82a8d023f6e1b7ae0adcfaa7d621814e4d60789bac751cb"
+dependencies = [
+ "aead",
+ "chacha20",
+ "cipher",
+ "poly1305",
 ]
 
 [[package]]
@@ -602,6 +639,17 @@ dependencies = [
  "serde",
  "wasm-bindgen",
  "windows-link",
+]
+
+[[package]]
+name = "cipher"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8cf2a2c93cd704877c0858356ed03480ff301ee950b43f1cbe4573b088bfa6c"
+dependencies = [
+ "block-buffer 0.12.1",
+ "crypto-common 0.2.2",
+ "inout",
 ]
 
 [[package]]
@@ -2562,6 +2610,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "inout"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b5cf4372d022092674a83b8febf5865f7a573cc0c5baec5e49c879b6a20978f"
+dependencies = [
+ "hybrid-array",
+]
+
+[[package]]
 name = "io-kit-sys"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3704,6 +3761,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "poly1305"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e2d0073b297041425c7c3df6eb4792d598a15323fe63346852b092eca02904c"
+dependencies = [
+ "cpufeatures 0.3.1",
+ "universal-hash",
+]
+
+[[package]]
 name = "polycool"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4292,6 +4359,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "aws-lc-rs",
+ "log",
  "once_cell",
  "ring",
  "rustls-pki-types",
@@ -6136,6 +6204,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
 
 [[package]]
+name = "universal-hash"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4987bdc12753382e0bec4a65c50738ffaabc998b9cdd1f952fb5f39b0048a96"
+dependencies = [
+ "crypto-common 0.2.2",
+ "ctutils",
+]
+
+[[package]]
 name = "untrusted"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6962,17 +7040,23 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "wslib-appliance-auth",
+ "wslib-appliance-backup",
+ "wslib-appliance-client",
  "wslib-appliance-config",
+ "wslib-appliance-core",
+ "wslib-appliance-https",
+ "wslib-appliance-server",
+ "wslib-appliance-service",
  "wslib-appliance-store",
  "wslib-appliance-types",
 ]
 
 [[package]]
 name = "wslib-appliance-auth"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -6993,8 +7077,49 @@ dependencies = [
 ]
 
 [[package]]
-name = "wslib-appliance-config"
+name = "wslib-appliance-backup"
 version = "0.1.0"
+dependencies = [
+ "argon2",
+ "axum",
+ "base64 0.23.1",
+ "chacha20poly1305",
+ "chrono",
+ "flate2",
+ "getrandom 0.3.4",
+ "rustls",
+ "serde",
+ "serde_json",
+ "subtle",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "wslib-appliance-auth",
+ "wslib-appliance-core",
+ "wslib-appliance-https",
+ "wslib-appliance-server",
+ "wslib-appliance-store",
+ "wslib-appliance-types",
+ "wslib-auth-totp",
+ "wslib-file-atomic",
+ "wslib-http-scaffold",
+ "wslib-secret",
+]
+
+[[package]]
+name = "wslib-appliance-client"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.21",
+ "tokio",
+ "windows-sys 0.61.2",
+ "wslib-host",
+]
+
+[[package]]
+name = "wslib-appliance-config"
+version = "0.1.1"
 dependencies = [
  "clap",
  "serde",
@@ -7006,8 +7131,126 @@ dependencies = [
 ]
 
 [[package]]
-name = "wslib-appliance-store"
+name = "wslib-appliance-core"
 version = "0.1.0"
+dependencies = [
+ "axum",
+ "axum-server",
+ "chrono",
+ "flate2",
+ "futures-util",
+ "hyper-util",
+ "libc",
+ "rcgen",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "windows-sys 0.61.2",
+ "wslib-appliance-auth",
+ "wslib-appliance-config",
+ "wslib-appliance-store",
+ "wslib-appliance-types",
+ "wslib-auth",
+ "wslib-auth-passkey",
+ "wslib-auth-totp",
+ "wslib-crypto",
+ "wslib-crypto-x509",
+ "wslib-file-atomic",
+ "wslib-homeassistant",
+ "wslib-host",
+ "wslib-http-error",
+ "wslib-http-scaffold",
+ "wslib-secret",
+ "wslib-service",
+ "wslib-telemetry",
+ "wslib-tls",
+]
+
+[[package]]
+name = "wslib-appliance-https"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "axum-server",
+ "chrono",
+ "h2",
+ "rustls",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-rustls",
+ "tokio-util",
+ "tracing",
+ "wslib-appliance-auth",
+ "wslib-appliance-config",
+ "wslib-appliance-core",
+ "wslib-appliance-server",
+ "wslib-appliance-store",
+ "wslib-appliance-types",
+ "wslib-auth",
+ "wslib-auth-totp",
+ "wslib-http-server",
+ "wslib-secret",
+ "wslib-service",
+ "wslib-telemetry",
+]
+
+[[package]]
+name = "wslib-appliance-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "flate2",
+ "futures-util",
+ "rustls",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "wslib-appliance-config",
+ "wslib-appliance-core",
+ "wslib-appliance-store",
+ "wslib-appliance-types",
+ "wslib-homeassistant",
+ "wslib-service",
+ "wslib-telemetry",
+]
+
+[[package]]
+name = "wslib-appliance-service"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "libc",
+ "rustls",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "wslib-appliance-core",
+ "wslib-appliance-store",
+ "wslib-appliance-types",
+ "wslib-file-atomic",
+ "wslib-service",
+ "wslib-telemetry",
+]
+
+[[package]]
+name = "wslib-appliance-store"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "serde",
@@ -7025,7 +7268,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-types"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "serde",

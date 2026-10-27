@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+- Dependency floors: `wslib-secret`, `wslib-appliance-store` and
+  `wslib-appliance-types` 0.1.1 (were 0.1.0), the floors the rest of the
+  family takes. No change to the API.
+
 ## 0.1.0
 
 Moved from `appliance-auth` 0.17.1 in wslib-appliance-rs; what differs:

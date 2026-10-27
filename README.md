@@ -46,7 +46,13 @@ appliance chassis and every app beside it.
 | `wslib-appliance-config` | An appliance's bootstrap settings: flags, env and files       |
 | `wslib-appliance-store`  | An appliance's tables, in one SQLite file its product shares  |
 | `wslib-appliance-auth`   | Sign-in: passwords, TOTP, recovery codes, passkeys, sessions  |
-| `wslib-appliance`        | The appliance family in one crate; store and auth as features |
+| `wslib-appliance-core`   | The appliance chassis: roles, routes, state, control sockets  |
+| `wslib-appliance-server` | The backend behind a console, on the app socket it proxies    |
+| `wslib-appliance-https`  | The self-served backend: TLS, sign-in, its own accounts       |
+| `wslib-appliance-service` | The desktop backend, on control sockets and named pipes      |
+| `wslib-appliance-backup` | Sealed backups, their routes and schedule, on any backend     |
+| `wslib-appliance-client` | A Windows app's connection to its service's control pipe      |
+| `wslib-appliance`        | The appliance family in one crate, each member a feature      |
 
 ## Using a crate
 

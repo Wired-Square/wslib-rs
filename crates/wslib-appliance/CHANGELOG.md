@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.1
+
+- `core`: `wslib-appliance-core` 0.1.0, pinned exactly, behind the `core`
+  feature, off by default, which turns on `auth`.
+- `server`: `wslib-appliance-server` 0.1.0, pinned exactly, behind the
+  `server` feature, off by default, which turns on `core`.
+- `https`: `wslib-appliance-https` 0.1.0, pinned exactly, behind the `https`
+  feature, off by default, which turns on `core`.
+- `service`: `wslib-appliance-service` 0.1.0, pinned exactly, behind the
+  `service` feature, off by default, which turns on `core`.
+- `backup`: `wslib-appliance-backup` 0.1.0, pinned exactly, behind the
+  `backup` feature, off by default, which turns on `core`.
+- `client`: `wslib-appliance-client` 0.1.0, pinned exactly, behind the
+  `client` feature, off by default.
+- `wslib-appliance-types`, `-config`, `-store` and `-auth` 0.1.1, pinned
+  exactly.
+- Each member now keeps its own version, and this crate pins each exactly.
+
 ## 0.1.0
 
 - `types`, `config` and `store`: `wslib-appliance-types`,

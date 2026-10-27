@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+- Dependency floors: `wslib-auth-totp` 0.1.1, `wslib-http-error` 0.1.1 and
+  `wslib-telemetry` 0.1.9 (were 0.1.0), the floors the rest of the family
+  takes. No change to the API.
+
 ## 0.1.0
 
 - `AppLink { name, href }`, one entry of an app switcher's listing.

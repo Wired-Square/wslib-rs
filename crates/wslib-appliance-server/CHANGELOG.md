@@ -11,8 +11,8 @@ Moved from `appliance-server` 0.17.1 in wslib-appliance-rs; what differs:
   without it.
 - The `test-support` feature is `testing`. `testing::TempDir` is gone: use
   `tempfile`. The harness's directory is a `tempfile` one.
-- `testing` re-exports `wslib-appliance-core`'s `testing`; its changes are in
-  that crate's changelog.
+- `testing`, `tls` and the other items re-exported from `wslib-appliance-core`
+  carry that crate's changes; see its changelog.
 - A harness that cannot assemble panics with "the harness assembles: " and
   the refusal (was "the trust tables load"); a `resolver` harness with no
   provider panics while minting its pair.

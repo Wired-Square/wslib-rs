@@ -48,6 +48,8 @@ let app = standard_layers(app);
   `{"status":"ok"}`, or `ready`'s error while it fails.
 - **`version(version, build)`**: `GET /version` answering
   `{"version", "build"}`; `build` is wslib-build-id's `WSLIB_BUILD_ID`.
+- **`attachment(content_type, filename, body)`**: a response a browser saves
+  as `filename` rather than renders, marked `no-store`.
 - **`standard_layers`**: tracing, gzip compression, and a panic answered as a
   500 error body. Call it last; it wraps only what the router already holds.
 - **`EncoderCap`**: at most 64 gzip encoders (~235 KB each) live at once, in

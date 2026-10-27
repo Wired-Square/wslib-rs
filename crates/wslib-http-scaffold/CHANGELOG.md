@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+- `attachment(content_type, filename, body)`: a `Response` a browser saves
+  as `filename`, marked `Cache-Control: no-store`. The name is sent as a
+  quoted string, and one no header can carry falls back to `download`.
+
 ## 0.1.2
 
 - `accepts_gzip(headers)`, now public, follows RFC 9110: `gzip` or `x-gzip`

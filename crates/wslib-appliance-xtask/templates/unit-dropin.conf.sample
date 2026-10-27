@@ -68,12 +68,12 @@
 # to avoid.
 #
 # That is the real limit, and it is worth separating from one that looks like
-# it and is not: a boolean the chassis sets, such as `ProtectClock=yes`, *can*
+# it and is not: a boolean the unit sets, such as `ProtectClock=yes`, *can*
 # be undone — `ProtectClock=no` is the default and puts it back exactly. So
-# "the chassis set this and I cannot unset it" applies to dependencies, not to
+# "the unit set this and I cannot unset it" applies to dependencies, not to
 # the sandbox.
 #
-# If a product genuinely needs the chassis to stop emitting something, that is
+# If a product genuinely needs the unit to stop carrying something, that is
 # a knob missing from `appliance.toml` and a change to wslib-appliance-xtask,
 # not a workaround here.
 #
@@ -103,7 +103,7 @@
 # observed behaviour rather than a promise. `DeviceAllow=` is
 # systemd.resource-control(5), not systemd.exec(5).
 #
-# None of it has been verified on a real board by anyone working on this
-# chassis. Check the unit you actually get with `systemctl cat
+# None of it has been verified on a real board by anyone working on
+# wslib-appliance-xtask. Check the unit you actually get with `systemctl cat
 # {{name}}.service`, and the sandbox you actually get with `systemd-analyze
 # security {{name}}.service`, before hanging a security property off a drop-in.

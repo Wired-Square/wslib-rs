@@ -141,7 +141,7 @@ one place where nothing else has the file open. Hooks are for what lives outside
 the database: a directory to create, a file from an older deployment to convert,
 a service to poke.
 
-## What the chassis already does, so you do not
+## What the maintainer scripts already do, so you do not
 
 - Creates `{{user}}` and the `{{group}}` group.
 - Creates `{{config_dir}}` and sets it to `root:{{group}}` mode `0751`. systemd

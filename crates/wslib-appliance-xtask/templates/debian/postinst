@@ -102,9 +102,9 @@ configure)
     # ---------------------------------------------------------------------
     # Hooks
     # ---------------------------------------------------------------------
-    # A product's own steps go in $HOOK_DIR as numbered executables. Nothing in
-    # the chassis writes that directory, so nothing there is lost when this file
-    # is regenerated.
+    # A product's own steps go in $HOOK_DIR as numbered executables. Nothing
+    # wslib-appliance-xtask renders writes that directory, so nothing there is
+    # lost when this file is regenerated.
     #
     # **--exit-on-error, and a failing hook fails the install.** run-parts
     # otherwise runs every script and reports afterwards, which for a migration

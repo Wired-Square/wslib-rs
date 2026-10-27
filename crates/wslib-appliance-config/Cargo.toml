@@ -1,0 +1,22 @@
+[package]
+name = "wslib-appliance-config"
+version = "0.0.1"
+description = "An appliance's bootstrap settings: what has to be known before there is a database, from flags, environment and files."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[dependencies]
+clap = { version = "4.0", default-features = false, features = ["std", "derive"] }
+serde = { version = "1.0.225", features = ["derive"] }
+thiserror = "2"
+toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
+tracing = "0.1.41"
+wslib-http-scaffold = { path = "../wslib-http-scaffold", version = "0.1.1", registry = "wired-square", default-features = false }
+
+[dev-dependencies]
+tempfile = "3.10.1"

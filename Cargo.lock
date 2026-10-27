@@ -6961,6 +6961,85 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-appliance"
+version = "0.0.1"
+dependencies = [
+ "wslib-appliance-auth",
+ "wslib-appliance-config",
+ "wslib-appliance-store",
+ "wslib-appliance-types",
+]
+
+[[package]]
+name = "wslib-appliance-auth"
+version = "0.0.1"
+dependencies = [
+ "base64 0.23.1",
+ "chrono",
+ "getrandom 0.3.4",
+ "sha2 0.10.9",
+ "subtle",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "wslib-appliance-store",
+ "wslib-appliance-types",
+ "wslib-auth",
+ "wslib-auth-passkey",
+ "wslib-auth-password",
+ "wslib-auth-totp",
+ "wslib-secret",
+]
+
+[[package]]
+name = "wslib-appliance-config"
+version = "0.0.1"
+dependencies = [
+ "clap",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml 1.1.8+spec-1.1.0",
+ "tracing",
+ "wslib-http-scaffold",
+]
+
+[[package]]
+name = "wslib-appliance-store"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "uuid",
+ "wslib-appliance-types",
+ "wslib-auth",
+ "wslib-db-sqlite",
+ "wslib-secret",
+]
+
+[[package]]
+name = "wslib-appliance-types"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "ts-rs",
+ "wslib-auth-passkey",
+ "wslib-auth-totp",
+ "wslib-http-error",
+ "wslib-secret",
+ "wslib-telemetry",
+]
+
+[[package]]
 name = "wslib-auth"
 version = "0.1.1"
 dependencies = [

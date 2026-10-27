@@ -1,0 +1,33 @@
+[package]
+name = "wslib-appliance-auth"
+version = "0.0.1"
+description = "An appliance's sign-in: passwords, TOTP, recovery codes and passkeys against its store, and sessions with the three checks that make revocation immediate."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[dependencies]
+base64 = { version = "0.23", default-features = false, features = ["alloc"] }
+chrono = { version = "0.4.39", default-features = false }
+getrandom = "0.3"
+sha2 = "0.10.9"
+subtle = { version = "2.5", default-features = false }
+thiserror = "2"
+tokio = { version = "1.47", default-features = false, features = ["rt"] }
+tracing = "0.1.41"
+wslib-appliance-store = { path = "../wslib-appliance-store", version = "0.0.1", registry = "wired-square" }
+wslib-appliance-types = { path = "../wslib-appliance-types", version = "0.0.1", registry = "wired-square" }
+wslib-auth = { path = "../wslib-auth", version = "0.1.1", registry = "wired-square", default-features = false, features = ["sqlite"] }
+wslib-auth-passkey = { path = "../wslib-auth-passkey", version = "0.1.0", registry = "wired-square", default-features = false, features = ["ceremonies"] }
+wslib-auth-password = { path = "../wslib-auth-password", version = "0.1.2", registry = "wired-square", default-features = false }
+wslib-auth-totp = { path = "../wslib-auth-totp", version = "0.1.1", registry = "wired-square", default-features = false, features = ["codes"] }
+wslib-secret = { path = "../wslib-secret", version = "0.1.0", registry = "wired-square" }
+
+[dev-dependencies]
+tempfile = "3.10.1"
+tokio = { version = "1.47", features = ["macros", "rt-multi-thread", "time"] }
+wslib-auth-passkey = { path = "../wslib-auth-passkey", version = "0.1.0", registry = "wired-square", features = ["testing"] }

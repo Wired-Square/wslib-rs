@@ -25,6 +25,6 @@ tracing = "0.1.41"
 
 [dev-dependencies]
 h2 = "0.4.2"
-rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
 rustls = { version = "0.23.27", default-features = false, features = ["ring", "std"] }
 tokio = { version = "1.47", features = ["io-util", "macros", "rt-multi-thread", "test-util"] }

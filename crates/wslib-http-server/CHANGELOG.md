@@ -4,7 +4,7 @@
 
 - Dependency floors raised to match the crates it shares a graph with:
   axum 0.8.7 (was 0.8), rustls 0.23.27 (was 0.23.11), tokio-util 0.7.19 (was
-  0.7.5). No change to the API.
+  0.7.5), and for its tests rcgen 0.14.10 (was 0.14). No change to the API.
 
 ## 0.1.2
 

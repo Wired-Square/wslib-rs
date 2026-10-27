@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The CI definition. A future Actions workflow calls this rather than restating it.
 # Everyday: workspace-wide cheap gates, then per-crate checks on crates changed
-# since their last release tag plus their reverse dependencies. --tag: every crate.
+# since their last release tag plus their reverse dependencies. --tag: every crate,
+# once per clean commit.
 #
 #   scripts/ci.sh [--tag]
 set -euo pipefail
@@ -12,6 +13,12 @@ all=false
 
 die() { printf 'ci: %s\n' "$*" >&2; exit 1; }
 step() { printf '\n== %s\n' "$*"; }
+
+stamp=
+if $all && [[ -z $(git status --porcelain) ]]; then
+  stamp="${CARGO_TARGET_DIR:-target}/ci-tag-passed/$(git rev-parse HEAD)"
+  [[ ! -e $stamp ]] || { printf 'ci: --tag already passed at %s\n' "$(git rev-parse --short HEAD)"; exit 0; }
+fi
 
 command -v cargo-hack >/dev/null || die "cargo-hack missing: cargo install cargo-hack"
 ! $all || cargo +nightly --version >/dev/null 2>&1 || die "nightly missing: rustup toolchain install nightly"
@@ -107,4 +114,5 @@ if $all; then
   done
 fi
 
+[[ -z $stamp ]] || { mkdir -p "$(dirname "$stamp")" && touch "$stamp"; }
 printf '\nci: ok\n'

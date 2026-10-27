@@ -55,8 +55,9 @@ crates() {
         | ($p | map(.name)) as $names
         | def changed($n): $all or ($n | IN($ENV.CHANGED | split(" ")[]));
           def rdeps($n): [$p[] | select(any(.dependencies[]; .name == $n)) | .name];
-          [$names[] | select(changed(.))] as $seed
-          | [$seed, ($seed | map(rdeps(.)) | add // [])] | add | unique | .[]'
+          def dependants: (. + map(rdeps(.)[]) | unique) as $next
+            | if $next == . then . else $next | dependants end;
+          [$names[] | select(changed(.))] | unique | dependants | .[]'
 }
 
 # A crate counts as changed if its directory differs from its newest release tag,

@@ -25,7 +25,7 @@ wslib-auth = { path = "../wslib-auth", version = "0.1.1", registry = "wired-squa
 wslib-auth-passkey = { path = "../wslib-auth-passkey", version = "0.1.0", registry = "wired-square", default-features = false, features = ["ceremonies"] }
 wslib-auth-password = { path = "../wslib-auth-password", version = "0.1.2", registry = "wired-square", default-features = false }
 wslib-auth-totp = { path = "../wslib-auth-totp", version = "0.1.1", registry = "wired-square", default-features = false, features = ["codes"] }
-wslib-secret = { path = "../wslib-secret", version = "0.1.0", registry = "wired-square" }
+wslib-secret = { path = "../wslib-secret", version = "0.1.1", registry = "wired-square" }
 
 [dev-dependencies]
 tempfile = "3.10.1"

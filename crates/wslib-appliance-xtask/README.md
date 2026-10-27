@@ -37,9 +37,67 @@ and `wslib-appliance-server` 0.1.0: the `/usr/share/<name>` layout, the
   the client sent. It refuses a non-loopback listener, and a request whose
   `Host` or `Origin` is not loopback. Run it as the uid the app was given as
   `<PREFIX>_CONSOLE_UID`.
+- **`gates [--release]`** checks the repository in this directory against
+  the rules of this version: see [Gates](#gates).
 
-Exit codes: `0` clean, `1` drift or an unpatched site, `2` the tool could not
-run.
+Exit codes: `0` clean, `1` drift, an unpatched site or a failed gate, `2` the
+tool could not run.
+
+## Gates
+
+A product's CI installs one exact version and runs it in the directory that
+holds its `Cargo.lock` and `appliance.toml`. Every path below is relative to
+that directory, and the greps read only beneath it:
+
+```sh
+cargo install wslib-appliance-xtask --locked --version =0.1.1 --registry wired-square
+wslib-appliance-xtask gates
+```
+
+Cache `~/.cargo/bin` keyed by that version. A product is held to the rules of
+the version it installs, and a new rule reaches it only when it bumps.
+
+The default run compiles nothing and takes seconds:
+
+- **forbidden names**: nothing in the tree matches a line of the product's own
+  `scripts/forbidden-names.txt` (`git grep -iE`), skipped when it is missing
+  or empty.
+- **sqlx query macros**: no `sqlx::query!` or its siblings, which need a live
+  database or a `.sqlx` cache to build.
+- **lock**: every `wslib-appliance*` crate in `Cargo.lock` comes from a
+  registry, not git or a path, so a tag can be rebuilt. One locked at a version
+  other than the one this tool renders for is a warning naming both.
+- **rustls provider**: exactly one of `ring` and `aws-lc-rs` in the normal
+  dependency graph on any target (`cargo tree`, which resolves without
+  compiling), or a process default cannot be chosen. Skipped with no rustls.
+- **packaging**: `packaging diff`, skipped with no `appliance.toml`.
+
+`--release`, for a tag, adds the builds a product's own CI may not run:
+`cargo clippy` for `aarch64-unknown-linux-musl` and for the host, both with
+`-D warnings`, and `cargo test --workspace --locked`. The cross clippy needs
+the target installed and a C compiler and archiver for it, checked before it
+starts; with zig, as shims:
+
+```sh
+mkdir -p "$HOME/.cross"
+cat >"$HOME/.cross/cc" <<'SHIM'
+#!/bin/sh
+n=$#
+while [ "$n" -gt 0 ]; do
+  a="$1"; shift; n=$((n - 1))
+  case "$a" in --target=*) ;; *) set -- "$@" "$a" ;; esac
+done
+exec zig cc -target aarch64-linux-musl "$@"
+SHIM
+printf '#!/bin/sh\nexec zig ar "$@"\n' >"$HOME/.cross/ar"
+chmod +x "$HOME/.cross/cc" "$HOME/.cross/ar"
+export CC_aarch64_unknown_linux_musl="$HOME/.cross/cc" AR_aarch64_unknown_linux_musl="$HOME/.cross/ar"
+```
+
+The `cc` shim drops cc-rs's `--target=<rust triple>`, which `zig cc` refuses.
+
+Each gate prints one line, `ok`, `skipped` with why, or `failed` with every
+hit beneath it; warnings go to stderr and never fail the run.
 
 ## What it owns, and what a product owns
 
@@ -66,6 +124,70 @@ in `[package.files]` are relative to the repository root.
 `make-image.sh` builds the image, one architecture per run, into
 `target/docker/`. Both take `CARGO_BUILD_TARGET` and call this tool by name, so
 it must be on `PATH`.
+
+## The package
+
+**Two `config.toml` files.** `<config_dir>/config.toml` is a dpkg conffile
+with every listener and `[tls]` key commented, so dpkg keeps an operator's
+edit and asks before replacing an edited file the upgrade changed.
+`[targets.deb]`'s `bind_address` and `https_port` go in
+`/usr/share/<name>/config.toml`, which is not a conffile, so every upgrade
+replaces it. The unit points `<PREFIX>_PACKAGE_CONFIG` at that file and sets
+no listener `Environment=`, which would outrank the operator: a key
+uncommented in the conffile wins. `redirect_port` defaults to `0`, so there is
+no plain-HTTP listener until an operator sets one. On every configure,
+`postinst` takes world access off the conffile and sets its group to `group`
+only while it is `root`'s, leaving an operator's group, a stricter mode and a
+symlink alone.
+
+**A renamed package.** With `[targets.deb] package`, the package conflicts
+with and replaces `name`, so installing it over a system-named one keeps the
+configuration, the state, the account and whether the unit is enabled. It
+does not provide `name`: another package's `Depends: <name>` is met only by a
+package called `name`. A purge leaves everything of the appliance's while
+another of its packages (`name`, `package`, `<name>-image`) is installed, and
+fails, removing nothing, when `dpkg-query` cannot say. A `package` is
+permanent once shipped: rename it again and the old package's purge does not
+know the new name, and takes the configuration and state from under it.
+
+**What an operator has.** `apt install ./<package>_*.deb` runs the daemon as
+`user`, holding `CAP_NET_BIND_SERVICE` and the declared `capabilities` and no
+more; journald is left as the distribution set it. An upgrade keeps the state
+and restarts a running daemon. A remove keeps the configuration directory,
+the state and the account; a purge takes all three.
+
+**What `make-deb.sh` refuses.**
+
+- A `ui_dist` holding `.git`, `node_modules` or a `.env*` file: everything
+  staged is served without a credential. Name the directory the bundler
+  writes, not the one it reads.
+- A `.gz` that no longer holds the file beside it. A file with a `.gz` beside
+  it is sent as that copy to a browser that takes gzip.
+- A hook in `hooks_dir` that `run-parts` would skip: a name with anything but
+  letters, digits, `_` and `-` (so no `.sh`), or no executable bit.
+- The example's `package.maintainer` placeholder, which also signs the
+  changelog.
+
+**Files an earlier version read.** A retired key in `appliance.toml`
+(`[targets.image]`, `[upgrade]`, `privilege` and the others) is refused,
+saying what became of it, and `packaging render` names a leftover
+`scaffold/image/` or `scaffold/targets/image/` to delete. It never deletes a
+file itself.
+
+## The image
+
+The image is distroless and runs as `10001:0`. Each socket is `0660` in group
+0, so a console runs it as `--user <uid>:0`, which is how a root console with
+no capabilities reaches the sockets. The image cannot carry a stop timeout:
+the console's must exceed the daemon's 22 s grace, or Docker's default of
+10 s kills the drain.
+
+A declared capability is set on the binary `+ep`, since the image runs as
+any non-root uid. The container's bounding set must hold it or the exec fails
+with `EPERM`: Docker's default set holds `NET_RAW` and `NET_BIND_SERVICE`, and
+`NET_ADMIN` needs `--cap-add`. The `setcap` stage installs it from Debian, so
+that build needs network, and a rootful builder: a user-namespaced `setcap`
+writes an attribute a rootful runtime ignores.
 
 ## Cross-building
 

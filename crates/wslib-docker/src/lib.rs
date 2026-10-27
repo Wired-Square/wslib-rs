@@ -1,7 +1,7 @@
-//! A Docker Engine client over its Unix socket: inspect, create, start, stop
-//! and remove containers, networks and images, and load or pull images, with
-//! errors that keep an engine that isn't there, one that doesn't answer and
-//! one that refuses apart.
+//! A Docker Engine client over its Unix socket, or on Windows its named pipe:
+//! inspect, create, start, stop and remove containers, networks and images,
+//! and load or pull images, with errors that keep an engine that isn't there,
+//! one that doesn't answer and one that refuses apart.
 //!
 //! ```no_run
 //! # async fn run() -> Result<(), wslib_docker::DockerError> {
@@ -17,13 +17,14 @@
 //! # }
 //! ```
 //!
-//! The `testing` feature adds [`testing::FakeEngine`]. Without the default
-//! `client` feature, only [`ImageReference`] is left, with no dependencies.
+//! The `testing` feature adds [`testing::FakeEngine`], on Unix. Without the
+//! default `client` feature, only [`ImageReference`] is left, with no
+//! dependencies.
 
 #[cfg(feature = "client")]
 mod client;
 mod reference;
-#[cfg(feature = "testing")]
+#[cfg(all(feature = "testing", unix))]
 pub mod testing;
 #[cfg(feature = "client")]
 pub mod trust;

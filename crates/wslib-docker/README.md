@@ -1,10 +1,10 @@
 # wslib-docker
 
-A Docker Engine client over its Unix socket, by hyper with no bollard:
-inspect, create, start, stop and remove containers, networks and images, and
-load or pull images. Image references parsed as `docker pull` takes them.
-Registry trust kept in `certs.d`. A fake engine for tests comes with the
-`testing` feature. Unix only.
+A Docker Engine client over its Unix socket, or on Windows its named pipe, by
+hyper with no bollard: inspect, create, start, stop and remove containers,
+networks and images, and load or pull images. Image references parsed as
+`docker pull` takes them. Registry trust kept in `certs.d`. A fake engine for
+tests comes with the `testing` feature, on Unix only.
 
 ```rust
 let docker = wslib_docker::Docker::default();
@@ -18,11 +18,12 @@ docker.start("hello").await?;
 
 ## What's here
 
-- **`Docker`**: the engine at `/var/run/docker.sock` by default
-  (`with_socket` for another), every path under API version 1.44
-  (`Docker::API_VERSION`), the oldest Docker 29 accepts. `ping`; `image`,
-  `container` and `network` inspect as `serde_json::Value`, with `None` for
-  what the engine doesn't have; `create_network` and `create` take the
+- **`Docker`**: the engine at `/var/run/docker.sock`, or on Windows
+  `\\.\pipe\docker_engine`, by default (`with_socket` for another), every
+  path under API version 1.44 (`Docker::API_VERSION`), the oldest Docker 29
+  accepts. `ping`; `image`, `container` and `network` inspect as
+  `serde_json::Value`, with `None` for what the engine doesn't have;
+  `create_network` and `create` take the
   engine's request body as JSON; `start` and `stop` succeed when it is
   already so; `stop_for_good` drops the restart policy, then stops;
   `remove` forces; `remove_image`. `load` streams a `docker save` archive
@@ -37,8 +38,8 @@ docker.start("hello").await?;
 - **Names are checked, not escaped**: a name or reference with a character
   no engine object has, or a `.`, `..` or empty path segment, is a
   `DockerError::Name` and nothing is sent.
-- **`exchange`**: one HTTP/1.1 request to whatever serves a Unix socket,
-  with a deadline, for the other daemons an app talks to that way.
+- **`exchange`**: one HTTP/1.1 request to whatever serves a Unix socket or
+  named pipe, with a deadline, for the other daemons an app talks to that way.
   `Request`, `Method`, `StatusCode` and `header` are re-exported from
   hyper, so a caller needn't match its major version.
 - **`ImageReference`**: `repository`, `repository:tag` or

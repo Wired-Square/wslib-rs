@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- Dependency floor raised to match the crates it shares a graph with:
+  axum 0.8.7 (was 0.8). No change to the API.
+
 ## 0.1.0
 
 - `ingress`: `Peers` (`home_assistant`, `new`, `with_loopback`, `exempt`,

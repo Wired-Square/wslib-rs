@@ -1,6 +1,6 @@
 [package]
 name = "wslib-host"
-version = "0.1.1"
+version = "0.1.2"
 description = "What a host says about itself: name, uptime, boot id, kernel, OS, an app-specific machine id, and who its local accounts are."
 readme = "README.md"
 edition.workspace = true
@@ -13,7 +13,7 @@ publish = ["wired-square"]
 [dependencies]
 # Pure Rust rather than ring: CI keeps ring out of the default graph.
 hmac = "0.12.1"
-sha2 = "0.10.1"
+sha2 = "0.10.9"
 uuid = { version = "1.1", default-features = false }
 
 [target.'cfg(unix)'.dependencies]

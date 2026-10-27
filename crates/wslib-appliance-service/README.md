@@ -37,3 +37,15 @@ let _ = rustls::crypto::ring::default_provider().install_default();
 - `testing`: `testing::Harness`, the service served on a temporary layout
   with a request over each role's endpoint. Take it on a dev-dependency, and
   install a provider in the tests before serving a harness.
+
+  ```rust
+  let builder = Harness::builder();
+  let store = builder.bootstrap().open_store(Some(sqlx::migrate!("./migrations"))).await?;
+  let service = Service::new(store, branding(), "0.0.0", wslib_appliance_service::logs(&[])).api(my_routes());
+  let harness = builder.serve(service).await;
+  assert_eq!(harness.get(Role::Viewer, "/api/devices").send().await.status(), StatusCode::FORBIDDEN);
+  harness.stop().await;
+  ```
+
+  The OS trust store is never read under it, so an unpinned dial trusts the
+  installed authorities alone.

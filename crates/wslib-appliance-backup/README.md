@@ -20,6 +20,50 @@ writes them.
 - **`run_schedule`** takes a sealed backup into `<state_dir>/backups` at the
   interval an administrator sets, under a passphrase of its own.
 
+```rust
+impl Sections for MySections {
+    async fn names(&self) -> Result<BTreeSet<String>, BackupError> {
+        Ok(["devices".to_string()].into())
+    }
+    async fn capture(&self, store: &Store, into: &mut Snapshot) -> Result<(), BackupError> {
+        into.put("devices", &my_devices(store).await?)
+    }
+    async fn restore(&self, tx: &mut Transaction<'_, Sqlite>, from: &Bundle, chosen: &BTreeSet<String>)
+        -> Result<Vec<String>, BackupError>
+    {
+        if chosen.contains("devices") {
+            write_my_devices(tx, &from.take("devices")?.unwrap_or_default()).await?;
+        }
+        Ok(Vec::new())
+    }
+    async fn erase(&self, tx: &mut Transaction<'_, Sqlite>) -> Result<(), BackupError> {
+        sqlx::query("DELETE FROM devices")
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| BackupError::Internal(e.to_string()))?;
+        Ok(())
+    }
+}
+
+// On wslib-appliance-service; SessionBackups::new takes the same arguments.
+let backups = LocalBackups::new(NAME, version, &bootstrap.state_dir, MySections);
+let service = service
+    .local_api(backups.routes())
+    .task(move |app, stop| backups.run_schedule(app, stop));
+```
+
+- **`names`** lists every section `capture` may put and `restore` reads, a
+  renamed section's old name too; a restore applies only these.
+- **`erase`** is a factory reset's half for the product's tables, in the
+  same transaction as `Store::erase_platform`. The commit catches a table
+  left full only if it references `users` with no `ON DELETE` action or with
+  `RESTRICT`, so the list of tables is the product's to keep.
+- **`BackupError::Refused(sentence)`** is a refusal an operator should read,
+  answered 409 as it stands; `Internal` is the daemon's own fault, its cause
+  in the journal alone.
+- A bundle is at most `wslib_appliance_types::backup::MAX_BUNDLE_LEN`
+  (8 MiB), sealed and as plaintext; a take over it is refused 413.
+
 A bundle is sealed with XChaCha20-Poly1305 under an Argon2id key from a
 passphrase of at least `wslib_appliance_types::backup::MIN_PASSPHRASE_LEN`
 characters. A bundle is never written unsealed; only the application half

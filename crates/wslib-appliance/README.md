@@ -39,3 +39,17 @@ wslib-appliance = { version = "0.1", registry = "wired-square" }
 
 Each `wslib-appliance-*` crate keeps its own version, and this crate pins
 each exactly, so naming it is naming a matched set.
+
+## Choosing a backend
+
+Take `server` for a box whose console proxies to the app and signs people
+in, or for Home Assistant's ingress; `https` for a package with nothing in
+front of it, which needs its own TLS listener, sign-in and accounts; and
+`service` for a desktop. All three take the same `Mount`s, so a product
+writes its routes once, and one binary can carry `server` and `https` and
+pick at start: behind a console when `Bootstrap::proxied` is set, else
+HTTPS.
+
+The browser half is `@wired-square/appliance-ui` and `@wired-square/kit`, in
+wslib-ts. A product's packaging, and a stand-in console for development, are
+`wslib-appliance-xtask`'s; see its README.

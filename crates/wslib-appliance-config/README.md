@@ -50,5 +50,9 @@ let db = open(&boot.db);
   as `Bootstrap::proxied`.
 - **No flag has a default or an `env`**: every field of the clap groups is an
   `Option`, so a flag never hides a file key.
+- **`ServingArgs` is a group of its own**, so a product behind a console
+  offers no listener flags, and a host with listener flags of its own still
+  flattens `ApplianceArgs`. Without it the listener resolves from the
+  environment, the files and the defaults.
 
 `toml` and `wslib-http-scaffold`'s `BasePath` are re-exported.

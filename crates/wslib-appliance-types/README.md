@@ -39,4 +39,16 @@ Every type a browser reads or sends derives ts-rs 11's `TS`. ts-rs writes a
 type, and each type it references, into `TS_RS_EXPORT_DIR` when an `export`
 test runs, this crate's or a consumer's; set the variable in the consumer's
 `.cargo/config.toml`. `constants.ts` comes only from this crate's own tests.
-A field wider than 32 bits is `number`, never `bigint`.
+A field wider than 32 bits is `number`, never `bigint`, and a `Secret` is a
+plain `string`.
+
+## The manifest
+
+`manifest::AppManifest` is what an app run as a container declares to its
+console. The image carries it, less `image`, as an `AppLabel` in its
+`MANIFEST_LABEL` OCI label, and the console adds the image it loaded, pinned
+by digest, with `AppManifest::from_label`. `name` passes `is_app_name` and is
+the base path, `/apps/<name>/`. An unknown field is refused at parse, and
+`validate()` names the first rule broken. Read `ManifestSchema` first: a
+`schema` newer than `MANIFEST_SCHEMA` is kept and not run, never refused as
+corrupt. The console runs the image as a uid of its choosing in group 0.

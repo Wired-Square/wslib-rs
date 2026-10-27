@@ -9,6 +9,6 @@ mod code;
 mod pin;
 mod uri;
 
-pub use code::{CodeError, NotACode, OneTimeCode, PairingCode, Redemption};
+pub use code::{CodeError, NotACode, OneTimeCode, PairingCode, Redemption, SpentBy, Status};
 pub use pin::{NotAPin, SpkiSha256};
 pub use uri::{PairingUri, UriError};

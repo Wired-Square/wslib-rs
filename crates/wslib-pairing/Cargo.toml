@@ -11,7 +11,6 @@ repository.workspace = true
 publish = ["wired-square"]
 
 [dependencies]
-getrandom = { version = "0.3", features = ["std"] }
 thiserror = "2"
 wslib-file-atomic = { version = "0.1.5", path = "../wslib-file-atomic", registry = "wired-square" }
 wslib-secret = { version = "0.1.2", path = "../wslib-secret", registry = "wired-square", features = ["token"] }

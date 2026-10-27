@@ -62,13 +62,53 @@ fn the_debug_form_hides_the_code() {
 }
 
 #[test]
-fn unknown_and_repeated_fragment_keys_are_refused() {
-    let unknown = parse(&format!("example-enrol://h:1#pin={PIN}&code={CODE}&next=x"));
-    assert!(matches!(unknown, Err(UriError::UnknownKey(key)) if key == "next"));
-    let twice = parse(&format!(
-        "example-enrol://h:1#pin={PIN}&code={CODE}&pin={PIN}"
-    ));
-    assert!(matches!(twice, Err(UriError::DuplicateKey(key)) if key == "pin"));
+fn an_unknown_fragment_key_is_ignored() {
+    let uri = parse(&format!(
+        "example-enrol://h:1#next=x&pin={PIN}&flag&code={CODE}"
+    ))
+    .unwrap();
+    assert_eq!(uri.pin(), pin());
+    assert_eq!(uri.code().expose(), CODE);
+    assert_eq!(
+        uri.expose(),
+        format!("example-enrol://h:1#pin={PIN}&code={CODE}")
+    );
+}
+
+#[test]
+fn a_repeated_fragment_key_is_refused_whether_known_or_not() {
+    for (fragment, repeated) in [
+        (format!("pin={PIN}&code={CODE}&pin={PIN}"), "pin"),
+        (format!("next=x&pin={PIN}&code={CODE}&next=y"), "next"),
+    ] {
+        let twice = parse(&format!("example-enrol://h:1#{fragment}"));
+        assert!(
+            matches!(&twice, Err(UriError::DuplicateKey(key)) if key == repeated),
+            "{twice:?}"
+        );
+    }
+}
+
+#[test]
+fn a_host_is_kept_as_a_pin_is_keyed() {
+    for (given, kept) in [
+        ("Broker.Example.LAN.", "broker.example.lan"),
+        ("2001:DB8:0::0001", "2001:db8::1"),
+    ] {
+        let uri = PairingUri::new("example-enrol", given, 1, pin(), code()).unwrap();
+        assert_eq!(uri.host(), kept);
+    }
+    let parsed = parse(&format!(
+        "example-enrol://Broker.LAN.:1#pin={PIN}&code={CODE}"
+    ))
+    .unwrap();
+    assert_eq!(parsed.host(), "broker.lan");
+    for bad in ["broker.lan..", "."] {
+        assert!(
+            PairingUri::new("example-enrol", bad, 1, pin(), code()).is_err(),
+            "{bad}"
+        );
+    }
 }
 
 #[test]

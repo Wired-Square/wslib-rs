@@ -14,7 +14,9 @@ pub struct PairingUri {
 }
 
 impl PairingUri {
-    /// `host` is a DNS name, or an IPv4 or IPv6 address without brackets.
+    /// `host` is a DNS name, or an IPv4 or IPv6 address without brackets,
+    /// kept as a pin is keyed: an address in canonical form, a name in
+    /// lowercase without its trailing dot.
     pub fn new(
         scheme: &str,
         host: &str,
@@ -25,15 +27,13 @@ impl PairingUri {
         if !is_scheme(scheme) {
             return Err(UriError::Scheme(scheme.into()));
         }
-        if !is_host(host) {
-            return Err(UriError::Host(host.into()));
-        }
+        let host = normalise_host(host).ok_or_else(|| UriError::Host(host.into()))?;
         if port == 0 {
             return Err(UriError::Port("0".into()));
         }
         Ok(Self {
             scheme: scheme.to_ascii_lowercase(),
-            host: host.into(),
+            host,
             port,
             pin,
             code,
@@ -54,20 +54,19 @@ impl PairingUri {
         }
         let port = port.parse().map_err(|_| UriError::Port(port.into()))?;
 
-        let (mut pin, mut code) = (None, None);
+        let mut pairs = Vec::new();
         for pair in fragment.split('&') {
             let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-            let slot = match key {
-                "pin" => &mut pin,
-                "code" => &mut code,
-                _ => return Err(UriError::UnknownKey(key.into())),
-            };
-            if slot.replace(value).is_some() {
+            if pairs.iter().any(|&(seen, _)| seen == key) {
                 return Err(UriError::DuplicateKey(key.into()));
             }
+            pairs.push((key, value));
         }
-        let pin = pin.ok_or(UriError::Missing("pin"))?;
-        let code = code.ok_or(UriError::Missing("code"))?;
+        let value = |key| {
+            let found = pairs.iter().find(|&&(seen, _)| seen == key);
+            found.map(|&(_, value)| value).ok_or(UriError::Missing(key))
+        };
+        let (pin, code) = (value("pin")?, value("code")?);
         Self::new(scheme, host, port, pin.parse()?, code.parse()?)
     }
 
@@ -133,8 +132,12 @@ fn is_scheme(scheme: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
 }
 
-fn is_host(host: &str) -> bool {
-    host.parse::<IpAddr>().is_ok() || is_dns_name(host)
+fn normalise_host(host: &str) -> Option<String> {
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return Some(ip.to_string());
+    }
+    let name = host.strip_suffix('.').unwrap_or(host).to_ascii_lowercase();
+    is_dns_name(&name).then_some(name)
 }
 
 /// An all-digit last label is refused, as a name ending so reads as a mistyped IPv4 address.
@@ -164,8 +167,6 @@ pub enum UriError {
     Host(String),
     #[error("not a port: {0}")]
     Port(String),
-    #[error("unknown key in the fragment: {0}")]
-    UnknownKey(String),
     #[error("{0} given twice in the fragment")]
     DuplicateKey(String),
     #[error("no {0} in the fragment")]

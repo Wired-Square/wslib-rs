@@ -1,6 +1,6 @@
 [package]
 name = "wslib-backoff"
-version = "0.1.1"
+version = "0.1.2"
 description = "Capped exponential backoff that restarts on success, with an optional async retry loop."
 edition.workspace = true
 rust-version.workspace = true
@@ -13,7 +13,7 @@ publish = ["wired-square"]
 tokio = ["dep:tokio"]
 
 [dependencies]
-tokio = { version = "1.2", features = ["time"], optional = true }
+tokio = { version = "1.47", features = ["time"], optional = true }
 
 [dev-dependencies]
-tokio = { version = "1.2", features = ["macros", "rt", "test-util", "time"] }
+tokio = { version = "1.47", features = ["macros", "rt", "test-util", "time"] }

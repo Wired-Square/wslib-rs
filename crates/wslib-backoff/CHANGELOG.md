@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- Dependency floor raised to match the crates it shares a graph with:
+  tokio 1.47 (was 1.2). No change to the API.
+
 ## 0.1.1
 
 - Dependency floor raised to what the crate's tests build against: tokio 1.2.

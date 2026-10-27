@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.4
+
+- Dependency floor raised to match the crates it shares a graph with:
+  tokio-util 0.7.19 (was 0.7.5). No change to the API.
+
 ## 0.1.3
 
 - A stop of the service's own logs its `stopping, by the service itself`

@@ -10,6 +10,8 @@
   feature, off by default, which turns on `core`.
 - `service`: `wslib-appliance-service` 0.1.1, pinned exactly, behind the
   `service` feature, off by default, which turns on `core`.
+- `client`: `wslib-appliance-client` 0.1.1, pinned exactly, behind the
+  `client` feature, off by default.
 - Every other crate of the family moves to 0.1.1 with them, pinned exactly.
 
 ## 0.1.0

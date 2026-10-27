@@ -1,0 +1,27 @@
+[package]
+name = "wslib-appliance-client"
+version = "0.1.1"
+description = "Connects a Windows client to an appliance's control pipe, refusing one its service does not own."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+# A desktop app takes this crate alone, or the facade with only `client`, so
+# nothing here may bring in axum, sqlx or rustls; scripts/ci.sh checks.
+[target.'cfg(windows)'.dependencies]
+thiserror = "2"
+tokio = { version = "1.47", features = ["net", "time"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+] }
+wslib-host = { path = "../wslib-host", version = "0.1.1", registry = "wired-square" }
+
+[target.'cfg(windows)'.dev-dependencies]
+tokio = { version = "1.47", features = ["macros", "rt-multi-thread"] }
+windows-sys = { version = "0.61", features = ["Win32_Security_Authorization", "Win32_System_Threading"] }

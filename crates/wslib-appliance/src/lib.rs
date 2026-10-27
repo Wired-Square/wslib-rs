@@ -3,6 +3,8 @@
 
 #[cfg(feature = "auth")]
 pub use wslib_appliance_auth as auth;
+#[cfg(feature = "client")]
+pub use wslib_appliance_client as client;
 pub use wslib_appliance_config as config;
 #[cfg(feature = "core")]
 pub use wslib_appliance_core as core;

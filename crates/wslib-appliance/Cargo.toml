@@ -18,6 +18,7 @@ core = ["auth", "dep:wslib-appliance-core"]
 server = ["core", "dep:wslib-appliance-server"]
 https = ["core", "dep:wslib-appliance-https"]
 service = ["core", "dep:wslib-appliance-service"]
+client = ["dep:wslib-appliance-client"]
 
 [dependencies]
 wslib-appliance-auth = { path = "../wslib-appliance-auth", version = "=0.1.1", registry = "wired-square", optional = true }
@@ -25,6 +26,7 @@ wslib-appliance-core = { path = "../wslib-appliance-core", version = "=0.1.1", r
 wslib-appliance-server = { path = "../wslib-appliance-server", version = "=0.1.1", registry = "wired-square", optional = true }
 wslib-appliance-https = { path = "../wslib-appliance-https", version = "=0.1.1", registry = "wired-square", optional = true }
 wslib-appliance-service = { path = "../wslib-appliance-service", version = "=0.1.1", registry = "wired-square", optional = true }
+wslib-appliance-client = { path = "../wslib-appliance-client", version = "=0.1.1", registry = "wired-square", optional = true }
 wslib-appliance-config = { path = "../wslib-appliance-config", version = "=0.1.1", registry = "wired-square" }
 wslib-appliance-store = { path = "../wslib-appliance-store", version = "=0.1.1", registry = "wired-square", optional = true }
 wslib-appliance-types = { path = "../wslib-appliance-types", version = "=0.1.1", registry = "wired-square" }

@@ -24,6 +24,9 @@ The appliance family in one dependency:
 - `wslib_appliance::service` is [`wslib-appliance-service`](../wslib-appliance-service),
   the backend served on control endpoints as a desktop service, behind the
   `service` feature (off by default), which turns on `core`.
+- `wslib_appliance::client` is [`wslib-appliance-client`](../wslib-appliance-client),
+  a Windows desktop app's connection to the service's pipe, behind the
+  `client` feature (off by default), which turns on nothing else.
 
 ```toml
 [dependencies]

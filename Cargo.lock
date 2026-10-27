@@ -6980,6 +6980,7 @@ name = "wslib-appliance"
 version = "0.1.1"
 dependencies = [
  "wslib-appliance-auth",
+ "wslib-appliance-client",
  "wslib-appliance-config",
  "wslib-appliance-core",
  "wslib-appliance-https",
@@ -7009,6 +7010,16 @@ dependencies = [
  "wslib-auth-password",
  "wslib-auth-totp",
  "wslib-secret",
+]
+
+[[package]]
+name = "wslib-appliance-client"
+version = "0.1.1"
+dependencies = [
+ "thiserror 2.0.21",
+ "tokio",
+ "windows-sys 0.61.2",
+ "wslib-host",
 ]
 
 [[package]]

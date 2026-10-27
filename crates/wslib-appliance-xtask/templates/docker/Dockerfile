@@ -1,5 +1,6 @@
 # {{name}}'s image, built by scaffold/packaging/make-image.sh from the context it
-# stages. Chassis-owned, and rewritten unconditionally by every render.
+# stages. Owned by wslib-appliance-xtask, and rewritten unconditionally by every
+# render.
 #
 # The app serves app.sock and hooks.sock in the directory the console mounts at
 # /run/appliance.

@@ -65,9 +65,9 @@ struct Identity {
 /// root, so no flag moves either path.
 #[derive(Debug, Subcommand)]
 enum Packaging {
-    /// Write every chassis-owned file into ./scaffold from ./appliance.toml, overwriting whatever is there.
+    /// Write every file this tool owns into ./scaffold from ./appliance.toml, overwriting whatever is there.
     Render,
-    /// Report every chassis-owned file in ./scaffold that is not what ./appliance.toml renders at this version.
+    /// Report every file this tool owns in ./scaffold that is not what ./appliance.toml renders at this version.
     Diff,
 }
 
@@ -258,7 +258,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
 
             if drifted == 0 {
-                println!("{} chassis-owned files, all in step", compared.len());
+                println!("{} files this tool owns, all in step", compared.len());
                 ExitCode::SUCCESS
             } else {
                 println!("run `wslib-appliance-xtask packaging render`, then read the diff in git");

@@ -88,6 +88,8 @@ CARGO_BUILD_TARGET=aarch64-unknown-linux-musl scaffold/packaging/make-deb.sh --t
   product with some adds them here. A `RUSTFLAGS` or `CARGO_ENCODED_RUSTFLAGS`
   in the environment, even empty, replaces it in turn: the link then succeeds
   without the fix, and `erratum-843419` refuses the binary.
+- `make-deb.sh` needs GNU coreutils (`install -D`, `du --exclude`, `date -R`):
+  on macOS, put Homebrew's `coreutils` `libexec/gnubin` first on `PATH`.
 
 ## `appliance.toml`
 

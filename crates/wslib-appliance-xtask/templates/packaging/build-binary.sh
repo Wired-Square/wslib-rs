@@ -3,7 +3,7 @@
 # make-deb.sh and make-image.sh. They source it, having set BINARY, TARGET_DIR,
 # CARGO_BUILD_TARGET and `die`; it defines two functions and runs nothing.
 #
-# Chassis-owned, and rewritten unconditionally by every render.
+# Owned by wslib-appliance-xtask, and rewritten unconditionally by every render.
 
 MIN_BINARY_BYTES='{{min_binary_bytes}}'
 

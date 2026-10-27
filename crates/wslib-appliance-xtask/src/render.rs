@@ -83,7 +83,7 @@ pub fn fixed(
 pub enum State {
     /// On disk and identical.
     Same,
-    /// On disk and not what this chassis renders.
+    /// On disk and not what this version renders.
     Differs,
     /// Not there at all.
     Missing,
@@ -101,7 +101,7 @@ impl State {
     pub fn because(self) -> &'static str {
         match self {
             State::Same => "is in step",
-            State::Differs => "is not what this chassis renders",
+            State::Differs => "is not what this version renders",
             State::Missing => "is not there",
             State::Unreadable => "could not be read",
         }

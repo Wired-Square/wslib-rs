@@ -1,7 +1,7 @@
 #!/bin/sh
 # Prints the identity of the build happening in this checkout, for {{name}}.
 #
-# Chassis-owned, and rewritten unconditionally by every render.
+# Owned by wslib-appliance-xtask, and rewritten unconditionally by every render.
 #
 # **This exists for the build that cannot read git for itself** — a container
 # whose context carries no .git, an unpacked source tarball, a chroot. Run it

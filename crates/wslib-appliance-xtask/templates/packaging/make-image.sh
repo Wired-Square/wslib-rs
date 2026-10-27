@@ -5,8 +5,8 @@
 #     CARGO_BUILD_TARGET=aarch64-unknown-linux-musl scaffold/packaging/make-image.sh
 #
 # One architecture per run: a `docker load` tarball cannot hold a list of them.
-# Chassis-owned, and rewritten unconditionally by every render; what the image
-# is follows from appliance.toml and manifest.json.
+# Owned by wslib-appliance-xtask, and rewritten unconditionally by every render;
+# what the image is follows from appliance.toml and manifest.json.
 set -eu
 
 NAME='{{name}}'

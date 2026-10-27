@@ -4,13 +4,13 @@
 #
 #     CARGO_BUILD_TARGET=x86_64-unknown-linux-musl scaffold/packaging/make-deb.sh --target deb
 #
-# Chassis-owned, and rewritten unconditionally by every render. **There is no
-# hook for the build itself, and that is deliberate**: this runs on a build host
-# and has no deployment-time behaviour to extend. What a product ships beyond the
-# binary is named in appliance.toml — `hooks_dir` and `[package.files]` — or
-# placed where this script looks for it: the unit's `.service.d/*.conf`
-# directory and the `debian/copyright` file. Anything else is a knob missing from
-# appliance.toml.
+# Owned by wslib-appliance-xtask, and rewritten unconditionally by every render.
+# **There is no hook for the build itself, and that is deliberate**: this runs on
+# a build host and has no deployment-time behaviour to extend. What a product
+# ships beyond the binary is named in appliance.toml — `hooks_dir` and
+# `[package.files]` — or placed where this script looks for it: the unit's
+# `.service.d/*.conf` directory and the `debian/copyright` file. Anything else is
+# a knob missing from appliance.toml.
 set -eu
 
 NAME='{{name}}'

@@ -1,11 +1,12 @@
 # The {{name}} appliance.
 #
-# **Chassis-owned. `wslib-appliance-xtask packaging render` rewrites this file
-# unconditionally, every time.** An edit here is lost at the next render, and the
-# loss shows up as a box behaving differently from the one beside it.
+# **Owned by wslib-appliance-xtask. `wslib-appliance-xtask packaging render`
+# rewrites this file unconditionally, every time.** An edit here is lost at the
+# next render, and the loss shows up as a box behaving differently from the one
+# beside it.
 #
-# Change a drop-in instead — `{{name}}.service.d/*.conf`, which nothing in the
-# chassis writes. There is a worked example in that directory.
+# Change a drop-in instead — `{{name}}.service.d/*.conf`, which
+# wslib-appliance-xtask never writes. There is a worked example in that directory.
 #
 # A directive that wants to differ *per product* rather than per deployment is a
 # knob missing from `appliance.toml`, not a hand-edit here.

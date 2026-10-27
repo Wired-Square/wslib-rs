@@ -1,9 +1,9 @@
 # Adding your own steps to {{name}}'s install
 
-**This file is chassis-owned and is rewritten by every `packaging render`.** So
-is every maintainer script beside it. Do not edit those — put your product's own
-steps in the hook directories described below, which nothing in the chassis ever
-writes.
+**This file is owned by wslib-appliance-xtask and is rewritten by every
+`packaging render`.** So is every maintainer script beside it. Do not edit those
+— put your product's own steps in the hook directories described below, which
+wslib-appliance-xtask never writes.
 
 ## The two directories
 

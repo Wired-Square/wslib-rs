@@ -15,7 +15,8 @@ Moved from `appliance-xtask` 0.17.1 in wslib-appliance-rs; what differs:
 - Renders for `wslib-appliance-config` 0.1.1, `wslib-appliance-store` 0.1.1
   and `wslib-appliance-server` 0.1.0.
 - Messages and rendered comments that meant this tool say
-  `wslib-appliance-xtask` where they said "the chassis", and point at
+  `wslib-appliance-xtask` or "this tool" where they said "the chassis" or
+  "chassis-owned", and point at
   `cargo install` and this crate's README rather than a tag or a build guide.
   `appliance.toml.example` says "an earlier release's" for "an earlier tag's".
 - `--version` names the commit only when built from a checkout; a registry

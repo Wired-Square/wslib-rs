@@ -28,6 +28,12 @@ impl Fingerprint {
     }
 }
 
+impl From<[u8; 32]> for Fingerprint {
+    fn from(digest: [u8; 32]) -> Self {
+        Self(digest)
+    }
+}
+
 impl fmt::Display for Fingerprint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.iter().try_for_each(|byte| write!(f, "{byte:02x}"))
@@ -81,5 +87,12 @@ mod tests {
         assert!(hex[..62].parse::<Fingerprint>().is_err());
         assert!(format!("{}zz", &hex[..62]).parse::<Fingerprint>().is_err());
         assert!("+f".repeat(32).parse::<Fingerprint>().is_err());
+    }
+
+    #[test]
+    fn a_fingerprint_is_made_from_its_digest_bytes() {
+        let fingerprint = Fingerprint::of(b"certificate");
+        assert_eq!(Fingerprint::from(*fingerprint.as_bytes()), fingerprint);
+        assert_eq!(Fingerprint::from([0xab; 32]).to_string(), "ab".repeat(32));
     }
 }

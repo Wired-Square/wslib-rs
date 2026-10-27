@@ -7126,7 +7126,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-crypto"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "p256",
  "p384",

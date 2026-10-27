@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- `Fingerprint` from its 32 digest bytes, as `From<[u8; 32]>`.
+
 ## 0.1.1
 
 - `random::<N>(provider)` for `N` bytes from the provider's randomness, and

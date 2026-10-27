@@ -52,7 +52,7 @@ appliance chassis and every app beside it.
 | `wslib-appliance-service` | The desktop backend, on control sockets and named pipes      |
 | `wslib-appliance-backup` | Sealed backups, their routes and schedule, on any backend     |
 | `wslib-appliance-client` | A Windows app's connection to its service's control pipe      |
-| `wslib-appliance-xtask`† | Renders a product's packaging, and stands in for its console  |
+| `wslib-appliance-xtask`† | A product's packaging, CI gates and a stand-in console        |
 | `wslib-appliance`        | The appliance family in one crate, each member a feature      |
 
 † marks a crate that ships non-Rust sources, and says so at the top of its own

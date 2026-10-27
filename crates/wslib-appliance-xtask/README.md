@@ -41,7 +41,7 @@ and `wslib-appliance-server` 0.1.0: the `/usr/share/<name>` layout, the
   the rules of this version: see [Gates](#gates).
 
 Exit codes: `0` clean, `1` drift, an unpatched site or a failed gate, `2` the
-tool could not run.
+tool could not run, or a gate could not run and none failed.
 
 ## Gates
 
@@ -65,7 +65,8 @@ The default run compiles nothing and takes seconds:
 - **sqlx query macros**: no `sqlx::query!` or its siblings, which need a live
   database or a `.sqlx` cache to build.
 - **lock**: every `wslib-appliance*` crate in `Cargo.lock` comes from a
-  registry, not git or a path, so a tag can be rebuilt. One locked at a version
+  registry, not git or a path, so a tag can be rebuilt; and not crates.io,
+  where a family crate is not ours. One locked at a version
   other than the one this tool renders for is a warning naming both.
 - **rustls provider**: exactly one of `ring` and `aws-lc-rs` in the normal
   dependency graph on any target (`cargo tree`, which resolves without
@@ -75,8 +76,8 @@ The default run compiles nothing and takes seconds:
 `--release`, for a tag, adds the builds a product's own CI may not run:
 `cargo clippy` for `aarch64-unknown-linux-musl` and for the host, both with
 `-D warnings`, and `cargo test --workspace --locked`. The cross clippy needs
-the target installed and a C compiler and archiver for it, checked before it
-starts; with zig, as shims:
+the target installed and a C compiler and archiver for it, found as cc-rs
+finds them and checked before it starts; with zig, as shims:
 
 ```sh
 mkdir -p "$HOME/.cross"
@@ -96,8 +97,9 @@ export CC_aarch64_unknown_linux_musl="$HOME/.cross/cc" AR_aarch64_unknown_linux_
 
 The `cc` shim drops cc-rs's `--target=<rust triple>`, which `zig cc` refuses.
 
-Each gate prints one line, `ok`, `skipped` with why, or `failed` with every
-hit beneath it; warnings go to stderr and never fail the run.
+Each gate prints one line, `ok`, `skipped` with why, `could not run` with
+why, or `failed` with every hit beneath it; warnings go to stderr and never
+fail the run.
 
 ## What it owns, and what a product owns
 

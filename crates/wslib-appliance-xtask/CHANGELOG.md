@@ -3,13 +3,15 @@
 ## 0.1.1
 
 - `gates`: the rules a product's CI checks with the version of this tool it
-  installs; a failed gate exits `1`, and a warning never fails. The default
-  run compiles nothing: the product's own forbidden names, no `sqlx::query!`,
-  every `wslib-appliance*` crate in `Cargo.lock` from a registry (a warning
+  installs; a failed gate exits `1`, one that could not run `2` when none
+  failed, and a warning never fails. The default run compiles nothing: the
+  product's own forbidden names, no `sqlx::query!`, every `wslib-appliance*`
+  crate in `Cargo.lock` from a registry other than crates.io (a warning
   when one is not at the version this tool renders for), exactly one rustls
   provider where rustls is in the graph, and `packaging diff`. `--release`
   adds clippy for `aarch64-unknown-linux-musl` and the host with
   `-D warnings`, and the tests.
+- The README gains "The package" and "The image" sections.
 
 ## 0.1.0
 

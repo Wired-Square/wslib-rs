@@ -4,7 +4,7 @@
 //! live in files it never writes. `--version` names this tool's version (and
 //! commit, from a checkout), `build-id` the commit of the product being built.
 //! Exit codes: `0` clean, `1` drift, an unpatched erratum site or a failed gate,
-//! `2` could not run.
+//! `2` could not run, or a gate could not run and none failed.
 
 mod debian;
 #[cfg(unix)]

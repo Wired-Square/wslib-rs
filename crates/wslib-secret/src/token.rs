@@ -1,5 +1,6 @@
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
+use zeroize::Zeroizing;
 
 use crate::Secret;
 
@@ -27,7 +28,7 @@ impl Encoding {
 fn encode(bytes: &[u8], alphabet: &[u8]) -> String {
     let width = alphabet.len().trailing_zeros();
     let mask = (1 << width) - 1;
-    let mut out = String::new();
+    let mut out = String::with_capacity((bytes.len() * 8).div_ceil(width as usize));
     let (mut buffer, mut bits) = (0u32, 0);
     for &byte in bytes {
         buffer = buffer << 8 | u32::from(byte);
@@ -46,9 +47,9 @@ fn encode(bytes: &[u8], alphabet: &[u8]) -> String {
 impl Secret {
     /// `N` bytes from the OS, as text in `encoding`.
     pub fn random<const N: usize>(encoding: Encoding) -> Result<Self, getrandom::Error> {
-        let mut bytes = [0; N];
-        getrandom::fill(&mut bytes)?;
-        Ok(Self(encoding.encode(&bytes)))
+        let mut bytes = Zeroizing::new([0; N]);
+        getrandom::fill(&mut *bytes)?;
+        Ok(Self(encoding.encode(&*bytes)))
     }
 
     /// What to store in place of the secret: [`TokenHash::of`] its text.

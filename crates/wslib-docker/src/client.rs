@@ -39,7 +39,11 @@ impl Default for Docker {
 
 impl Docker {
     /// Where the engine listens on Linux.
+    #[cfg(unix)]
     pub const SOCKET: &str = "/var/run/docker.sock";
+    /// Where the engine listens on Windows.
+    #[cfg(windows)]
+    pub const SOCKET: &str = r"\\.\pipe\docker_engine";
 
     /// The API version every path is under, so the shapes asked for stay put
     /// across engine updates; Docker 29 accepts nothing older.
@@ -277,7 +281,7 @@ pub async fn exchange(
     within: Duration,
 ) -> Result<(StatusCode, Bytes), DockerError> {
     tokio::time::timeout(within, async {
-        let stream = tokio::net::UnixStream::connect(socket).await?;
+        let stream = connect(socket).await?;
         let (mut sender, connection) =
             hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(stream)).await?;
         tokio::spawn(connection);
@@ -287,6 +291,16 @@ pub async fn exchange(
     })
     .await
     .map_err(|_| DockerError::Timeout)?
+}
+
+#[cfg(unix)]
+async fn connect(socket: &Path) -> io::Result<tokio::net::UnixStream> {
+    tokio::net::UnixStream::connect(socket).await
+}
+
+#[cfg(windows)]
+async fn connect(pipe: &Path) -> io::Result<tokio::net::windows::named_pipe::NamedPipeClient> {
+    tokio::net::windows::named_pipe::ClientOptions::new().open(pipe)
 }
 
 /// Container, network and image names, image references and IDs are all of

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.7
+
+- A transaction's roll-back, and `recover`'s, leave a directory found at a
+  staged path rather than failing on it, so a failed stage no longer strands
+  a pending record.
+
 ## 0.1.6
 
 - `keep_mode(dir, mode)`: sets `dir`'s permission bits to `mode` only when

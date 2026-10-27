@@ -1,7 +1,7 @@
 [package]
 name = "wslib-docker"
-version = "0.1.0"
-description = "A Docker Engine client over its Unix socket, image references as `docker pull` takes them, registry trust in certs.d, and a fake engine for tests."
+version = "0.1.1"
+description = "A Docker Engine client over its Unix socket or Windows named pipe, image references as `docker pull` takes them, registry trust in certs.d, and a fake engine for tests."
 readme = "README.md"
 edition.workspace = true
 rust-version.workspace = true

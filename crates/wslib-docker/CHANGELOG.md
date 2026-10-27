@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- Builds on Windows, where `Docker` and `exchange` talk to a named pipe,
+  `\\.\pipe\docker_engine` by default. `testing` is Unix only.
+
 ## 0.1.0
 
 - `Docker`: the Docker Engine over its Unix socket, API version 1.44.

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.4
+
+- An ECDSA key with explicit curve parameters, rather than a named curve, is
+  described with no curve instead of the parameters' DER.
+
 ## 0.1.3
 
 - `CertificateView::name_constraints`: the RFC 5280 name constraints, as

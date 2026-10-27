@@ -10,3 +10,5 @@
   feature, off by default, which turns on `store`.
 - `core`: `wslib-appliance-core` 0.1.0, pinned exactly, behind the `core`
   feature, off by default, which turns on `auth`.
+- `server`: `wslib-appliance-server` 0.1.0, pinned exactly, behind the
+  `server` feature, off by default, which turns on `core`.

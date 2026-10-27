@@ -15,6 +15,9 @@ The appliance family in one dependency:
   the router, the authority and the workers, behind the `core` feature (off
   by default), which turns on `auth`. `use wslib_appliance::core;` shadows
   the built-in `core` crate in that module.
+- `wslib_appliance::server` is [`wslib-appliance-server`](../wslib-appliance-server),
+  the backend behind a console or an ingress proxy, behind the `server`
+  feature (off by default), which turns on `core`.
 
 ```toml
 [dependencies]

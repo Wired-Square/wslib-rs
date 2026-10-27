@@ -21,6 +21,29 @@ sessions, sign-in, your own password and the first account. Most of it is
   bootstrap's `browser_onboarding` is on; otherwise its first account is
   made over the control socket.
 
+## Sessions and second factors
+
+`POST` and `DELETE /api/session` sign in and out with an `HttpOnly`,
+`Secure`, `SameSite=Strict` cookie under the base path, and
+`PUT /api/session/password` changes the caller's own password, proving the
+current one. A session is a store row, re-checked against its account on
+every request; disabling an account or changing its password deletes its
+sessions.
+
+When a second step is owed, `POST /api/session` answers 202 and a
+`SecondStep` instead of a session: `next: "code"`, while TOTP is on, goes on
+to `POST /api/session/code`, and `next: "enrol"`, for an account an
+administrator required to enrol, to `POST /api/session/enrolment`. A passkey
+signs in at `POST /api/session/passkey` with no code after it. While the
+caller's TOTP is on, a change to its own password or factors, a backup, and
+making an account or changing another's role, password, TOTP requirement or
+passkeys each take a code, a recovery code or a passkey, never the password
+alone.
+
+A passkey ceremony runs only on the port in the browser's address. Behind a
+dev server's proxy that passes `Host` through, `Server::origin_port` names
+that port.
+
 ## A crypto provider
 
 This crate installs no rustls provider. Install one before serving, or
@@ -35,4 +58,6 @@ let _ = rustls::crypto::ring::default_provider().install_default();
 - `testing`: `testing::Harness`, the appliance a product's tests drive its
   routes through, with `wslib-appliance-core`'s `testing` re-exported. Take it
   on a dev-dependency, and install a provider in the tests before building a
-  harness.
+  harness. It starts with no accounts: `signed_in(username, role)` and
+  `admin(username)` make one and answer a session token for `.cookie(..)`,
+  and `serve_tls()` puts the real TLS listener on loopback.

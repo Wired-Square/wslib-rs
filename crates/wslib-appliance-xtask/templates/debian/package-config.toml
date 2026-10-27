@@ -1,0 +1,6 @@
+# {{name}}'s package values, read beneath
+# {{config_dir}}/config.toml. Owned by the package and replaced on every
+# upgrade: set a key in that file instead.
+
+bind_address = {{bind_address}}
+https_port = {{https_port}}

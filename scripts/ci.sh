@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The CI definition. A future Actions workflow calls this rather than restating it.
 # Everyday: workspace-wide cheap gates, then per-crate checks on crates changed
-# since their last release tag plus their reverse dependencies. --tag: every crate.
+# since their last release tag plus their reverse dependencies. --tag: every crate,
+# once per clean commit.
 #
 #   scripts/ci.sh [--tag]
 set -euo pipefail
@@ -13,8 +14,20 @@ all=false
 die() { printf 'ci: %s\n' "$*" >&2; exit 1; }
 step() { printf '\n== %s\n' "$*"; }
 
+stamp=
+if $all && [[ -z $(git status --porcelain) ]]; then
+  stamp="${CARGO_TARGET_DIR:-target}/ci-tag-passed/$(git rev-parse HEAD)"
+  [[ ! -e $stamp ]] || { printf 'ci: --tag already passed at %s\n' "$(git rev-parse --short HEAD)"; exit 0; }
+fi
+
 command -v cargo-hack >/dev/null || die "cargo-hack missing: cargo install cargo-hack"
 ! $all || cargo +nightly --version >/dev/null 2>&1 || die "nightly missing: rustup toolchain install nightly"
+win=x86_64-pc-windows-msvc
+cross_windows=false
+[[ $(rustc -vV | sed -n 's/^host: //p') == *windows* ]] || cross_windows=true
+! $cross_windows || rustup target list --installed | grep -qx $win || die "$win missing: rustup target add $win"
+! $cross_windows || ! $all || rustup +nightly target list --installed | grep -qx $win \
+  || die "nightly $win missing: rustup +nightly target add $win"
 
 step "No consumer is named"
 names=scripts/forbidden-names.txt
@@ -26,15 +39,12 @@ step "No reference to the project dossier"
 
 # Shared crates take no rustls provider; the app installs one.
 step "No rustls provider by default"
-# A package can be resolved without any edge to it, so look for a printed tree
-# rather than trusting the exit status.
-in_default_graph() { cargo tree --workspace -e normal -i "$1" 2>/dev/null | grep -q .; }
-! in_default_graph aws-lc-rs || die "aws-lc-rs is in the default graph"
-! in_default_graph ring || die "ring is in the default graph"
+graph=$(cargo tree --workspace -e normal --prefix none)
+! grep -E '^(aws-lc-rs|ring) ' <<<"$graph" || die "a rustls provider is in the default graph"
 
 step "wslib-telemetry's setup-core has no regex engine"
-! cargo tree -p wslib-telemetry --no-default-features --features setup-core -e normal --prefix none \
-  | grep -qE '^(regex|regex-automata|matchers) ' || die "setup-core pulls in a regex engine"
+graph=$(cargo tree -p wslib-telemetry --no-default-features --features setup-core -e normal --prefix none)
+! grep -E '^(regex|regex-automata|matchers) ' <<<"$graph" || die "setup-core pulls in a regex engine"
 
 step "The appliance family is at one version"
 [[ $(cargo metadata --format-version 1 --no-deps --locked \
@@ -44,9 +54,6 @@ step "The appliance family is at one version"
 step "Format"
 cargo fmt --all --check
 
-step "Check"
-cargo check --workspace --all-targets --locked
-
 crates() {
   cargo metadata --format-version 1 --no-deps --locked \
     | jq -r --argjson all "$all" '
@@ -54,8 +61,9 @@ crates() {
         | ($p | map(.name)) as $names
         | def changed($n): $all or ($n | IN($ENV.CHANGED | split(" ")[]));
           def rdeps($n): [$p[] | select(any(.dependencies[]; .name == $n)) | .name];
-          [$names[] | select(changed(.))] as $seed
-          | [$seed, ($seed | map(rdeps(.)) | add // [])] | add | unique | .[]'
+          def dependants: (. + map(rdeps(.)[]) | unique) as $next
+            | if $next == . then . else $next | dependants end;
+          [$names[] | select(changed(.))] | unique | dependants | .[]'
 }
 
 # A crate counts as changed if its directory differs from its newest release tag,
@@ -70,14 +78,34 @@ for dir in crates/*/; do
 done
 export CHANGED="${changed[*]:-}"
 
-for crate in $(crates); do
-  step "$crate: clippy"
-  cargo clippy -p "$crate" --all-targets --all-features --locked -- -D warnings
+selected=$(crates)
+if [[ -n $selected ]]; then
+  step Clippy: $selected
+  cargo clippy $(printf -- ' -p %s' $selected) --all-targets --all-features --locked -- -D warnings
+fi
+
+# Per crate: built together, features unify, so a sibling's can mask a missing one
+# or add a second rustls provider that a test's process default can't choose between.
+for crate in $selected; do
   step "$crate: test"
   cargo test -p "$crate" --all-features --locked
   step "$crate: each feature"
   cargo hack check -p "$crate" --each-feature --locked
 done
+
+windows_only() {
+  cargo metadata --format-version 1 --no-deps --locked \
+    | jq -r --arg among "$*" '.packages[] | select(.name | IN($among | split(" ")[]))
+        | select(any(.dependencies[]; .target // "" | test("windows"))) | .name'
+}
+
+# A Windows-only dependency means Windows-only code, which a build on this host skips.
+windows=
+! $cross_windows || windows=$(windows_only $selected)
+if [[ -n $windows ]]; then
+  step "Clippy for $win:" $windows
+  cargo clippy $(printf -- ' -p %s' $windows) --target $win --all-features --locked -- -D warnings
+fi
 
 if $all; then
   step "Docs"
@@ -102,9 +130,12 @@ if $all; then
       && while read -r package version; do
            [[ -z $package ]] || cargo +nightly update -q -p "$package" --precise "$version"
          done <<<"$pins" \
-      && cargo +nightly check --workspace --all-features --all-targets -q) \
+      && cargo +nightly check --workspace --all-features --all-targets -q \
+      && { ! grep -qx "$name" <<<"$windows" \
+           || cargo +nightly check --target $win --workspace --all-features -q; }) \
       || die "$name does not build at its dependency floors"
   done
 fi
 
+[[ -z $stamp ]] || { mkdir -p "$(dirname "$stamp")" && touch "$stamp"; }
 printf '\nci: ok\n'

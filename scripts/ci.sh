@@ -138,9 +138,11 @@ windows_only() {
         | select(any(.dependencies[]; .target // "" | test("windows"))) | .name'
 }
 
-# A Windows-only dependency means Windows-only code, which a build on this host skips.
+# A build on this host skips cfg(windows) code, and a crate breaks on Windows without
+# any Windows-only dependency. These crates' --all-features build is Unix-only.
+unix_only='wslib-tailscale'
 windows=
-! $cross_windows || windows=$(windows_only $selected)
+! $cross_windows || windows=$(grep -vxE "$unix_only" <<<"$selected" || true)
 if [[ -n $windows ]]; then
   step "Clippy for $win:" $windows
   cargo clippy $(printf -- ' -p %s' $windows) --target $win --all-features --locked -- -D warnings
@@ -155,6 +157,8 @@ if $all; then
 
   # Per crate: one lock can't hold every crate's floors at once.
   step "Dependency floors"
+  # A Windows-only dependency's floor is resolved only for Windows.
+  windows_deps=$(! $cross_windows || windows_only $selected)
   floors=$(mktemp -d)
   trap 'rm -rf "$floors" ${stubs:+"$stubs"}' EXIT
   git ls-files -z -co --exclude-standard \
@@ -170,7 +174,7 @@ if $all; then
            [[ -z $package ]] || cargo +nightly update -q -p "$package" --precise "$version"
          done <<<"$pins" \
       && cargo +nightly check --workspace --all-features --all-targets -q \
-      && { ! grep -qx "$name" <<<"$windows" \
+      && { ! grep -qx "$name" <<<"$windows_deps" \
            || cargo +nightly check --target $win --workspace --all-features -q; }) \
       || die "$name does not build at its dependency floors"
   done

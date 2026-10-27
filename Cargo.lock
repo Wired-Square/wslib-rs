@@ -6962,7 +6962,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "wslib-appliance-auth",
  "wslib-appliance-config",
@@ -6972,7 +6972,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-auth"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -6994,7 +6994,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-config"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "clap",
  "serde",
@@ -7007,7 +7007,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-store"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "chrono",
  "serde",
@@ -7025,7 +7025,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-types"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "chrono",
  "serde",

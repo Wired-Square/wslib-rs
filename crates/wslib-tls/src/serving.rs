@@ -15,8 +15,8 @@ use wslib_crypto_x509::{CertificateView, Report, SubjectAltName};
 use wslib_file_atomic::{CommitError, Options, RecordIdentity, Refused, Transaction};
 use wslib_secret::Secret;
 
-use crate::AnchorError;
 use crate::trust::authority;
+use crate::{AnchorError, KeyFingerprint};
 
 const DISPLACED: &str = "unusable";
 const PROBE: &str = ".wslib-tls-write-probe";
@@ -132,6 +132,7 @@ pub struct Serving {
     provider: Arc<CryptoProvider>,
     location: Location,
     configs: watch::Sender<Arc<ServerConfig>>,
+    key: watch::Sender<KeyFingerprint>,
     alpn: Vec<Vec<u8>>,
     clients: Arc<dyn ClientCertVerifier>,
     cannot_replace: Option<(PathBuf, io::ErrorKind)>,
@@ -164,7 +165,7 @@ impl Serving {
 
         let unusable = match present(&location)? {
             Present::Both => match load(&provider, &location) {
-                Ok(config) => return Ok(Self::new(provider, location, config)),
+                Ok(served) => return Ok(Self::new(provider, location, served)),
                 Err(unusable) => unusable,
             },
             Present::Neither => return Self::mint(provider, location, &names(), algorithm),
@@ -183,13 +184,14 @@ impl Serving {
         Self::mint(provider, location, &names(), algorithm)
     }
 
-    fn new(provider: Arc<CryptoProvider>, location: Location, config: Arc<ServerConfig>) -> Self {
+    fn new(provider: Arc<CryptoProvider>, location: Location, served: Served) -> Self {
         // Once, at startup: a directory that becomes unwritable later fails the write itself.
         let cannot_replace = writable(&location).err();
         Self {
             provider,
             location,
-            configs: watch::Sender::new(config),
+            configs: watch::Sender::new(served.config),
+            key: watch::Sender::new(served.key),
             alpn: Vec::new(),
             clients: WebPkiClientVerifier::no_client_auth(),
             cannot_replace,
@@ -204,9 +206,9 @@ impl Serving {
         algorithm: KeyAlgorithm,
     ) -> Result<Self, ServingError> {
         tracing::info!(cert = %location.cert.display(), ?names, "minting a serving pair");
-        let (pair, config) = mint_pair(&provider, names, algorithm)?;
+        let (pair, served) = mint_pair(&provider, names, algorithm)?;
         commit_pair(&location, &pair).map_err(|(error, _)| error)?;
-        Ok(Self::new(provider, location, config))
+        Ok(Self::new(provider, location, served))
     }
 
     /// Serves `protocols` as ALPN in every configuration from here on, the one
@@ -262,6 +264,12 @@ impl Serving {
         self.configs.subscribe()
     }
 
+    /// The SHA-256 of the served key's SubjectPublicKeyInfo, to pin; it holds
+    /// while a chain over the same key replaces the certificate.
+    pub fn key_fingerprint(&self) -> KeyFingerprint {
+        *self.key.borrow()
+    }
+
     pub fn location(&self) -> &Location {
         &self.location
     }
@@ -299,8 +307,8 @@ impl Serving {
         };
         let (chain, key, view) = parse(&self.provider, &pair)?;
         let report = wslib_crypto_x509::examine(view, host, now);
-        let config = server_config(&self.provider, chain, key)?;
-        let config = self.commit(pair, config).await?;
+        let served = server_config(&self.provider, chain, key)?;
+        let config = self.commit(pair, served).await?;
         Ok(Installed { config, report })
     }
 
@@ -313,16 +321,16 @@ impl Serving {
         algorithm: KeyAlgorithm,
     ) -> Result<Arc<ServerConfig>, ServingError> {
         let (provider, names) = (self.provider.clone(), names.to_vec());
-        let (pair, config) = blocking(move || mint_pair(&provider, &names, algorithm)).await?;
-        self.commit(pair, config).await
+        let (pair, served) = blocking(move || mint_pair(&provider, &names, algorithm)).await?;
+        self.commit(pair, served).await
     }
 
     async fn commit(
         &self,
         pair: ServingPair,
-        config: Arc<ServerConfig>,
+        served: Served,
     ) -> Result<Arc<ServerConfig>, ServingError> {
-        let config = self.dressed(config);
+        let config = self.dressed(served.config);
         let mut left = self.installing.lock().await;
         self.replaceable()?;
         self.after_recovery(&mut left, move |location| {
@@ -333,6 +341,7 @@ impl Serving {
         })
         .await?;
         self.configs.send_replace(config.clone());
+        self.key.send_replace(served.key);
         Ok(config)
     }
 
@@ -502,10 +511,7 @@ fn present(location: &Location) -> Result<Present, ServingError> {
     })
 }
 
-fn load(
-    provider: &Arc<CryptoProvider>,
-    location: &Location,
-) -> Result<Arc<ServerConfig>, ServingError> {
+fn load(provider: &Arc<CryptoProvider>, location: &Location) -> Result<Served, ServingError> {
     let (chain, key, _) = parse(provider, &read_pair(location)?)?;
     server_config(provider, chain, key)
 }
@@ -555,7 +561,7 @@ fn mint_pair(
     provider: &Arc<CryptoProvider>,
     names: &[SubjectAltName],
     algorithm: KeyAlgorithm,
-) -> Result<(ServingPair, Arc<ServerConfig>), ServingError> {
+) -> Result<(ServingPair, Served), ServingError> {
     let key = PrivateKeyDer::from(algorithm.generate().map_err(ServingError::Generate)?);
     let signer = Signer::new(provider.clone(), &key).map_err(ServingError::KeyRefused)?;
     let cert = wslib_crypto_x509::mint(&signer, names).map_err(ServingError::Mint)?;
@@ -566,16 +572,25 @@ fn mint_pair(
     Ok((pair, server_config(provider, vec![cert], key)?))
 }
 
+struct Served {
+    config: Arc<ServerConfig>,
+    key: KeyFingerprint,
+}
+
 fn server_config(
     provider: &Arc<CryptoProvider>,
     chain: Vec<CertificateDer<'static>>,
     key: PrivateKeyDer<'static>,
-) -> Result<Arc<ServerConfig>, ServingError> {
-    ServerConfig::builder_with_provider(provider.clone())
+) -> Result<Served, ServingError> {
+    let fingerprint = KeyFingerprint::of(&chain[0]).map_err(ServingError::Certificate)?;
+    let config = ServerConfig::builder_with_provider(provider.clone())
         .with_safe_default_protocol_versions()
         .and_then(|builder| builder.with_no_client_auth().with_single_cert(chain, key))
-        .map(Arc::new)
-        .map_err(ServingError::Refused)
+        .map_err(ServingError::Refused)?;
+    Ok(Served {
+        config: Arc::new(config),
+        key: fingerprint,
+    })
 }
 
 /// The record sits beside the key and is named for it, so two pairs in one directory never share one.
@@ -990,6 +1005,39 @@ mod tests {
             assert_eq!(on_disk(&dir.join("cert.pem")), minted, "{name}");
             assert_eq!(served(&provider, second.config()).await, minted, "{name}");
             assert!(second.replaceable().is_ok(), "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_key_fingerprint_follows_the_served_key_through_restarts_and_writes() {
+        for (name, provider) in providers() {
+            let dir = Scratch::new(&format!("key-fingerprint-{name}"));
+            let on_disk = || {
+                let pem = fs::read_to_string(dir.join("cert.pem")).unwrap();
+                KeyFingerprint::of(&pem::certificates(&pem).unwrap()[0]).unwrap()
+            };
+            let serving = start(&provider, dir.managed()).expect(name);
+            let minted = on_disk();
+            assert_eq!(serving.key_fingerprint(), minted, "{name}");
+            assert_eq!(
+                start(&provider, dir.managed())
+                    .expect(name)
+                    .key_fingerprint(),
+                minted,
+                "{name}"
+            );
+
+            let names = ["widget-02".parse().unwrap()];
+            let _ = serving
+                .regenerate(&names, KeyAlgorithm::EcP256)
+                .await
+                .expect(name);
+            assert_ne!(on_disk(), minted, "{name}");
+            assert_eq!(serving.key_fingerprint(), on_disk(), "{name}");
+
+            let (cert, key) = another_pair(&provider);
+            let _ = install(&serving, &cert, &key).await.expect(name);
+            assert_eq!(serving.key_fingerprint(), on_disk(), "{name}");
         }
     }
 

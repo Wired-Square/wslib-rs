@@ -28,6 +28,15 @@ cross_windows=false
 ! $cross_windows || rustup target list --installed | grep -qx $win || die "$win missing: rustup target add $win"
 ! $cross_windows || ! $all || rustup +nightly target list --installed | grep -qx $win \
   || die "nightly $win missing: rustup +nightly target add $win"
+# Clippy and check need no object code, and sqlite3.c cannot be cross-compiled for msvc off Windows.
+stubs=
+if $cross_windows; then
+  stubs=$(mktemp -d)
+  trap 'rm -rf "$stubs"' EXIT
+  printf '#!/bin/sh\nfor a; do case $a in -out:*) touch "${a#-out:}";; esac; done\n' >"$stubs/ar"
+  chmod +x "$stubs/ar"
+  export CC_x86_64_pc_windows_msvc=true AR_x86_64_pc_windows_msvc="$stubs/ar"
+fi
 
 step "No consumer is named"
 names=scripts/forbidden-names.txt
@@ -135,7 +144,7 @@ if $all; then
   # Per crate: one lock can't hold every crate's floors at once.
   step "Dependency floors"
   floors=$(mktemp -d)
-  trap 'rm -rf "$floors"' EXIT
+  trap 'rm -rf "$floors" ${stubs:+"$stubs"}' EXIT
   git ls-files -z -co --exclude-standard \
     | while IFS= read -r -d '' f; do [[ -e $f ]] && printf '%s\0' "$f"; done \
     | tar -c --null -T - | tar -x -C "$floors"

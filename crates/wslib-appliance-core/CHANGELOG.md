@@ -11,7 +11,8 @@ Moved from `appliance-core` 0.17.1 in wslib-appliance-rs; what differs:
   `backend::install_crypto_provider` is gone. `tls::pair_at` needs one
   too: an offline backup in its own process without one fails as
   `TlsError::Internal`. So do `testing`'s TLS peers, `Authority` and
-  `self_signed`.
+  `self_signed`. Every test that touches TLS installs one itself: one installed
+  by another test in the same process hides a missing one.
 - `hostname`, `boottime`, `box_id` and the About page's OS and kernel are
   read through `wslib-host`, without `ring`: the same box id for the same
   machine. `hostname` is `wslib_host::hostname` re-exported.

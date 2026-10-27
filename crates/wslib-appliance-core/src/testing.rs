@@ -1,6 +1,9 @@
 //! The half of `wslib-appliance-server`'s harness that needs no appliance: a request
 //! through a router, its body read back, a peer to dial, and a second factor
 //! to sign in with.
+//!
+//! Every test that touches TLS installs a rustls crypto provider itself: one
+//! installed by another test in the same process hides a missing one.
 
 use std::convert::Infallible;
 

@@ -16,7 +16,7 @@ VERSION='{{version}}'
 ARCHES='{{arches}}'
 
 # The cargo package the `--bin` target lives in, as make-deb.sh takes it.
-PACKAGE="${PACKAGE:-$BINARY}"
+BINARY_PACKAGE="${BINARY_PACKAGE:-$BINARY}"
 
 die() {
     echo "make-image: $1" >&2
@@ -42,10 +42,10 @@ docker buildx version >/dev/null 2>&1 || die "docker buildx is not installed"
 [ -f "$DOCKERFILE" ] || die "$DOCKERFILE is not there — run \`wslib-appliance-xtask packaging render\`"
 
 # The tag, the OCI version label and the binary's --version are one version.
-PKGID=$(cargo pkgid -p "$PACKAGE")
+PKGID=$(cargo pkgid -p "$BINARY_PACKAGE")
 CRATE_VERSION=${PKGID##*[#@]}
 [ "$VERSION" = "$CRATE_VERSION" ] ||
-    die "the rendered version is $VERSION and $PACKAGE's is $CRATE_VERSION — set manifest.json's version to the crate's and run \`wslib-appliance-xtask packaging render\`"
+    die "the rendered version is $VERSION and $BINARY_PACKAGE's is $CRATE_VERSION — set manifest.json's version to the crate's and run \`wslib-appliance-xtask packaging render\`"
 
 . "$HERE/build-binary.sh"
 

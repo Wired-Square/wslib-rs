@@ -385,17 +385,23 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn the_binary_builds_with_its_own_package_features_alone() {
-        build_product_beside_another_member(Some("product"));
+        build_product_beside_another_member(&[("BINARY_PACKAGE", "product")]);
     }
 
     #[cfg(unix)]
     #[test]
     fn a_build_with_no_package_set_builds_the_binary_s_own_package() {
-        build_product_beside_another_member(None);
+        build_product_beside_another_member(&[]);
     }
 
     #[cfg(unix)]
-    fn build_product_beside_another_member(package: Option<&str>) {
+    #[test]
+    fn a_caller_s_own_package_variable_is_not_the_build_s() {
+        build_product_beside_another_member(&[("PACKAGE", "other")]);
+    }
+
+    #[cfg(unix)]
+    fn build_product_beside_another_member(env: &[(&str, &str)]) {
         use std::process::Command;
 
         let dir = tempfile::TempDir::new().expect("tempdir");
@@ -452,11 +458,10 @@ mod tests {
         .current_dir(dir.path())
         .env("BINARY", "product")
         .env("TARGET_DIR", "target")
-        .env("CARGO_BUILD_TARGET", &host);
-        match package {
-            Some(package) => sh.env("PACKAGE", package),
-            None => sh.env_remove("PACKAGE"),
-        };
+        .env("CARGO_BUILD_TARGET", &host)
+        .env_remove("PACKAGE")
+        .env_remove("BINARY_PACKAGE")
+        .envs(env.iter().copied());
         let out = sh.output().expect("sh");
         let built = dir.path().join(format!("target/{host}/release/product"));
         assert!(built.exists(), "{}", String::from_utf8_lossy(&out.stderr));

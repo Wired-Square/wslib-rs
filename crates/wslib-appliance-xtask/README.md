@@ -50,7 +50,7 @@ holds its `Cargo.lock` and `appliance.toml`. Every path below is relative to
 that directory, and the greps read only beneath it:
 
 ```sh
-cargo install wslib-appliance-xtask --locked --version =0.1.1 --registry wired-square
+cargo install wslib-appliance-xtask --locked --version =0.2.0 --registry wired-square
 wslib-appliance-xtask gates
 ```
 
@@ -125,7 +125,8 @@ in `[package.files]` are relative to the repository root.
 `make-deb.sh --target deb` builds the package into `target/debian/deb/`, and
 `make-image.sh` builds the image, one architecture per run, into
 `target/docker/`. Both take `CARGO_BUILD_TARGET` and call this tool by name, so
-it must be on `PATH`.
+it must be on `PATH`. They build the binary's own package unless
+`BINARY_PACKAGE` names another.
 
 ## The package
 

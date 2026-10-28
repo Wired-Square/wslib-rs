@@ -491,17 +491,29 @@ fn plain_line(text: &str) -> bool {
 }
 
 /// The staged files go, and are synced gone, before the record: a record
-/// lost first would strand a staged secret with nothing naming it. A directory
-/// under a staged name was never staged, so it is left.
+/// lost first would strand a staged secret with nothing naming it. A directory,
+/// or on Windows a link to one, under a staged name was never staged, so it is
+/// left.
 fn roll_back(record: &Path, suffix: &str, targets: &[PathBuf]) -> io::Result<()> {
     for target in targets {
         let staged = beside(target, suffix);
-        if !fs::symlink_metadata(&staged).is_ok_and(|metadata| metadata.is_dir()) {
+        if !fs::symlink_metadata(&staged).is_ok_and(|metadata| a_directory(metadata.file_type())) {
             remove_if_there(&staged)?;
         }
     }
     sync_parents(targets)?;
     remove_if_there(record)
+}
+
+#[cfg(unix)]
+fn a_directory(file_type: fs::FileType) -> bool {
+    file_type.is_dir()
+}
+
+#[cfg(windows)]
+fn a_directory(file_type: fs::FileType) -> bool {
+    use std::os::windows::fs::FileTypeExt;
+    file_type.is_dir() || file_type.is_symlink_dir()
 }
 
 /// A staged file already gone under a committed record was renamed before the

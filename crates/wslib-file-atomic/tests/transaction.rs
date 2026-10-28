@@ -162,6 +162,34 @@ fn a_directory_at_a_staged_path_fails_the_stage_but_not_its_roll_back() {
     assert_eq!(recover(&dir.0, "tls").unwrap(), Recovered::Nothing);
 }
 
+#[cfg(windows)]
+#[test]
+fn a_junction_at_a_staged_path_fails_the_stage_but_not_its_roll_back() {
+    let dir = pair("txn-stage-junction");
+    let planted = dir.join("planted");
+    fs::create_dir(&planted).unwrap();
+    let made = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(dir.join(STAGED_CERT))
+        .arg(&planted)
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "{made:?}");
+    let mut transaction = Transaction::begin(&dir.0, "tls").unwrap();
+    transaction
+        .stage(&dir.join(KEY), b"new key", &Options::new())
+        .unwrap();
+    assert!(
+        transaction
+            .stage(&dir.join(CERT), b"new cert", &Options::new())
+            .is_err()
+    );
+    assert_old_pair(&dir);
+    assert_only(&dir, &[KEY, CERT, STAGED_CERT, "planted"]);
+    assert_eq!(recover(&dir.0, "tls").unwrap(), Recovered::Nothing);
+    assert!(planted.exists(), "the roll-back left the junction's target");
+}
+
 #[test]
 fn abort_removes_the_staged_files_and_the_record() {
     let dir = pair("txn-abort");

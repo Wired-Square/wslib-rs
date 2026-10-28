@@ -8,6 +8,11 @@
   so about twice the deadline in all.
 - The minted serving certificate is valid from 1975, which Safari accepts:
   `wslib-crypto-x509` >= 0.1.5.
+- `tls::discard_pending(&bootstrap.tls)`: moves aside the record an
+  interrupted write of the pair left, answering a line that says what moved,
+  for a product's `main` to run as an operator's verb (`tls discard-pending`)
+  when a named pair in a directory others may write refuses every start:
+  `wslib-tls` >= 0.2.4.
 
 ## 0.1.0
 

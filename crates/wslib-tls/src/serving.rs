@@ -76,6 +76,14 @@ impl Location {
         recover(self, None)
     }
 
+    /// Moves an interrupted write's record aside, with the files it staged,
+    /// without following or acting on what it names: the operator's step past
+    /// [`ServingError::RecordRefused`]. Where the record went; `None` when
+    /// there was none.
+    pub fn discard_pending(&self) -> Result<Option<PathBuf>, ServingError> {
+        set_aside_interrupted(self)
+    }
+
     /// The pair on disk, for a backup taken with nothing serving, after
     /// [`recover`](Self::recover); `None` when neither file is there.
     ///
@@ -531,10 +539,15 @@ pub enum ServingError {
 }
 
 impl ServingError {
-    /// What follows, for an error whose message says: [`Unfinished`](Self::Unfinished)'s.
+    /// What follows: [`Unfinished`](Self::Unfinished)'s, which its message
+    /// says, and [`RecordRefused`](Self::RecordRefused)'s.
     pub fn next_step(&self) -> Option<String> {
         match self {
             Self::Unfinished { record, named, .. } => Some(unfinished_next_step(record, *named)),
+            Self::RecordRefused { record, .. } => Some(format!(
+                "check {}, then move it aside by hand or with `Location::discard_pending`",
+                record.display()
+            )),
             _ => None,
         }
     }
@@ -746,7 +759,7 @@ fn named_record_acted_on(location: &Location) -> Result<(), ServingError> {
 
 /// The staged files go aside before the record, as a record lost first would
 /// strand a staged key with nothing naming it.
-fn set_aside_interrupted(location: &Location) -> Result<(), ServingError> {
+fn set_aside_interrupted(location: &Location) -> Result<Option<PathBuf>, ServingError> {
     let suffix = format!("{}.txn", transaction(location).1);
     displace(&wslib_file_atomic::beside(&location.cert, &suffix))?;
     displace(&wslib_file_atomic::beside(&location.key, &suffix))?;
@@ -802,7 +815,7 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) 
 }
 
 /// Into the first free `.unusable`, `.unusable.1`, …, so an earlier incident's file is kept.
-fn displace(path: &Path) -> Result<(), ServingError> {
+fn displace(path: &Path) -> Result<Option<PathBuf>, ServingError> {
     for n in 0u32.. {
         let suffix = match n {
             0 => DISPLACED.to_string(),
@@ -811,7 +824,7 @@ fn displace(path: &Path) -> Result<(), ServingError> {
         let aside = wslib_file_atomic::beside(path, &suffix);
         match rename_no_replace(path, &aside) {
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(source) => {
                 return Err(ServingError::Displace {
                     path: path.to_path_buf(),
@@ -820,7 +833,7 @@ fn displace(path: &Path) -> Result<(), ServingError> {
             }
             Ok(()) => {
                 tracing::warn!(from = %path.display(), to = %aside.display(), "kept the unusable file");
-                return Ok(());
+                return Ok(Some(aside));
             }
         }
     }
@@ -1595,6 +1608,79 @@ mod tests {
         assert!(record.exists());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_refused_record_discarded_by_the_operator_lets_the_named_pair_start() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("discard-refused");
+        let served = start(provider, dir.named()).unwrap().key_fingerprint();
+        let mut crashed = Transaction::begin(&dir.0, "key.pem").unwrap();
+        crashed
+            .stage(&dir.join("key.pem"), b"staged", &Options::new())
+            .unwrap();
+        std::mem::forget(crashed);
+        loosen(&dir);
+        let refused = start(provider, dir.named()).map(drop).unwrap_err();
+        let ServingError::Named { source, .. } = &refused else {
+            panic!("{refused}");
+        };
+        assert!(
+            source.next_step().unwrap().contains("discard_pending"),
+            "{source}"
+        );
+
+        let aside = dir.named().discard_pending().unwrap();
+        assert_eq!(aside, Some(dir.join("key.pem.txn.unusable")));
+        let started = start(provider, dir.named()).expect("no write is in flight");
+        assert_eq!(started.key_fingerprint(), served);
+        assert_eq!(
+            dir.listing(),
+            [
+                "cert.pem",
+                "key.pem",
+                "key.pem.key.pem.txn.unusable",
+                "key.pem.txn.unusable",
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discarding_a_symlinked_record_moves_the_link_and_leaves_what_it_names() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("discard-symlink");
+        start(provider, dir.named()).unwrap();
+        let (record, elsewhere) = (dir.join("key.pem.txn"), dir.join("elsewhere"));
+        write(&elsewhere, "not the record's");
+        std::os::unix::fs::symlink(&elsewhere, &record).unwrap();
+        std::os::unix::fs::symlink(dir.join("missing"), dir.join("dangling")).unwrap();
+
+        assert_eq!(
+            dir.named().discard_pending().unwrap(),
+            Some(dir.join("key.pem.txn.unusable"))
+        );
+        fs::rename(dir.join("dangling"), &record).unwrap();
+        assert_eq!(
+            dir.named().discard_pending().unwrap(),
+            Some(dir.join("key.pem.txn.unusable.1"))
+        );
+        for aside in ["key.pem.txn.unusable", "key.pem.txn.unusable.1"] {
+            let link = fs::symlink_metadata(dir.join(aside)).unwrap();
+            assert!(link.file_type().is_symlink(), "{aside}");
+        }
+        assert_eq!(fs::read_to_string(&elsewhere).unwrap(), "not the record's");
+        assert!(!dir.join("missing").exists());
+    }
+
+    #[test]
+    fn discarding_with_no_record_is_ok_and_moves_nothing() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("discard-nothing");
+        start(provider, dir.named()).unwrap();
+        assert_eq!(dir.named().discard_pending().unwrap(), None);
+        assert_eq!(dir.listing(), ["cert.pem", "key.pem"]);
+    }
+
     /// A committed write whose certificate cannot be renamed into place
     /// because a directory is there.
     fn wedged(dir: &Scratch) {
@@ -2087,7 +2173,7 @@ mod tests {
 
         NO_REPLACE_UNSUPPORTED.set(true);
         let displaced =
-            displace(&dir.join("key.pem")).and_then(|()| displace(&dir.join("cert.pem")));
+            displace(&dir.join("key.pem")).and_then(|_| displace(&dir.join("cert.pem")));
         NO_REPLACE_UNSUPPORTED.set(false);
         displaced.unwrap();
         let read = |name: &str| fs::read_to_string(dir.join(name)).unwrap();

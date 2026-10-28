@@ -77,6 +77,14 @@ On a backend with its own TLS listener, `app.tls` is the serving pair:
 refuse, and `pair()` reads both halves for a backup. On a backend with no
 pair each answers `TlsError::Unsupported`.
 
+A named pair's directory, such as a Docker volume, is kept `0700` or `0750`
+and owned by the service user: where others may write, an interrupted
+write's record may have been planted, so every start refuses it. The
+product's `main` dispatches `tls discard-pending` to
+`tls::discard_pending(&bootstrap.tls)`, which moves the record aside, so a
+distroless image recovers with
+`docker run --rm -v <vol>:/state <image> tls discard-pending`.
+
 ## A crypto provider
 
 This crate enables no rustls provider. Install one before serving, or

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0
+
+- The cargo package to build is `BINARY_PACKAGE` (was `PACKAGE`), in
+  `build-binary.sh`, `make-deb.sh` and `make-image.sh`, so a `PACKAGE` the
+  caller already has no longer picks the package. Rename it where you set it.
+
 ## 0.1.3
 
 - `build-binary.sh` builds `$BINARY`'s own package when `PACKAGE` is unset,

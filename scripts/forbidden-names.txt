@@ -1,4 +1,9 @@
 ups.?manager
 upsmgr
-wiretap
+wiretap.?server
+wiretap.?backend
+wiretap.?model
+wiretap.?app
+wiretap.?can.?cli
+wiretap.?desktop
 accessmanager

@@ -15,7 +15,7 @@ use serde::Deserialize;
 pub const RENDERS_FOR: [(&str, &str); 3] = [
     ("wslib-appliance-config", "0.1.1"),
     ("wslib-appliance-store", "0.1.1"),
-    ("wslib-appliance-server", "0.1.0"),
+    ("wslib-appliance-server", "0.1.1"),
 ];
 
 const FORBIDDEN_NAMES: &str = "scripts/forbidden-names.txt";
@@ -463,6 +463,25 @@ mod tests {
         let readme = include_str!("../README.md").replace('\n', " ");
         for (name, version) in RENDERS_FOR {
             assert!(readme.contains(&format!("`{name}` {version}")), "{name}");
+        }
+    }
+
+    #[test]
+    fn the_rendered_for_versions_are_the_family_crates_in_the_workspace() {
+        #[derive(Deserialize)]
+        struct Manifest {
+            package: Package,
+        }
+        #[derive(Deserialize)]
+        struct Package {
+            version: String,
+        }
+
+        for (name, version) in RENDERS_FOR {
+            let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../{name}/Cargo.toml"));
+            let text = std::fs::read_to_string(&path).expect("a sibling manifest");
+            let manifest: Manifest = toml::from_str(&text).expect("parses");
+            assert_eq!(manifest.package.version, version, "{name}");
         }
     }
 

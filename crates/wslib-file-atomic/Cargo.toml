@@ -1,6 +1,6 @@
 [package]
 name = "wslib-file-atomic"
-version = "0.1.7"
+version = "0.1.8"
 description = "Crash-safe whole-file writes: replaced whole or not at all, readable by whom it should be from creation."
 readme = "README.md"
 edition.workspace = true

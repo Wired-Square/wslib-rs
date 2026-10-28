@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.8
+
+- On Windows, a roll-back leaves a junction or directory symlink found at a
+  staged path, as it does a directory, rather than failing on it.
+
 ## 0.1.7
 
 - A transaction's roll-back, and `recover`'s, leave a directory found at a

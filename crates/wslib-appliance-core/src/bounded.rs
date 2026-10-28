@@ -10,16 +10,18 @@ use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, ready};
 use std::time::Duration;
 
 use axum::serve::Listener;
+use axum_server::accept::Accept;
 use axum_server::{AddrListener, Address, Handle};
 use hyper_util::rt::{TokioExecutor, TokioTimer};
 use hyper_util::server::conn::auto::{Builder, Http1Builder};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
+use tokio::time::Sleep;
 use tokio_util::sync::CancellationToken;
 
 /// Hold a connection's http/1.1 request head, and the wait for its next one, to
@@ -150,6 +152,121 @@ where
     }
 }
 
+/// Bounds hyper's sniff for the h2 preface to `head` and refuses the preface,
+/// for http/1.1 with upgrades.
+#[derive(Clone)]
+pub struct Http1Only {
+    pub head: Duration,
+}
+
+impl<I, S> Accept<I, S> for Http1Only {
+    type Stream = Sniffed<I>;
+    type Service = S;
+    type Future = std::future::Ready<io::Result<(Sniffed<I>, S)>>;
+
+    fn accept(&self, stream: I, service: S) -> Self::Future {
+        std::future::ready(Ok((Sniffed::new(stream, self.head), service)))
+    }
+}
+
+/// hyper's own, copied: a hyper-util bump that changes the sniff changes this.
+const PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+
+pub struct Sniffed<S> {
+    stream: S,
+    sniff: Option<Sniff>,
+}
+
+struct Sniff {
+    matched: usize,
+    deadline: Pin<Box<Sleep>>,
+}
+
+impl<S> Sniffed<S> {
+    fn new(stream: S, head: Duration) -> Self {
+        Self {
+            stream,
+            sniff: Some(Sniff {
+                matched: 0,
+                deadline: Box::pin(tokio::time::sleep(head)),
+            }),
+        }
+    }
+}
+
+/// Whether hyper could now tell the protocols apart: a divergence, the whole
+/// preface, or an end of stream.
+fn decided(matched: &mut usize, read: &[u8]) -> bool {
+    let same = read
+        .iter()
+        .zip(&PREFACE[*matched..])
+        .take_while(|(sent, expected)| sent == expected)
+        .count();
+    *matched += same;
+    read.is_empty() || same < read.len() || *matched == PREFACE.len()
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for Sniffed<S> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        if let Some(sniff) = &mut this.sniff
+            && sniff.deadline.as_mut().poll(cx).is_ready()
+        {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the peer did not begin a request",
+            )));
+        }
+        let from = buf.filled().len();
+        ready!(Pin::new(&mut this.stream).poll_read(cx, buf))?;
+        if let Some(sniff) = this
+            .sniff
+            .take_if(|sniff| decided(&mut sniff.matched, &buf.filled()[from..]))
+            && sniff.matched == PREFACE.len()
+        {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "h2 is not served here",
+            )));
+        }
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for Sniffed<S> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.stream).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.stream).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.stream).poll_shutdown(cx)
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[io::IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.stream).poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.stream.is_write_vectored()
+    }
+}
+
 /// A stream that gives its permit back when the connection ends, and not before.
 pub struct Permitted<S> {
     stream: S,
@@ -208,6 +325,77 @@ mod tests {
             .await
             .expect("bind");
         BoundedListener::new(tcp, 1)
+    }
+
+    async fn pair() -> (TcpStream, TcpStream) {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind");
+        let address = listener.local_addr().expect("a local address");
+        let (peer, accepted) = tokio::join!(TcpStream::connect(address), listener.accept());
+        (peer.expect("connect"), accepted.expect("accept").0)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stream_that_says_nothing_fails_at_its_deadline() {
+        use tokio::io::AsyncReadExt;
+
+        let (_peer, server) = pair().await;
+        let mut sniffed = Sniffed::new(server, Duration::from_millis(100));
+
+        let failed = sniffed
+            .read(&mut [0u8; 1])
+            .await
+            .expect_err("the deadline ends it");
+        assert_eq!(failed.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[tokio::test]
+    async fn a_settled_stream_drops_its_deadline() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (mut peer, server) = pair().await;
+        let mut sniffed = Sniffed::new(server, Duration::from_secs(30));
+
+        peer.write_all(b"GET").await.expect("a request line");
+        sniffed
+            .read_exact(&mut [0u8; 3])
+            .await
+            .expect("the bytes the peer sent");
+
+        assert!(sniffed.sniff.is_none());
+    }
+
+    #[test]
+    fn a_request_line_settles_it_on_its_first_byte() {
+        assert!(decided(&mut 0, b"GET / HTTP/1.1\r\n"));
+    }
+
+    #[test]
+    fn a_preface_arriving_in_pieces_is_not_settled_until_the_last_one() {
+        let mut matched = 0;
+        assert!(!decided(&mut matched, b"PRI * HTTP/2.0"));
+        assert!(!decided(&mut matched, b"\r\n\r\nSM\r\n"));
+        assert!(decided(&mut matched, b"\r\n"));
+        assert_eq!(matched, PREFACE.len());
+    }
+
+    #[test]
+    fn a_prefix_of_the_preface_and_then_something_else_is_settled() {
+        let mut matched = 0;
+        assert!(!decided(&mut matched, b"PRI"));
+        assert!(decided(&mut matched, b" / HTTP/1.1\r\n"));
+        assert!(matched < PREFACE.len());
+    }
+
+    #[test]
+    fn a_read_longer_than_what_is_left_of_the_preface_settles_it() {
+        assert!(decided(&mut (PREFACE.len() - 2), b"\r\nGET / HTTP/1.1\r\n"));
+    }
+
+    #[test]
+    fn the_end_of_the_stream_settles_it() {
+        assert!(decided(&mut 0, b""));
     }
 
     #[tokio::test]

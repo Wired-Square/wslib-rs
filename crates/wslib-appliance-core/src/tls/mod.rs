@@ -1124,10 +1124,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_minted_certificate_is_valid_from_1_july_2026_to_4096() {
+    async fn a_minted_certificate_is_valid_from_1975_to_4096() {
         let dir = tempfile::tempdir().unwrap();
         let view = on_disk(&Tls::minted_in(&dir).await).expect("reads");
-        assert_eq!(view.not_before.to_rfc3339(), "2026-07-01T00:00:00+00:00");
+        assert_eq!(view.not_before.to_rfc3339(), "1975-01-01T00:00:00+00:00");
         assert_eq!(view.not_after.to_rfc3339(), "4096-01-01T00:00:00+00:00");
     }
 

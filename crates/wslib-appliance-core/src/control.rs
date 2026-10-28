@@ -405,8 +405,8 @@ where
 /// Serve `router` on `listener`, held to [`CONNECTIONS`] and `head`, until
 /// `stop` and the grace after it, handing each request its connection's `C`.
 ///
-/// http/1.1 only: a cleartext h2 connection's preface is read against no
-/// deadline.
+/// http/1.1 only, upgrades included. The peer gets `head` to begin and `head`
+/// again for its first request head.
 pub(crate) async fn serve_http1<L, C>(
     listener: L,
     router: Router,
@@ -422,12 +422,12 @@ where
         + Sync
         + 'static,
 {
-    use crate::bounded::{Bounded, BoundedListener, head_within, until_stopped};
+    use crate::bounded::{Bounded, BoundedListener, Http1Only, head_within, until_stopped};
 
     let handle = axum_server::Handle::<Bounded<L>>::new();
     let mut server =
         axum_server::Server::from_listener(BoundedListener::new(listener, CONNECTIONS))
-            .http1_only()
+            .acceptor(Http1Only { head })
             .handle(handle.clone());
     head_within(server.http_builder(), head);
     let serving = server.serve(router.into_make_service_with_connect_info::<C>());
@@ -702,6 +702,89 @@ mod tests {
         .await
         .expect("a connection that sent no head is hung up on")
         .expect("reads");
+
+        stop.cancel();
+        serving.await.expect("did not panic").expect("served");
+    }
+
+    #[cfg(unix)]
+    async fn echo_upgrade(mut request: axum::extract::Request) -> axum::response::Response {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let upgrading = hyper::upgrade::on(&mut request);
+        tokio::spawn(async move {
+            let mut upgraded = hyper_util::rt::TokioIo::new(upgrading.await.expect("upgraded"));
+            let mut byte = [0u8; 1];
+            upgraded.read_exact(&mut byte).await.expect("a byte");
+            upgraded.write_all(&byte).await.expect("echoed");
+        });
+        axum::response::Response::builder()
+            .status(axum::http::StatusCode::SWITCHING_PROTOCOLS)
+            .header(axum::http::header::CONNECTION, "upgrade")
+            .header(axum::http::header::UPGRADE, "echo")
+            .body(axum::body::Body::empty())
+            .expect("a response")
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_upgraded_control_connection_carries_bytes_after_the_101() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("control.sock");
+        let router =
+            ControlRouter::new(Router::new().route("/echo", axum::routing::get(echo_upgrade)));
+        let (stop, serving) = serving_one(router, &socket).await;
+        let mut peer = tokio::net::UnixStream::connect(&socket)
+            .await
+            .expect("connects");
+
+        peer.write_all(b"GET /echo HTTP/1.1\r\nHost: localhost\r\nConnection: upgrade\r\nUpgrade: echo\r\n\r\n")
+            .await
+            .expect("writes");
+        let mut head = Vec::new();
+        while !head.ends_with(b"\r\n\r\n") {
+            head.push(peer.read_u8().await.expect("the response head"));
+        }
+        assert!(
+            head.starts_with(b"HTTP/1.1 101"),
+            "{}",
+            String::from_utf8_lossy(&head)
+        );
+        peer.write_all(b"x").await.expect("writes after the 101");
+        let echoed = tokio::time::timeout(Duration::from_secs(5), peer.read_u8()).await;
+        assert!(matches!(echoed, Ok(Ok(b'x'))), "{echoed:?}");
+
+        drop(peer);
+        stop.cancel();
+        serving.await.expect("did not panic").expect("served");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_h2_preface_on_a_control_socket_is_refused() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("control.sock");
+        let (stop, serving) = serving_one(ControlRouter::empty(), &socket).await;
+        let mut peer = tokio::net::UnixStream::connect(&socket)
+            .await
+            .expect("connects");
+
+        peer.write_all(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+            .await
+            .expect("writes");
+        let mut answer = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), peer.read_to_end(&mut answer))
+            .await
+            .expect("closed")
+            .ok();
+        assert!(
+            answer.is_empty() || answer.starts_with(b"HTTP/1.1 "),
+            "{answer:?}"
+        );
 
         stop.cancel();
         serving.await.expect("did not panic").expect("served");

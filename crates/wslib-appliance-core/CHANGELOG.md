@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1
+
+- Every http/1.1 listener serves upgrades; the connection was reset right
+  after the 101. h2 is still refused, now at the preface. A peer gets the
+  head deadline to begin and the deadline again for its first request head,
+  so about twice the deadline in all.
+- The minted serving certificate is valid from 1975, which Safari accepts:
+  `wslib-crypto-x509` >= 0.1.5.
+
 ## 0.1.0
 
 Moved from `appliance-core` 0.17.1 in wslib-appliance-rs; what differs:

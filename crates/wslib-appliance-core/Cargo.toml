@@ -1,6 +1,6 @@
 [package]
 name = "wslib-appliance-core"
-version = "0.1.0"
+version = "0.1.1"
 description = "The router, the authority and the workers an appliance needs, beneath the backends that serve them behind a console, on their own TLS listener and as a desktop service."
 readme = "README.md"
 edition.workspace = true
@@ -46,7 +46,7 @@ wslib-appliance-types = { path = "../wslib-appliance-types", version = "0.1.1", 
 wslib-auth = { path = "../wslib-auth", version = "0.1.1", registry = "wired-square", default-features = false }
 wslib-auth-passkey = { path = "../wslib-auth-passkey", version = "0.1.0", registry = "wired-square", default-features = false, optional = true }
 wslib-crypto = { path = "../wslib-crypto", version = "0.1.0", registry = "wired-square" }
-wslib-crypto-x509 = { path = "../wslib-crypto-x509", version = "0.1.1", registry = "wired-square" }
+wslib-crypto-x509 = { path = "../wslib-crypto-x509", version = "0.1.5", registry = "wired-square" }
 wslib-file-atomic = { path = "../wslib-file-atomic", version = "0.1.6", registry = "wired-square" }
 wslib-homeassistant = { path = "../wslib-homeassistant", version = "0.1.0", registry = "wired-square" }
 wslib-host = { path = "../wslib-host", version = "0.1.1", registry = "wired-square" }
@@ -72,6 +72,7 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [dev-dependencies]
+hyper = { version = "1.8", default-features = false }
 rcgen = { version = "0.14.10", default-features = false }
 rustls = { version = "0.23.27", default-features = false, features = ["ring"] }
 tempfile = "3.10.1"

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+- `build-binary.sh` builds `$BINARY`'s own package when `PACKAGE` is unset,
+  so a script that sources it directly under `set -u` builds as it did before
+  0.1.2.
+
 ## 0.1.2
 
 - `build-binary.sh` builds with `-p "$PACKAGE"`, so in a virtual workspace the

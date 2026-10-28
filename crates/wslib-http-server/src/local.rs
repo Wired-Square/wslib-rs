@@ -9,6 +9,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::Request;
+use axum_server::accept::DefaultAcceptor;
 use axum_server::{AddrListener, Address, Handle, Server};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Semaphore;
@@ -16,6 +17,7 @@ use tower::util::MapRequestLayer;
 use wslib_host::PeerCredentials;
 
 use crate::bounded::{Bounds, Permitted, backed_off, made_bound, permit};
+use crate::deciding::Deciding;
 use crate::{app, head_within, until_stopped};
 
 /// A bound Unix socket held to its [`Bounds`]. One [`bind`](Self::bind) made is
@@ -243,7 +245,7 @@ pub async fn serve_local(
     tracing::info!(path = %socket.path().display(), "listening");
     let handle = Handle::<Credentialled>::new();
     let mut server = Server::from_listener(socket)
-        .http1_only()
+        .acceptor(Deciding::http1_within(DefaultAcceptor::new(), bounds.head))
         .handle(handle.clone());
     head_within(server.http_builder(), bounds.head);
     let router = router.layer(MapRequestLayer::new(with_credentials));

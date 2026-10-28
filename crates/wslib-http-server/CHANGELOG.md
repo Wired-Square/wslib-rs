@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.5
+
+- `serve_local` serves http/1.1 upgrades; the connection was reset right
+  after the 101. It still refuses h2, now at the preface. As over TCP, a
+  peer gets `Bounds::head` to begin and `head` again for its first request
+  head, so about twice `head` in all.
+
 ## 0.1.4
 
 - On Unix, `LocalSocket` and `serve_local`: an axum `Router` over http/1.1

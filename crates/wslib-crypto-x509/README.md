@@ -84,7 +84,8 @@ signature::verify(&inspect(&leaf)?.spki, &algorithm_identifier, message, signed,
   `signature::algorithm_name(oid)` is OpenSSL's name for a signature
   algorithm, or the OID when unknown.
 - **`mint(signer, names)`**: a self-signed serving certificate. The first
-  name is the common name; valid from 1 July 2026 into the year 4096;
+  name is the common name; valid from 1975 into the year 4096, issued
+  before Safari's 825-day cap applies;
   `CA:FALSE`, digital signature and server authentication, each stated;
   a random serial and key identifier from `wslib-crypto`.
 

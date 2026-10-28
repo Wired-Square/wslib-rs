@@ -139,10 +139,9 @@ windows_only() {
 }
 
 # A build on this host skips cfg(windows) code, and a crate breaks on Windows without
-# any Windows-only dependency. These crates' --all-features build is Unix-only.
-unix_only='wslib-tailscale'
+# any Windows-only dependency.
 windows=
-! $cross_windows || windows=$(grep -vxE "$unix_only" <<<"$selected" || true)
+! $cross_windows || windows=$selected
 if [[ -n $windows ]]; then
   step "Clippy for $win:" $windows
   cargo clippy $(printf -- ' -p %s' $windows) --target $win --all-features --locked -- -D warnings

@@ -9,9 +9,10 @@ use crate::{Error, SubjectAltName};
 
 /// A self-signed serving certificate for `names`, the first of which is also its common name.
 ///
-/// Valid from 1 July 2026 into the year 4096, so that a clock running fast or
-/// slow never invalidates it; `CA:FALSE`, digital signatures and server
-/// authentication, each stated.
+/// Valid from 1975 into the year 4096, so that a clock running fast or slow
+/// never invalidates it and Safari's 825-day cap, which starts in 2019, never
+/// applies; `CA:FALSE`, digital signatures and server authentication, each
+/// stated.
 pub fn mint(signer: &Signer, names: &[SubjectAltName]) -> Result<CertificateDer<'static>, Error> {
     let first = names.first().ok_or(Error::NoNames)?;
     let mut params = CertificateParams::default();
@@ -20,7 +21,7 @@ pub fn mint(signer: &Signer, names: &[SubjectAltName]) -> Result<CertificateDer<
     params
         .distinguished_name
         .push(DnType::CommonName, first.to_string());
-    params.not_before = rcgen::date_time_ymd(2026, 7, 1);
+    params.not_before = rcgen::date_time_ymd(1975, 1, 1);
     params.not_after = rcgen::date_time_ymd(4096, 1, 1);
     params.is_ca = IsCa::ExplicitNoCa;
     params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
@@ -78,7 +79,7 @@ mod tests {
         );
         assert_eq!(
             view.not_before,
-            SystemTime::UNIX_EPOCH + Duration::from_secs(1_782_864_000)
+            SystemTime::UNIX_EPOCH + Duration::from_secs(157_766_400)
         );
         assert_eq!(view.spki, signer.spki());
 
@@ -90,6 +91,14 @@ mod tests {
                 "{host}"
             );
         }
+    }
+
+    #[test]
+    fn a_minted_certificate_predates_the_825_day_cap() {
+        let names = ["localhost".parse().unwrap()];
+        let view = inspect(&mint(&signer(KeyAlgorithm::EcP256), &names).unwrap()).unwrap();
+        let cap_starts = SystemTime::UNIX_EPOCH + Duration::from_secs(1_561_939_200);
+        assert!(view.not_before < cap_starts, "{:?}", view.not_before);
     }
 
     #[test]

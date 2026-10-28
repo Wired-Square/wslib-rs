@@ -1,6 +1,6 @@
 [package]
 name = "wslib-appliance-core"
-version = "0.1.0"
+version = "0.1.1"
 description = "The router, the authority and the workers an appliance needs, beneath the backends that serve them behind a console, on their own TLS listener and as a desktop service."
 readme = "README.md"
 edition.workspace = true
@@ -46,7 +46,7 @@ wslib-appliance-types = { path = "../wslib-appliance-types", version = "0.1.1", 
 wslib-auth = { path = "../wslib-auth", version = "0.1.1", registry = "wired-square", default-features = false }
 wslib-auth-passkey = { path = "../wslib-auth-passkey", version = "0.1.0", registry = "wired-square", default-features = false, optional = true }
 wslib-crypto = { path = "../wslib-crypto", version = "0.1.0", registry = "wired-square" }
-wslib-crypto-x509 = { path = "../wslib-crypto-x509", version = "0.1.1", registry = "wired-square" }
+wslib-crypto-x509 = { path = "../wslib-crypto-x509", version = "0.1.5", registry = "wired-square" }
 wslib-file-atomic = { path = "../wslib-file-atomic", version = "0.1.6", registry = "wired-square" }
 wslib-homeassistant = { path = "../wslib-homeassistant", version = "0.1.0", registry = "wired-square" }
 wslib-host = { path = "../wslib-host", version = "0.1.1", registry = "wired-square" }
@@ -55,7 +55,7 @@ wslib-http-scaffold = { path = "../wslib-http-scaffold", version = "0.1.3", regi
 wslib-secret = { path = "../wslib-secret", version = "0.1.1", registry = "wired-square" }
 wslib-service = { path = "../wslib-service", version = "0.1.3", registry = "wired-square" }
 wslib-telemetry = { path = "../wslib-telemetry", version = "0.1.9", registry = "wired-square", default-features = false, features = ["journald", "ring"] }
-wslib-tls = { path = "../wslib-tls", version = "0.2.0", registry = "wired-square" }
+wslib-tls = { path = "../wslib-tls", version = "0.2.4", registry = "wired-square" }
 
 [target.'cfg(unix)'.dependencies]
 libc = { version = "0.2.174", optional = true }
@@ -72,6 +72,7 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [dev-dependencies]
+hyper = { version = "1.8", default-features = false }
 rcgen = { version = "0.14.10", default-features = false }
 rustls = { version = "0.23.27", default-features = false, features = ["ring"] }
 tempfile = "3.10.1"
@@ -79,7 +80,7 @@ tokio = { version = "1.47", features = ["io-util", "macros", "rt-multi-thread", 
 wslib-auth-passkey = { path = "../wslib-auth-passkey", version = "0.1.0", registry = "wired-square", features = ["testing"] }
 wslib-auth-totp = { path = "../wslib-auth-totp", version = "0.1.1", registry = "wired-square", features = ["codes"] }
 wslib-telemetry = { path = "../wslib-telemetry", version = "0.1.9", registry = "wired-square", default-features = false, features = ["test-support"] }
-wslib-tls = { path = "../wslib-tls", version = "0.2.0", registry = "wired-square", features = ["testing"] }
+wslib-tls = { path = "../wslib-tls", version = "0.2.4", registry = "wired-square", features = ["testing"] }
 
 [target.'cfg(unix)'.dev-dependencies]
 libc = "0.2.174"

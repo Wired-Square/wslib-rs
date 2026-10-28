@@ -129,7 +129,10 @@ for warning in &installed.report.warnings { /* expired, host not covered, ... */
   at a named location so is one in a directory others may write, and on
   Windows any record. A refused record is `ServingError::RecordRefused`,
   and one that cannot be finished `ServingError::Recover`, each naming the
-  record for an operator to check and move aside by hand. A `Serving`
+  record for an operator to check and move aside, by hand or with
+  `Location::discard_pending()`, which renames the record and its staged
+  files to the first free `.unusable` name without following what it names
+  and is never run on its own. A `Serving`
   finishes the record its own failed commit left while it is still that
   file, whatever its directory.
 - **A failed write says where it stopped**: `ServingError::Write { path }`

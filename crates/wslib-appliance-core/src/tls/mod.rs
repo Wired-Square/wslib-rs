@@ -404,6 +404,21 @@ pub fn pair_at(settings: &wslib_appliance_config::Tls) -> Result<Option<ServingP
     Ok(pair.map(ours))
 }
 
+/// Moves aside the record an interrupted write of the pair left, for an
+/// operator to run with the daemon stopped once a start refuses it; a line
+/// saying what moved.
+pub fn discard_pending(settings: &wslib_appliance_config::Tls) -> Result<String, TlsError> {
+    let location = Location::managed(&settings.cert, &settings.key);
+    let record = location.record().display().to_string();
+    let aside = location
+        .discard_pending()
+        .map_err(|e| tls_error(e, &location))?;
+    Ok(match aside {
+        Some(aside) => format!("moved {record} aside to {}", aside.display()),
+        None => format!("no interrupted write is recorded at {record}"),
+    })
+}
+
 #[cfg(any(test, feature = "testing"))]
 impl Tls {
     /// Mint into `dir` through the real [`Tls::load_or_mint`].
@@ -739,6 +754,41 @@ mod tests {
         assert!(e.to_string().contains("may be written by others"), "{e}");
         assert!(e.to_string().contains("named in this appliance"), "{e}");
         assert!(dir.path().join("key.pem.txn").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_named_pair_in_a_shared_volume_starts_once_the_operator_discards_its_record() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let named = wslib_appliance_config::Tls::supplied(
+            dir.path().join("cert.pem"),
+            dir.path().join("key.pem"),
+        );
+        drop(Tls::load_or_mint(&named, None).await.expect("mints"));
+        a_record(&dir, "pending\n");
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o770)).unwrap();
+        Tls::load_or_mint(&named, None)
+            .await
+            .expect_err("a record anybody in the group could have left");
+
+        let record = dir.path().join("key.pem.txn");
+        assert_eq!(
+            discard_pending(&named).unwrap(),
+            format!(
+                "moved {} aside to {}.unusable",
+                record.display(),
+                record.display()
+            )
+        );
+        Tls::load_or_mint(&named, None)
+            .await
+            .expect("starts with no write in flight");
+        assert_eq!(
+            discard_pending(&named).unwrap(),
+            format!("no interrupted write is recorded at {}", record.display())
+        );
     }
 
     #[cfg(windows)]
@@ -1124,10 +1174,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_minted_certificate_is_valid_from_1_july_2026_to_4096() {
+    async fn a_minted_certificate_is_valid_from_1975_to_4096() {
         let dir = tempfile::tempdir().unwrap();
         let view = on_disk(&Tls::minted_in(&dir).await).expect("reads");
-        assert_eq!(view.not_before.to_rfc3339(), "2026-07-01T00:00:00+00:00");
+        assert_eq!(view.not_before.to_rfc3339(), "1975-01-01T00:00:00+00:00");
         assert_eq!(view.not_after.to_rfc3339(), "4096-01-01T00:00:00+00:00");
     }
 

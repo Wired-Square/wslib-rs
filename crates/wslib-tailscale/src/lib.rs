@@ -12,7 +12,7 @@
 //! # }
 //! ```
 //!
-//! The `testing` feature adds [`testing::FakeTailscaled`].
+//! The `testing` feature adds [`testing::FakeTailscaled`], on Unix.
 
 use std::fmt;
 use std::io;
@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 mod status;
-#[cfg(feature = "testing")]
+#[cfg(all(feature = "testing", unix))]
 pub mod testing;
 
 pub use status::{BackendState, OwnNode, Prefs, Status};

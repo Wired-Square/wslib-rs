@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.4
+
+- `Location::discard_pending()`: moves an interrupted write's record aside to
+  the first free `.unusable` name, with the files it staged, without following
+  or acting on what it names, and answers where it went (`None` when there was
+  none). The operator's step past `ServingError::RecordRefused`, whose
+  `next_step()` now names it; nothing runs it on its own.
+
 ## 0.2.3
 
 - `Serving::with_client_auth_pinned(authorities, KeyFingerprint)`:

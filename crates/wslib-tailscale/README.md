@@ -36,11 +36,11 @@ match api.status().await {
   display tailscaled's own text: log it, and show users a fixed message.
 - **`is_tailnet_address`**: `100.64.0.0/10` or `fd7a:115c:a1e0::/48`, taking an
   IPv4-mapped address as its IPv4 one, as a dual-stack listener reports it.
-- **`testing::FakeTailscaled`** (feature `testing`): answers status, prefs,
-  logout and reset-auth on a socket path the test picks. The node is enrolled
-  or logged out, set at any time; a logout logs it out. It records each
-  request line, stops (removing the socket) and starts again, and can be set
-  to never answer or to refuse with a given status.
+- **`testing::FakeTailscaled`** (feature `testing`, on Unix): answers
+  status, prefs, logout and reset-auth on a socket path the test picks. The
+  node is enrolled or logged out, set at any time; a logout logs it out. It
+  records each request line, stops (removing the socket) and starts again,
+  and can be set to never answer or to refuse with a given status.
 
 ## What isn't
 

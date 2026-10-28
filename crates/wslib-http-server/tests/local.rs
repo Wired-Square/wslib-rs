@@ -6,12 +6,16 @@ use std::io::ErrorKind;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-use axum::extract::ConnectInfo;
+use axum::body::Body;
+use axum::extract::{ConnectInfo, Request};
+use axum::http::{StatusCode, header};
+use axum::response::Response;
 use axum::routing::get;
 use axum::{Extension, Router};
+use hyper_util::rt::TokioIo;
 use support::{BRIEF, PATIENT, answered, closed, exchange};
 use tempfile::TempDir;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -37,6 +41,23 @@ fn app() -> Router {
             }),
         )
         .route("/stalled", get(std::future::pending::<()>))
+        .route("/echo", get(echo_upgrade))
+}
+
+async fn echo_upgrade(mut request: Request) -> Response {
+    let upgrading = hyper::upgrade::on(&mut request);
+    tokio::spawn(async move {
+        let mut upgraded = TokioIo::new(upgrading.await.expect("upgraded"));
+        let mut byte = [0u8; 1];
+        upgraded.read_exact(&mut byte).await.expect("a byte");
+        upgraded.write_all(&byte).await.expect("echoed");
+    });
+    Response::builder()
+        .status(StatusCode::SWITCHING_PROTOCOLS)
+        .header(header::CONNECTION, "upgrade")
+        .header(header::UPGRADE, "echo")
+        .body(Body::empty())
+        .expect("a response")
 }
 
 fn socket_in() -> (TempDir, PathBuf) {
@@ -108,6 +129,51 @@ async fn the_credentials_are_an_extension_over_the_socket_and_absent_over_tcp() 
         .expect("an answer");
     assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
     assert!(answer.ends_with("\r\n\r\nnone"), "{answer}");
+}
+
+#[tokio::test]
+async fn an_upgraded_connection_carries_bytes_after_the_101() {
+    let (_dir, path) = socket_in();
+    let _serving = Serving::on(bind(&path, Bounds::SERVING));
+    let mut peer = dial(&path).await;
+
+    peer.write_all(
+        b"GET /echo HTTP/1.1\r\nHost: localhost\r\nConnection: upgrade\r\nUpgrade: echo\r\n\r\n",
+    )
+    .await
+    .expect("writes");
+    let mut head = Vec::new();
+    while !head.ends_with(b"\r\n\r\n") {
+        head.push(peer.read_u8().await.expect("the response head"));
+    }
+    assert!(
+        head.starts_with(b"HTTP/1.1 101"),
+        "{}",
+        String::from_utf8_lossy(&head)
+    );
+    peer.write_all(b"x").await.expect("writes after the 101");
+    let echoed = tokio::time::timeout(PATIENT, peer.read_u8()).await;
+    assert!(matches!(echoed, Ok(Ok(b'x'))), "{echoed:?}");
+}
+
+#[tokio::test]
+async fn an_h2_preface_is_refused() {
+    let (_dir, path) = socket_in();
+    let _serving = Serving::on(bind(&path, Bounds::SERVING));
+    let mut peer = dial(&path).await;
+
+    peer.write_all(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+        .await
+        .expect("writes");
+    let mut answer = Vec::new();
+    tokio::time::timeout(PATIENT, peer.read_to_end(&mut answer))
+        .await
+        .expect("closed")
+        .ok();
+    assert!(
+        answer.is_empty() || answer.starts_with(b"HTTP/1.1 "),
+        "{answer:?}"
+    );
 }
 
 #[tokio::test]

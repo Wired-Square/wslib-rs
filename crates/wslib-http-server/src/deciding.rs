@@ -1,7 +1,9 @@
 //! hyper tells http/1.1 from h2 by reading up to the h2 preface, and times
 //! that read against nothing, so a peer that connects and says nothing would
 //! hold its slot under the cap for ever. This bounds the wait, ending it where
-//! hyper's own sniff would decide rather than at the first byte.
+//! hyper's own sniff would decide rather than at the first byte. hyper serves
+//! upgrades only through that sniff, so an http/1.1-only listener refuses the
+//! preface here instead.
 
 use std::io;
 use std::pin::Pin;
@@ -20,11 +22,25 @@ const PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 pub(crate) struct Deciding<A> {
     inner: A,
     within: Duration,
+    h2: bool,
 }
 
 impl<A> Deciding<A> {
     pub(crate) fn within(inner: A, within: Duration) -> Self {
-        Self { inner, within }
+        Self {
+            inner,
+            within,
+            h2: true,
+        }
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn http1_within(inner: A, within: Duration) -> Self {
+        Self {
+            inner,
+            within,
+            h2: false,
+        }
     }
 }
 
@@ -41,10 +57,10 @@ where
 
     fn accept(&self, stream: I, service: S) -> Self::Future {
         let accepting = self.inner.accept(stream, service);
-        let within = self.within;
+        let (within, h2) = (self.within, self.h2);
         Box::pin(async move {
             let (stream, service) = accepting.await?;
-            Ok((Undecided::new(stream, within), service))
+            Ok((Undecided::new(stream, within, h2), service))
         })
     }
 }
@@ -58,15 +74,17 @@ pub(crate) struct Undecided<S> {
 struct Sniff {
     matched: usize,
     deadline: Pin<Box<Sleep>>,
+    h2: bool,
 }
 
 impl<S> Undecided<S> {
-    fn new(stream: S, within: Duration) -> Self {
+    fn new(stream: S, within: Duration, h2: bool) -> Self {
         Self {
             stream,
             sniff: Some(Sniff {
                 matched: 0,
                 deadline: Box::pin(tokio::time::sleep(within)),
+                h2,
             }),
         }
     }
@@ -107,12 +125,16 @@ impl<S: AsyncRead + Unpin> AsyncRead for Undecided<S> {
         let from = buf.filled().len();
         ready!(Pin::new(&mut this.stream).poll_read(cx, buf))?;
 
-        let settled = this
+        if let Some(sniff) = this
             .sniff
-            .as_mut()
-            .is_some_and(|sniff| decided(&mut sniff.matched, &buf.filled()[from..]));
-        if settled {
-            this.sniff = None;
+            .take_if(|sniff| decided(&mut sniff.matched, &buf.filled()[from..]))
+            && !sniff.h2
+            && sniff.matched == PREFACE.len()
+        {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "h2 is not served here",
+            )));
         }
         Poll::Ready(Ok(()))
     }
@@ -167,7 +189,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_stream_that_says_nothing_fails_at_its_deadline() {
         let (_peer, server) = pair().await;
-        let mut undecided = Undecided::new(server, Duration::from_millis(100));
+        let mut undecided = Undecided::new(server, Duration::from_millis(100), true);
 
         let failed = undecided
             .read(&mut [0u8; 1])
@@ -179,7 +201,7 @@ mod tests {
     #[tokio::test]
     async fn a_settled_stream_drops_its_deadline() {
         let (mut peer, server) = pair().await;
-        let mut undecided = Undecided::new(server, Duration::from_secs(30));
+        let mut undecided = Undecided::new(server, Duration::from_secs(30), true);
 
         peer.write_all(b"GET").await.expect("a request line");
         undecided

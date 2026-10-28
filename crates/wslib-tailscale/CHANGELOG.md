@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- The `testing` feature builds off Unix, with no `testing` module: it
+  failed to compile there.
+
 ## 0.1.0
 
 - `LocalApi`: tailscaled's LocalAPI over its Unix socket, by hand-written

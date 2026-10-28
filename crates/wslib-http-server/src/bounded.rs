@@ -16,7 +16,8 @@ pub struct Bounds {
     /// Connections held at once; past it, peers wait in the kernel's backlog.
     pub connections: usize,
     /// How long a peer has to finish its handshake, say which protocol it
-    /// speaks, and send each http/1.1 request head.
+    /// speaks, and send each http/1.1 request head; each step gets its own
+    /// `head`, so the first head may arrive up to about twice `head` in.
     pub head: Duration,
     /// How long open connections get to finish once the stop future completes.
     pub grace: Duration,

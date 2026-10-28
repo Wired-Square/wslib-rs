@@ -117,6 +117,7 @@ dependencies = [
  "blake2",
  "cpufeatures 0.3.1",
  "password-hash",
+ "zeroize",
 ]
 
 [[package]]
@@ -657,6 +658,7 @@ dependencies = [
  "cipher",
  "cpufeatures 0.3.1",
  "rand_core 0.10.1",
+ "zeroize",
 ]
 
 [[package]]
@@ -669,6 +671,7 @@ dependencies = [
  "chacha20",
  "cipher",
  "poly1305",
+ "zeroize",
 ]
 
 [[package]]
@@ -7110,7 +7113,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "wslib-appliance-auth",
  "wslib-appliance-backup",
@@ -7148,7 +7151,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-backup"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "argon2",
  "axum",
@@ -7175,6 +7178,7 @@ dependencies = [
  "wslib-file-atomic",
  "wslib-http-scaffold",
  "wslib-secret",
+ "zeroize",
 ]
 
 [[package]]
@@ -7202,13 +7206,14 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "axum-server",
  "chrono",
  "flate2",
  "futures-util",
+ "hyper",
  "hyper-util",
  "libc",
  "rcgen",
@@ -7248,7 +7253,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-https"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "axum-server",
@@ -7277,7 +7282,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "chrono",
@@ -7300,7 +7305,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-service"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "libc",
@@ -7492,7 +7497,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-crypto-x509"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "const-oid 0.9.6",
  "pem 4.0.0",
@@ -7638,11 +7643,12 @@ dependencies = [
 
 [[package]]
 name = "wslib-http-server"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "axum",
  "axum-server",
  "h2",
+ "hyper",
  "hyper-util",
  "libc",
  "rcgen",
@@ -7785,7 +7791,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-tailscale"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -7826,7 +7832,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-tls"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "http",
  "libc",

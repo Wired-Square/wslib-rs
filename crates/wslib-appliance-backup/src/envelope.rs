@@ -11,11 +11,12 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
-use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
+use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq as _;
 use wslib_appliance_types::backup::{BundleHeader, Contains, MAX_BUNDLE_LEN};
+use zeroize::Zeroizing;
 
 use crate::BackupError;
 
@@ -149,12 +150,10 @@ fn is_box_id(id: &str) -> bool {
         })
 }
 
-fn derive(
-    passphrase: &str,
-    kdf: &Kdf,
-    ceiling: Ceiling,
-) -> Result<([u8; KEY_LEN], [u8; COMMITMENT_LEN]), BackupError> {
-    use argon2::{Algorithm, Argon2, Params, Version};
+type Derived = (Zeroizing<[u8; KEY_LEN]>, [u8; COMMITMENT_LEN]);
+
+fn derive(passphrase: &str, kdf: &Kdf, ceiling: Ceiling) -> Result<Derived, BackupError> {
+    use argon2::{Algorithm, Argon2, Block, Params, Version};
 
     if passphrase.is_empty() {
         return Err(BackupError::Passphrase(
@@ -193,16 +192,40 @@ fn derive(
     )
     .map_err(|e| BackupError::Malformed(format!("unusable KDF parameters — {e}")))?;
 
-    let mut material = [0u8; KEY_LEN + COMMITMENT_LEN];
+    // argon2 frees the memory it allocates itself unwiped, zeroize feature or not.
+    let mut memory = Zeroizing::new(vec![Block::default(); params.block_count()]);
+    let mut material = Zeroizing::new([0u8; KEY_LEN + COMMITMENT_LEN]);
     Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
-        .hash_password_into(passphrase.as_bytes(), &salt, &mut material)
+        .hash_password_into_with_memory(passphrase.as_bytes(), &salt, &mut *material, &mut **memory)
         .map_err(|e| BackupError::Passphrase(format!("could not derive a key — {e}")))?;
 
-    let (key, commitment) = material.split_at(KEY_LEN);
-    Ok((
-        key.try_into().expect("KEY_LEN bytes"),
-        commitment.try_into().expect("COMMITMENT_LEN bytes"),
-    ))
+    let mut key = Zeroizing::new([0u8; KEY_LEN]);
+    key.copy_from_slice(&material[..KEY_LEN]);
+    let commitment = material[KEY_LEN..]
+        .try_into()
+        .expect("COMMITMENT_LEN bytes");
+    Ok((key, commitment))
+}
+
+/// A buffer that wipes what it held, and each one it outgrew.
+#[derive(Default)]
+pub(crate) struct Wiping(pub(crate) Zeroizing<Vec<u8>>);
+
+impl std::io::Write for Wiping {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let needed = self.0.len() + bytes.len();
+        if needed > self.0.capacity() {
+            let mut grown = Vec::with_capacity(needed.max(2 * self.0.capacity()));
+            grown.extend_from_slice(&self.0);
+            self.0 = Zeroizing::new(grown);
+        }
+        self.0.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 fn random<const N: usize>() -> Result<[u8; N], BackupError> {
@@ -231,8 +254,7 @@ fn seal_at(
     m_cost: u32,
     t_cost: u32,
 ) -> Result<String, BackupError> {
-    use flate2::{Compression, write::GzEncoder};
-    use std::io::Write as _;
+    use flate2::{Compression, bufread::GzEncoder};
 
     within_the_cap(plaintext.len())?;
     let kdf = Kdf {
@@ -252,18 +274,21 @@ fn seal_at(
     header.app_schema_version = provenance.app_schema_version;
     header.contains = contains;
 
-    let mut gz = GzEncoder::new(Vec::new(), Compression::default());
-    gz.write_all(plaintext).map_err(BackupError::internal)?;
-    let compressed = gz.finish().map_err(BackupError::internal)?;
+    let mut compressed = Wiping::default();
+    std::io::copy(
+        &mut GzEncoder::new(plaintext, Compression::default()),
+        &mut compressed,
+    )
+    .map_err(BackupError::internal)?;
 
     let (key, commitment) = derive(passphrase, &kdf, Ceiling::General)?;
     let commitment = B64.encode(commitment);
     let nonce = random::<NONCE_LEN>()?;
-    let sealed = XChaCha20Poly1305::new(&Key::from(key))
+    let sealed = XChaCha20Poly1305::new((&*key).into())
         .encrypt(
             &XNonce::from(nonce),
             Payload {
-                msg: &compressed,
+                msg: &compressed.0,
                 aad: &aad(&header, &commitment),
             },
         )
@@ -299,8 +324,8 @@ pub(crate) fn open(
     passphrase: &str,
     ours: u32,
     ceiling: Ceiling,
-) -> Result<(BundleHeader, Vec<u8>), BackupError> {
-    use flate2::read::GzDecoder;
+) -> Result<(BundleHeader, Zeroizing<Vec<u8>>), BackupError> {
+    use flate2::bufread::GzDecoder;
     use std::io::Read as _;
 
     within_the_cap(text.len())?;
@@ -349,7 +374,7 @@ pub(crate) fn open(
         .decode(&envelope.sealed)
         .map_err(|_| BackupError::malformed("the sealed body is not valid base64"))?;
 
-    let compressed = XChaCha20Poly1305::new(&Key::from(key))
+    let compressed = XChaCha20Poly1305::new((&*key).into())
         .decrypt(
             &XNonce::try_from(&nonce[..])
                 .map_err(|_| BackupError::malformed("the nonce is the wrong length"))?,
@@ -358,17 +383,19 @@ pub(crate) fn open(
                 aad: &aad(&envelope.header, &envelope.commitment),
             },
         )
+        .map(Zeroizing::new)
         .map_err(|_| BackupError::malformed("the sealed body did not verify"))?;
 
     // The cap above bounds the input; `take` bounds what the gzip expands to.
-    let mut plaintext = Vec::new();
-    GzDecoder::new(&compressed[..])
-        .take(MAX_BUNDLE_LEN as u64 + 1)
-        .read_to_end(&mut plaintext)
-        .map_err(BackupError::internal)?;
-    within_the_cap(plaintext.len())?;
+    let mut plaintext = Wiping::default();
+    std::io::copy(
+        &mut GzDecoder::new(&compressed[..]).take(MAX_BUNDLE_LEN as u64 + 1),
+        &mut plaintext,
+    )
+    .map_err(BackupError::internal)?;
+    within_the_cap(plaintext.0.len())?;
 
-    Ok((envelope.header, plaintext))
+    Ok((envelope.header, plaintext.0))
 }
 
 #[cfg(test)]
@@ -379,7 +406,7 @@ pub(crate) mod tests {
         text: &str,
         passphrase: &str,
         ours: u32,
-    ) -> Result<(BundleHeader, Vec<u8>), BackupError> {
+    ) -> Result<(BundleHeader, Zeroizing<Vec<u8>>), BackupError> {
         super::open(text, passphrase, ours, Ceiling::General)
     }
 
@@ -407,6 +434,68 @@ pub(crate) mod tests {
         .expect("seal")
     }
 
+    fn incompressible() -> Vec<u8> {
+        let mut bytes = vec![0u8; 64 * 1024];
+        getrandom::fill(&mut bytes).expect("random bytes");
+        bytes
+    }
+
+    fn cheaply_sealed(plaintext: &[u8]) -> String {
+        seal_at(
+            plaintext,
+            Contains::default(),
+            "correct horse battery",
+            &provenance(),
+            64,
+            1,
+        )
+        .expect("seal")
+    }
+
+    /// Before deflate's last 32 KiB window: the compression library's own
+    /// state is not wiped, and not checked here.
+    fn early(plaintext: &[u8]) -> &[u8] {
+        &plaintext[..32]
+    }
+
+    #[test]
+    fn opening_a_bundle_leaves_no_plaintext_in_the_crates_own_buffers() {
+        let plaintext = incompressible();
+        let text = cheaply_sealed(&plaintext);
+        let ((), freed) = crate::watching::freed_during(|| {
+            open(&text, "correct horse battery", 1).expect("open");
+        });
+        assert!(
+            !freed.holds(early(&plaintext)),
+            "a freed buffer held the plaintext"
+        );
+    }
+
+    #[test]
+    fn sealing_leaves_no_plaintext_in_the_crates_own_buffers() {
+        let plaintext = incompressible();
+        let (_text, freed) = crate::watching::freed_during(|| cheaply_sealed(&plaintext));
+        assert!(
+            !freed.holds(early(&plaintext)),
+            "a freed buffer held the plaintext"
+        );
+    }
+
+    #[test]
+    fn deriving_a_key_wipes_the_argon2_memory() {
+        let kdf = Kdf {
+            algorithm: "argon2id".to_string(),
+            salt: B64.encode([7u8; SALT_LEN]),
+            m_cost: 64,
+            t_cost: 1,
+            p_cost: 1,
+        };
+        let (_derived, freed) = crate::watching::freed_during(|| {
+            derive("correct horse battery", &kdf, Ceiling::General).expect("derives")
+        });
+        assert_eq!(freed.unwiped_argon2_memory, 0);
+    }
+
     #[test]
     fn a_bundle_survives_the_round_trip() {
         let text = sealed(b"{\"users\":[]}");
@@ -416,7 +505,7 @@ pub(crate) mod tests {
         assert_eq!(header.version, FORMAT_VERSION);
         assert_eq!(header.source_host, "widget-01");
         assert_eq!(header.box_id.as_deref(), Some(BOX));
-        assert_eq!(plaintext, b"{\"users\":[]}");
+        assert_eq!(*plaintext, b"{\"users\":[]}");
     }
 
     #[test]
@@ -424,7 +513,7 @@ pub(crate) mod tests {
         let (header, plaintext) = open(FORMAT_1, "correct horse battery", 1).expect("open");
         assert_eq!(header.version, 1);
         assert_eq!(header.box_id, None);
-        assert_eq!(plaintext, b"{\"users\":[]}");
+        assert_eq!(*plaintext, b"{\"users\":[]}");
     }
 
     #[test]

@@ -343,9 +343,10 @@ impl Snapshot {
         provenance: &Provenance,
     ) -> Result<String, BackupError> {
         check_passphrase(passphrase)?;
-        let plaintext = serde_json::to_vec(&self.body).map_err(BackupError::internal)?;
+        let mut plaintext = envelope::Wiping::default();
+        serde_json::to_writer(&mut plaintext, &self.body).map_err(BackupError::internal)?;
         envelope::seal(
-            &plaintext,
+            &plaintext.0,
             self.body.contains(),
             passphrase.expose(),
             provenance,

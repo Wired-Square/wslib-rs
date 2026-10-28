@@ -18,6 +18,8 @@ mod sections;
 mod session;
 mod snapshot;
 mod tick;
+#[cfg(test)]
+mod watching;
 
 pub use error::BackupError;
 pub use local::LocalBackups;

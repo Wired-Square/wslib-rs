@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1
+
+- Pins `wslib-appliance-core` 0.1.1.
+- The derived key, argon2's memory, and the plaintext and compressed
+  buffers this crate allocates, every one they outgrow included, are wiped
+  when dropped. State inside the compression library, and the strings of an
+  opened snapshot, are not. `zeroize` (>= 1.8.1) is now a dependency.
+
 ## 0.1.0
 
 Moved from `appliance-backup` 0.17.1 in wslib-appliance-rs; what differs:

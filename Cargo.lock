@@ -7576,7 +7576,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-file-atomic"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",

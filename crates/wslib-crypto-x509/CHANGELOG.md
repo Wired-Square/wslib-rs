@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.5
+
+- `mint`: valid from 1975-01-01, not 2026-07-01. Safari and SecTrust refuse
+  a certificate issued from 1 July 2019 that is valid for more than 825
+  days.
+
 ## 0.1.4
 
 - An ECDSA key with explicit curve parameters, rather than a named curve, is

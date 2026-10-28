@@ -281,6 +281,8 @@ fn opening_is_spawnable() {
     drop(spawnable(async move {
         let _ = Database::open(PathBuf::new(), &chains).await;
         let _ = Database::open_existing(PathBuf::new(), &chains).await;
+        let _ = Database::open_with(PathBuf::new(), &chains, Default::default()).await;
+        let _ = Database::open_existing_with(PathBuf::new(), &chains, Default::default()).await;
         let _ = Database::open_in_memory(&chains).await;
     }));
 }

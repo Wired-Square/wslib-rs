@@ -40,6 +40,9 @@ own manifest, pinned to the same version as this crate's.
   synchronous `NORMAL`, foreign keys on and a five-second busy timeout. The
   file, `-wal` and `-shm` are made owner-only on every open; on Windows they
   inherit the directory's ACL, so keep the directory private.
+- `open_with` and `open_existing_with` also apply a `Tuning` to every
+  connection: `cache_kib(n)` for the page cache and `temp_store_in_memory()`.
+  It cannot change WAL, synchronous, foreign keys or the busy timeout.
 - `begin` is `BEGIN IMMEDIATE` with `PRAGMA defer_foreign_keys = ON`: a
   transaction that reads before writing waits through the busy timeout, and
   a foreign-key violation, `ON DELETE RESTRICT` included, fails the commit

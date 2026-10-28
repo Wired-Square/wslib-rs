@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2
+
+- `Database::open`, `open_existing` and `open_in_memory` return `Send`
+  futures, so they can be spawned or boxed.
+
 ## 0.2.1
 
 - Migrations run with foreign keys off, so a rebuild of a referenced table

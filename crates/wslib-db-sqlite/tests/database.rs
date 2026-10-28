@@ -270,3 +270,17 @@ async fn closing_gives_up_on_a_connection_never_returned() {
         .expect("close waits five seconds, not for ever");
     drop(held);
 }
+
+fn spawnable<F: Future + Send + 'static>(future: F) -> F {
+    future
+}
+
+#[test]
+fn opening_is_spawnable() {
+    let chains = Vec::<Chain>::new();
+    drop(spawnable(async move {
+        let _ = Database::open(PathBuf::new(), &chains).await;
+        let _ = Database::open_existing(PathBuf::new(), &chains).await;
+        let _ = Database::open_in_memory(&chains).await;
+    }));
+}

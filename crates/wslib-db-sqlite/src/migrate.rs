@@ -287,8 +287,8 @@ async fn apply_with_foreign_keys_off(
     };
     for (chain, m) in pending {
         let started = Instant::now();
-        sqlx::raw_sql(&m.sql)
-            .execute(&mut *conn)
+        // `raw_sql(..).execute(conn)` makes `Database::open`'s future not `Send`.
+        sqlx::Executor::execute(&mut *conn, sqlx::raw_sql(&m.sql))
             .await
             .map_err(|e| chain.error(MigrateError::ExecuteMigration(e, m.version)))?;
         if let Some(new) = dangling(conn)

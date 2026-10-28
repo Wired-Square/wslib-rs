@@ -305,6 +305,17 @@ mod tests {
             .expect("in-memory store")
     }
 
+    fn spawnable<F: Future + Send + 'static>(future: F) -> F {
+        future
+    }
+
+    #[test]
+    fn opening_is_spawnable() {
+        drop(spawnable(Store::open(PathBuf::new(), None)));
+        drop(spawnable(Store::open_existing(PathBuf::new(), None)));
+        drop(spawnable(Store::open_in_memory(None)));
+    }
+
     pub(crate) async fn tables(store: &Store) -> Vec<String> {
         sqlx::query_scalar(
             "SELECT name FROM sqlite_master WHERE type = 'table' \

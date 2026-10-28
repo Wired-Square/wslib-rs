@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.3
+
+- `Database::open_with` and `open_existing_with` take a `Tuning`, which sets
+  `cache_size` (in KiB) and `temp_store = MEMORY` on every connection.
+
 ## 0.2.2
 
 - `Database::open`, `open_existing` and `open_in_memory` return `Send`

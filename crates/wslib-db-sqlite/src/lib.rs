@@ -169,6 +169,43 @@ pub struct Database {
     chain_versions: Arc<BTreeMap<String, i64>>,
 }
 
+/// Per-connection settings an app may add to the crate's own, for
+/// [`Database::open_with`] and [`Database::open_existing_with`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Tuning {
+    cache_kib: Option<u32>,
+    temp_store_in_memory: bool,
+}
+
+impl Tuning {
+    /// Each connection's page cache, in KiB, rather than SQLite's default.
+    pub fn cache_kib(self, kib: u32) -> Self {
+        Self {
+            cache_kib: Some(kib),
+            ..self
+        }
+    }
+
+    /// Keep each connection's temporary tables and indices in memory.
+    pub fn temp_store_in_memory(self) -> Self {
+        Self {
+            temp_store_in_memory: true,
+            ..self
+        }
+    }
+
+    fn apply(self, mut opts: SqliteConnectOptions) -> SqliteConnectOptions {
+        if let Some(kib) = self.cache_kib {
+            // A negative cache_size is in KiB; a positive one is in pages.
+            opts = opts.pragma("cache_size", format!("-{kib}"));
+        }
+        if self.temp_store_in_memory {
+            opts = opts.pragma("temp_store", "MEMORY");
+        }
+        opts
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum Schema {
     Migrate,
@@ -179,7 +216,16 @@ impl Database {
     /// Open (creating if absent), apply every pending migration of `chains`,
     /// and restrict the file to its owner.
     pub async fn open(path: impl AsRef<Path>, chains: &[Chain]) -> Result<Self, Error> {
-        Self::open_at(path.as_ref(), chains, Schema::Migrate).await
+        Self::open_with(path, chains, Tuning::default()).await
+    }
+
+    /// [`open`](Self::open), with `tuning` applied to every connection.
+    pub async fn open_with(
+        path: impl AsRef<Path>,
+        chains: &[Chain],
+        tuning: Tuning,
+    ) -> Result<Self, Error> {
+        Self::open_at(path.as_ref(), chains, Schema::Migrate, tuning).await
     }
 
     /// [`open`](Self::open) for a process beside the one that owns the
@@ -191,11 +237,20 @@ impl Database {
     /// [`Error::UnknownChain`]. Run it as the owner's account: the file is
     /// restricted to its owner.
     pub async fn open_existing(path: impl AsRef<Path>, chains: &[Chain]) -> Result<Self, Error> {
+        Self::open_existing_with(path, chains, Tuning::default()).await
+    }
+
+    /// [`open_existing`](Self::open_existing), with `tuning` applied to every connection.
+    pub async fn open_existing_with(
+        path: impl AsRef<Path>,
+        chains: &[Chain],
+        tuning: Tuning,
+    ) -> Result<Self, Error> {
         let path = path.as_ref();
         if !path.try_exists().map_err(sqlx::Error::Io)? {
             return Err(Error::NoDatabase(path.to_path_buf()));
         }
-        Self::open_at(path, chains, Schema::Verify).await
+        Self::open_at(path, chains, Schema::Verify, tuning).await
     }
 
     /// An in-memory database with `chains` applied, for tests.
@@ -213,7 +268,12 @@ impl Database {
         Self::pooled(opts, 1, chains, Schema::Migrate).await
     }
 
-    async fn open_at(path: &Path, chains: &[Chain], schema: Schema) -> Result<Self, Error> {
+    async fn open_at(
+        path: &Path,
+        chains: &[Chain],
+        schema: Schema,
+        tuning: Tuning,
+    ) -> Result<Self, Error> {
         migrate::check_names(chains)?;
         let opts = SqliteConnectOptions::new()
             .filename(path)
@@ -223,6 +283,7 @@ impl Database {
             .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
             .foreign_keys(true)
             .busy_timeout(BUSY_TIMEOUT);
+        let opts = tuning.apply(opts);
 
         enter_wal(&opts).await?;
         restrict_to_owner(path);

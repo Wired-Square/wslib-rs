@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2
+
+- `build-binary.sh` builds with `-p "$PACKAGE"`, so in a virtual workspace the
+  binary takes only its own package's features rather than every member's.
+- Renders for `wslib-appliance-server` 0.1.1, so `gates` no longer warns on a
+  lock that holds it.
+
 ## 0.1.1
 
 - `gates`: the rules a product's CI checks with the version of this tool it

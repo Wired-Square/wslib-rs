@@ -1,7 +1,8 @@
 #!/bin/sh
 # Cross-builds {{name}}'s binary and refuses one no artefact should carry, for
-# make-deb.sh and make-image.sh. They source it, having set BINARY, TARGET_DIR,
-# CARGO_BUILD_TARGET and `die`; it defines two functions and runs nothing.
+# make-deb.sh and make-image.sh. They source it, having set BINARY, PACKAGE,
+# TARGET_DIR, CARGO_BUILD_TARGET and `die`; it defines two functions and runs
+# nothing.
 #
 # Owned by wslib-appliance-xtask, and rewritten unconditionally by every render.
 
@@ -32,7 +33,7 @@ build_binary() {
     # `--fix-cortex-a53-843419`, which the check below holds it to: use
     # `rust-lld`, since `zig cc` refuses the flag (wslib-appliance-xtask's
     # README, "Cross-building").
-    cargo build --release --locked --target "$CARGO_BUILD_TARGET" --target-dir "$TARGET_DIR" --bin "$BINARY"
+    cargo build --release --locked --target "$CARGO_BUILD_TARGET" --target-dir "$TARGET_DIR" -p "$PACKAGE" --bin "$BINARY"
     BIN="$TARGET_DIR/$CARGO_BUILD_TARGET/release/$BINARY"
 
     # The four assertions this file exists to make. Each is about a binary that

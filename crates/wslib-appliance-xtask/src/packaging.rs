@@ -382,6 +382,73 @@ mod tests {
         assert!(built < checked, "{script}");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn the_binary_builds_with_its_own_package_features_alone() {
+        use std::process::Command;
+
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let put = |path: &str, body: &str| {
+            let path = dir.path().join(path);
+            std::fs::create_dir_all(path.parent().expect("a parent")).expect("mkdir");
+            std::fs::write(path, body).expect("write");
+        };
+        let member = |name: &str, shared: &str| {
+            format!(
+                "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\
+                 [dependencies]\nshared = {{ path = \"../shared\"{shared} }}\n"
+            )
+        };
+        put(
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"product\", \"other\", \"shared\"]\nresolver = \"3\"\n",
+        );
+        put(
+            "shared/Cargo.toml",
+            "[package]\nname = \"shared\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\
+             [features]\nother = []\n",
+        );
+        put(
+            "shared/src/lib.rs",
+            "#[cfg(feature = \"other\")]\ncompile_error!(\"another member's feature\");\n",
+        );
+        put("product/Cargo.toml", &member("product", ""));
+        put("product/src/main.rs", "fn main() {}\n");
+        put(
+            "other/Cargo.toml",
+            &member("other", ", features = [\"other\"]"),
+        );
+        put("other/src/lib.rs", "");
+        put("build-binary.sh", &body("packaging/build-binary.sh"));
+
+        let locked = Command::new("cargo")
+            .args(["generate-lockfile", "--offline", "-q"])
+            .current_dir(dir.path())
+            .status()
+            .expect("cargo");
+        assert!(locked.success());
+        let host = Command::new("rustc").arg("-vV").output().expect("rustc");
+        let host = String::from_utf8_lossy(&host.stdout)
+            .lines()
+            .find_map(|l| l.strip_prefix("host: ").map(str::to_owned))
+            .expect("a host triple");
+
+        let out = Command::new("sh")
+            .args([
+                "-c",
+                r#"set -eu; die() { echo "$1" >&2; exit 1; }; . ./build-binary.sh; build_binary"#,
+            ])
+            .current_dir(dir.path())
+            .env("BINARY", "product")
+            .env("PACKAGE", "product")
+            .env("TARGET_DIR", "target")
+            .env("CARGO_BUILD_TARGET", &host)
+            .output()
+            .expect("sh");
+        let built = dir.path().join(format!("target/{host}/release/product"));
+        assert!(built.exists(), "{}", String::from_utf8_lossy(&out.stderr));
+    }
+
     #[test]
     fn an_arm64_binary_is_scanned_for_unpatched_erratum_sites() {
         use clap::Parser;

@@ -1,6 +1,6 @@
 [package]
 name = "wslib-tailscale"
-version = "0.1.0"
+version = "0.1.1"
 description = "A client for tailscaled's LocalAPI over its Unix socket, and a fake tailscaled for tests."
 readme = "README.md"
 edition.workspace = true

@@ -1,5 +1,5 @@
 //! A Modbus TCP device on loopback for tests, answering each request with a
-//! closure.
+//! closure, or from register banks that keep what is written.
 
 use std::sync::{Arc, Mutex};
 
@@ -7,6 +7,11 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
     sync::Notify,
+};
+
+use crate::{
+    RegisterType,
+    protocol::{bytes_to_coils, bytes_to_registers, coils_to_bytes, registers_to_bytes},
 };
 
 /// One request as the device saw it. `connection` counts accepted sockets from 1.
@@ -125,5 +130,90 @@ pub fn registers(request: &Request) -> Reply {
         }
         0x06 | 0x10 => Reply::Pdu(pdu[..5].to_vec()),
         _ => Reply::Exception(0x01),
+    }
+}
+
+/// A device's four banks, every address zero until seeded or written, for
+/// [`device`] to answer from with [`RegisterBanks::answer`]. Clones share the
+/// banks.
+#[derive(Clone)]
+pub struct RegisterBanks {
+    state: Arc<Mutex<BankState>>,
+}
+
+struct BankState {
+    banks: [Vec<u16>; 4],
+    applying_writes: bool,
+}
+
+impl Default for RegisterBanks {
+    fn default() -> Self {
+        Self {
+            state: Arc::new(Mutex::new(BankState {
+                banks: std::array::from_fn(|_| vec![0; 1 << 16]),
+                applying_writes: true,
+            })),
+        }
+    }
+}
+
+impl RegisterBanks {
+    /// `count` addresses of `bank` from `start`; a coil or discrete input is 0 or 1.
+    pub fn get(&self, bank: RegisterType, start: u16, count: u16) -> Vec<u16> {
+        let start = usize::from(start);
+        self.state.lock().unwrap().banks[bank as usize][start..start + usize::from(count)].to_vec()
+    }
+
+    pub fn set(&self, bank: RegisterType, start: u16, values: &[u16]) {
+        let start = usize::from(start);
+        self.state.lock().unwrap().banks[bank as usize][start..start + values.len()]
+            .copy_from_slice(values);
+    }
+
+    /// While `false`, a write is acknowledged but leaves the banks as they were.
+    pub fn apply_writes(&self, applying: bool) {
+        self.state.lock().unwrap().applying_writes = applying;
+    }
+
+    /// FC01 to FC06, FC15 and FC16 against the banks; a range past the last
+    /// address is exception 0x02, any other function 0x01.
+    pub fn answer(&self, request: &Request) -> Reply {
+        let function = request.function();
+        let Some(bank) = RegisterType::from_function_code(function) else {
+            return Reply::Exception(0x01);
+        };
+        let (start, pdu, word) = (request.start(), &request.pdu, request.count());
+        let count = if matches!(function, 0x05 | 0x06) {
+            1
+        } else {
+            word
+        };
+        if usize::from(start) + usize::from(count) > 1 << 16 {
+            return Reply::Exception(0x02);
+        }
+        if function <= 0x04 {
+            let values = self.get(bank, start, count);
+            let data = if bank.is_register_bank() {
+                registers_to_bytes(&values)
+            } else {
+                coils_to_bytes(&values.iter().map(|&v| v != 0).collect::<Vec<_>>())
+            };
+            let mut reply = vec![function, data.len() as u8];
+            reply.extend(data);
+            return Reply::Pdu(reply);
+        }
+        let values: Vec<u16> = match function {
+            0x05 => vec![u16::from(word == 0xFF00)],
+            0x06 => vec![word],
+            0x0F => bytes_to_coils(&pdu[6..], count.into())
+                .into_iter()
+                .map(u16::from)
+                .collect(),
+            _ => bytes_to_registers(&pdu[6..]),
+        };
+        if self.state.lock().unwrap().applying_writes {
+            self.set(bank, start, &values);
+        }
+        Reply::Pdu(pdu[..5].to_vec())
     }
 }

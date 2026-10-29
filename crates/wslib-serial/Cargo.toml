@@ -1,0 +1,42 @@
+[package]
+name = "wslib-serial"
+version = "0.1.0"
+description = "A serial line: its settings and wire time, SLIP and delimiter framing, and a port read by a task that reopens it, read-only unless writes are on."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+task = ["dep:tokio", "dep:wslib-backoff", "dep:libc"]
+ports = ["dep:serialport"]
+write = ["task", "ports"]
+
+[dependencies]
+thiserror = "2.0.3"
+tokio = { version = "1.53.3", default-features = false, features = ["macros", "net", "rt", "sync", "time"], optional = true }
+wslib-backoff = { path = "../wslib-backoff", version = "0.1.2", registry = "wired-square", optional = true }
+# Optional here and not on Windows, where `task` reads every port through it: a
+# feature can't be per-target.
+serialport = { version = "4.9", default-features = false, optional = true }
+
+[target.'cfg(windows)'.dependencies]
+serialport = { version = "4.9", default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2.183", optional = true }
+
+[dev-dependencies]
+# A build that unifies this feature in gives `UsbPortInfo` a field the tests must name.
+serialport = { version = "4.9", default-features = false, features = ["usbportinfo-interface"] }
+tokio = { version = "1.53.3", features = ["macros", "rt", "time"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2.183"
+
+[[test]]
+name = "task"
+required-features = ["task"]

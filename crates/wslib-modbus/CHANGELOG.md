@@ -12,6 +12,7 @@
 - `LengthRule::from_toml`, `is_modelled_function`,
   `ModbusRtuStream::frames_function` and `rule_rejections`: `validate` reads a
   function code's rules and the modelled codes through the stream's own table.
+- `ManifestMeta::parse`: a catalogue's `[meta]` name and version.
 - `ts`: `VendorLength`, `LengthRule`, `Selector` and `VendorLen`.
 - tokio's floor is 1.53.3, as wslib-serial's is; a consumer building with
   `--locked` on an older lockfile may need `cargo update -p tokio`.

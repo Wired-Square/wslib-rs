@@ -44,7 +44,7 @@ order, eight to a byte and least significant bit first.
 
 `validate` reports what is wrong in a catalogue's `[meta]` and
 `[frame.modbus]` sections as field paths and messages; it reads no other
-section.
+section. `ManifestMeta::parse` reads `[meta]`'s name and version.
 
 ## Modbus RTU
 

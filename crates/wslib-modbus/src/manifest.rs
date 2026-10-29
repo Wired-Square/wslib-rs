@@ -147,6 +147,33 @@ impl Default for ModbusMeta {
     }
 }
 
+/// A catalogue's `[meta]` name and version. A name that is missing or not a
+/// string reads as empty, and a version missing or not a `u32` as 1.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManifestMeta {
+    pub name: String,
+    pub version: u32,
+}
+
+impl ManifestMeta {
+    /// Reads `[meta]` alone; the rest of the text need not be a manifest.
+    pub fn parse(text: &str) -> Result<Self, ManifestError> {
+        let root: toml::Table = toml::from_str(text)?;
+        let meta = root.get("meta");
+        let field = |key| meta.and_then(|m| m.get(key));
+        Ok(Self {
+            name: field("name")
+                .and_then(toml::Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            version: field("version")
+                .and_then(toml::Value::as_integer)
+                .and_then(|v| u32::try_from(v).ok())
+                .unwrap_or(1),
+        })
+    }
+}
+
 /// A parsed manifest: its defaults and the frames to poll.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -747,6 +774,54 @@ fn synth_frame_signal(key: &str, f: &RawFrame) -> Option<ModbusSignal> {
 mod tests {
     use super::*;
     use rust_decimal_macros::dec;
+
+    fn meta(text: &str) -> ManifestMeta {
+        ManifestMeta::parse(text).unwrap()
+    }
+
+    #[test]
+    fn a_meta_reads_its_name_and_version() {
+        assert_eq!(
+            meta("[meta]\nname = \"Inverter\"\nversion = 3\n"),
+            ManifestMeta {
+                name: "Inverter".into(),
+                version: 3
+            }
+        );
+    }
+
+    #[test]
+    fn a_missing_or_unreadable_field_reads_as_the_catalogues_default() {
+        let defaults = ManifestMeta {
+            name: String::new(),
+            version: 1,
+        };
+        for text in [
+            "",
+            "[meta]\n",
+            "[meta]\nname = 5\nversion = \"two\"\n",
+            "[meta]\nversion = -1\n",
+            "[meta]\nversion = 4294967296\n",
+            "meta = 1\n",
+        ] {
+            assert_eq!(meta(text), defaults, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn invalid_toml_is_refused() {
+        assert!(matches!(
+            ManifestMeta::parse("[meta"),
+            Err(ManifestError::Toml(_))
+        ));
+    }
+
+    #[test]
+    fn a_meta_reads_beside_a_manifest_with_frames() {
+        let text = "[meta]\nname = \"x\"\n[frame.modbus.status]\nregister_number = 1\n";
+        assert!(ModbusManifest::parse(text).is_ok());
+        assert_eq!(meta(text).name, "x");
+    }
 
     const SUNGROW: &str = include_str!("testdata/sungrow_shx.toml");
 

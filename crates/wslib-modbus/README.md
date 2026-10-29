@@ -56,10 +56,8 @@ too. Both are sans-io and need no feature.
 
 ```rust
 use wslib_modbus::{ModbusRtuOptions, RtuTap};
-use wslib_serial::{LineSettings, Parity};
 
-let line = LineSettings { baud: 9600, data_bits: 8, parity: Parity::None, stop_bits: 1 };
-let mut tap = RtuTap::new(&ModbusRtuOptions::tapped(), line);
+let mut tap = RtuTap::new(&ModbusRtuOptions::tapped(), 9600, 10); // 9600 8N1
 for tapped in tap.push(&bytes, std::time::SystemTime::now()) {
     println!("{:?} unit {} fc {}", tapped.at, tapped.message.device_address, tapped.message.function);
 }

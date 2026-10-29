@@ -9,9 +9,7 @@
 //! late, but it never goes backwards. The clock is the caller's.
 
 use std::collections::VecDeque;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use wslib_serial::LineSettings;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::rtu_stream::{ModbusRtuMessage, ModbusRtuOptions, ModbusRtuStream};
 
@@ -33,7 +31,8 @@ struct ReadEnd {
 #[derive(Debug)]
 pub struct RtuTap {
     options: ModbusRtuOptions,
-    line: LineSettings,
+    baud: u32,
+    bits_per_char: u32,
     stream: ModbusRtuStream,
     /// The reads that could still deliver a message's last byte, oldest first.
     reads: VecDeque<ReadEnd>,
@@ -41,11 +40,13 @@ pub struct RtuTap {
 }
 
 impl RtuTap {
-    /// A tap on one line, framing it with `options`.
-    pub fn new(options: &ModbusRtuOptions, line: LineSettings) -> Self {
+    /// A tap on one line at `baud`, each character `bits_per_char` bits with
+    /// its start, parity and stop bits, framing it with `options`.
+    pub fn new(options: &ModbusRtuOptions, baud: u32, bits_per_char: u32) -> Self {
         Self {
             options: options.clone(),
-            line,
+            baud,
+            bits_per_char,
             stream: options.stream(),
             reads: VecDeque::new(),
             floor: UNIX_EPOCH,
@@ -111,11 +112,19 @@ impl RtuTap {
         let read = self.reads[0];
         let at = read
             .at
-            .checked_sub(self.line.wire_time(read.end.saturating_sub(end_offset)))
+            .checked_sub(self.wire_time(read.end.saturating_sub(end_offset)))
             .unwrap_or(UNIX_EPOCH)
             .max(self.floor);
         self.floor = at;
         at
+    }
+
+    /// `bytes` at the line rate, in whole microseconds.
+    fn wire_time(&self, bytes: u64) -> Duration {
+        let micros = bytes
+            .saturating_mul(u64::from(self.bits_per_char) * 1_000_000)
+            .checked_div(u64::from(self.baud));
+        Duration::from_micros(micros.unwrap_or(0))
     }
 
     /// Lets go of every read that ended at or before `offset`, raising the floor
@@ -130,10 +139,7 @@ impl RtuTap {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use wslib_checksum::algorithms::crc16_modbus_checksum;
-    use wslib_serial::Parity;
 
     use super::*;
     use crate::{CrcPolicy, MAX_RTU_LEN};
@@ -152,16 +158,11 @@ mod tests {
         t.duration_since(UNIX_EPOCH).unwrap().as_micros() as u64
     }
 
-    /// 10 bits a byte, 1 041.67 µs each.
-    const LINE_9600_8N1: LineSettings = LineSettings {
-        baud: 9600,
-        data_bits: 8,
-        parity: Parity::None,
-        stop_bits: 1,
-    };
+    /// 8N1: 10 bits a byte, 1 041.67 µs each at 9600.
+    const BITS_8N1: u32 = 10;
 
     fn tap_on_9600_8n1() -> RtuTap {
-        RtuTap::new(&ModbusRtuOptions::tapped(), LINE_9600_8N1)
+        RtuTap::new(&ModbusRtuOptions::tapped(), 9600, BITS_8N1)
     }
 
     fn keys(messages: &[TappedMessage]) -> Vec<(u8, u8, usize)> {
@@ -388,11 +389,6 @@ mod tests {
     #[test]
     fn the_first_byte_is_the_stamp_less_the_messages_wire_time() {
         // 12 bits a byte: exactly 1 250 µs, so no rounding hides a mismatch.
-        let line = LineSettings {
-            parity: Parity::Even,
-            stop_bits: 2,
-            ..LINE_9600_8N1
-        };
         let byte_us = 1_250;
         let traffic = [
             one_register_read(),
@@ -403,7 +399,7 @@ mod tests {
         let t0 = 1_700_000_000_000_000;
 
         for chunk in [1, 3, 64] {
-            let mut tap = RtuTap::new(&ModbusRtuOptions::tapped(), line);
+            let mut tap = RtuTap::new(&ModbusRtuOptions::tapped(), 9600, 12);
             let mut got = Vec::new();
             for (i, c) in traffic.chunks(chunk).enumerate() {
                 let last_byte = (i * chunk + c.len() - 1) as u64;
@@ -413,7 +409,7 @@ mod tests {
             for m in &got {
                 let len = m.message.raw.len() as u64;
                 let first_byte = m.message.end_offset - len;
-                let derived = m.at - line.wire_time(len - 1);
+                let derived = m.at - tap.wire_time(len - 1);
                 assert_eq!(us(derived), t0 + first_byte * byte_us, "{chunk}-byte reads");
             }
         }
@@ -460,7 +456,7 @@ mod tests {
             crc: CrcPolicy::Lenient,
             ..Default::default()
         };
-        let mut tap = RtuTap::new(&options, LINE_9600_8N1);
+        let mut tap = RtuTap::new(&options, 9600, BITS_8N1);
         assert!(tap.push(&withheld[..4], at(1_000_000)).is_empty());
         assert!(tap.push(&withheld[4..], at(2_000_000)).is_empty());
 
@@ -481,7 +477,7 @@ mod tests {
     fn new_options_keep_the_floor_and_take_effect() {
         let request = one_register_read();
         let vendor = with_crc(&[0x01, 0x65, 0x02, 0x0B, 0xB8]);
-        let mut tap = RtuTap::new(&ModbusRtuOptions::default(), LINE_9600_8N1);
+        let mut tap = RtuTap::new(&ModbusRtuOptions::default(), 9600, BITS_8N1);
         assert_eq!(stamps(&tap.push(&request, at(2_000_000))), [2_000_000]);
         assert!(tap.push(&vendor, at(2_100_000)).is_empty(), "undeclared");
 
@@ -580,7 +576,7 @@ mod tests {
             let mut burst = 0;
             for (i, c) in bytes.chunks(chunk).enumerate() {
                 // Read as fast as the line can deliver a chunk.
-                let read_at = UNIX_EPOCH + LINE_9600_8N1.wire_time(((i + 1) * chunk) as u64);
+                let read_at = UNIX_EPOCH + tap.wire_time(((i + 1) * chunk) as u64);
                 let batch = tap.push(c, read_at);
                 if burst == 0 {
                     burst = batch.len();

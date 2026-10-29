@@ -7,6 +7,8 @@
   by `with_vendor_functions` or laid out by `VendorLength` rules;
   `ModbusRtuOptions`; and `RtuTap`, which stamps each message by the read that
   delivered its last byte, never earlier than a stamp before it.
+  `RtuTap::new(options, baud, bits_per_char)` takes the line rate and the bits
+  per character, start, parity and stop included, as exact integers.
 - `RtuTap::set_options` reframes a line with new options and keeps the
   timestamp floor, where rebuilding the tap with `new` loses it.
 - `LengthRule::from_toml`, `is_modelled_function`,
@@ -14,7 +16,7 @@
   function code's rules and the modelled codes through the stream's own table.
 - `ManifestMeta::parse`: a catalogue's `[meta]` name and version.
 - `ts`: `VendorLength`, `LengthRule`, `Selector` and `VendorLen`.
-- tokio's floor is 1.53.3, as wslib-serial's is; a consumer building with
+- tokio's floor is 1.53.3; a consumer building with
   `--locked` on an older lockfile may need `cargo update -p tokio`.
 
 ## 0.2.0

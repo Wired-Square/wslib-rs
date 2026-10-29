@@ -143,6 +143,10 @@ if grep -qx wslib-modbus <<<"$selected"; then
   step "wslib-modbus without features has no tokio"
   tree=$(cargo tree -p wslib-modbus --no-default-features -e normal --prefix none --locked)
   ! grep -E '^tokio(-modbus)? ' <<<"$tree" || die "wslib-modbus pulls in tokio without a feature"
+  step "wslib-modbus without features has no serial port on Windows"
+  tree=$(cargo tree -p wslib-modbus --no-default-features -e normal --prefix none \
+    --target x86_64-pc-windows-msvc --locked)
+  ! grep -E '^(wslib-serial|serialport) ' <<<"$tree" || die "wslib-modbus pulls in a serial port on Windows"
 fi
 
 # A read-only port on Linux needs neither serialport nor libudev.

@@ -7989,7 +7989,6 @@ dependencies = [
  "wslib-backoff",
  "wslib-bits",
  "wslib-checksum",
- "wslib-serial",
  "wslib-tcp",
 ]
 

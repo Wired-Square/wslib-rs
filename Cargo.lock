@@ -6166,7 +6166,17 @@ dependencies = [
  "chrono",
  "serde_json",
  "thiserror 2.0.21",
- "ts-rs-macros",
+ "ts-rs-macros 11.1.0",
+]
+
+[[package]]
+name = "ts-rs"
+version = "12.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "756050066659291d47a554a9f558125db17428b073c5ffce1daf5dcb0f7231d8"
+dependencies = [
+ "thiserror 2.0.21",
+ "ts-rs-macros 12.0.1",
 ]
 
 [[package]]
@@ -6174,6 +6184,18 @@ name = "ts-rs-macros"
 version = "11.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee6ff59666c9cbaec3533964505d39154dc4e0a56151fdea30a09ed0301f62e2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "termcolor",
+]
+
+[[package]]
+name = "ts-rs-macros"
+version = "12.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38d90eea51bc7988ef9e674bf80a85ba6804739e535e9cab48e4bb34a8b652aa"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7349,7 +7371,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
- "ts-rs",
+ "ts-rs 11.1.0",
  "wslib-auth-passkey",
  "wslib-auth-totp",
  "wslib-http-error",
@@ -7416,7 +7438,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "ts-rs",
+ "ts-rs 11.1.0",
 ]
 
 [[package]]
@@ -7438,7 +7460,7 @@ dependencies = [
  "sha1",
  "sha2 0.10.9",
  "subtle",
- "ts-rs",
+ "ts-rs 11.1.0",
  "wslib-secret",
 ]
 
@@ -7618,7 +7640,7 @@ dependencies = [
  "tokio",
  "tower",
  "tracing",
- "ts-rs",
+ "ts-rs 11.1.0",
  "wslib-telemetry",
 ]
 
@@ -7735,7 +7757,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "subtle",
- "ts-rs",
+ "ts-rs 11.1.0",
  "zeroize",
 ]
 
@@ -7827,7 +7849,7 @@ dependencies = [
  "tracing",
  "tracing-log",
  "tracing-subscriber",
- "ts-rs",
+ "ts-rs 11.1.0",
 ]
 
 [[package]]
@@ -7849,6 +7871,15 @@ dependencies = [
  "wslib-crypto-x509",
  "wslib-file-atomic",
  "wslib-secret",
+]
+
+[[package]]
+name = "wslib-wiretap-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "ts-rs 12.0.1",
 ]
 
 [[package]]

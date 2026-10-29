@@ -1,0 +1,31 @@
+[package]
+name = "wslib-can-gvret"
+version = "0.1.0"
+description = "GVRET, both ends of the codec in the dialect the field speaks, and a CAN task on a GVRET device over TCP or a serial port."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+transport = ["wslib-can/tcp", "dep:tokio", "dep:wslib-tcp"]
+serial = ["transport", "dep:wslib-serial", "wslib-serial/write"]
+
+[dependencies]
+tokio = { version = "1.53.3", default-features = false, features = ["net", "rt", "time"], optional = true }
+wslib-can = { path = "../wslib-can", version = "0.1", registry = "wired-square" }
+wslib-serial = { path = "../wslib-serial", version = "0.1", registry = "wired-square", optional = true }
+wslib-tcp = { path = "../wslib-tcp", version = "0.1", registry = "wired-square", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1.53.3", features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+libc = "0.2.183"
+
+[[test]]
+name = "transport"
+required-features = ["transport"]

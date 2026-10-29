@@ -1,0 +1,22 @@
+[package]
+name = "wslib-checksum"
+version = "0.1.0"
+description = "Checksum algorithms, CRC-32 among them, and a scored engine that finds which checksum explains a set of frames, or solves for its parameters."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+ts = ["dep:ts-rs"]
+
+[dependencies]
+serde = { version = "1.0.225", features = ["derive"] }
+ts-rs = { version = "12", features = ["no-serde-warnings"], optional = true }
+wslib-bits = { path = "../wslib-bits", version = "0.1", registry = "wired-square" }
+
+[dev-dependencies]
+serde_json = "1.0.85"

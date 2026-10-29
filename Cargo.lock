@@ -7567,6 +7567,16 @@ name = "wslib-build-id"
 version = "0.1.0"
 
 [[package]]
+name = "wslib-checksum"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "ts-rs 12.0.1",
+ "wslib-bits",
+]
+
+[[package]]
 name = "wslib-cli"
 version = "0.2.0"
 dependencies = [

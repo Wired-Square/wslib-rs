@@ -44,11 +44,11 @@ pub fn rtu_rules(text: &str) -> Result<RtuRules, RtuRulesError> {
     let root: Value = toml::from_str(text)?;
     let mut findings = Vec::new();
     if let Some(table) = root.as_table() {
-        crate::validate::require_meta_name(table, &mut findings);
+        wslib_modbus::require_meta_name(table, &mut findings);
     }
     let section = modbus_section(&root);
     if let Some(codes) = section.and_then(|s| get(s, "function_code")) {
-        crate::validate::validate_function_codes(codes, &mut findings);
+        wslib_modbus::validate_function_codes(codes, &mut findings);
     }
     if !findings.is_empty() {
         return Err(RtuRulesError::Rules(findings));

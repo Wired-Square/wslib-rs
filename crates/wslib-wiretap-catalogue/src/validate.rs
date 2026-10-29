@@ -6,9 +6,8 @@ use serde::{Deserialize, Serialize};
 use toml::Value;
 
 use crate::model::{Endianness, FrameChecksum, ValidationError};
-use crate::parse::{header_position, parse_function_code_key, parse_id, parse_length_rule};
+use crate::parse::{header_position, parse_id};
 use crate::serial_framing::FramingMode;
-use wslib_modbus::is_modelled_function;
 
 fn err(field: impl Into<String>, message: impl Into<String>) -> ValidationError {
     ValidationError {
@@ -175,75 +174,6 @@ fn validate_serial_header_fields(
             None => continue,
         };
         errors.push(err(field, message));
-    }
-}
-
-pub(crate) fn require_meta_name<'a>(
-    table: &'a toml::map::Map<String, Value>,
-    errors: &mut Vec<ValidationError>,
-) -> Option<&'a toml::map::Map<String, Value>> {
-    let Some(meta) = table.get("meta").and_then(Value::as_table) else {
-        errors.push(err("meta", "Missing [meta] section"));
-        return None;
-    };
-    match meta.get("name") {
-        None => errors.push(err(
-            "meta.name",
-            "Catalogue name is required in [meta] section",
-        )),
-        Some(name) if !name.is_str() => {
-            errors.push(err("meta.name", "Catalogue name must be a string"))
-        }
-        Some(_) => {}
-    }
-    Some(meta)
-}
-
-/// `[meta.modbus.function_code.<code>]`. The parser drops what it can't read,
-/// and a dropped rule leaves its code to the shortest-CRC search, which is the
-/// truncation the rule was written to prevent.
-pub(crate) fn validate_function_codes(codes: &Value, errors: &mut Vec<ValidationError>) {
-    let prefix = "meta.modbus.function_code";
-    let Some(codes) = codes.as_table() else {
-        errors.push(err(prefix, "Function codes must be a table keyed by code"));
-        return;
-    };
-    for (key, body) in codes {
-        let field = format!("{prefix}.{key}");
-        match parse_function_code_key(key) {
-            None | Some(0) => errors.push(err(
-                &field,
-                format!("Function code '{key}' must be 0x01 to 0x7F"),
-            )),
-            Some(code) if is_modelled_function(code) => errors.push(err(
-                &field,
-                format!("Function code {code:#04x} is standard Modbus, framed by its own length rules, so declaring it has no effect"),
-            )),
-            Some(_) => {}
-        }
-        let Some(body) = body.as_table() else {
-            errors.push(err(field, "A function code must be a table"));
-            continue;
-        };
-        let Some(rules) = body.get("lengths") else {
-            continue;
-        };
-        let Some(rules) = rules.as_array() else {
-            errors.push(err(
-                format!("{field}.lengths"),
-                "Lengths must be an array of rules",
-            ));
-            continue;
-        };
-        for (i, rule) in rules.iter().enumerate() {
-            if parse_length_rule(rule).is_none() {
-                errors.push(err(
-                    format!("{field}.lengths[{i}]"),
-                    "A length rule needs a len of { fixed } or { count_at, overhead }, \
-                     and optionally a when of { offset, value }",
-                ));
-            }
-        }
     }
 }
 

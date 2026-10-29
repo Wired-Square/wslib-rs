@@ -85,14 +85,17 @@ pub struct LineSettings {
 }
 
 impl LineSettings {
-    /// Start, data, parity and stop bits at the baud rate, in whole microseconds.
+    /// Start, data, parity and stop bits: what one character takes on the wire.
+    pub fn bits_per_char(&self) -> u32 {
+        1 + u32::from(self.data_bits)
+            + u32::from(self.parity != Parity::None)
+            + u32::from(self.stop_bits)
+    }
+
+    /// [`bits_per_char`](Self::bits_per_char) at the baud rate, in whole microseconds.
     pub fn wire_time(&self, bytes: u64) -> Duration {
-        let bits = 1
-            + u64::from(self.data_bits)
-            + u64::from(self.parity != Parity::None)
-            + u64::from(self.stop_bits);
         let micros = bytes
-            .saturating_mul(bits * 1_000_000)
+            .saturating_mul(u64::from(self.bits_per_char()) * 1_000_000)
             .checked_div(u64::from(self.baud));
         Duration::from_micros(micros.unwrap_or(0))
     }
@@ -154,6 +157,20 @@ mod tests {
         parity: Parity::None,
         stop_bits: 1,
     };
+
+    #[test]
+    fn a_character_counts_its_start_parity_and_stop_bits() {
+        let line = |data_bits, parity, stop_bits| LineSettings {
+            data_bits,
+            parity,
+            stop_bits,
+            ..LINE_9600_8N1
+        };
+        assert_eq!(LINE_9600_8N1.bits_per_char(), 10);
+        assert_eq!(line(8, Parity::Even, 2).bits_per_char(), 12);
+        assert_eq!(line(7, Parity::Odd, 1).bits_per_char(), 10);
+        assert_eq!(line(5, Parity::None, 1).bits_per_char(), 7);
+    }
 
     #[test]
     fn wire_time_counts_start_parity_and_stop_bits() {

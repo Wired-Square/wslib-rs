@@ -790,3 +790,53 @@ async fn a_failed_row_in_sqlx_table_is_refused_as_dirty() {
         );
     }
 }
+
+async fn user_version(path: &Path) -> i64 {
+    let pool = SqlitePool::connect_with(SqliteConnectOptions::new().filename(path))
+        .await
+        .unwrap();
+    let version = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+    version
+}
+
+#[tokio::test]
+async fn a_stamping_chain_sets_user_version_with_its_migrations_or_not_at_all() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.db");
+    let good = chain("app", &[(1, "CREATE TABLE a (id INTEGER)")]).await;
+    Database::open(&path, &[good.stamps_user_version(5)])
+        .await
+        .expect("open")
+        .close()
+        .await;
+    assert_eq!(user_version(&path).await, 6);
+
+    let failing = chain("app", &[(1, "CREATE TABLE a (id INTEGER)"), (2, "NOT SQL")]).await;
+    assert!(
+        Database::open(&path, &[failing.stamps_user_version(5)])
+            .await
+            .is_err()
+    );
+    assert_eq!(user_version(&path).await, 6);
+}
+
+#[tokio::test]
+async fn a_chain_that_does_not_stamp_leaves_user_version_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("app.db");
+    let app = chain(
+        "app",
+        &[(1, "CREATE TABLE a (id INTEGER); PRAGMA user_version = 42")],
+    )
+    .await;
+    Database::open(&path, &[app])
+        .await
+        .expect("open")
+        .close()
+        .await;
+    assert_eq!(user_version(&path).await, 42);
+}

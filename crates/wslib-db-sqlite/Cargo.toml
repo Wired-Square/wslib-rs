@@ -1,6 +1,6 @@
 [package]
 name = "wslib-db-sqlite"
-version = "0.2.3"
+version = "0.2.4"
 description = "One SQLite database for an app: WAL and owner-only on open, write transactions that lock up front, migration chains applied in one transaction, and a settings table with secrets and local state kept out of exports."
 readme = "README.md"
 edition.workspace = true

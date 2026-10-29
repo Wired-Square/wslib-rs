@@ -37,13 +37,20 @@ own manifest, pinned to the same version as this crate's.
   migration a chain lacks or has modified is `Migrate`, and a registered
   chain not given is `UnknownChain`.
 - WAL is entered once on its own connection, then a pool of five with
-  synchronous `NORMAL`, foreign keys on and a five-second busy timeout. The
+  synchronous `NORMAL`, foreign keys on and a
+  five-second busy timeout. A connection returned mid-transaction or with
+  `query_only` on, as a future dropped at the wrong await leaves one, is
+  closed rather than handed out again. The
   file, `-wal` and `-shm` are made owner-only on every open; on Windows they
   inherit the directory's ACL, so keep the directory private.
 - `open_with` and `open_existing_with` also apply a `Tuning` to every
-  connection: `cache_kib(n)` for the page cache and `temp_store_in_memory()`.
+  connection: `cache_kib(n)` for the page cache, `temp_store_in_memory()`
+  and `wal_limit_kib(n)` for `journal_size_limit`. `own_writer()` adds a
+  sixth connection that only `begin` and `writer()` use, so writers queue for
+  it in turn and readers holding the pool can't keep one out.
   It cannot change WAL, synchronous, foreign keys or the busy timeout.
-- `begin` is `BEGIN IMMEDIATE` with `PRAGMA defer_foreign_keys = ON`: a
+- `begin` is `BEGIN IMMEDIATE` on `writer()` with
+  `PRAGMA defer_foreign_keys = ON`: a
   transaction that reads before writing waits through the busy timeout, and
   a foreign-key violation, `ON DELETE RESTRICT` included, fails the commit
   rather than the statement.
@@ -77,6 +84,9 @@ own, from anywhere. A chain named `sqlx`, whose table would be
 - A modified applied migration is refused, and so is an applied version its
   chain no longer has, naming the chain and version. A registered chain the
   open isn't given is `UnknownChain`, from `open` and `open_existing` alike.
+- `Chain::stamps_user_version(offset)` sets `user_version` to the chain's
+  version plus `offset` in the same transaction, for a file of the chain's
+  own that an older build reads by `user_version`.
 - **Mirrored chains** also write each migration they apply to
   `_sqlx_migrations`, in sqlx's own table and columns. A chain is mirrored if
   it asks (`Chain::new(..).mirrored()`) or if the import made it; the

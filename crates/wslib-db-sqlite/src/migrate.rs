@@ -64,6 +64,7 @@ pub struct Chain {
     name: String,
     migrations: Vec<Migration>,
     mirrored: bool,
+    user_version_offset: Option<i64>,
 }
 
 impl Chain {
@@ -76,6 +77,7 @@ impl Chain {
                 .cloned()
                 .collect(),
             mirrored: false,
+            user_version_offset: None,
         }
     }
 
@@ -87,6 +89,14 @@ impl Chain {
     /// mirrored whether or not it asks.
     pub fn mirrored(mut self) -> Self {
         self.mirrored = true;
+        self
+    }
+
+    /// Also set `user_version` to this chain's newest version plus `offset`,
+    /// in the transaction that applies it, on every open that migrates; for a
+    /// file of its own, which an older build reads by `user_version`.
+    pub fn stamps_user_version(mut self, offset: i64) -> Self {
+        self.user_version_offset = Some(offset);
         self
     }
 
@@ -321,6 +331,13 @@ async fn apply_with_foreign_keys_off(
             .bind(i64::try_from(started.elapsed().as_nanos()).unwrap_or(i64::MAX))
             .execute(&mut *conn)
             .await?;
+        }
+    }
+    for chain in chains {
+        if let (Some(offset), Some(version)) = (chain.user_version_offset, chain.version()) {
+            sqlx::query(&format!("PRAGMA user_version = {}", version + offset))
+                .execute(&mut *conn)
+                .await?;
         }
     }
     tx.commit().await?;
@@ -654,6 +671,7 @@ mod tests {
                 })
                 .collect(),
             mirrored: false,
+            user_version_offset: None,
         }
     }
 

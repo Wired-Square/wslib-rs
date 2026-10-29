@@ -52,6 +52,7 @@ appliance chassis and every app beside it.
 | `wslib-can-socketcan`    | SocketCAN frame layouts, and a raw-socket task on Linux       |
 | `wslib-can-gvret`        | GVRET, both ends, and a task over TCP or a serial port        |
 | `wslib-wiretap-catalogue` | Device catalogues: parse, validate, decode, edit, frame, DBC |
+| `wslib-wiretap-gateway`  | A capture gateway's HTTP API, as serde types                  |
 | `wslib-appliance-types`  | An appliance's wire contract, shared by daemon and browser    |
 | `wslib-appliance-config` | An appliance's bootstrap settings: flags, env and files       |
 | `wslib-appliance-store`  | An appliance's tables, in one SQLite file its product shares  |
@@ -64,7 +65,6 @@ appliance chassis and every app beside it.
 | `wslib-appliance-client` | A Windows app's connection to its service's control pipe      |
 | `wslib-appliance-xtask`† | A product's packaging, CI gates and a stand-in console        |
 | `wslib-appliance`        | The appliance family in one crate, each member a feature      |
-| `wslib-wiretap-gateway`  | A capture gateway's HTTP API, as serde types                  |
 
 † marks a crate that ships non-Rust sources, and says so at the top of its own
 README. `wslib-appliance-xtask` ships shell build scripts, Debian maintainer

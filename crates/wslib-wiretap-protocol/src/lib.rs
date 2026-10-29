@@ -1,12 +1,16 @@
-//! The vocabulary captures share: protocols, frame identities, selections and
-//! inventory rows.
+//! The vocabulary captures share (protocols, frame identities, selections and
+//! inventory rows) and the wire protocols they travel by: the binary ingest
+//! protocol, the HTTP capture-import body and the Test Pattern link check.
 
 use std::fmt;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
+pub mod import;
+pub mod ingest;
 mod selection;
+pub mod testpattern;
 
 pub use selection::{FrameSelection, InventoryRow, PayloadQuery, ProtocolFrames, Sampling};
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0
+
+- `client`, off by default: `GatewayClient`, its `Db` and `FrameCursor`, and
+  the admin calls, moved from `wiretap-gateway` at v0.10.2. The requests and
+  bodies it sends are unchanged. It runs on reqwest 0.12 with no TLS backend;
+  the app enables one.
+- `InventoryEntry::max_len_for`, under `client`.
+
 ## 0.1.0
 
 - The gateway's HTTP types, moved from `wiretap-gateway` at v0.10.2: query

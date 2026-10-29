@@ -164,6 +164,11 @@ if grep -qx wslib-wiretap-gateway <<<"$selected"; then
     --target x86_64-pc-windows-msvc --locked)
   ! grep -E '^(serialport|sqlx[a-z_-]*|rusqlite|libsqlite3-sys) ' <<<"$tree" \
     || die "wslib-wiretap-gateway pulls in a serial port or SQLite on Windows"
+  step "wslib-wiretap-gateway has no HTTP stack without client, and no TLS backend with it"
+  tree=$(cargo tree -p wslib-wiretap-gateway -e normal --prefix none --target all --locked)
+  ! grep -E '^(reqwest|hyper|tokio) ' <<<"$tree" || die "wslib-wiretap-gateway pulls in an HTTP stack without client"
+  tree=$(cargo tree -p wslib-wiretap-gateway --features client -e normal --prefix none --target all --locked)
+  ! grep -E '^(ring|aws-lc-rs|openssl) ' <<<"$tree" || die "wslib-wiretap-gateway's client pulls in a TLS backend"
 fi
 
 # gs_usb is the kernel's on Linux and nusb's elsewhere, never libusb's.

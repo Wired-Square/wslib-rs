@@ -3,6 +3,9 @@
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "client")]
+use crate::Protocol;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct InventoryEntry {
@@ -15,6 +18,18 @@ pub struct InventoryEntry {
     /// Absent from gateways before 0.1.4.
     #[serde(default)]
     pub max_len: Option<u16>,
+}
+
+#[cfg(feature = "client")]
+impl InventoryEntry {
+    /// The longest payload in bytes. A gateway before 0.1.4 serves only
+    /// `max_dlc`, a CAN length code (above 8 only FD) or a whole message's length.
+    pub fn max_len_for(&self, protocol: Protocol) -> u16 {
+        self.max_len.unwrap_or_else(|| match protocol {
+            Protocol::Can => wslib_can::dlc_to_len(self.max_dlc as u8, true) as u16,
+            Protocol::ModbusRtu | Protocol::Serial => self.max_dlc,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

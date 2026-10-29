@@ -261,7 +261,7 @@ impl TimeRangeQuery {
 }
 
 /// The query string's spelling, which is serde's, not the stored tag.
-fn query_name(protocol: Protocol) -> &'static str {
+pub(crate) fn query_name(protocol: Protocol) -> &'static str {
     match protocol {
         Protocol::Can => "can",
         Protocol::ModbusRtu => "modbus",

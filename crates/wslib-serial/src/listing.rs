@@ -29,6 +29,8 @@ pub struct UsbPort {
     pub pid: u16,
     pub serial: Option<String>,
     pub manufacturer: Option<String>,
+    /// On Windows, the device's friendly name with the port appended
+    /// ("USB Serial Port (COM4)"), not the USB product string.
     pub product: Option<String>,
 }
 

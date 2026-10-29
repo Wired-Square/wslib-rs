@@ -42,6 +42,8 @@ appliance chassis and every app beside it.
 | `wslib-service`          | A service under launchd, systemd or Windows, from one call    |
 | `wslib-tauri`            | Tauri desktop pieces: a quit that waits for in-flight work    |
 | `wslib-pairing`          | A one-time pairing code and the URI carrying the key pin      |
+| `wslib-wiretap-protocol` | Capture vocabulary: protocols, frame selections, inventories  |
+| `wslib-wiretap-capture`† | Captured frames, bytes and events in SQLite, with a cancel    |
 | `wslib-appliance-types`  | An appliance's wire contract, shared by daemon and browser    |
 | `wslib-appliance-config` | An appliance's bootstrap settings: flags, env and files       |
 | `wslib-appliance-store`  | An appliance's tables, in one SQLite file its product shares  |
@@ -58,7 +60,7 @@ appliance chassis and every app beside it.
 † marks a crate that ships non-Rust sources, and says so at the top of its own
 README. `wslib-appliance-xtask` ships shell build scripts, Debian maintainer
 scripts, a systemd unit and a Dockerfile, as templates it renders into a
-product.
+product. `wslib-wiretap-capture` ships its schema as SQL migrations.
 
 ## Using a crate
 

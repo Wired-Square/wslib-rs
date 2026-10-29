@@ -1,0 +1,32 @@
+[package]
+name = "wslib-wiretap-capture"
+version = "0.1.0"
+description = "A capture store in one SQLite file: frames and raw bytes per capture, their metadata and events, paged, filtered and searched reads, and statements run with a cancel."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[dependencies]
+serde = { version = "1.0.225", features = ["derive"] }
+serde_json = { version = "1.0.85", optional = true }
+sqlx = { version = "0.8.5", default-features = false, features = ["macros", "migrate", "runtime-tokio", "sqlite"], optional = true }
+thiserror = { version = "2", optional = true }
+tokio = { version = "1.47", default-features = false, features = ["fs"], optional = true }
+# 12, not 11: these crates' TS types nest only each other's, and their consumer needs `with_large_int`.
+ts-rs = { version = "12", optional = true, features = ["no-serde-warnings"] }
+wslib-db-sqlite = { path = "../wslib-db-sqlite", version = "0.2.3", registry = "wired-square", optional = true }
+wslib-wiretap-protocol = { path = "../wslib-wiretap-protocol", version = "0.1", registry = "wired-square" }
+
+[features]
+# `Store`, its migration chain and `Cancel`, on sqlx and wslib-db-sqlite.
+sqlite = ["dep:serde_json", "dep:sqlx", "dep:thiserror", "dep:tokio", "dep:wslib-db-sqlite"]
+ts = ["dep:ts-rs"]
+
+[dev-dependencies]
+serde_json = "1.0.85"
+tempfile = "3.10.1"
+tokio = { version = "1.47", features = ["macros", "rt", "time"] }

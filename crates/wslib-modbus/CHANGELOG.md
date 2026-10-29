@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.1
+
+- Modbus RTU, with no feature: `ModbusRtuStream`, which frames messages off a
+  byte stream by the length rules and CRC-16/Modbus, with vendor codes declared
+  by `with_vendor_functions` or laid out by `VendorLength` rules;
+  `ModbusRtuOptions`; and `RtuTap`, which stamps each message by the read that
+  delivered its last byte, never earlier than a stamp before it.
+- `RtuTap::set_options` reframes a line with new options and keeps the
+  timestamp floor, where rebuilding the tap with `new` loses it.
+- `LengthRule::from_toml`, `is_modelled_function`,
+  `ModbusRtuStream::frames_function` and `rule_rejections`: `validate` reads a
+  function code's rules and the modelled codes through the stream's own table.
+- `ts`: `VendorLength`, `LengthRule`, `Selector` and `VendorLen`.
+- tokio's floor is 1.53.3, as wslib-serial's is; a consumer building with
+  `--locked` on an older lockfile may need `cargo update -p tokio`.
+
 ## 0.2.0
 
 - Breaking: `encode_signal` and `encode_enum` refuse a value the field can't

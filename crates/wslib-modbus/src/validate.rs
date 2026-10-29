@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use toml::{Table, Value};
 
 use crate::manifest::layout_fits;
-use crate::{DisplayHint, ManifestError, ModbusManifest, RegisterType};
+use crate::{
+    DisplayHint, LengthRule, ManifestError, ModbusManifest, RegisterType, is_modelled_function,
+};
 
 /// One finding: the path of the field at fault and what is wrong with it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,7 +109,7 @@ fn validate_function_codes(codes: &Value, findings: &mut Vec<Finding>) {
                 &field,
                 format!("Function code '{key}' must be 0x01 to 0x7F"),
             )),
-            Some(code) if has_own_length_rules(code) => findings.push(finding(
+            Some(code) if is_modelled_function(code) => findings.push(finding(
                 &field,
                 format!(
                     "Function code {code:#04x} is standard Modbus, framed by its own length rules, so declaring it has no effect"
@@ -130,7 +132,7 @@ fn validate_function_codes(codes: &Value, findings: &mut Vec<Finding>) {
             continue;
         };
         for (i, rule) in rules.iter().enumerate() {
-            if !is_length_rule(rule) {
+            if LengthRule::from_toml(rule).is_none() {
                 findings.push(finding(
                     format!("{field}.lengths[{i}]"),
                     "A length rule needs a len of { fixed } or { count_at, overhead }, \
@@ -150,34 +152,6 @@ fn function_code(key: &str) -> Option<u8> {
         None => return None,
     };
     u8::try_from(code).ok()
-}
-
-/// The codes an RTU line frames without a declared rule: the reads, the writes,
-/// and every exception.
-fn has_own_length_rules(code: u8) -> bool {
-    code & 0x80 != 0 || matches!(code, 0x01..=0x06 | 0x0F | 0x10)
-}
-
-/// `{ len = { fixed } }` or `{ len = { count_at, overhead } }`, optionally with
-/// `when = { offset, value }`.
-fn is_length_rule(rule: &Value) -> bool {
-    let int = |v: &Value, key: &str| v.get(key).and_then(Value::as_integer);
-    let byte = |v: &Value, key: &str| int(v, key).and_then(|i| u8::try_from(i).ok());
-    let word = |v: &Value, key: &str| int(v, key).and_then(|i| u16::try_from(i).ok());
-    let when_ok = rule
-        .get("when")
-        .is_none_or(|w| byte(w, "offset").is_some() && byte(w, "value").is_some());
-    let len_ok = rule.get("len").is_some_and(|len| {
-        matches!(
-            (
-                word(len, "fixed"),
-                byte(len, "count_at"),
-                word(len, "overhead")
-            ),
-            (Some(_), None, None) | (None, Some(_), Some(_))
-        )
-    });
-    when_ok && len_ok
 }
 
 /// A malformed `display` parses as no hint and a non-finite scale decodes as out
@@ -396,9 +370,9 @@ bit_length = 16
 
     #[test]
     fn the_standard_codes_are_exactly_the_ones_with_their_own_length_rules() {
-        let own: Vec<u8> = (0..=0x7F).filter(|&c| has_own_length_rules(c)).collect();
+        let own: Vec<u8> = (0..=0x7F).filter(|&c| is_modelled_function(c)).collect();
         assert_eq!(own, [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x0F, 0x10]);
-        assert!((0x80..=0xFF).all(has_own_length_rules));
+        assert!((0x80..=0xFF).all(is_modelled_function));
     }
 
     #[test]

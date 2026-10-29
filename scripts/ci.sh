@@ -141,6 +141,13 @@ if grep -qx wslib-modbus <<<"$selected"; then
   done
 fi
 
+# A sans-io consumer takes wslib-modbus's RTU side with no features.
+if grep -qx wslib-modbus <<<"$selected"; then
+  step "wslib-modbus without features has no tokio"
+  tree=$(cargo tree -p wslib-modbus --no-default-features -e normal --prefix none --locked)
+  ! grep -E '^tokio(-modbus)? ' <<<"$tree" || die "wslib-modbus pulls in tokio without a feature"
+fi
+
 # A read-only port on Linux needs neither serialport nor libudev.
 if grep -qx wslib-serial <<<"$selected"; then
   step "wslib-serial's task has no serialport on Linux"

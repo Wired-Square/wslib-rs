@@ -46,6 +46,30 @@ order, eight to a byte and least significant bit first.
 `[frame.modbus]` sections as field paths and messages; it reads no other
 section.
 
+## Modbus RTU
+
+`ModbusRtuStream` frames messages off a byte stream with no transport header,
+by the length rules and CRC-16/Modbus, and `RtuTap` stamps each one by the read
+that delivered its last byte, less the wire time of the bytes after it. A
+stamp is never earlier than one before it, across a `reset` or `set_options`
+too. Both are sans-io and need no feature.
+
+```rust
+use wslib_modbus::{ModbusRtuOptions, RtuTap};
+use wslib_serial::{LineSettings, Parity};
+
+let line = LineSettings { baud: 9600, data_bits: 8, parity: Parity::None, stop_bits: 1 };
+let mut tap = RtuTap::new(&ModbusRtuOptions::tapped(), line);
+for tapped in tap.push(&bytes, std::time::SystemTime::now()) {
+    println!("{:?} unit {} fc {}", tapped.at, tapped.message.device_address, tapped.message.function);
+}
+```
+
+A vendor's function codes are framed only once declared: by
+`with_vendor_functions`, a CRC search for the shortest valid length, or by a
+`VendorLength` rule, which is exact. `frame_any_function` frames every code,
+which a tap wants and a decoder does not.
+
 ## Features
 
 None is on by default.

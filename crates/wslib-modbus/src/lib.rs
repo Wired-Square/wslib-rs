@@ -1,12 +1,15 @@
 //! Modbus: the wire facts, a TOML register map decoded and encoded, poll
-//! schedules on the caller's clock, a register sweep's plan, and with `tcp` a
-//! client and a poller over it.
+//! schedules on the caller's clock, a register sweep's plan, Modbus RTU framed
+//! off a byte stream and stamped off a serial line, and with `tcp` a client and
+//! a poller over it.
 
 mod bank;
 mod item_schedule;
 mod manifest;
 pub mod protocol;
 mod ranges;
+mod rtu_stream;
+mod rtu_tap;
 mod scan;
 mod schedule;
 mod validate;
@@ -33,6 +36,11 @@ pub use item_schedule::{ItemSchedule, PollItem};
 pub use manifest::*;
 pub use protocol::*;
 pub use ranges::{RangeError, RangeSpec, RegisterRange, chunk_ranges};
+pub use rtu_stream::{
+    CrcPolicy, Direction, DirectionBasis, LengthRule, ModbusRtuMessage, ModbusRtuOptions,
+    ModbusRtuStream, Payload, Selector, VendorLen, VendorLength, is_modelled_function,
+};
+pub use rtu_tap::{RtuTap, TappedMessage};
 pub use scan::{
     AddressBlock, DEFAULT_BUSY_RETRIES, ReadOutcome, ReadSpan, RegisterSweep, SweepEnd,
     SweepLimits, SweepProgress, SweepStep,

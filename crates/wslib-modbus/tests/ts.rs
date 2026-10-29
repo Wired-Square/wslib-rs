@@ -4,12 +4,16 @@
 use ts_rs::{Config, TS};
 
 use wslib_modbus::Finding;
+use wslib_modbus::LengthRule;
 use wslib_modbus::ModbusFrame;
 use wslib_modbus::ModbusManifest;
 use wslib_modbus::ModbusMeta;
 use wslib_modbus::ModbusSignal;
 use wslib_modbus::ModbusWrite;
 use wslib_modbus::RegisterType;
+use wslib_modbus::Selector;
+use wslib_modbus::VendorLen;
+use wslib_modbus::VendorLength;
 use wslib_modbus::WriteBank;
 
 fn exported<T: TS + 'static>() -> String {
@@ -91,5 +95,37 @@ fn finding() {
     assert_eq!(
         exported::<Finding>(),
         "export type ValidationError = { field: string, message: string, };"
+    );
+}
+
+#[test]
+fn vendor_length() {
+    assert_eq!(
+        exported::<VendorLength>(),
+        r#"import type { Selector } from "./Selector"; import type { VendorLen } from "./VendorLen"; export type VendorLength = { function: number, when?: Selector | null, len: VendorLen, };"#
+    );
+}
+
+#[test]
+fn length_rule() {
+    assert_eq!(
+        exported::<LengthRule>(),
+        r#"import type { Selector } from "./Selector"; import type { VendorLen } from "./VendorLen"; export type LengthRule = { when?: Selector | null, len: VendorLen, };"#
+    );
+}
+
+#[test]
+fn selector() {
+    assert_eq!(
+        exported::<Selector>(),
+        "export type Selector = { offset: number, value: number, };"
+    );
+}
+
+#[test]
+fn vendor_len() {
+    assert_eq!(
+        exported::<VendorLen>(),
+        "export type VendorLen = { fixed: number } | { countAt: number, overhead: number };"
     );
 }

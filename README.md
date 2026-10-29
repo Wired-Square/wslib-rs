@@ -46,6 +46,7 @@ appliance chassis and every app beside it.
 | `wslib-wiretap-capture`† | Captured frames, bytes and events in SQLite, with a cancel    |
 | `wslib-bits`             | Payload fields by bit and order, word swaps, hex and readings |
 | `wslib-checksum`         | Checksum algorithms, and finding or solving a link's checksum |
+| `wslib-tcp`              | A TCP connect that tries each resolved address in one budget  |
 | `wslib-appliance-types`  | An appliance's wire contract, shared by daemon and browser    |
 | `wslib-appliance-config` | An appliance's bootstrap settings: flags, env and files       |
 | `wslib-appliance-store`  | An appliance's tables, in one SQLite file its product shares  |

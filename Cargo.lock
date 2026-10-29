@@ -7939,6 +7939,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-tcp"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "wslib-telemetry"
 version = "0.1.9"
 dependencies = [

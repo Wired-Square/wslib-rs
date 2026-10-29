@@ -1,0 +1,157 @@
+#![cfg(feature = "ts")]
+//! Each declaration against the JSON its type serialises to, under a consumer's
+//! `Config` (`large_int` as `number`), doc comments aside.
+
+use serde_json::json;
+use ts_rs::{Config, TS};
+use wslib_wiretap_gateway::*;
+
+fn decl<T: TS>() -> String {
+    T::decl(&Config::new().with_large_int("number"))
+        .lines()
+        .filter(|line| !line.starts_with("/**") && !line.starts_with(" *"))
+        .collect()
+}
+
+#[test]
+fn a_protocol_is_its_lowercase_name_as_archive_protocol() {
+    assert_eq!(
+        serde_json::to_value([Protocol::Can, Protocol::ModbusRtu, Protocol::Serial]).unwrap(),
+        json!(["can", "modbus", "serial"])
+    );
+    assert_eq!(
+        decl::<Protocol>(),
+        r#"type ArchiveProtocol = "can" | "modbus" | "serial";"#
+    );
+}
+
+#[test]
+fn a_spec_is_tagged_by_type_with_its_window_flattened() {
+    let spec = QuerySpec::FirstLast {
+        frame_id: 256,
+        is_extended: None,
+        window: RowWindow {
+            protocol: Some(Protocol::Can),
+            start_us: Some(1),
+            end_us: None,
+        },
+    };
+    assert_eq!(
+        serde_json::to_value(&spec).unwrap(),
+        json!({ "type": "first_last", "frame_id": 256, "is_extended": null, "protocol": "can", "start_us": 1, "end_us": null })
+    );
+    let window =
+        "protocol?: ArchiveProtocol | null, start_us: number | null, end_us: number | null, }";
+    let variants = [
+        r#""type": "byte_changes", frame_id: number, is_extended: boolean | null, byte_index: number, limit: number | null, "#,
+        r#""type": "frame_changes", frame_id: number, is_extended: boolean | null, limit: number | null, "#,
+        r#""type": "mirror_validation", mirror_frame_id: number, source_frame_id: number, is_extended: boolean | null, tolerance_ms: number, limit: number | null, "#,
+        r#""type": "mux_statistics", frame_id: number, is_extended: boolean | null, mux_selector_byte: number, include_16bit: boolean, payload_length: number, limit: number | null, "#,
+        r#""type": "first_last", frame_id: number, is_extended: boolean | null, "#,
+        r#""type": "frequency", frame_id: number, is_extended: boolean | null, bucket_size_ms: number, limit: number | null, "#,
+        r#""type": "distribution", frame_id: number, is_extended: boolean | null, byte_index: number, "#,
+        r#""type": "gap_analysis", frame_id: number, is_extended: boolean | null, gap_threshold_ms: number, limit: number | null, "#,
+        r#""type": "pattern_search", pattern: Array<number>, pattern_mask: Array<number>, limit: number | null, "#,
+        r#""type": "frame_inventory", limit: number | null, "#,
+    ]
+    .map(|fields| format!("{{ {fields}{window}"));
+    assert_eq!(
+        decl::<QuerySpec>(),
+        format!("type QuerySpec = {};", variants.join(" | "))
+    );
+}
+
+#[test]
+fn a_result_nests_its_rows_and_stats_by_name() {
+    assert_eq!(
+        decl::<FirstLastQueryResult>(),
+        "type FirstLastQueryResult = { results: FirstLastResult, stats: QueryStats, };"
+    );
+    assert_eq!(
+        decl::<FirstLastResult>(),
+        "type FirstLastResult = { first_timestamp_us: number, first_payload: Array<number>, \
+         last_timestamp_us: number, last_payload: Array<number>, total_count: number, };"
+    );
+}
+
+#[test]
+fn a_provenance_leaves_out_what_it_does_not_know() {
+    assert_eq!(
+        serde_json::to_value(Provenance::default()).unwrap(),
+        json!({})
+    );
+    assert_eq!(
+        decl::<Provenance>(),
+        "type Provenance = { repo?: string | null, path?: string | null, \
+         blob_sha?: string | null, ref?: string | null, commit?: string | null, \
+         based_on?: ProvenanceBase | null, };"
+    );
+}
+
+#[test]
+fn a_query_body_is_its_params_untagged_with_the_filter_flattened() {
+    assert_eq!(
+        decl::<QueryBody>(),
+        "type QueryBody = ByteChangesParams | FrameChangesParams | MirrorValidationParams | \
+         MuxStatisticsParams | FirstLastParams | FrequencyParams | DistributionParams | \
+         GapAnalysisParams | PatternSearchParams;"
+    );
+    assert_eq!(
+        decl::<FirstLastParams>(),
+        "type FirstLastParams = { query_id: string | null, frame_id: number, \
+         is_extended: boolean | null, start_time: string | null, end_time: string | null, \
+         protocol?: ArchiveProtocol | null, };"
+    );
+}
+
+#[test]
+fn database_activity_is_its_rows() {
+    assert_eq!(
+        decl::<DatabaseActivity>(),
+        "type DatabaseActivity = { pid: number, database: string | null, \
+         username: string | null, application_name: string | null, \
+         client_addr: string | null, state: string | null, query: string | null, \
+         query_start: string | null, duration_secs: number | null, is_cancellable: boolean, };"
+    );
+    assert_eq!(
+        decl::<DatabaseActivityResult>(),
+        "type DatabaseActivityResult = { queries: Array<DatabaseActivity>, \
+         sessions: Array<DatabaseActivity>, };"
+    );
+}
+
+#[test]
+fn an_import_result_is_named_apart_from_a_capture_s() {
+    assert_eq!(
+        decl::<ImportResult>(),
+        "type ArchiveImportResult = { imported: number, elapsed_ms: number, };"
+    );
+}
+
+/// The admin types keep the names their declarations had before the rename.
+#[test]
+fn the_catalogue_admin_types_keep_their_declared_names() {
+    let declared = [
+        decl::<ActiveCatalogue>(),
+        decl::<RefusedCatalogue>(),
+        decl::<AssignCatalogue>(),
+        decl::<AssignedCatalogue>(),
+        decl::<CatalogueRejected>(),
+        decl::<StoredCatalogue>(),
+        decl::<CatalogueFinding>(),
+        decl::<DaemonDevice>(),
+    ];
+    assert_eq!(
+        declared,
+        [
+            "type ActiveCatalog = { source: string, blob_sha: string | null, name: string | null, since_us: number, refused: RefusedCatalog | null, };",
+            "type RefusedCatalog = { blob_sha: string, reason: string, };",
+            "type AssignCatalog = { daemon_id: string, interface: string, content: string, provenance: Provenance, expected?: string | null, };",
+            "type AssignedCatalog = { daemon_id: string, interface: string, assignment: Assignment, warnings: Array<CatalogFinding>, };",
+            "type CatalogRejected = { error: string, findings: Array<CatalogFinding>, };",
+            "type StoredCatalog = { blob_sha: string, content: string, provenance: Provenance, created_at_us: number, };",
+            "type CatalogFinding = { field: string, message: string, };",
+            "type DaemonDevice = { interface: string, bus: number | null, database: string | null, last_seen_us: number | null, assignment: Assignment | null, active: ActiveCatalog | null, };",
+        ]
+    );
+}

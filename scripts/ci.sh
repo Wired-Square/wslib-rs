@@ -157,6 +157,15 @@ if grep -qx wslib-serial <<<"$selected"; then
   ! grep -E '^(serialport|libudev(-sys)?) ' <<<"$tree" || die "wslib-serial's task pulls in serialport on Linux"
 fi
 
+# The gateway's types are serde-only, a Windows client's included.
+if grep -qx wslib-wiretap-gateway <<<"$selected"; then
+  step "wslib-wiretap-gateway on Windows has no serial port or SQLite"
+  tree=$(cargo tree -p wslib-wiretap-gateway -e normal --prefix none \
+    --target x86_64-pc-windows-msvc --locked)
+  ! grep -E '^(serialport|sqlx[a-z_-]*|rusqlite|libsqlite3-sys) ' <<<"$tree" \
+    || die "wslib-wiretap-gateway pulls in a serial port or SQLite on Windows"
+fi
+
 windows_only() {
   cargo metadata --format-version 1 --no-deps --locked \
     | jq -r --arg among "$*" '.packages[] | select(.name | IN($among | split(" ")[]))

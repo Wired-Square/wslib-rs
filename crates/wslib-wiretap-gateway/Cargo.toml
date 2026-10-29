@@ -1,0 +1,26 @@
+[package]
+name = "wslib-wiretap-gateway"
+version = "0.1.0"
+description = "The WireTAP gateway's HTTP API as serde types: query results, the archive, events and admin endpoints, the request bodies and query strings, and a query spec with the request that asks it."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+ts = ["dep:ts-rs", "wslib-wiretap-protocol/ts"]
+
+[dependencies]
+serde = { version = "1.0.225", features = ["derive"] }
+ts-rs = { version = "12", optional = true, features = ["no-serde-warnings"] }
+wslib-wiretap-protocol = { path = "../wslib-wiretap-protocol", version = "0.2", registry = "wired-square" }
+
+[dev-dependencies]
+serde_json = "1.0.85"
+
+[[test]]
+name = "ts"
+required-features = ["ts"]

@@ -43,7 +43,6 @@ appliance chassis and every app beside it.
 | `wslib-tauri`            | Tauri desktop pieces: a quit that waits for in-flight work    |
 | `wslib-pairing`          | A one-time pairing code and the URI carrying the key pin      |
 | `wslib-wiretap-protocol` | Capture vocabulary: protocols, frame selections, inventories  |
-| `wslib-wiretap-capture`† | Captured frames, bytes and events in SQLite, with a cancel    |
 | `wslib-bits`             | Payload fields by bit and order, word swaps, hex and readings |
 | `wslib-checksum`         | Checksum algorithms, and finding or solving a link's checksum |
 | `wslib-tcp`              | A TCP connect that tries each resolved address in one budget  |
@@ -64,7 +63,6 @@ appliance chassis and every app beside it.
 † marks a crate that ships non-Rust sources, and says so at the top of its own
 README. `wslib-appliance-xtask` ships shell build scripts, Debian maintainer
 scripts, a systemd unit and a Dockerfile, as templates it renders into a
-product. `wslib-wiretap-capture` ships its schema as SQL migrations.
 
 ## Using a crate
 

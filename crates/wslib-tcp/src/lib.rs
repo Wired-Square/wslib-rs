@@ -224,6 +224,9 @@ mod tests {
         listener.local_addr().unwrap()
     }
 
+    /// Windows retries a SYN refused by a closed loopback port for about 2 s.
+    const REFUSAL_MS: u64 = 3000;
+
     fn deadline_in(millis: u64) -> Instant {
         Instant::now() + Duration::from_millis(millis)
     }
@@ -262,7 +265,7 @@ mod tests {
         within(async {
             let live = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addrs = [refused_addr().await, live.local_addr().unwrap()];
-            let result = connect_any(&addrs, deadline_in(1000)).await;
+            let result = connect_any(&addrs, deadline_in(REFUSAL_MS)).await;
             assert!(matches!(result, Some(Ok(_))));
         })
         .await
@@ -272,7 +275,7 @@ mod tests {
     async fn the_last_failure_is_the_one_reported() {
         within(async {
             let addr = refused_addr().await;
-            let result = connect_any(&[addr], deadline_in(1000)).await;
+            let result = connect_any(&[addr], deadline_in(REFUSAL_MS)).await;
             assert!(
                 matches!(result, Some(Err(TransportError::Connect { addr: a, .. })) if a == addr)
             );

@@ -2,7 +2,7 @@ mod support;
 
 use std::time::{Duration, Instant, SystemTime};
 
-use support::{Action, FakeServer, within};
+use support::{Action, FakeServer, refusable, within};
 use wslib_modbus::{
     Banks, ExceptionCode, ItemId, ModbusTcp, PollEvent, Poller, ReadData, StepEnd, TcpOptions,
     TransportError, UnitSource,
@@ -154,7 +154,7 @@ async fn a_failed_connect_reads_nothing_and_charges_no_item() {
     within(async {
         let server = FakeServer::start().await;
         server.close().await;
-        let mut tcp = ModbusTcp::new(server.endpoint(), quick());
+        let mut tcp = ModbusTcp::new(server.endpoint(), refusable(quick()));
         let t0 = Instant::now();
         let mut poller = raw(UnitSource::Item, t0);
 

@@ -4,7 +4,7 @@ mod support;
 
 use std::time::Duration;
 
-use support::within;
+use support::{refusable, within};
 use wslib_modbus::RegisterType;
 use wslib_modbus::{
     ModbusTcp, ModbusWrite, ReadData, ReadRequest, RequestError, TcpOptions, TransportError,
@@ -12,12 +12,19 @@ use wslib_modbus::{
     testing::{self, RegisterBanks, Reply, device},
 };
 
-fn connect(device: &testing::Device) -> ModbusTcp {
-    let options = TcpOptions {
+fn quick() -> TcpOptions {
+    TcpOptions {
         connect_timeout: Duration::from_millis(500),
         op_timeout: Duration::from_millis(200),
         ..TcpOptions::default()
-    };
+    }
+}
+
+fn connect(device: &testing::Device) -> ModbusTcp {
+    connect_with(device, quick())
+}
+
+fn connect_with(device: &testing::Device, options: TcpOptions) -> ModbusTcp {
     ModbusTcp::new(format!("127.0.0.1:{}", device.port), options)
 }
 
@@ -92,7 +99,7 @@ async fn an_answer_can_refuse_stay_silent_or_hang_up() {
 async fn a_device_that_vanishes_refuses_the_next_connect() {
     within(async {
         let device = device(|_| Reply::Vanish).await;
-        let mut tcp = connect(&device);
+        let mut tcp = connect_with(&device, refusable(quick()));
 
         assert!(tcp.read(holding(0, 1)).await.is_err());
         let refused = tcp.read(holding(0, 1)).await.unwrap_err();

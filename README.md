@@ -52,6 +52,7 @@ appliance chassis and every app beside it.
 | `wslib-can-socketcan`    | SocketCAN frame layouts, and a raw-socket task on Linux       |
 | `wslib-can-gvret`        | GVRET, both ends, and a task over TCP or a serial port        |
 | `wslib-can-slcan`        | SLCAN with Elmue's CAN FD, and a task over a serial port      |
+| `wslib-can-gsusb`        | gs_usb (candleLight), a task over nusb, a listing on Linux    |
 | `wslib-wiretap-catalogue` | Device catalogues: parse, validate, decode, edit, frame, DBC |
 | `wslib-wiretap-gateway`  | A capture gateway's HTTP API, as serde types                  |
 | `wslib-appliance-types`  | An appliance's wire contract, shared by daemon and browser    |

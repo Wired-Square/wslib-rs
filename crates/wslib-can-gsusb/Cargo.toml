@@ -1,0 +1,24 @@
+[package]
+name = "wslib-can-gsusb"
+version = "0.1.0"
+description = "gs_usb, the candleLight protocol, and a CAN task on a gs_usb adapter over nusb on macOS and Windows, or its SocketCAN interfaces listed on Linux."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+transport = ["wslib-can/task", "dep:tokio", "dep:nusb"]
+
+[dependencies]
+tokio = { version = "1.53.3", default-features = false, features = ["time"], optional = true }
+wslib-can = { path = "../wslib-can", version = "0.1.1", registry = "wired-square" }
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+nusb = { version = "0.2.7", default-features = false, features = ["tokio"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1.53.3", features = ["macros", "rt", "sync", "time"] }

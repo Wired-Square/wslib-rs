@@ -166,6 +166,16 @@ if grep -qx wslib-wiretap-gateway <<<"$selected"; then
     || die "wslib-wiretap-gateway pulls in a serial port or SQLite on Windows"
 fi
 
+# gs_usb is the kernel's on Linux and nusb's elsewhere, never libusb's.
+if grep -qx wslib-can-gsusb <<<"$selected"; then
+  step "wslib-can-gsusb has no libusb, and no nusb on Linux"
+  tree=$(cargo tree -p wslib-can-gsusb --features transport -e normal --prefix none --target all --locked)
+  ! grep -E '^(rusb|libusb[a-z0-9-]*) ' <<<"$tree" || die "wslib-can-gsusb pulls in libusb"
+  tree=$(cargo tree -p wslib-can-gsusb --features transport -e normal --prefix none \
+    --target x86_64-unknown-linux-gnu --locked)
+  ! grep -E '^nusb ' <<<"$tree" || die "wslib-can-gsusb pulls in nusb on Linux"
+fi
+
 windows_only() {
   cargo metadata --format-version 1 --no-deps --locked \
     | jq -r --arg among "$*" '.packages[] | select(.name | IN($among | split(" ")[]))

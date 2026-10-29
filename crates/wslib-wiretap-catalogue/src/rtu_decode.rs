@@ -164,7 +164,7 @@ mod tests {
     use super::*;
     use wslib_modbus::ModbusRtuStream;
 
-    const CATALOG: &str = r#"
+    const CATALOGUE: &str = r#"
 [meta]
 name = "sbr"
 [frame.can."0x1E0"]
@@ -187,7 +187,7 @@ unit = "A"
 "#;
 
     fn catalogue() -> Catalogue {
-        Catalogue::parse(CATALOG).unwrap()
+        Catalogue::parse(CATALOGUE).unwrap()
     }
 
     struct Decode {

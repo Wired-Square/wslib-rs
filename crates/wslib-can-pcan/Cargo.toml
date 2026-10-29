@@ -15,7 +15,7 @@ transport = ["wslib-can/task", "dep:tokio", "dep:nusb", "dep:libloading"]
 
 [dependencies]
 tokio = { version = "1.53.3", default-features = false, features = ["rt", "time"], optional = true }
-wslib-can = { path = "../wslib-can", version = "0.1", registry = "wired-square" }
+wslib-can = { path = "../wslib-can", version = "0.1.1", registry = "wired-square" }
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 nusb = { version = "0.2.7", default-features = false, features = ["tokio"], optional = true }

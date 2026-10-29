@@ -132,6 +132,15 @@ for crate in $selected; do
   cargo hack check -p "$crate" --each-feature --locked
 done
 
+# A read-only build takes `tcp` or `task` without `write`; wslib-modbus's
+# compile_fail doctests fail if a write path is compiled into either.
+if grep -qx wslib-modbus <<<"$selected"; then
+  step "wslib-modbus without write has no write path"
+  for features in tcp task; do
+    cargo test -p wslib-modbus --no-default-features --features "$features" --doc --locked
+  done
+fi
+
 windows_only() {
   cargo metadata --format-version 1 --no-deps --locked \
     | jq -r --arg among "$*" '.packages[] | select(.name | IN($among | split(" ")[]))

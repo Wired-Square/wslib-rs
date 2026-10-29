@@ -7654,7 +7654,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-db-sqlite"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "chrono",
  "serde",

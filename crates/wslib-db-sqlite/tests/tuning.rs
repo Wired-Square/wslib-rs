@@ -99,3 +99,26 @@ async fn a_plain_open_leaves_sqlites_defaults() {
     assert_every(&each_connection(&db).await, defaults);
     db.close().await;
 }
+
+#[tokio::test]
+async fn the_wal_limit_holds_on_every_connection_and_the_writer() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = Database::open_with(
+        dir.path().join("app.db"),
+        &[],
+        Tuning::default().wal_limit_kib(4096).own_writer(),
+    )
+    .await
+    .expect("open");
+    let mut held = vec![db.writer().acquire().await.unwrap()];
+    for _ in 0..db.pool().options().get_max_connections() {
+        held.push(db.pool().acquire().await.unwrap());
+    }
+    for conn in &mut held {
+        let limit: i64 = sqlx::query_scalar("PRAGMA journal_size_limit")
+            .fetch_one(&mut **conn)
+            .await
+            .unwrap();
+        assert_eq!(limit, 4096 * 1024);
+    }
+}

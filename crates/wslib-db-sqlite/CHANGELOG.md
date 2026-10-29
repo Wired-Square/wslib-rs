@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.4
+
+- A file database's pool closes a connection returned mid-transaction or
+  with `query_only` on, rather than hand it out again, and closes idle ones
+  after ten minutes and every one after an hour.
+
+- `Tuning::own_writer` gives `begin` a connection of its own,
+  `Database::writer`, so writers queue for it in turn and readers holding the
+  pool can't keep one out; without it `writer` is the pool.
+  `Tuning::wal_limit_kib` sets `journal_size_limit`.
+
+- `Chain::stamps_user_version(offset)` sets `user_version` to the chain's
+  version plus `offset` in the transaction that applies it.
+
 ## 0.2.3
 
 - `Database::open_with` and `open_existing_with` take a `Tuning`, which sets

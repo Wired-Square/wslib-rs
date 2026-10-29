@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use sqlx::migrate::MigrateError;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
-use sqlx::{Sqlite, Transaction};
+use sqlx::{Connection, Sqlite, SqliteConnection, Transaction};
 
 pub mod migrate;
 pub mod settings;
@@ -45,6 +45,8 @@ pub use settings::Settings;
 pub use sqlx;
 
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+const IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const MAX_LIFETIME: Duration = Duration::from_secs(60 * 60);
 
 /// Why a database operation could not be completed.
 #[derive(Debug, thiserror::Error)]
@@ -166,15 +168,18 @@ impl Error {
 #[derive(Debug, Clone)]
 pub struct Database {
     pool: SqlitePool,
+    writer: SqlitePool,
     chain_versions: Arc<BTreeMap<String, i64>>,
 }
 
-/// Per-connection settings an app may add to the crate's own, for
-/// [`Database::open_with`] and [`Database::open_existing_with`].
+/// Settings an app may add to the crate's own, for [`Database::open_with`]
+/// and [`Database::open_existing_with`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Tuning {
     cache_kib: Option<u32>,
     temp_store_in_memory: bool,
+    wal_limit_kib: Option<u32>,
+    own_writer: bool,
 }
 
 impl Tuning {
@@ -194,6 +199,28 @@ impl Tuning {
         }
     }
 
+    /// Truncate the `-wal` back to `kib` KiB whenever SQLite restarts it,
+    /// rather than leave it at its largest.
+    pub fn wal_limit_kib(self, kib: u32) -> Self {
+        Self {
+            wal_limit_kib: Some(kib),
+            ..self
+        }
+    }
+
+    /// Give [`Database::begin`] a connection of its own, beside the pool's five,
+    /// so writers queue for it in turn and readers holding the pool can't keep
+    /// one out.
+    ///
+    /// The writer goes back to its pool on the runtime that dropped it, so a
+    /// current-thread runtime that blocks after a write strands it.
+    pub fn own_writer(self) -> Self {
+        Self {
+            own_writer: true,
+            ..self
+        }
+    }
+
     fn apply(self, mut opts: SqliteConnectOptions) -> SqliteConnectOptions {
         if let Some(kib) = self.cache_kib {
             // A negative cache_size is in KiB; a positive one is in pages.
@@ -201,6 +228,9 @@ impl Tuning {
         }
         if self.temp_store_in_memory {
             opts = opts.pragma("temp_store", "MEMORY");
+        }
+        if let Some(kib) = self.wal_limit_kib {
+            opts = opts.pragma("journal_size_limit", (u64::from(kib) * 1024).to_string());
         }
         opts
     }
@@ -265,7 +295,14 @@ impl Database {
         let opts = SqliteConnectOptions::from_str("sqlite::memory:")
             .expect("a literal in-memory URL parses")
             .foreign_keys(true);
-        Self::pooled(opts, 1, chains, Schema::Migrate).await
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .min_connections(1)
+            .idle_timeout(None)
+            .max_lifetime(None)
+            .connect_with(opts)
+            .await?;
+        Self::pooled(pool.clone(), pool, chains, Schema::Migrate).await
     }
 
     async fn open_at(
@@ -287,30 +324,32 @@ impl Database {
 
         enter_wal(&opts).await?;
         restrict_to_owner(path);
-        let db = Self::pooled(opts, 5, chains, schema).await?;
+        let pool = file_pool(5).connect_with(opts.clone()).await?;
+        let writer = if tuning.own_writer {
+            file_pool(1).connect_with(opts).await?
+        } else {
+            pool.clone()
+        };
+        let db = Self::pooled(pool, writer, chains, schema).await?;
         restrict_to_owner(path);
         Ok(db)
     }
 
     async fn pooled(
-        opts: SqliteConnectOptions,
-        max_connections: u32,
+        pool: SqlitePool,
+        writer: SqlitePool,
         chains: &[Chain],
         schema: Schema,
     ) -> Result<Self, Error> {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(max_connections)
-            .min_connections(1)
-            .idle_timeout(None)
-            .max_lifetime(None)
-            .connect_with(opts)
-            .await?;
         let ready = match schema {
             Schema::Migrate => migrate::apply(&pool, chains).await,
             Schema::Verify => migrate::verify(&pool, chains).await,
         };
         if let Err(e) = ready {
             close_once_returned(&pool).await;
+            if !writer.is_closed() {
+                close_once_returned(&writer).await;
+            }
             return Err(e);
         }
         let chain_versions = chains
@@ -319,6 +358,7 @@ impl Database {
             .collect();
         Ok(Self {
             pool,
+            writer,
             chain_versions: Arc::new(chain_versions),
         })
     }
@@ -333,8 +373,15 @@ impl Database {
         &self.pool
     }
 
-    /// Begin a write transaction, **taking the write lock up front**, with
-    /// foreign keys checked at the commit.
+    /// Where [`begin`](Self::begin) takes its connection: one of its own with
+    /// [`Tuning::own_writer`], for a write outside a transaction too, and
+    /// otherwise the pool.
+    pub fn writer(&self) -> &SqlitePool {
+        &self.writer
+    }
+
+    /// Begin a write transaction on [`writer`](Self::writer), **taking the
+    /// write lock up front**, with foreign keys checked at the commit.
     ///
     /// `BEGIN IMMEDIATE`, not sqlx's plain `BEGIN`: a deferred transaction that
     /// reads before it writes must upgrade its lock, and SQLite answers
@@ -346,7 +393,7 @@ impl Database {
     /// `ON DELETE RESTRICT` acts at the commit too; `SET NULL`, `SET DEFAULT` and
     /// `CASCADE` still act at the statement.
     pub async fn begin(&self) -> Result<Transaction<'_, Sqlite>, Error> {
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let mut tx = self.writer.begin_with("BEGIN IMMEDIATE").await?;
         // Per transaction: SQLite switches it back off at the commit or rollback.
         sqlx::query("PRAGMA defer_foreign_keys = ON")
             .execute(&mut *tx)
@@ -363,9 +410,12 @@ impl Database {
     /// and the pool can close two at once. On Windows it then waits up to a
     /// second for them to go.
     pub async fn close(&self) {
-        use sqlx::{ConnectOptions, Connection};
+        use sqlx::ConnectOptions;
 
         close_once_returned(&self.pool).await;
+        if !self.writer.is_closed() {
+            close_once_returned(&self.writer).await;
+        }
         let alone = self
             .pool
             .connect_options()
@@ -385,6 +435,26 @@ impl Database {
     }
 }
 
+/// A file's pool, which closes a connection returned mid-transaction or
+/// read-only rather than hand it out again: a future dropped at the wrong
+/// await leaves one so, holding the write lock or refusing every write.
+fn file_pool(max_connections: u32) -> SqlitePoolOptions {
+    SqlitePoolOptions::new()
+        .max_connections(max_connections)
+        .min_connections(1)
+        .idle_timeout(IDLE_TIMEOUT)
+        .max_lifetime(MAX_LIFETIME)
+        .after_release(|conn, _| Box::pin(reusable(conn)))
+}
+
+async fn reusable(conn: &mut SqliteConnection) -> Result<bool, sqlx::Error> {
+    // First, so the rollback a dropped `Transaction` queued has run.
+    let query_only: bool = sqlx::query_scalar("PRAGMA query_only")
+        .fetch_one(&mut *conn)
+        .await?;
+    Ok(!query_only && !conn.is_in_transaction())
+}
+
 fn is_plain_name(name: &str) -> bool {
     let mut bytes = name.bytes();
     bytes.next().is_some_and(|b| b.is_ascii_lowercase())
@@ -395,7 +465,7 @@ fn is_plain_name(name: &str) -> bool {
 /// busy timeout cannot wait on, so two pooled connections entering it at once
 /// on a new database would both fail with `database is locked`.
 async fn enter_wal(opts: &SqliteConnectOptions) -> Result<(), Error> {
-    use sqlx::{ConnectOptions, Connection};
+    use sqlx::ConnectOptions;
 
     let conn = opts
         .clone()

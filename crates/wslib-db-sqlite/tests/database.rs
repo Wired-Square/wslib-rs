@@ -271,6 +271,23 @@ async fn closing_gives_up_on_a_connection_never_returned() {
     drop(held);
 }
 
+#[tokio::test]
+async fn with_its_own_writer_a_write_transaction_never_waits_on_readers() {
+    let dir = tempfile::tempdir().unwrap();
+    let tuning = wslib_db_sqlite::Tuning::default().own_writer();
+    let db = Database::open_with(dir.path().join("app.db"), &[], tuning)
+        .await
+        .expect("open");
+    let mut readers = Vec::new();
+    for _ in 0..db.pool().options().get_max_connections() {
+        readers.push(db.pool().acquire().await.expect("acquire"));
+    }
+
+    let begun = tokio::time::timeout(Duration::from_secs(1), db.begin()).await;
+
+    assert!(matches!(begun, Ok(Ok(_))), "{begun:?}");
+}
+
 fn spawnable<F: Future + Send + 'static>(future: F) -> F {
     future
 }

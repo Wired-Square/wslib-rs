@@ -1,0 +1,26 @@
+[package]
+name = "wslib-bits"
+version = "0.1.0"
+description = "Bits and bytes of a payload: fields by bit position and order, word swaps, hex, register readings, exact decimal scaling and value formatting."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+decimal = ["dep:rust_decimal"]
+display = ["dep:serde_json"]
+ts = ["dep:ts-rs"]
+
+[dependencies]
+rust_decimal = { version = "1.42", default-features = false, features = ["std"], optional = true }
+serde = { version = "1.0.225", features = ["derive"] }
+serde_json = { version = "1.0.85", optional = true }
+ts-rs = { version = "12", features = ["no-serde-warnings"], optional = true }
+
+[dev-dependencies]
+serde_json = "1.0.85"
+rust_decimal_macros = "1.40"

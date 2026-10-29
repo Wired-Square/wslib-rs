@@ -1,0 +1,102 @@
+[
+  {
+    "code": "analysed",
+    "values": {
+      "frames": 4611686018427387903,
+      "maxLength": 4611686018427387905,
+      "minLength": 4611686018427387904
+    }
+  },
+  {
+    "code": "columnNearlyConstant",
+    "values": {
+      "distinct": 4611686018427387903
+    }
+  },
+  {
+    "code": "columnVaries",
+    "values": {
+      "distinct": 4611686018427387903,
+      "samples": 4611686018427387904
+    }
+  },
+  {
+    "code": "configurationsTested",
+    "values": {
+      "algorithms": 4611686018427387904,
+      "specs": 4611686018427387903
+    }
+  },
+  {
+    "code": "constantExcluded",
+    "values": {
+      "value": "0xA0"
+    }
+  },
+  {
+    "code": "constantPadding",
+    "values": {
+      "position": -2,
+      "value": "0xA1"
+    }
+  },
+  {
+    "code": "constantPaddingRun",
+    "values": {
+      "from": -2,
+      "to": -3,
+      "value": "0xA2"
+    }
+  },
+  {
+    "code": "fewSamples",
+    "values": {
+      "count": 4611686018427387903
+    }
+  },
+  {
+    "code": "highByteConstant",
+    "values": {}
+  },
+  {
+    "code": "matchesAll",
+    "values": {
+      "count": 4611686018427387903
+    }
+  },
+  {
+    "code": "matchesSome",
+    "values": {
+      "matched": 4611686018427387903,
+      "total": 4611686018427387904
+    }
+  },
+  {
+    "code": "noFrames",
+    "values": {}
+  },
+  {
+    "code": "noneButLastByteVaries",
+    "values": {
+      "distinct": 4611686018427387903,
+      "frames": 4611686018427387904
+    }
+  },
+  {
+    "code": "noneLastByteConstant",
+    "values": {
+      "frames": 4611686018427387904,
+      "value": "0xA0"
+    }
+  },
+  {
+    "code": "shortRange",
+    "values": {}
+  },
+  {
+    "code": "startsAfterHeader",
+    "values": {
+      "byte": -2
+    }
+  }
+]

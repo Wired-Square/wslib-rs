@@ -1,0 +1,18 @@
+[package]
+name = "wslib-tcp"
+version = "0.1.0"
+description = "A TCP connect that resolves its endpoint every time and tries each address within one budget."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[dependencies]
+thiserror = "2"
+tokio = { version = "1.47", default-features = false, features = ["net", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1.47", features = ["macros", "rt"] }

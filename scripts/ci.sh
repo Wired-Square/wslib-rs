@@ -141,6 +141,14 @@ if grep -qx wslib-modbus <<<"$selected"; then
   done
 fi
 
+# A read-only port on Linux needs neither serialport nor libudev.
+if grep -qx wslib-serial <<<"$selected"; then
+  step "wslib-serial's task has no serialport on Linux"
+  tree=$(cargo tree -p wslib-serial --no-default-features --features task -e normal --prefix none \
+    --target x86_64-unknown-linux-gnu --locked)
+  ! grep -E '^(serialport|libudev(-sys)?) ' <<<"$tree" || die "wslib-serial's task pulls in serialport on Linux"
+fi
+
 windows_only() {
   cargo metadata --format-version 1 --no-deps --locked \
     | jq -r --arg among "$*" '.packages[] | select(.name | IN($among | split(" ")[]))

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0
+
+- Breaking: `encode_signal` and `encode_enum` refuse a value the field can't
+  hold once unscaled and rounded with `EncodeError::OutOfRange`, carrying the
+  raw value and the field's raw range. 0.1.0, like the code it was ported
+  from, clamped it to the field's width.
+- `testing`: `RegisterBanks`, holding, input, coil and discrete banks that
+  `device` answers from. A write lands in its bank and reads back, a test
+  seeds and inspects them, and `apply_writes(false)` acknowledges writes
+  without applying them.
+- rust_decimal's floor is 1.42; a consumer building with `--locked` on an
+  older lockfile may need `cargo update -p rust_decimal`.
+
 ## 0.1.0
 
 - `protocol`: the Modbus size limits, function and exception names,

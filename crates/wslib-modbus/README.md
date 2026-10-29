@@ -38,8 +38,9 @@ defaults, so a device that stores 32-bit values low word first needs saying so
 once. A write encodes in the same orders, so it decodes back to its value; a
 signal of no bits, a numeric one over 64 bits, or one past the bank's 65 536
 addresses is skipped at parse, and `validate` reports it. Scaling is
-exact (`3374 × 0.1` is `337.4`). A coil or discrete frame has one order, eight
-to a byte and least significant bit first.
+exact (`3374 × 0.1` is `337.4`), and a write the field can't hold once
+unscaled is refused rather than clamped. A coil or discrete frame has one
+order, eight to a byte and least significant bit first.
 
 `validate` reports what is wrong in a catalogue's `[meta]` and
 `[frame.modbus]` sections as field paths and messages; it reads no other
@@ -59,7 +60,8 @@ None is on by default.
   it no write path is compiled in; Cargo unions features across a build, so
   check with `cargo tree -e features -i wslib-modbus`.
 - `testing`: `testing::device`, a fake Modbus TCP device on loopback that
-  answers each request with a closure.
+  answers each request with a closure, and `testing::RegisterBanks`, four
+  banks it can answer from, so a write reads back.
 - `ts`: `ts_rs::TS` (ts-rs 12) on every serde type. `Finding` exports as
   `ValidationError`. Nothing here writes a `.ts` file.
 

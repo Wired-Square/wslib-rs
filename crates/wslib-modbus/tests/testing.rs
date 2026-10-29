@@ -7,8 +7,9 @@ use std::time::Duration;
 use support::within;
 use wslib_modbus::RegisterType;
 use wslib_modbus::{
-    ModbusTcp, ReadData, ReadRequest, RequestError, TcpOptions, TransportError,
-    testing::{self, Reply, device},
+    ModbusTcp, ModbusWrite, ReadData, ReadRequest, RequestError, TcpOptions, TransportError,
+    WriteOutcome,
+    testing::{self, RegisterBanks, Reply, device},
 };
 
 fn connect(device: &testing::Device) -> ModbusTcp {
@@ -21,12 +22,21 @@ fn connect(device: &testing::Device) -> ModbusTcp {
 }
 
 fn holding(start: u16, count: u16) -> ReadRequest {
+    read(RegisterType::Holding, start, count)
+}
+
+fn read(register_type: RegisterType, start: u16, count: u16) -> ReadRequest {
     ReadRequest {
-        register_type: RegisterType::Holding,
+        register_type,
         start,
         count,
         unit: Some(7),
     }
+}
+
+async fn bank_device(banks: &RegisterBanks) -> testing::Device {
+    let banks = banks.clone();
+    device(move |request| banks.answer(request)).await
 }
 
 #[tokio::test]
@@ -94,6 +104,91 @@ async fn a_device_that_vanishes_refuses_the_next_connect() {
             "{refused:?}"
         );
         assert_eq!(device.requests().len(), 1);
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_write_lands_in_its_bank_and_reads_back() {
+    within(async {
+        let banks = RegisterBanks::default();
+        let device = bank_device(&banks).await;
+        let mut tcp = connect(&device);
+
+        tcp.write_registers(None, 10, &[7]).await.unwrap();
+        tcp.write_registers(None, 20, &[1, 2, 3]).await.unwrap();
+        tcp.write_coils(None, 5, &[true]).await.unwrap();
+        tcp.write_coils(None, 8, &[true, false, true])
+            .await
+            .unwrap();
+
+        let registers = tcp.read(holding(10, 1)).await.unwrap();
+        assert_eq!(registers.data, ReadData::Registers(vec![7]));
+        let registers = tcp.read(holding(19, 5)).await.unwrap();
+        assert_eq!(registers.data, ReadData::Registers(vec![0, 1, 2, 3, 0]));
+        let coils = tcp.read(read(RegisterType::Coil, 4, 8)).await.unwrap();
+        assert_eq!(
+            coils.data,
+            ReadData::Coils(vec![false, true, false, false, true, false, true, false])
+        );
+        assert_eq!(banks.get(RegisterType::Holding, 20, 3), [1, 2, 3]);
+        assert_eq!(banks.get(RegisterType::Coil, 8, 3), [1, 0, 1]);
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_seeded_bank_is_what_a_read_returns() {
+    within(async {
+        let banks = RegisterBanks::default();
+        banks.set(RegisterType::Input, 100, &[0xBEEF, 2]);
+        banks.set(RegisterType::Discrete, 3, &[1, 1]);
+        let device = bank_device(&banks).await;
+        let mut tcp = connect(&device);
+
+        let input = tcp.read(read(RegisterType::Input, 100, 2)).await.unwrap();
+        assert_eq!(input.data, ReadData::Registers(vec![0xBEEF, 2]));
+        let discrete = tcp.read(read(RegisterType::Discrete, 2, 3)).await.unwrap();
+        assert_eq!(discrete.data, ReadData::Coils(vec![false, true, true]));
+        let holding = tcp.read(holding(100, 1)).await.unwrap();
+        assert_eq!(holding.data, ReadData::Registers(vec![0]));
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_read_past_the_last_address_is_refused() {
+    within(async {
+        let device = bank_device(&RegisterBanks::default()).await;
+        let mut tcp = connect(&device);
+
+        let refused = tcp.read(holding(u16::MAX, 2)).await.unwrap_err();
+        assert!(refused.device_replied(), "{refused:?}");
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_verified_write_the_device_acks_but_does_not_apply_is_unconfirmed() {
+    within(async {
+        let banks = RegisterBanks::default();
+        let device = bank_device(&banks).await;
+        let mut tcp = connect(&device);
+        let write = [ModbusWrite::holding(30, 500, 0xFFFF)];
+
+        banks.apply_writes(false);
+        let ignored = tcp.write_verified(None, &write).await;
+        assert!(
+            matches!(ignored.outcome, WriteOutcome::Unconfirmed(_)),
+            "{:?}",
+            ignored.outcome
+        );
+        assert_eq!(banks.get(RegisterType::Holding, 30, 1), [0]);
+
+        banks.apply_writes(true);
+        let applied = tcp.write_verified(None, &write).await;
+        assert_eq!(applied.outcome, WriteOutcome::Confirmed);
+        assert_eq!(banks.get(RegisterType::Holding, 30, 1), [500]);
     })
     .await
 }

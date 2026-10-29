@@ -334,11 +334,19 @@ pub enum EncodeError {
     UnknownEnumName { name: String, value: String },
     #[error("signal '{name}' can't be written a value that isn't a finite number")]
     NotFinite { name: String },
+    #[error("signal '{name}' can't be written raw value {raw}: the field holds {min} to {max}")]
+    OutOfRange {
+        name: String,
+        raw: i128,
+        min: i128,
+        max: i128,
+    },
 }
 
 /// The writes that set a signal to `value`, one per register or coil: the
 /// inverse of [`decode_frame`]. Layouts other than whole 16 to 64-bit registers,
-/// a field within one register, or 1 to 64 coils are an error.
+/// a field within one register, or 1 to 64 coils are an error, as is a value
+/// the field can't hold once unscaled and rounded.
 pub fn encode_signal(
     manifest: &ModbusManifest,
     frame: &ModbusFrame,
@@ -367,24 +375,14 @@ pub fn encode_enum(
     encode_raw(manifest, frame, signal, value)
 }
 
-/// `value` unscaled, rounded and clamped to the signal's width, or `None` when
-/// it isn't finite.
+/// `value` unscaled and rounded, or `None` when it isn't finite.
 fn scale_to_raw(signal: &ModbusSignal, value: f64) -> Option<i128> {
     let factor = match signal.factor {
         Some(f) if f != 0.0 => f,
         _ => 1.0,
     };
     let raw = ((value - signal.offset.unwrap_or(0.0)) / factor).round();
-    if !raw.is_finite() {
-        return None;
-    }
-    let n = signal.bit_length.clamp(1, 64);
-    let (lo, hi) = if signal.signed {
-        (-(1i128 << (n - 1)), (1i128 << (n - 1)) - 1)
-    } else {
-        (0, (1i128 << n) - 1)
-    };
-    Some((raw as i128).clamp(lo, hi))
+    raw.is_finite().then_some(raw as i128)
 }
 
 fn encode_raw(
@@ -404,6 +402,19 @@ fn encode_raw(
     };
     if !layout_fits(frame.register_type, true, start.into(), len.into()) {
         return Err(unsupported());
+    }
+    let (min, max) = if signal.signed {
+        (-(1i128 << (len - 1)), (1i128 << (len - 1)) - 1)
+    } else {
+        (0, (1i128 << len) - 1)
+    };
+    if !(min..=max).contains(&raw) {
+        return Err(EncodeError::OutOfRange {
+            name: signal.name.clone(),
+            raw,
+            min,
+            max,
+        });
     }
     let raw_bits = (raw as u128) & ((1u128 << len) - 1);
     let base = manifest.protocol_address(frame);
@@ -1520,14 +1531,121 @@ bit_length = 1
     }
 
     #[test]
-    fn encode_clamps_to_bit_width() {
+    fn encode_refuses_a_value_past_the_field() {
         let m = write_manifest();
-        let (f, s) = wsig(&m, "Forced_Charge_Discharge_Power"); // u16
-        assert_eq!(encode_signal(&m, f, s, -50.0).unwrap(), vec![reg(13051, 0)]);
+        let (f, s) = wsig(&m, "Forced_Charge_Discharge_Power");
+        let out_of_range = |raw| EncodeError::OutOfRange {
+            name: "Forced_Charge_Discharge_Power".into(),
+            raw,
+            min: 0,
+            max: 65535,
+        };
+        assert_eq!(encode_signal(&m, f, s, -50.0), Err(out_of_range(-50)));
         assert_eq!(
-            encode_signal(&m, f, s, 1_000_000.0).unwrap(),
-            vec![reg(13051, 65535)]
+            encode_signal(&m, f, s, 1_000_000.0),
+            Err(out_of_range(1_000_000))
         );
+    }
+
+    #[test]
+    fn a_field_takes_its_exact_bounds_and_refuses_one_past_each() {
+        for (signal, min, max) in [
+            ("start_bit = 0\nbit_length = 16", 0.0, 65535.0),
+            (
+                "start_bit = 0\nbit_length = 16\nsigned = true",
+                -32768.0,
+                32767.0,
+            ),
+            ("start_bit = 4\nbit_length = 4", 0.0, 15.0),
+            ("start_bit = 4\nbit_length = 4\nsigned = true", -8.0, 7.0),
+            (
+                "start_bit = 0\nbit_length = 32\nsigned = true",
+                -2147483648.0,
+                2147483647.0,
+            ),
+        ] {
+            let m = one_signal("", "", signal);
+            let (frame, s) = (&m.frames[0], &m.frames[0].signals[0]);
+            for value in [min, max] {
+                assert!(
+                    encode_signal(&m, frame, s, value).is_ok(),
+                    "{signal} {value}"
+                );
+            }
+            for value in [min - 1.0, max + 1.0] {
+                assert!(
+                    matches!(
+                        encode_signal(&m, frame, s, value),
+                        Err(EncodeError::OutOfRange { .. })
+                    ),
+                    "{signal} {value}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_scaled_field_is_bounded_after_unscaling() {
+        let m = one_signal(
+            "",
+            "",
+            "start_bit = 0\nbit_length = 16\nfactor = 0.1\noffset = -100",
+        );
+        let (frame, s) = (&m.frames[0], &m.frames[0].signals[0]);
+        assert!(encode_signal(&m, frame, s, -100.0).is_ok());
+        assert!(encode_signal(&m, frame, s, 6453.5).is_ok());
+        assert_eq!(
+            encode_signal(&m, frame, s, -100.1),
+            Err(EncodeError::OutOfRange {
+                name: "S".into(),
+                raw: -1,
+                min: 0,
+                max: 65535
+            })
+        );
+        assert!(matches!(
+            encode_signal(&m, frame, s, 6453.6),
+            Err(EncodeError::OutOfRange { raw: 65536, .. })
+        ));
+    }
+
+    #[test]
+    fn an_enum_value_past_the_field_is_refused() {
+        let m = one_signal(
+            "",
+            "",
+            "start_bit = 4\nbit_length = 4\nenum = { \"16\" = \"too_big\" }",
+        );
+        assert!(matches!(
+            encode_enum(&m, &m.frames[0], &m.frames[0].signals[0], "too_big"),
+            Err(EncodeError::OutOfRange {
+                raw: 16,
+                max: 15,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_coil_takes_zero_or_one() {
+        let toml = "[frame.modbus.0]\nregister_type = \"coil\"\nlength = 1\n\
+                    [[ frame.modbus.0.signals ]]\nname = \"On\"\nstart_bit = 0\nbit_length = 1\n";
+        let m = ModbusManifest::parse(toml).unwrap();
+        let (frame, s) = (&m.frames[0], &m.frames[0].signals[0]);
+        assert_eq!(
+            encode_signal(&m, frame, s, 0.0),
+            Ok(vec![ModbusWrite::coil(0, false)])
+        );
+        assert_eq!(
+            encode_signal(&m, frame, s, 1.0),
+            Ok(vec![ModbusWrite::coil(0, true)])
+        );
+        for value in [-1.0, 2.0] {
+            assert!(matches!(
+                encode_signal(&m, frame, s, value),
+                Err(EncodeError::OutOfRange { min: 0, max: 1, .. })
+            ));
+        }
     }
 
     #[test]

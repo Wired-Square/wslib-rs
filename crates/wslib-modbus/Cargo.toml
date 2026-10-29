@@ -1,6 +1,6 @@
 [package]
 name = "wslib-modbus"
-version = "0.1.0"
+version = "0.2.0"
 description = "Modbus: the wire facts, a TOML register map decoded and encoded, poll schedules on the caller's clock, a register sweep's plan, and a Modbus TCP client, poller and poll task with writes behind their own feature."
 readme = "README.md"
 edition.workspace = true
@@ -57,7 +57,7 @@ required-features = ["task", "write"]
 
 [[test]]
 name = "testing"
-required-features = ["testing"]
+required-features = ["testing", "write"]
 
 [[test]]
 name = "ts"

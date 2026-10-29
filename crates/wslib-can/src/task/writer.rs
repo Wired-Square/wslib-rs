@@ -135,7 +135,8 @@ impl CanWriter {
     pub fn submit(
         &self,
         frame: CanFrame,
-    ) -> Result<impl Future<Output = Result<io::Result<()>, SendRefused>> + Send, SendRefused> {
+    ) -> Result<impl Future<Output = Result<io::Result<()>, SendRefused>> + Send + use<>, SendRefused>
+    {
         self.admit(&frame)?;
         let permit = self.jobs.try_reserve().map_err(|e| match e {
             TrySendError::Full(()) => SendRefused::QueueFull,
@@ -149,7 +150,8 @@ impl CanWriter {
     pub async fn send_when_ready(
         &self,
         frame: CanFrame,
-    ) -> Result<impl Future<Output = Result<io::Result<()>, SendRefused>> + Send, SendRefused> {
+    ) -> Result<impl Future<Output = Result<io::Result<()>, SendRefused>> + Send + use<>, SendRefused>
+    {
         self.admit(&frame)?;
         let permit = self
             .jobs
@@ -176,7 +178,7 @@ impl CanWriter {
 fn queue(
     permit: mpsc::Permit<'_, Job>,
     frame: CanFrame,
-) -> impl Future<Output = Result<io::Result<()>, SendRefused>> + Send {
+) -> impl Future<Output = Result<io::Result<()>, SendRefused>> + Send + use<> {
     let (reply, answer) = oneshot::channel();
     permit.send(Job { frame, reply });
     async { answer.await.unwrap_or(Err(SendRefused::Stopped)) }
@@ -186,9 +188,11 @@ fn queue(
 fn futures_are_send(writer: CanWriter, frame: CanFrame) {
     fn is_send<T: Send>(_: &T) {}
     fn is_sync<T: Sync>(_: &T) {}
+    fn outlives_the_writer<T: 'static>(_: T) {}
     is_send(&writer);
     is_sync(&writer);
     is_send(&writer.send(frame.clone()));
+    outlives_the_writer(writer.submit(frame.clone()));
     is_send(&writer.send_when_ready(frame));
 }
 

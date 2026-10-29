@@ -176,6 +176,19 @@ if grep -qx wslib-can-gsusb <<<"$selected"; then
   ! grep -E '^nusb ' <<<"$tree" || die "wslib-can-gsusb pulls in nusb on Linux"
 fi
 
+# PEAK's adapters are peak_usb's on Linux; only Windows loads PCANBasic.dll.
+if grep -qx wslib-can-pcan <<<"$selected"; then
+  step "wslib-can-pcan has no libusb, no nusb on Linux, and libloading only on Windows"
+  tree=$(cargo tree -p wslib-can-pcan --features transport -e normal --prefix none --target all --locked)
+  ! grep -E '^(rusb|libusb[a-z0-9-]*) ' <<<"$tree" || die "wslib-can-pcan pulls in libusb"
+  tree=$(cargo tree -p wslib-can-pcan --features transport -e normal --prefix none \
+    --target x86_64-unknown-linux-gnu --locked)
+  ! grep -E '^(nusb|libloading) ' <<<"$tree" || die "wslib-can-pcan pulls in nusb or libloading on Linux"
+  tree=$(cargo tree -p wslib-can-pcan --features transport -e normal --prefix none \
+    --target aarch64-apple-darwin --locked)
+  ! grep -E '^libloading ' <<<"$tree" || die "wslib-can-pcan pulls in libloading on macOS"
+fi
+
 windows_only() {
   cargo metadata --format-version 1 --no-deps --locked \
     | jq -r --arg among "$*" '.packages[] | select(.name | IN($among | split(" ")[]))

@@ -1,0 +1,31 @@
+[package]
+name = "wslib-can-pcan"
+version = "0.1.0"
+description = "PEAK-System's PCAN-USB and its CAN FD family, both codecs, and a CAN task on either over nusb on macOS and Windows, or through PEAK's own driver on Windows."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+transport = ["wslib-can/task", "dep:tokio", "dep:nusb", "dep:libloading"]
+
+[dependencies]
+tokio = { version = "1.53.3", default-features = false, features = ["rt", "time"], optional = true }
+wslib-can = { path = "../wslib-can", version = "0.1", registry = "wired-square" }
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+nusb = { version = "0.2.7", default-features = false, features = ["tokio"], optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+libloading = { version = "0.8.9", default-features = false, optional = true }
+
+[dev-dependencies]
+tokio = { version = "1.53.3", features = ["macros", "rt", "sync", "time"] }
+
+[[test]]
+name = "transport"
+required-features = ["transport"]

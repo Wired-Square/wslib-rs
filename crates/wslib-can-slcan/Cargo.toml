@@ -1,0 +1,31 @@
+[package]
+name = "wslib-can-slcan"
+version = "0.1.0"
+description = "SLCAN (Lawicel serial line CAN) with the Elmue CAN FD extension, and a CAN task on an SLCAN adapter over a serial port."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+transport = ["wslib-can/task", "dep:tokio", "dep:wslib-serial", "wslib-serial/write"]
+
+[dependencies]
+wslib-can = { path = "../wslib-can", version = "0.1", registry = "wired-square" }
+
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+tokio = { version = "1.53.3", default-features = false, features = ["rt", "time"], optional = true }
+wslib-serial = { path = "../wslib-serial", version = "0.1.1", registry = "wired-square", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1.53.3", features = ["macros", "net", "rt", "sync", "time"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+libc = "0.2.183"
+
+[[test]]
+name = "transport"
+required-features = ["transport"]

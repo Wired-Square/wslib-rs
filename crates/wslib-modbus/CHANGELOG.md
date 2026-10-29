@@ -2,6 +2,8 @@
 
 ## 0.2.1
 
+- On Windows, a device closing the connection is `TransportError::Closed`,
+  not `Io`.
 - Modbus RTU, with no feature: `ModbusRtuStream`, which frames messages off a
   byte stream by the length rules and CRC-16/Modbus, with vendor codes declared
   by `with_vendor_functions` or laid out by `VendorLength` rules;

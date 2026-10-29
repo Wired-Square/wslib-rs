@@ -238,7 +238,8 @@ impl Link {
 }
 
 /// tokio-modbus reports a clean EOF as `io::Error::last_os_error()`, a stale
-/// errno: the EAGAIN or EINPROGRESS of an earlier syscall on the same thread.
+/// errno: the EAGAIN or EINPROGRESS of an earlier syscall on the same thread,
+/// or Windows' 0.
 fn closed_by_peer(e: &io::Error) -> bool {
     use io::ErrorKind::*;
     matches!(
@@ -249,7 +250,7 @@ fn closed_by_peer(e: &io::Error) -> bool {
             | BrokenPipe
             | NotConnected
             | WouldBlock
-    ) || e.raw_os_error() == Some(EINPROGRESS)
+    ) || matches!(e.raw_os_error(), Some(0 | EINPROGRESS))
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -267,4 +268,21 @@ fn futures_are_send(mut tcp: ModbusTcp, request: ReadRequest) {
     is_send(&tcp.disconnect());
     is_send(&tcp.read(request));
     is_send(&tcp.read_device_identification(None, DeviceIdCode::Basic, 0));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_stale_errno_after_a_clean_eof_is_closed() {
+        for errno in [0, EINPROGRESS] {
+            assert!(
+                closed_by_peer(&io::Error::from_raw_os_error(errno)),
+                "{errno}"
+            );
+        }
+        assert!(closed_by_peer(&io::ErrorKind::WouldBlock.into()));
+        assert!(!closed_by_peer(&io::ErrorKind::PermissionDenied.into()));
+    }
 }

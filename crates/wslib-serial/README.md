@@ -3,6 +3,7 @@
 A serial line: its settings and the wire time of its bytes, the SLIP (RFC 1055)
 and delimiter framers, and a port read by a task that reopens the line when it
 goes away. The settings and framers need no feature and do no I/O.
+[`docs/slip.md`](docs/slip.md) specifies SLIP.
 
 ```rust
 use wslib_serial::{LineSettings, SerialEvent, SerialOptions};

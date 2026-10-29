@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1
+
+- The ingest, import and Test Pattern specifications ship in `docs/`, as they
+  did before the move.
+
 ## 0.2.0
 
 - `ingest`, the binary ingest protocol, both ends, and `ServerSession`, its

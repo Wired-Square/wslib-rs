@@ -2,7 +2,7 @@
 
 GVRET, both ends: the host end a client speaks to an adapter, and the device
 end a capture tool speaks to look like one. The codec is sans-io and the
-default.
+default; [`docs/gvret.md`](docs/gvret.md) specifies the protocol.
 
 ```rust
 use wslib_can_gvret::{DeviceDecoder, DeviceMessage, SYNC, encode_transmit};

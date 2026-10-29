@@ -1,6 +1,6 @@
 [package]
 name = "wslib-wiretap-protocol"
-version = "0.2.0"
+version = "0.2.1"
 description = "The vocabulary captures share, the archive protocol and its stored names, frame keys and ids, frame selections and inventory rows, and the wire protocols they travel by: ingest, the capture-import body and Test Pattern."
 readme = "README.md"
 edition.workspace = true

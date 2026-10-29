@@ -2,7 +2,8 @@
 
 SocketCAN's `can_frame` and `canfd_frame` layouts and the flags packed beside
 an id, by default; a kernel ABI rather than a wire format, so the id is
-native-endian. With `transport`, on Linux, a wslib-can task over a raw socket.
+native-endian ([`docs/socketcan.md`](docs/socketcan.md)). With `transport`, on
+Linux, a wslib-can task over a raw socket.
 
 ```rust
 use wslib_can_socketcan::{Frame, encode_frame, parse_frame};

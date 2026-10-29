@@ -44,7 +44,29 @@ order, eight to a byte and least significant bit first.
 
 `validate` reports what is wrong in a catalogue's `[meta]` and
 `[frame.modbus]` sections as field paths and messages; it reads no other
-section.
+section. `ManifestMeta::parse` reads `[meta]`'s name and version.
+
+## Modbus RTU
+
+`ModbusRtuStream` frames messages off a byte stream with no transport header,
+by the length rules and CRC-16/Modbus, and `RtuTap` stamps each one by the read
+that delivered its last byte, less the wire time of the bytes after it. A
+stamp is never earlier than one before it, across a `reset` or `set_options`
+too. Both are sans-io and need no feature.
+
+```rust
+use wslib_modbus::{ModbusRtuOptions, RtuTap};
+
+let mut tap = RtuTap::new(&ModbusRtuOptions::tapped(), 9600, 10); // 9600 8N1
+for tapped in tap.push(&bytes, std::time::SystemTime::now()) {
+    println!("{:?} unit {} fc {}", tapped.at, tapped.message.device_address, tapped.message.function);
+}
+```
+
+A vendor's function codes are framed only once declared: by
+`with_vendor_functions`, a CRC search for the shortest valid length, or by a
+`VendorLength` rule, which is exact. `frame_any_function` frames every code,
+which a tap wants and a decoder does not.
 
 ## Features
 

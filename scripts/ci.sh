@@ -133,12 +133,20 @@ for crate in $selected; do
 done
 
 # A read-only build takes `tcp` or `task` without `write`; wslib-modbus's
-# compile_fail doctests fail if a write path is compiled into either.
+# compile_fail doctests fail if a write path is compiled into either. A sans-io
+# consumer takes its RTU side with no features.
 if grep -qx wslib-modbus <<<"$selected"; then
   step "wslib-modbus without write has no write path"
   for features in tcp task; do
     cargo test -p wslib-modbus --no-default-features --features "$features" --doc --locked
   done
+  step "wslib-modbus without features has no tokio"
+  tree=$(cargo tree -p wslib-modbus --no-default-features -e normal --prefix none --locked)
+  ! grep -E '^tokio(-modbus)? ' <<<"$tree" || die "wslib-modbus pulls in tokio without a feature"
+  step "wslib-modbus without features has no serial port on Windows"
+  tree=$(cargo tree -p wslib-modbus --no-default-features -e normal --prefix none \
+    --target x86_64-pc-windows-msvc --locked)
+  ! grep -E '^(wslib-serial|serialport) ' <<<"$tree" || die "wslib-modbus pulls in a serial port on Windows"
 fi
 
 windows_only() {

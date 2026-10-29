@@ -19,6 +19,16 @@ use tokio::{
     task::JoinHandle,
     time::{sleep, timeout},
 };
+use wslib_modbus::TcpOptions;
+
+/// `options` with a connect budget a refused connect fits in: Windows retries a
+/// SYN refused by a closed loopback port for about 2 s.
+pub fn refusable(options: TcpOptions) -> TcpOptions {
+    TcpOptions {
+        connect_timeout: Duration::from_secs(3),
+        ..options
+    }
+}
 
 /// What the server does with one request. Unscripted requests get `Reply`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

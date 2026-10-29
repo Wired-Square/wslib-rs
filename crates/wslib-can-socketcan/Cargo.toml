@@ -1,0 +1,30 @@
+[package]
+name = "wslib-can-socketcan"
+version = "0.1.0"
+description = "SocketCAN's classic and FD frame layouts, and on Linux a CAN task over a raw socket stamped with the kernel's receive time."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+transport = ["wslib-can/task", "dep:socketcan", "dep:libc", "dep:tokio"]
+
+[dependencies]
+wslib-can = { path = "../wslib-can", version = "0.1", registry = "wired-square" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { version = "0.2.183", optional = true }
+socketcan = { version = "3.6", default-features = false, features = ["netlink"], optional = true }
+tokio = { version = "1.53.3", default-features = false, features = ["net"], optional = true }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+socketcan = { version = "3.6", default-features = false }
+tokio = { version = "1.53.3", features = ["macros", "rt", "time"] }
+
+[[test]]
+name = "vcan"
+required-features = ["transport"]

@@ -47,6 +47,10 @@ appliance chassis and every app beside it.
 | `wslib-checksum`         | Checksum algorithms, and finding or solving a link's checksum |
 | `wslib-tcp`              | A TCP connect that tries each resolved address in one budget  |
 | `wslib-modbus`           | Modbus register maps, poll schedules, RTU framing, TCP poller |
+| `wslib-serial`           | Serial line settings, SLIP and delimiters, a reopening port   |
+| `wslib-can`              | CAN frames, length codes, logs, and the task transports share |
+| `wslib-can-socketcan`    | SocketCAN frame layouts, and a raw-socket task on Linux       |
+| `wslib-can-gvret`        | GVRET, both ends, and a task over TCP or a serial port        |
 | `wslib-appliance-types`  | An appliance's wire contract, shared by daemon and browser    |
 | `wslib-appliance-config` | An appliance's bootstrap settings: flags, env and files       |
 | `wslib-appliance-store`  | An appliance's tables, in one SQLite file its product shares  |

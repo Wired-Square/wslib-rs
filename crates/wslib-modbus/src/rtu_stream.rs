@@ -1343,8 +1343,6 @@ mod tests {
         assert_eq!(msgs[0].payload, Payload::None);
     }
 
-    // ---- Coil banks ----
-
     /// Ten coils: 0xCD is the first eight, LSB first, and only two bits of the
     /// second byte are coils at all.
     const TEN_COILS: [bool; 10] = [
@@ -1411,8 +1409,6 @@ mod tests {
         assert!(msgs[0].coils().is_empty());
     }
 
-    // ---- Payload and direction basis ----
-
     #[test]
     fn a_read_pair_is_sided_by_layout() {
         let mut t = strict(Some(1));
@@ -1470,8 +1466,6 @@ mod tests {
         }
         assert!(t.buf.len() <= MAX_BUFFER);
     }
-
-    // ---- Lenient CRC policy ----
 
     #[test]
     fn lenient_emits_the_bad_crc_message_strict_discards() {
@@ -1554,8 +1548,6 @@ mod tests {
         assert!(msgs[0].crc_valid);
         assert_eq!(msgs[0].function, 0x04);
     }
-
-    // ---- interpret: one already-framed message ----
 
     /// Without a CRC to vouch for it, a candidate whose own header contradicts
     /// itself is not a message. Five bytes opening like an address and a read
@@ -1647,8 +1639,6 @@ mod tests {
         t.interpret(&hex("01044DE20002C691")).unwrap();
         assert_eq!(t.buf, buffered);
     }
-
-    // ---- byte streams and end of stream ----
 
     #[test]
     fn push_bytes_reassembles_a_message_fed_one_byte_at_a_time() {

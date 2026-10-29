@@ -133,16 +133,13 @@ for crate in $selected; do
 done
 
 # A read-only build takes `tcp` or `task` without `write`; wslib-modbus's
-# compile_fail doctests fail if a write path is compiled into either.
+# compile_fail doctests fail if a write path is compiled into either. A sans-io
+# consumer takes its RTU side with no features.
 if grep -qx wslib-modbus <<<"$selected"; then
   step "wslib-modbus without write has no write path"
   for features in tcp task; do
     cargo test -p wslib-modbus --no-default-features --features "$features" --doc --locked
   done
-fi
-
-# A sans-io consumer takes wslib-modbus's RTU side with no features.
-if grep -qx wslib-modbus <<<"$selected"; then
   step "wslib-modbus without features has no tokio"
   tree=$(cargo tree -p wslib-modbus --no-default-features -e normal --prefix none --locked)
   ! grep -E '^tokio(-modbus)? ' <<<"$tree" || die "wslib-modbus pulls in tokio without a feature"

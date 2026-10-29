@@ -1575,6 +1575,21 @@ mod tests {
     }
 
     #[test]
+    fn a_label_declaring_devices_needs_schema_2() {
+        let mut json: serde_json::Value = serde_json::from_str(LABEL).unwrap();
+        json["devices"] = serde_json::json!([{"class": "usb-serial", "vids": ["2fe3"]}]);
+        let problems = |json: &serde_json::Value| {
+            inspect_with(&with_docker(EXAMPLE), &json.to_string()).problems
+        };
+        assert_eq!(
+            problems(&json),
+            [format!("manifest.json: {}", ManifestError::OldSchema)]
+        );
+        json["schema"] = 2.into();
+        assert!(problems(&json).is_empty(), "{:#?}", problems(&json));
+    }
+
+    #[test]
     fn a_volume_at_under_or_above_what_the_image_ships_or_under_a_0700_dir_is_refused() {
         let binary = format!("/usr/bin/{}", checked(EXAMPLE).appliance.binary);
         let ui = wslib_appliance_config::default_ui_dir("myappliance");

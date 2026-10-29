@@ -51,4 +51,6 @@ by digest, with `AppManifest::from_label`. `name` passes `is_app_name` and is
 the base path, `/apps/<name>/`. An unknown field is refused at parse, and
 `validate()` names the first rule broken. Read `ManifestSchema` first: a
 `schema` newer than `MANIFEST_SCHEMA` is kept and not run, never refused as
-corrupt. The console runs the image as a uid of its choosing in group 0.
+corrupt. A manifest is written at its `oldest_schema()`, so one that declares
+no devices stays at schema 1 and an older console still runs it. The console
+runs the image as a uid of its choosing in group 0.

@@ -3,13 +3,13 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{MAX_APP_LEN, is_app_name, is_segment};
 
-/// The newest manifest schema this build reads and writes. Every field or
-/// variant added raises it.
-pub const MANIFEST_SCHEMA: u32 = 1;
+/// The newest manifest schema this build reads, raised by every field or variant
+/// added; a manifest is written at its [`AppManifest::oldest_schema`].
+pub const MANIFEST_SCHEMA: u32 = 2;
 
 const MAX_VOLUMES: usize = 32;
 const MAX_LISTENERS: usize = 64;
@@ -51,6 +51,8 @@ pub struct AppManifest {
     pub listeners: Vec<AppListener>,
     #[serde(default)]
     pub health: AppHealth,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub devices: Vec<AppDevice>,
 }
 
 /// The OCI label a product's image carries its [`AppLabel`] in, as compact JSON.
@@ -77,6 +79,8 @@ pub struct AppLabel {
     pub listeners: Vec<AppListener>,
     #[serde(default)]
     pub health: AppHealth,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub devices: Vec<AppDevice>,
 }
 
 /// An image pinned by digest, never by tag.
@@ -185,6 +189,40 @@ pub struct AppHealth {
     pub start_timeout_s: Option<u32>,
 }
 
+/// A class of hotplugged device the console passes into the app.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(deny_unknown_fields)]
+pub struct AppDevice {
+    pub class: DeviceClass,
+    /// Only a USB class takes these; none means any vendor.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vids: Vec<UsbVendorId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
+pub enum DeviceClass {
+    /// `/dev/ttyACM*` and `/dev/ttyUSB*`.
+    UsbSerial,
+    /// `/dev/bus/usb`.
+    UsbRaw,
+    /// video4linux's `/dev/video*`.
+    Video,
+    /// The Bluetooth adapter, held by this app alone.
+    Bluetooth,
+}
+
+/// A USB vendor ID, 4 hex digits, read in lowercase.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct UsbVendorId(String);
+
 /// Why a manifest is refused; never names the value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -193,6 +231,8 @@ pub enum ManifestError {
     NewerSchema,
     #[error("the manifest's schema is 0, which nothing writes")]
     NoSchema,
+    #[error("the manifest's schema is older than what it declares")]
+    OldSchema,
     #[error(
         "the app's name is not one path segment of at most {} bytes",
         MAX_APP_LEN
@@ -245,10 +285,16 @@ pub enum ManifestError {
     StartTimeout,
     #[error("the start timeout is longer than {} seconds", MAX_START_TIMEOUT_S)]
     LongStartTimeout,
+    #[error("a device's vendor ID is not 4 hex digits")]
+    VendorId,
+    #[error("a device names vendor IDs, which only a USB class takes")]
+    VendorIdNotUsb,
+    #[error("a device class is named twice")]
+    RepeatedDevice,
 }
 
 impl AppManifest {
-    /// A manifest at [`MANIFEST_SCHEMA`] that serves, keeps and asks for nothing.
+    /// A manifest at schema 1 that serves, keeps and asks for nothing.
     pub fn new(
         name: impl Into<String>,
         version: impl Into<String>,
@@ -256,7 +302,7 @@ impl AppManifest {
         arches: Vec<AppArch>,
     ) -> Self {
         Self {
-            schema: MANIFEST_SCHEMA,
+            schema: 1,
             name: name.into(),
             version: version.into(),
             image,
@@ -267,6 +313,7 @@ impl AppManifest {
             volumes: Vec::new(),
             listeners: Vec::new(),
             health: AppHealth::default(),
+            devices: Vec::new(),
         }
     }
 
@@ -284,6 +331,7 @@ impl AppManifest {
             volumes,
             listeners,
             health,
+            devices,
         } = label;
         Self {
             schema,
@@ -297,6 +345,7 @@ impl AppManifest {
             volumes,
             listeners,
             health,
+            devices,
         }
     }
 
@@ -337,15 +386,22 @@ impl AppManifest {
         manifest
     }
 
+    /// The oldest schema that carries everything this manifest declares, so an
+    /// older console still runs one that declares nothing newer.
+    pub fn oldest_schema(&self) -> u32 {
+        if self.devices.is_empty() { 1 } else { 2 }
+    }
+
     /// The first rule this manifest breaks, if any. The supervisor still checks
     /// the image's symlinks, `host` network with `NET_ADMIN`, host-mode port
     /// clashes, the Docker names it derives, and the digest against `arches`.
     pub fn validate(&self) -> Result<(), ManifestError> {
         use ManifestError::*;
-        let (volumes, listeners) = (&self.volumes, &self.listeners);
+        let (volumes, listeners, devices) = (&self.volumes, &self.listeners, &self.devices);
         // One at a time, in order: the caps bound every quadratic rule after them.
         require(self.schema <= MANIFEST_SCHEMA, NewerSchema)?;
         require(self.schema > 0, NoSchema)?;
+        require(self.schema >= self.oldest_schema(), OldSchema)?;
         require(is_app_name(&self.name), Name)?;
         require(is_version(&self.version), Version)?;
         require(is_repository(&self.image.repository), Repository)?;
@@ -375,7 +431,22 @@ impl AppManifest {
                 .start_timeout_s
                 .is_none_or(|s| s <= MAX_START_TIMEOUT_S),
             LongStartTimeout,
-        )
+        )?;
+        require(
+            devices
+                .iter()
+                .flat_map(|d| &d.vids)
+                .all(UsbVendorId::is_well_formed),
+            VendorId,
+        )?;
+        require(
+            devices
+                .iter()
+                .all(|d| d.vids.is_empty() || d.class.is_usb()),
+            VendorIdNotUsb,
+        )?;
+        // Quadratic, but a repeat turns up within one entry more than there are classes.
+        require(distinct(devices.iter().map(|d| d.class)), RepeatedDevice)
     }
 }
 
@@ -385,6 +456,35 @@ impl ListenerProtocol {
             Self::Tcp => "tcp",
             Self::Udp => "udp",
         }
+    }
+}
+
+impl DeviceClass {
+    fn is_usb(self) -> bool {
+        matches!(self, Self::UsbSerial | Self::UsbRaw)
+    }
+}
+
+impl UsbVendorId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    fn is_well_formed(&self) -> bool {
+        self.0.len() == 4 && self.0.bytes().all(|b| b.is_ascii_hexdigit())
+    }
+}
+
+impl From<String> for UsbVendorId {
+    fn from(mut id: String) -> Self {
+        id.make_ascii_lowercase();
+        Self(id)
+    }
+}
+
+impl<'de> Deserialize<'de> for UsbVendorId {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(Self::from)
     }
 }
 
@@ -626,9 +726,9 @@ mod tests {
 
     #[test]
     fn a_newer_manifest_reads_its_schema_and_nothing_else() {
-        let newer = r#"{"schema":2,"new":1}"#;
+        let newer = r#"{"schema":3,"new":1}"#;
         let read: ManifestSchema = serde_json::from_str(newer).unwrap();
-        assert_eq!(read.schema, 2);
+        assert_eq!(read.schema, 3);
         assert!(serde_json::from_str::<AppManifest>(newer).is_err());
         assert!(serde_json::from_str::<ManifestSchema>("{}").is_err());
     }
@@ -931,5 +1031,104 @@ mod tests {
         assert_eq!(manifest, generated(["/etc/x", "/srv", "/data"]));
         let ats: Vec<_> = manifest.volumes.iter().map(|v| v.at.as_str()).collect();
         assert_eq!(ats, ["/data", "/etc/x", "/srv"]);
+    }
+
+    fn device(class: DeviceClass, vids: &[&str]) -> AppDevice {
+        AppDevice {
+            class,
+            vids: vids
+                .iter()
+                .map(|v| UsbVendorId::from(v.to_string()))
+                .collect(),
+        }
+    }
+
+    fn with_devices(devices: Vec<AppDevice>) -> AppManifest {
+        let mut manifest = declared();
+        manifest.devices = devices;
+        manifest.schema = manifest.oldest_schema();
+        manifest
+    }
+
+    #[test]
+    fn devices_have_a_kebab_case_class_and_lowercase_vids_on_the_wire() {
+        let mut json = serde_json::to_value(declared()).unwrap();
+        json["schema"] = 2.into();
+        json["devices"] = serde_json::json!([
+            {"class": "usb-serial", "vids": ["2FE3", "303a"]},
+            {"class": "usb-raw"},
+            {"class": "video"},
+            {"class": "bluetooth"},
+        ]);
+        let read: AppManifest = serde_json::from_value(json.clone()).unwrap();
+        let expected = with_devices(vec![
+            device(DeviceClass::UsbSerial, &["2fe3", "303a"]),
+            device(DeviceClass::UsbRaw, &[]),
+            device(DeviceClass::Video, &[]),
+            device(DeviceClass::Bluetooth, &[]),
+        ]);
+        assert_eq!(read, expected);
+        assert_eq!(read.validate(), Ok(()));
+        json["devices"][0]["vids"][0] = "2fe3".into();
+        assert_eq!(serde_json::to_value(&read).unwrap(), json);
+    }
+
+    #[test]
+    fn a_manifest_without_devices_is_written_at_schema_1_with_no_devices_key() {
+        assert_eq!(declared().oldest_schema(), 1);
+        let json = serde_json::to_value(declared()).unwrap();
+        assert_eq!(json["schema"], 1);
+        assert!(json.get("devices").is_none());
+        assert_eq!(
+            serde_json::from_value::<AppManifest>(json).unwrap(),
+            declared()
+        );
+        assert_eq!(refusal(|m| m.schema = 2), Ok(()));
+    }
+
+    #[test]
+    fn a_manifest_with_devices_needs_schema_2() {
+        let manifest = with_devices(vec![device(DeviceClass::Video, &[])]);
+        assert_eq!(manifest.schema, 2);
+        assert_eq!(manifest.validate(), Ok(()));
+        assert_eq!(
+            refusal(|m| {
+                m.devices = manifest.devices.clone();
+                m.schema = 1;
+            }),
+            Err(ManifestError::OldSchema)
+        );
+    }
+
+    #[test]
+    fn a_vid_is_4_hex_digits() {
+        for vid in ["", "2fe", "2fe3a", "2fg3", "0x2f", " 2fe"] {
+            let manifest = with_devices(vec![device(DeviceClass::UsbSerial, &[vid])]);
+            assert_eq!(manifest.validate(), Err(ManifestError::VendorId), "{vid:?}");
+        }
+        let manifest = with_devices(vec![device(DeviceClass::UsbRaw, &["ABCD", "0000"])]);
+        assert_eq!(manifest.validate(), Ok(()));
+        assert_eq!(manifest.devices[0].vids[0].as_str(), "abcd");
+    }
+
+    #[test]
+    fn only_a_usb_class_takes_vids() {
+        for class in [DeviceClass::Video, DeviceClass::Bluetooth] {
+            let manifest = with_devices(vec![device(class, &["2fe3"])]);
+            assert_eq!(
+                manifest.validate(),
+                Err(ManifestError::VendorIdNotUsb),
+                "{class:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_device_class_is_named_once() {
+        let manifest = with_devices(vec![
+            device(DeviceClass::UsbSerial, &["2fe3"]),
+            device(DeviceClass::UsbSerial, &["303a"]),
+        ]);
+        assert_eq!(manifest.validate(), Err(ManifestError::RepeatedDevice));
     }
 }

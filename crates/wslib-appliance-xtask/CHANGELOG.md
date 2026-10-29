@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1
+
+- `manifest.json` may declare `devices`, at schema 2, with
+  `wslib-appliance-types` 0.1.2.
+
 ## 0.2.0
 
 - The cargo package to build is `BINARY_PACKAGE` (was `PACKAGE`), in

@@ -50,7 +50,7 @@ holds its `Cargo.lock` and `appliance.toml`. Every path below is relative to
 that directory, and the greps read only beneath it:
 
 ```sh
-cargo install wslib-appliance-xtask --locked --version =0.2.0 --registry wired-square
+cargo install wslib-appliance-xtask --locked --version =0.2.1 --registry wired-square
 wslib-appliance-xtask gates
 ```
 

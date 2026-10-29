@@ -17,6 +17,8 @@
   `ModbusRtuStream::frames_function` and `rule_rejections`: `validate` reads a
   function code's rules and the modelled codes through the stream's own table.
 - `ManifestMeta::parse`: a catalogue's `[meta]` name and version.
+- `require_meta_name` and `validate_function_codes`: `validate`'s findings for
+  `[meta]`'s name and its function codes, alone.
 - `ts`: `VendorLength`, `LengthRule`, `Selector` and `VendorLen`.
 - tokio's floor is 1.53.3; a consumer building with
   `--locked` on an older lockfile may need `cargo update -p tokio`.

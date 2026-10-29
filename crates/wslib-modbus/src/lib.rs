@@ -46,7 +46,7 @@ pub use scan::{
     SweepLimits, SweepProgress, SweepStep,
 };
 pub use schedule::{FrameBackoff, PollSchedule};
-pub use validate::{Finding, validate};
+pub use validate::{Finding, require_meta_name, validate, validate_function_codes};
 pub use wslib_bits::{DisplayHint, Endianness, SignalFormat};
 
 #[cfg(feature = "tcp")]

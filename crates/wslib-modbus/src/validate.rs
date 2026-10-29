@@ -55,10 +55,11 @@ pub fn validate(content: &str) -> Vec<Finding> {
     findings
 }
 
-fn validate_meta(table: &Table, findings: &mut Vec<Finding>) {
+/// The findings for a missing `[meta]` or `meta.name`, and `[meta]` when there is one.
+pub fn require_meta_name<'a>(table: &'a Table, findings: &mut Vec<Finding>) -> Option<&'a Table> {
     let Some(meta) = table.get("meta").and_then(Value::as_table) else {
         findings.push(finding("meta", "Missing [meta] section"));
-        return;
+        return None;
     };
     match meta.get("name") {
         None => findings.push(finding(
@@ -70,6 +71,13 @@ fn validate_meta(table: &Table, findings: &mut Vec<Finding>) {
         }
         Some(_) => {}
     }
+    Some(meta)
+}
+
+fn validate_meta(table: &Table, findings: &mut Vec<Finding>) {
+    let Some(meta) = require_meta_name(table, findings) else {
+        return;
+    };
     if meta
         .get("version")
         .and_then(Value::as_integer)
@@ -91,9 +99,10 @@ fn validate_meta(table: &Table, findings: &mut Vec<Finding>) {
     }
 }
 
-/// A rule an RTU line can't read is dropped, which leaves its code to the
-/// shortest-CRC search: the truncation the rule was written to prevent.
-fn validate_function_codes(codes: &Value, findings: &mut Vec<Finding>) {
+/// The findings in `[meta.modbus.function_code]`. A rule an RTU line can't read
+/// is dropped, which leaves its code to the shortest-CRC search: the truncation
+/// the rule was written to prevent.
+pub fn validate_function_codes(codes: &Value, findings: &mut Vec<Finding>) {
     let prefix = "meta.modbus.function_code";
     let Some(codes) = codes.as_table() else {
         findings.push(finding(

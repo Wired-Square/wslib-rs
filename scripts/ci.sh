@@ -13,6 +13,7 @@ all=false
 
 die() { printf 'ci: %s\n' "$*" >&2; exit 1; }
 step() { printf '\n== %s\n' "$*"; }
+normal_tree() { cargo tree -e normal --prefix none --locked -p "$@"; }
 
 stamp=
 if $all && [[ -z $(git status --porcelain) ]]; then
@@ -57,15 +58,15 @@ graph=$(cargo tree --workspace -e normal --prefix none)
 ! grep -E '^(aws-lc-rs|ring) ' <<<"$graph" || die "a rustls provider is in the default graph"
 
 step "wslib-telemetry's setup-core has no regex engine"
-graph=$(cargo tree -p wslib-telemetry --no-default-features --features setup-core -e normal --prefix none)
+graph=$(normal_tree wslib-telemetry --no-default-features --features setup-core)
 ! grep -E '^(regex|regex-automata|matchers) ' <<<"$graph" || die "setup-core pulls in a regex engine"
 
 # A desktop app takes wslib-appliance-client alone, or the facade with only
 # `client`; --target all covers the Windows graph.
 step "wslib-appliance-client carries no server stack"
-for graph in "-p wslib-appliance-client" "-p wslib-appliance --no-default-features --features client"; do
+for graph in "wslib-appliance-client" "wslib-appliance --no-default-features --features client"; do
   read -ra args <<<"$graph"
-  tree=$(cargo tree "${args[@]}" --target all -e normal --prefix none --locked)
+  tree=$(normal_tree "${args[@]}" --target all)
   ! grep -qE '(^|[-_])(axum|sqlx|rustls)([-_][a-z0-9_]+)* v[0-9]' <<<"$tree" \
     || die "cargo tree $graph pulls in axum, sqlx or rustls"
 done
@@ -141,56 +142,50 @@ if grep -qx wslib-modbus <<<"$selected"; then
     cargo test -p wslib-modbus --no-default-features --features "$features" --doc --locked
   done
   step "wslib-modbus without features has no tokio"
-  tree=$(cargo tree -p wslib-modbus --no-default-features -e normal --prefix none --locked)
+  tree=$(normal_tree wslib-modbus --no-default-features)
   ! grep -E '^tokio(-modbus)? ' <<<"$tree" || die "wslib-modbus pulls in tokio without a feature"
   step "wslib-modbus without features has no serial port on Windows"
-  tree=$(cargo tree -p wslib-modbus --no-default-features -e normal --prefix none \
-    --target x86_64-pc-windows-msvc --locked)
+  tree=$(normal_tree wslib-modbus --no-default-features --target x86_64-pc-windows-msvc)
   ! grep -E '^(wslib-serial|serialport) ' <<<"$tree" || die "wslib-modbus pulls in a serial port on Windows"
 fi
 
 # A read-only port on Linux needs neither serialport nor libudev.
 if grep -qx wslib-serial <<<"$selected"; then
   step "wslib-serial's task has no serialport on Linux"
-  tree=$(cargo tree -p wslib-serial --no-default-features --features task -e normal --prefix none \
-    --target x86_64-unknown-linux-gnu --locked)
+  tree=$(normal_tree wslib-serial --no-default-features --features task --target x86_64-unknown-linux-gnu)
   ! grep -E '^(serialport|libudev(-sys)?) ' <<<"$tree" || die "wslib-serial's task pulls in serialport on Linux"
 fi
 
 # The gateway's types are serde-only, a Windows client's included.
 if grep -qx wslib-wiretap-gateway <<<"$selected"; then
   step "wslib-wiretap-gateway on Windows has no serial port or SQLite"
-  tree=$(cargo tree -p wslib-wiretap-gateway -e normal --prefix none \
-    --target x86_64-pc-windows-msvc --locked)
+  tree=$(normal_tree wslib-wiretap-gateway --target x86_64-pc-windows-msvc)
   ! grep -E '^(serialport|sqlx[a-z_-]*|rusqlite|libsqlite3-sys) ' <<<"$tree" \
     || die "wslib-wiretap-gateway pulls in a serial port or SQLite on Windows"
   step "wslib-wiretap-gateway has no HTTP stack without client, and no TLS backend with it"
-  tree=$(cargo tree -p wslib-wiretap-gateway -e normal --prefix none --target all --locked)
+  tree=$(normal_tree wslib-wiretap-gateway --target all)
   ! grep -E '^(reqwest|hyper|tokio) ' <<<"$tree" || die "wslib-wiretap-gateway pulls in an HTTP stack without client"
-  tree=$(cargo tree -p wslib-wiretap-gateway --features client -e normal --prefix none --target all --locked)
+  tree=$(normal_tree wslib-wiretap-gateway --features client --target all)
   ! grep -E '^(ring|aws-lc-rs|openssl) ' <<<"$tree" || die "wslib-wiretap-gateway's client pulls in a TLS backend"
 fi
 
 # gs_usb is the kernel's on Linux and nusb's elsewhere, never libusb's.
 if grep -qx wslib-can-gsusb <<<"$selected"; then
   step "wslib-can-gsusb has no libusb, and no nusb on Linux"
-  tree=$(cargo tree -p wslib-can-gsusb --features transport -e normal --prefix none --target all --locked)
+  tree=$(normal_tree wslib-can-gsusb --features transport --target all)
   ! grep -E '^(rusb|libusb[a-z0-9-]*) ' <<<"$tree" || die "wslib-can-gsusb pulls in libusb"
-  tree=$(cargo tree -p wslib-can-gsusb --features transport -e normal --prefix none \
-    --target x86_64-unknown-linux-gnu --locked)
+  tree=$(normal_tree wslib-can-gsusb --features transport --target x86_64-unknown-linux-gnu)
   ! grep -E '^nusb ' <<<"$tree" || die "wslib-can-gsusb pulls in nusb on Linux"
 fi
 
 # PEAK's adapters are peak_usb's on Linux; only Windows loads PCANBasic.dll.
 if grep -qx wslib-can-pcan <<<"$selected"; then
   step "wslib-can-pcan has no libusb, no nusb on Linux, and libloading only on Windows"
-  tree=$(cargo tree -p wslib-can-pcan --features transport -e normal --prefix none --target all --locked)
+  tree=$(normal_tree wslib-can-pcan --features transport --target all)
   ! grep -E '^(rusb|libusb[a-z0-9-]*) ' <<<"$tree" || die "wslib-can-pcan pulls in libusb"
-  tree=$(cargo tree -p wslib-can-pcan --features transport -e normal --prefix none \
-    --target x86_64-unknown-linux-gnu --locked)
+  tree=$(normal_tree wslib-can-pcan --features transport --target x86_64-unknown-linux-gnu)
   ! grep -E '^(nusb|libloading) ' <<<"$tree" || die "wslib-can-pcan pulls in nusb or libloading on Linux"
-  tree=$(cargo tree -p wslib-can-pcan --features transport -e normal --prefix none \
-    --target aarch64-apple-darwin --locked)
+  tree=$(normal_tree wslib-can-pcan --features transport --target aarch64-apple-darwin)
   ! grep -E '^libloading ' <<<"$tree" || die "wslib-can-pcan pulls in libloading on macOS"
 fi
 

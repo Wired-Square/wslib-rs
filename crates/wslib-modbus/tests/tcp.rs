@@ -4,7 +4,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use tokio::{net::TcpStream, time::sleep};
 
-use support::{Action, FakeServer, discrete_input, input_register, silent_addr, within};
+use support::{Action, FakeServer, discrete_input, input_register, refusable, silent_addr, within};
 use wslib_modbus::RegisterType;
 use wslib_modbus::{
     DeviceIdCode, ExceptionCode, ModbusTcp, ReadData, ReadRequest, RequestError, ResolveError,
@@ -206,12 +206,7 @@ async fn a_refused_connect_is_told_apart_from_a_resolve_failure() {
             let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             server.local_addr().unwrap()
         };
-        // Windows retries a SYN refused by a closed loopback port for about 2 s.
-        let refusable = TcpOptions {
-            connect_timeout: Duration::from_secs(3),
-            ..quick()
-        };
-        let mut tcp = ModbusTcp::new(refused.to_string(), refusable);
+        let mut tcp = ModbusTcp::new(refused.to_string(), refusable(quick()));
         let error = tcp.read(holding(0, 1)).await.unwrap_err();
         assert!(matches!(
             error,

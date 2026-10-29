@@ -2,7 +2,7 @@ mod support;
 
 use std::time::{Duration, Instant};
 
-use support::{Action, FakeServer, within};
+use support::{Action, FakeServer, refusable, within};
 use wslib_modbus::{
     ExceptionCode, ModbusTcp, ReadbackKind, RequestError, TcpOptions, WriteOutcome, WriteReport,
 };
@@ -500,12 +500,7 @@ async fn a_batch_that_cannot_connect_fails_as_lost() {
             let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             server.local_addr().unwrap()
         };
-        // Windows retries a SYN refused by a closed loopback port for about 2 s.
-        let refusable = TcpOptions {
-            connect_timeout: Duration::from_secs(3),
-            ..quick()
-        };
-        let mut tcp = ModbusTcp::new(refused.to_string(), refusable);
+        let mut tcp = ModbusTcp::new(refused.to_string(), refusable(quick()));
 
         let report = tcp.write_verified(None, &[full(10, 1)]).await;
 

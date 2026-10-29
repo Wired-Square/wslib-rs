@@ -1,0 +1,224 @@
+# modbus
+
+100: 100 | 1 | 1000 ms (default)
+0/4 Relays | — |  | no | BE | none |  |
+
+5000: 5000 | 4 | 1000 ms (default) | Running state; Read every second
+0/32 Daily_Yield | ×0.1 | kWh | no | BE | high |  |
+
+battery_power: battery_power | 2 | tx Inverter | 500 ms
+0/16 Battery_Power | — | W | yes | BE | none |  |
+
+0x32F9: 0x32F9 | 2 | 1000 ms (default)
+0/16 Mode | — |  | no | BE | none | 0=Stop, 1=Run |
+
+# report-edges
+
+256: Decimal key | 8 | 50 ms | bus 0
+0/16 Big | — |  | no | BE | none |  |
+16/8 <Tagged & 'quoted'> | — |  | no | LE | none | 0=Off, 1=On | first; second
+
+0x7FF: - | 8 | 20 ms
+
+0x18FF0010: - | 8 | 1000 ms | bus 1
+mux - 0/8 | selector; page
+case 0-3
+8/8 Low | — |  | no | LE | low |  |
+case 10,12
+8/16 High | ×0.5 − 10 | A | no | LE | medium |  |
+mux Inner 24/4
+case 2
+28/4 Deep | — |  | no | LE | none |  |
+
+5000: 5000 | 2 | 5000 ms (default)
+0/16 Not in the report | — |  | no | BE | none |  |
+
+# report-legacy
+
+0x10: Legacy keyed frame | 4
+0/8 Legacy | — |  | no | LE | none |  |
+
+# sbrxxx
+
+0x000: - | 8 | tx BMS | inherits signals
+
+0x009: - | 8 | tx BMS | 10000 ms | inherits signals | Only transmitted on INIT
+
+0x100: - | 8 | tx Inverter
+0/64 100 | — |  | no | LE | none |  |
+
+0x103: - | 8 | tx Inverter
+mux mux_259_0_8 0/8
+case 0
+8/56 Info_Inverter_SN_1 | — |  | no | LE | medium |  | NOBATT
+case 1
+8/56 Info_Inverter_SN_2 | — |  | no | LE | medium |  | NOBATT
+
+0x104: - | 8 | tx Inverter
+mux mux_260_0_8 0/8
+case 0
+8/56 Info_Inverter_Manufacturer_1 | — |  | no | LE | medium |  | NOBATT
+case 1
+8/56 Info_Inverter_Manufacturer_2 | — |  | no | LE | medium |  | NOBATT
+
+0x105: - | 8 | tx Inverter
+mux mux_261_0_8 0/8
+case 0
+8/56 Info_Inverter_Model_1 | — |  | no | LE | medium |  | NOBATT
+case 1
+8/56 Info_Inverter_Model_2 | — |  | no | LE | none |  | NOBATT
+
+0x191: - | 8 | tx Inverter | NOBATT Discovery Message
+0/64 191 | — |  | no | LE | none |  |
+
+0x701: - | 8 | tx BMS
+0/16 Info_Battery_Max_Voltage | ×0.1 | V | no | LE | high |  |
+16/16 Info_Battery_Min_Voltage | ×0.1 | V | no | LE | high |  |
+32/16 Info_Battery_Max_Charge_Current | ×0.1 | A | no | LE | high |  |
+48/16 Info_Battery_Max_Dischg_Current | ×0.1 | A | no | LE | high |  |
+
+0x708: - | 8 | tx BMS | 10000 ms
+mux mux_1800_0_8 0/8
+case 0
+8/56 Info_Battery_SN_1 | — |  | no | LE | high |  |
+case 1
+8/48 Info_Battery_SN_2 | — |  | no | LE | high |  |
+
+0x70A: - | 8 | tx BMS | 10000 ms
+mux mux_1802_0_8 0/8
+case 0
+8/56 Info_Battery_Manufacturer | — |  | no | LE | high |  |
+case 1
+8/56 Info_Battery_Model_Short | — |  | no | LE | medium |  |
+
+0x70F: - | 8 | tx BMS | 10000 ms
+mux mux_1807_0_8 0/8
+case 0
+16/16 70F_Mux0_Const | — |  | no | LE | low |  |
+32/16 Info_Battery_Max_Power | — | W | no | LE | high |  | Static nameplate rating = 1920 W x module_count (64 V nominal per module x 30 A pack maximum continuous, per the Sungrow SBR datasheet). Matches every observed value: SBR096 5760, SBR128 7680, SBR160 9600, SBR224 13440. Not a live limit — it held ~13000 while Info_Battery_Max_Charge_Current at 0x701 fell to 0 A. Live limits are reported in 0x701. Shows small excursions in cold windows only; mechanism unconfirmed.
+48/16 Info_Battery_Max_Power_2 | — | W | no | LE | high |  | Second copy of the static 1920 W x module_count rating. Invariant across every sampled window — unlike bytes 4-5, it showed no cold-window excursions at all. Not a live limit; live limits are reported in 0x701.
+case 1
+8/56 70F_Mux1_Padding | — |  | no | LE | low |  |
+case 2
+16/16 70F_Unknown_Mux_2_1 | — |  | no | LE | low |  | Dynamic, unmapped. Drifts together with 70F_Unknown_Mux_3_1: ~9950 in warm windows, ~12800 in cold. Being higher in cold is the opposite of the charge/discharge power limits, which derate in cold, so this is neither SoC nor power. Temperature- or impedance-like; unresolved.
+32/16 70F_Mux2_Padding | — |  | no | LE | low |  |
+48/16 70F_Unknown_Mux_2_3 | — |  | no | LE | none |  | dynamic, unmapped
+case 3
+16/16 70F_Unknown_Mux_3_1 | — |  | no | LE | low |  | Dynamic, unmapped. Drifts together with 70F_Unknown_Mux_2_1: ~9926 in warm windows, ~12940 in cold. Being higher in cold is the opposite of the charge/discharge power limits, which derate in cold, so this is neither SoC nor power. Temperature- or impedance-like; unresolved.
+32/16 70F_Mux3_Padding | — |  | no | LE | low |  |
+48/16 70F_Unknown_Mux_3_3 | ×0.01 | % | no | LE | low |  | Narrow band 99.71-99.90 %, slowly rising; semantics unresolved. Not SoH: checked against the decoded Status_Battery_SoH at 0x702 over three separate windows — real SoH falls monotonically (raw 9902, 9899, 9868) while this value rises (raw ~9977, ~9980, 9990), holding a persistent gap of ~70-120 raw units; the two never match. Not SoC: it held constant at 9990 while SoC cycled 25.6 % to 100 %.
+case 4
+8/8 70F_Mux4_Padding_0 | — |  | no | LE | low |  |
+16/16 70F_Mux4_Charge_Value | — |  | no | LE | low |  | Bytes 2-3 are one 16-bit field, not an 8-bit value plus padding: byte 3 changed from 7 to 10 between sampled windows. Drifts slowly (~1996 warm, ~2593 cold) and tracks with 70F_Unknown_Mux_2_1 and 70F_Unknown_Mux_3_1.
+32/24 70F_Mux4_Padding_1 | — |  | no | LE | low |  |
+56/8 Status_Charge_State | — |  | no | LE | high | 0=Normal, 2=Stop Charge |
+case 5
+16/16 Status_Module_1_SoC | ×0.01 | % | no | LE | high |  |
+32/16 Status_Module_2_SoC | ×0.01 | % | no | LE | high |  |
+48/16 Status_Module_3_SoC | ×0.01 | % | no | LE | high |  |
+case 6
+16/16 Status_Module_4_SoC | ×0.01 | % | no | LE | high |  |
+32/16 Status_Module_5_SoC | ×0.01 | % | no | LE | high |  |
+48/16 Status_Module_6_SoC | ×0.01 | % | no | LE | high |  |
+case 7
+16/16 Status_Module_7_SoC | ×0.01 | % | no | LE | high |  |
+32/16 Status_Module_8_SoC | ×0.01 | % | no | LE | medium |  |
+48/16 70F_Mux7_Padding | — |  | no | LE | low |  |
+
+0x71B: - | 8 | tx BMS | 60000 ms
+0/32 Info_Module_1_Production_Date | — |  | no | LE | high |  |
+32/32 Info_Module_2_Production_Date | — |  | no | LE | high |  |
+
+0x71F: - | 8 | tx BMS | 60000 ms | Characters 8–9 = year (YY), 10 = month (M, or A/B/C for 10–12), 11–12 = day (DD).
+mux mux_1823_0_8 0/8
+case 1
+mux mux_1823_1_8_8 8/8
+case 1
+16/48 Info_Module_1_SN_1 | — |  | no | LE | high |  |
+case 2
+16/48 Info_Module_1_SN_2 | — |  | no | LE | high |  |
+case 3
+16/48 Info_Module_1_SN_3 | — |  | no | LE | high |  |
+case 2
+mux mux_1823_2_8_8 8/8
+case 1
+16/48 Info_Module_2_SN_1 | — |  | no | LE | high |  |
+case 2
+16/48 Info_Module_2_SN_2 | — |  | no | LE | high |  |
+case 3
+16/48 Info_Module_2_SN_3 | — |  | no | LE | high |  |
+case 3
+mux mux_1823_3_8_8 8/8
+case 1
+16/48 Info_Module_3_SN_1 | — |  | no | LE | high |  |
+case 2
+16/48 Info_Module_3_SN_2 | — |  | no | LE | high |  |
+case 3
+16/48 Info_Module_3_SN_3 | — |  | no | LE | high |  |
+case 4
+mux mux_1823_4_8_8 8/8
+case 1
+16/48 Info_Module_4_SN_1 | — |  | no | LE | high |  |
+case 2
+16/48 Info_Module_4_SN_2 | — |  | no | LE | high |  |
+case 3
+16/48 Info_Module_4_SN_3 | — |  | no | LE | high |  |
+case 5
+mux mux_1823_5_8_8 8/8
+case 1
+16/48 Info_Module_5_SN_1 | — |  | no | LE | high |  |
+case 2
+16/48 Info_Module_5_SN_2 | — |  | no | LE | high |  |
+case 3
+16/48 Info_Module_5_SN_3 | — |  | no | LE | high |  |
+case 6
+mux mux_1823_6_8_8 8/8
+case 1
+16/48 Info_Module_6_SN_1 | — |  | no | LE | high |  |
+case 2
+16/48 Info_Module_6_SN_2 | — |  | no | LE | high |  |
+case 3
+16/48 Info_Module_6_SN_3 | — |  | no | LE | high |  |
+case 7
+mux mux_1823_7_8_8 8/8
+case 1
+16/48 Info_Module_7_SN_1 | — |  | no | LE | high |  |
+case 2
+16/48 Info_Module_7_SN_2 | — |  | no | LE | high |  |
+case 3
+16/48 Info_Module_7_SN_3 | — |  | no | LE | high |  |
+case 8
+mux mux_1823_8_8_8 8/8
+case 1
+16/48 Info_Module_8_SN_1 | — |  | no | LE | high |  |
+case 2
+16/48 Info_Module_8_SN_2 | — |  | no | LE | high |  |
+case 3
+16/48 Info_Module_8_SN_3 | — |  | no | LE | high |  |
+
+tunnel_4de2_holding: tunnel_4de2_holding | 12 | 5000 ms (default)
+0/16 Tunnel_4DE2_Holding_0 | — |  | no | BE | none |  |
+16/16 Tunnel_4DE2_Holding_1 | — |  | no | BE | none |  |
+32/16 Tunnel_4DE2_Holding_2 | — |  | no | BE | none |  |
+48/16 Tunnel_4DE2_Holding_3 | — |  | no | BE | none |  |
+64/16 Tunnel_4DE2_Holding_4 | — |  | no | BE | none |  |
+80/16 Tunnel_4DE2_Holding_5 | — |  | no | BE | none |  |
+
+tunnel_4de2_input: tunnel_4de2_input | 4 | 5000 ms (default)
+0/16 Tunnel_4DE2_Input_0 | — |  | no | BE | none |  |
+16/16 Tunnel_4DE2_Input_1 | — |  | no | BE | none |  |
+
+# serial
+
+0x10 | 12 | tx Controller | 250 ms | Status broadcast
+24/16 Voltage | ×0.01 | V | no | LE | none |  |
+40/8 Flags | — |  | no | BE | none |  |
+
+0x20 | 16
+mux Page 24/8
+case 1
+32/16 Temperature | ×0.1 | C | yes | LE | none |  |
+case 2-3
+32/32 Counter | — |  | no | LE | none |  |
+
+heartbeat | 4 | Keyed by a name, not an id

@@ -206,7 +206,12 @@ async fn a_refused_connect_is_told_apart_from_a_resolve_failure() {
             let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             server.local_addr().unwrap()
         };
-        let mut tcp = ModbusTcp::new(refused.to_string(), quick());
+        // Windows retries a SYN refused by a closed loopback port for about 2 s.
+        let refusable = TcpOptions {
+            connect_timeout: Duration::from_secs(3),
+            ..quick()
+        };
+        let mut tcp = ModbusTcp::new(refused.to_string(), refusable);
         let error = tcp.read(holding(0, 1)).await.unwrap_err();
         assert!(matches!(
             error,

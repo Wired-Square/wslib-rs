@@ -460,9 +460,10 @@ async fn a_refused_connect_is_a_connect_error() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = listener.local_addr().unwrap().to_string();
         drop(listener);
+        // Windows retries a SYN refused by a closed loopback port for about 2 s.
         let link = Link::Tcp {
             endpoint,
-            connect_timeout: Duration::from_secs(1),
+            connect_timeout: Duration::from_secs(3),
         };
         assert!(matches!(
             open_err(link).await,

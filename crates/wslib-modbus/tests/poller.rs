@@ -154,7 +154,12 @@ async fn a_failed_connect_reads_nothing_and_charges_no_item() {
     within(async {
         let server = FakeServer::start().await;
         server.close().await;
-        let mut tcp = ModbusTcp::new(server.endpoint(), quick());
+        // Windows retries a SYN refused by a closed loopback port for about 2 s.
+        let refusable = TcpOptions {
+            connect_timeout: secs(3),
+            ..quick()
+        };
+        let mut tcp = ModbusTcp::new(server.endpoint(), refusable);
         let t0 = Instant::now();
         let mut poller = raw(UnitSource::Item, t0);
 

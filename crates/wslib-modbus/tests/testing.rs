@@ -13,8 +13,12 @@ use wslib_modbus::{
 };
 
 fn connect(device: &testing::Device) -> ModbusTcp {
+    connect_within(device, Duration::from_millis(500))
+}
+
+fn connect_within(device: &testing::Device, connect_timeout: Duration) -> ModbusTcp {
     let options = TcpOptions {
-        connect_timeout: Duration::from_millis(500),
+        connect_timeout,
         op_timeout: Duration::from_millis(200),
         ..TcpOptions::default()
     };
@@ -92,7 +96,8 @@ async fn an_answer_can_refuse_stay_silent_or_hang_up() {
 async fn a_device_that_vanishes_refuses_the_next_connect() {
     within(async {
         let device = device(|_| Reply::Vanish).await;
-        let mut tcp = connect(&device);
+        // Windows retries a SYN refused by a closed loopback port for about 2 s.
+        let mut tcp = connect_within(&device, Duration::from_secs(3));
 
         assert!(tcp.read(holding(0, 1)).await.is_err());
         let refused = tcp.read(holding(0, 1)).await.unwrap_err();

@@ -6,25 +6,6 @@
 //! The Modbus register map, poll schedules and RTU framing are
 //! [`wslib_modbus`]'s; this crate reads a catalogue's Modbus section through
 //! them.
-//!
-//! - [`parse`]: `Catalogue::parse` resolves all three frame sections into the
-//!   unified [`model`] (`Catalogue`/`Frame`/`Signal`/`Mux`).
-//! - [`validate`]: field-path and message findings for the editor.
-//! - [`decode`]: raw bytes to signal values.
-//! - [`mirror`]: does a mirrored frame still agree with its source, over the
-//!   bytes it inherited?
-//! - [`rtu`]: a catalogue's function codes and tunnels as RTU stream options.
-//! - [`rtu_decode`]: a recovered RTU message as signals.
-//! - [`framing_detect`]: which framing a raw serial byte stream uses (SLIP,
-//!   Modbus RTU or a delimiter), and what RTU couldn't frame.
-//! - [`serial_framing`]: a serial byte stream cut into frames by SLIP, a
-//!   delimiter or Modbus RTU, behind one `SerialFramer`, and where a frame's id
-//!   sits in it.
-//! - [`summary`]: a catalogue's counts and resolved per-frame rows, across
-//!   protocols, for a consumer's report.
-//! - [`dbc`]: Vector DBC to and from catalogue TOML.
-//! - [`text`]: a catalogue's source as text: the editor's line diff,
-//!   `[meta].name` from a file that may not parse, and the filename rules.
 
 mod byte_name;
 pub mod dbc;

@@ -3,7 +3,7 @@
 CAN, sans-io: `CanFrame` as it is on the bus, its flags byte, the data length
 code table, the kernel's bit timing search, what a SocketCAN error frame says,
 and the candump and SavvyCAN text formats. With `task`, the one task shape
-every CAN transport runs.
+every CAN transport runs. [`docs/`](docs/) specifies both text formats.
 
 ```rust
 use wslib_can::{CanFrame, Direction, candump, payload_dlc};

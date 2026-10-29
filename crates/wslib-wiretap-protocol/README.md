@@ -30,7 +30,7 @@ I/O and no storage:
   side as a sans-io state machine.
 
 The wire is a contract with ends this crate doesn't build: the ingest, import
-and Test Pattern tests pin their bytes.
+and Test Pattern tests pin their bytes, and [`docs/`](docs/) specifies each one.
 
 The off-by-default `ts` feature derives `ts_rs::TS` (ts-rs 12) on
 `Protocol` (as `ArchiveProtocol`), `FrameKey`, `ProtocolFrames` and

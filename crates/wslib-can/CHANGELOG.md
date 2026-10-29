@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- `CanWriter::submit` and `send_when_ready` hand back a future that no
+  longer borrows the writer, so it can be spawned or boxed as `'static`.
+
 ## 0.1.0
 
 - `CanFrame`, `CanFlags`, `Direction`, `ErrorState` and `ErrorFrame`, and the

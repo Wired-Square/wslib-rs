@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- `SerialPort::try_clone`: a second handle on an idle port, for a write
+  that can't wait for a read in flight.
+
 ## 0.1.0
 
 - `LineSettings` and `Parity`: a line's rate and character framing, parsed

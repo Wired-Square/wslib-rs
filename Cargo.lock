@@ -1320,7 +1320,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0b2472de95ea9a994cc90d8b5ccc62ded095714ffb16b2b3059cd805437b4c3"
 dependencies = [
  "dfu-core",
- "nusb",
+ "nusb 0.1.14",
  "thiserror 2.0.21",
 ]
 
@@ -2754,7 +2754,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "617ee6cf8e3f66f3b4ea67a4058564628cde41901316e19f559e14c7c72c5e7b"
 dependencies = [
  "core-foundation-sys",
- "mach2",
+ "mach2 0.4.3",
+]
+
+[[package]]
+name = "io-kit-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06d3a048d09fbb6597dbf7c69f40d14df4a49487db1487191618c893fc3b1c26"
+dependencies = [
+ "core-foundation-sys",
+ "mach2 0.5.0",
 ]
 
 [[package]]
@@ -3057,6 +3067,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
+name = "libloading"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
+dependencies = [
+ "cfg-if",
+ "windows-link",
+]
+
+[[package]]
 name = "libm"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3158,6 +3178,15 @@ name = "mach2"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d640282b302c0bb0a2a8e0233ead9035e3bed871f0b7e81fe4a1ec829765db44"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "mach2"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a1b95cd5421ec55b445b5ae102f5ea0e768de1f82bd3001e11f426c269c3aea"
 dependencies = [
  "libc",
 ]
@@ -3535,13 +3564,36 @@ dependencies = [
  "core-foundation 0.9.4",
  "core-foundation-sys",
  "futures-core",
- "io-kit-sys",
+ "io-kit-sys 0.4.1",
  "libc",
  "log",
  "once_cell",
  "rustix 0.38.44",
  "slab",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "nusb"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18ef13beb3b3a8fc16fd7aea912ebd3d45dde00a9a5b968d0742297468065845"
+dependencies = [
+ "core-foundation 0.10.1",
+ "core-foundation-sys",
+ "futures-core",
+ "io-kit-sys 0.5.0",
+ "js-sys",
+ "linux-raw-sys 0.12.1",
+ "log",
+ "once_cell",
+ "rustix 1.1.5",
+ "slab",
+ "tokio",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4415,6 +4467,38 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "reqwest"
+version = "0.12.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "futures-core",
+ "http",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "js-sys",
+ "log",
+ "percent-encoding",
+ "pin-project-lite",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "sync_wrapper",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tower-service",
+ "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "reqwest"
 version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "16a1cfa75cc186dd73d5818e510e042e40927bccc9c236b061cea97e1eb08029"
@@ -4500,7 +4584,7 @@ dependencies = [
  "pastey",
  "pin-project-lite",
  "rand 0.10.3",
- "reqwest",
+ "reqwest 0.13.5",
  "rmcp-macros",
  "schemars 1.2.3",
  "serde",
@@ -5125,9 +5209,9 @@ dependencies = [
  "cfg-if",
  "core-foundation 0.10.1",
  "core-foundation-sys",
- "io-kit-sys",
+ "io-kit-sys 0.4.1",
  "libudev",
- "mach2",
+ "mach2 0.4.3",
  "nix 0.26.4",
  "scopeguard",
  "unescaper",
@@ -5865,7 +5949,7 @@ dependencies = [
  "percent-encoding",
  "plist",
  "raw-window-handle",
- "reqwest",
+ "reqwest 0.13.5",
  "serde",
  "serde_json",
  "serde_repr",
@@ -7739,7 +7823,7 @@ name = "wslib-auth-oidc"
 version = "0.1.0"
 dependencies = [
  "jsonwebtoken",
- "reqwest",
+ "reqwest 0.13.5",
  "rustls",
  "serde",
  "serde_json",
@@ -7807,12 +7891,21 @@ version = "0.1.0"
 
 [[package]]
 name = "wslib-can"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "wslib-backoff",
  "wslib-tcp",
+]
+
+[[package]]
+name = "wslib-can-gsusb"
+version = "0.1.0"
+dependencies = [
+ "nusb 0.2.7",
+ "tokio",
+ "wslib-can",
 ]
 
 [[package]]
@@ -7824,6 +7917,26 @@ dependencies = [
  "wslib-can",
  "wslib-serial",
  "wslib-tcp",
+]
+
+[[package]]
+name = "wslib-can-pcan"
+version = "0.1.0"
+dependencies = [
+ "libloading",
+ "nusb 0.2.7",
+ "tokio",
+ "wslib-can",
+]
+
+[[package]]
+name = "wslib-can-slcan"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "tokio",
+ "wslib-can",
+ "wslib-serial",
 ]
 
 [[package]]
@@ -7938,7 +8051,7 @@ dependencies = [
  "flate2",
  "quick-xml 0.38.4",
  "rcgen",
- "reqwest",
+ "reqwest 0.13.5",
  "rustls",
  "rustls-pki-types",
  "serde",
@@ -8061,7 +8174,7 @@ version = "0.2.1"
 dependencies = [
  "axum",
  "ipnet",
- "reqwest",
+ "reqwest 0.13.5",
  "rmcp",
  "schemars 1.2.3",
  "serde",
@@ -8081,7 +8194,7 @@ dependencies = [
  "dfu-nusb",
  "espflash",
  "ihex",
- "nusb",
+ "nusb 0.1.14",
  "serde",
  "serialport",
  "thiserror 2.0.21",
@@ -8154,7 +8267,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-serial"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libc",
  "serialport",
@@ -8306,11 +8419,15 @@ dependencies = [
 
 [[package]]
 name = "wslib-wiretap-gateway"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "tokio",
  "ts-rs 12.0.1",
+ "wslib-bits",
+ "wslib-can",
  "wslib-wiretap-protocol",
 ]
 

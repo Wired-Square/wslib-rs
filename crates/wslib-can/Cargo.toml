@@ -1,6 +1,6 @@
 [package]
 name = "wslib-can"
-version = "0.1.0"
+version = "0.1.1"
 description = "CAN: the frame on the bus, its data length codes, bit timing, candump and SavvyCAN text, and the task every CAN transport runs, reopening its device with backoff."
 readme = "README.md"
 edition.workspace = true

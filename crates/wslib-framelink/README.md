@@ -22,7 +22,8 @@ println!("{} {}", identity.board_name, identity.board_revision);
   when the device reports none), its embedded `BoardDef` and live signals.
 - `probe_version`: the protocol version a device replies in, after a
   session to it has failed. A device drops a frame of a version it does not
-  speak, so a PING goes out at every version.
+  speak, so a PING goes out at every version. `probe` also tells a silent
+  device from one whose reply no frame parses from.
 - `board`: the board TOML a device stores, up and down, and its signals for a
   picker.
 - `Error`: one error for the crate.

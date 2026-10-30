@@ -13,16 +13,36 @@ use crate::client::MAX_STUFFED_FRAME;
 
 const LISTEN_WINDOW: Duration = Duration::from_millis(1500);
 
+/// What came back from the PINGs [`probe`] sends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Probe {
+    /// The protocol version the device replied in.
+    Answered(u8),
+    /// Bytes came back, but no frame in them parsed or named a version.
+    Unparseable,
+    /// Nothing came back.
+    Silent,
+}
+
 /// The protocol version the device at `addr` replies in, or `None` when no
 /// frame that parses or names its version comes back within a moment and a
 /// half.
+pub async fn probe_version(addr: SocketAddr) -> Result<Option<u8>, Error> {
+    Ok(match probe(addr).await? {
+        Probe::Answered(version) => Some(version),
+        _ => None,
+    })
+}
+
+/// How the device at `addr` answers PINGs within a moment and a half.
 ///
 /// A device drops a frame of a version it does not speak, so a PING goes out
 /// at each of the sixteen versions the header can name. This relies on every
 /// version keeping the 5-byte header and COBS framing, so the version nibble
 /// is read the same way whichever one answers. A device serves one client:
 /// close any session to it first.
-pub async fn probe_version(addr: SocketAddr) -> Result<Option<u8>, Error> {
+pub async fn probe(addr: SocketAddr) -> Result<Probe, Error> {
     let mut stream = TcpStream::connect(addr).await?;
     stream.set_nodelay(true)?;
     stream.write_all(&pings()).await?;
@@ -30,11 +50,13 @@ pub async fn probe_version(addr: SocketAddr) -> Result<Option<u8>, Error> {
     let mut decoder = CobsDecoder::with_max_frame_len(MAX_STUFFED_FRAME);
     let deadline = tokio::time::Instant::now() + LISTEN_WINDOW;
     let mut buf = [0u8; 512];
+    let mut heard = Probe::Silent;
     loop {
         let n = match tokio::time::timeout_at(deadline, stream.read(&mut buf)).await {
-            Err(_) | Ok(Ok(0)) => return Ok(None),
+            Err(_) | Ok(Ok(0)) => return Ok(heard),
             Ok(read) => read?,
         };
+        heard = Probe::Unparseable;
         let version =
             decoder.feed(&buf[..n]).iter().find_map(|block| {
                 match frame::parse_unstuffed(&block.bytes) {
@@ -43,8 +65,8 @@ pub async fn probe_version(addr: SocketAddr) -> Result<Option<u8>, Error> {
                     Err(_) => None,
                 }
             });
-        if version.is_some() {
-            return Ok(version);
+        if let Some(version) = version {
+            return Ok(Probe::Answered(version));
         }
     }
 }
@@ -65,7 +87,7 @@ fn pings() -> Vec<u8> {
 mod tests {
     use super::*;
     use tokio::net::TcpListener;
-    use wslib_framelink_protocol::types::{FLAG_RESPONSE, MSG_PONG};
+    use wslib_framelink_protocol::types::{FLAG_RESPONSE, MSG_NACK, MSG_PONG};
 
     #[test]
     fn the_ping_at_our_version_is_the_one_the_protocol_builds() {
@@ -78,6 +100,11 @@ mod tests {
 
     /// Answers only the PING stamped `version`, with a PONG stamped the same.
     async fn device_speaking(version: Option<u8>) -> SocketAddr {
+        device_replying(version, MSG_PONG).await
+    }
+
+    /// Answers only the PING stamped `version`, with `reply` stamped the same.
+    async fn device_replying(version: Option<u8>, reply: u8) -> SocketAddr {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -93,7 +120,7 @@ mod tests {
                     if Some(ping.bytes[0] >> 4) != version {
                         continue;
                     }
-                    let pong = frame::build_frame(MSG_PONG, FLAG_RESPONSE, 0, &[]);
+                    let pong = frame::build_frame(reply, FLAG_RESPONSE, 0, &[]);
                     let mut raw = cobs::decode(&pong[1..pong.len() - 1]).unwrap();
                     raw[0] = ping.bytes[0] & 0xF0 | raw[0] & 0x0F;
                     socket.write_all(&cobs::encode(&raw)).await.ok();
@@ -119,6 +146,48 @@ mod tests {
     async fn a_silent_device_is_none() {
         let addr = device_speaking(None).await;
         assert_eq!(probe_version(addr).await.unwrap(), None);
+    }
+
+    /// Answers the first bytes it reads with `reply`, then stays open.
+    async fn device_answering_with(reply: &'static [u8]) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 512];
+            if socket.read(&mut buf).await.unwrap_or(0) > 0 {
+                socket.write_all(reply).await.ok();
+            }
+            tokio::time::sleep(LISTEN_WINDOW * 2).await;
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn a_pong_is_answered_in_its_version() {
+        let addr = device_speaking(Some(PROTOCOL_VERSION)).await;
+        assert_eq!(
+            probe(addr).await.unwrap(),
+            Probe::Answered(PROTOCOL_VERSION)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_nack_names_its_version() {
+        let addr = device_replying(Some(3), MSG_NACK).await;
+        assert_eq!(probe(addr).await.unwrap(), Probe::Answered(3));
+    }
+
+    #[tokio::test]
+    async fn garbage_is_unparseable() {
+        let addr = device_answering_with(&[0x00, 0x03, 0xFF, 0xFF, 0x00, 0x17]).await;
+        assert_eq!(probe(addr).await.unwrap(), Probe::Unparseable);
+    }
+
+    #[tokio::test]
+    async fn a_device_that_accepts_and_says_nothing_is_silent() {
+        let addr = device_answering_with(&[]).await;
+        assert_eq!(probe(addr).await.unwrap(), Probe::Silent);
     }
 
     #[tokio::test]

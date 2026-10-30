@@ -12,6 +12,9 @@
   devices' sessions, and a cached session whose link has closed is opened
   again, over UDP as over BLE.
 - `WifiStatus::as_byte`, the inverse of `from_byte`.
+- `probe` tells a device that answers in a version (`Probe::Answered`) from
+  one that sends bytes no frame parses from (`Unparseable`) and one that
+  says nothing (`Silent`). `probe_version` is unchanged.
 
 ## 0.1.0
 

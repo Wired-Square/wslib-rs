@@ -26,7 +26,7 @@ pub use client::FramingStats;
 pub use device::{Device, DeviceBuilder, DeviceId, Transport};
 pub use error::Error;
 pub use identify::{DEFAULT_TX_QUEUE_DEPTH, DeviceIdentity};
-pub use probe::probe_version;
+pub use probe::{Probe, probe, probe_version};
 pub use session::{
     FileProgress, FileUploadOutcome, FrameLinkSession, SessionConfig, TransmitStats,
 };

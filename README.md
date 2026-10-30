@@ -38,7 +38,7 @@ appliance chassis and every app beside it.
 | `wslib-host`             | Hostname, uptime, kernel, OS and an app-specific machine id   |
 | `wslib-tasks`            | One task per row of a desired set, reconciled on change       |
 | `wslib-homeassistant`    | Home Assistant Ingress: peer check, caller and base path      |
-| `wslib-mcu-flash`        | ESP32 and STM32 flashing: tty lookup, images, five backends   |
+| `wslib-mcu-flash`        | ESP32 and STM32 flashing: tty lookup, images, six backends    |
 | `wslib-service`          | A service under launchd, systemd or Windows, from one call    |
 | `wslib-tauri`            | Tauri desktop pieces: a quit that waits for in-flight work    |
 | `wslib-pairing`          | A one-time pairing code and the URI carrying the key pin      |

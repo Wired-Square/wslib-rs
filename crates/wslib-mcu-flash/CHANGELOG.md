@@ -2,6 +2,11 @@
 
 ## 0.1.1
 
+- `mcumgr`: `mcumgr::flash` uploads an MCUboot image over a
+  `wslib_mcumgr::Session`, then tests or confirms it and resets, as
+  `Activation` says; it reports through `FlashProgress` and honours its
+  cancel mid-upload. `wslib_mcumgr` is re-exported. `mcumgr-udp` and
+  `mcumgr-ble` turn on wslib-mcumgr's transports.
 - serde's floor is 1.0.228, thiserror's 2.0.20, tokio's 1.53.1, async-trait's 0.1.92 and wslib-file-atomic's 0.1.6.
 
 ## 0.1.0

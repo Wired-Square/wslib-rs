@@ -1,7 +1,7 @@
 [package]
 name = "wslib-mcu-flash"
 version = "0.1.1"
-description = "Chip families, USB-serial port resolution, firmware image parsing and the flash backends (esptool, dfu-util, espflash, USB DFU, STM32 AN3155) Wired Square tools share."
+description = "Chip families, USB-serial port resolution, firmware image parsing and the flash backends (esptool, dfu-util, espflash, USB DFU, STM32 AN3155, MCUboot over SMP) Wired Square tools share."
 readme = "README.md"
 edition.workspace = true
 rust-version.workspace = true
@@ -17,22 +17,29 @@ thiserror = "2.0.20"
 async-trait = { version = "0.1.92", optional = true }
 dfu-nusb = { version = "0.1", optional = true }
 espflash = { version = "4", default-features = false, features = ["serialport"], optional = true }
+futures-core = { version = "0.3.34", default-features = false, optional = true }
 # `dfu-nusb` 0.1 pins nusb 0.1; consumers that also use nusb 0.2 alias this copy.
 nusb = { version = "0.1.10", optional = true }
 serde = { version = "1.0.228", features = ["derive"], optional = true }
 serialport = { version = "4.7.2", features = ["usbportinfo-interface"], optional = true }
-tokio = { version = "1.53.1", features = ["io-util", "process", "rt", "sync", "time"], optional = true }
+tokio = { version = "1.53.1", features = ["time"], optional = true }
 wslib-file-atomic = { path = "../wslib-file-atomic", version = "0.1.6", registry = "wired-square", optional = true }
+wslib-mcumgr = { path = "../wslib-mcumgr", version = "0.1.0", registry = "wired-square", optional = true }
 
 [features]
 default = []
 serde = ["dep:serde"]
 ports = ["dep:serialport"]
-esptool = ["dep:async-trait", "dep:tokio"]
-dfu-util = ["dep:async-trait", "dep:tokio"]
+esptool = ["dep:async-trait", "dep:tokio", "tokio/io-util", "tokio/process", "tokio/rt", "tokio/sync"]
+dfu-util = ["dep:async-trait", "dep:tokio", "tokio/io-util", "tokio/process", "tokio/rt", "tokio/sync"]
 espflash = ["dep:espflash", "dep:wslib-file-atomic", "ports"]
 dfu = ["dep:dfu-nusb", "dep:nusb"]
 stm32-uart = ["dep:wslib-file-atomic", "ports"]
+mcumgr = ["dep:futures-core", "dep:tokio", "dep:wslib-mcumgr"]
+mcumgr-udp = ["mcumgr", "wslib-mcumgr/udp"]
+mcumgr-ble = ["mcumgr", "wslib-mcumgr/ble"]
 
 [dev-dependencies]
+ciborium = { version = "0.2.2", default-features = false, features = ["std"] }
+serde = { version = "1.0.228", features = ["derive"] }
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "time"] }

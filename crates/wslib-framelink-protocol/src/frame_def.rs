@@ -55,6 +55,11 @@ fn ser_value_type_name<S: Serializer>(value_type: &u8, s: S) -> Result<S::Ok, S:
     s.serialize_str(value_type_name(*value_type))
 }
 
+// The firmware's `frame_def.h` (`FL_CAN_FLAG_*`).
+pub const CAN_FLAG_EXTENDED: u8 = 0x01;
+pub const CAN_FLAG_FD: u8 = 0x02;
+pub const CAN_FLAG_BRS: u8 = 0x04;
+pub const CAN_FLAG_RTR: u8 = 0x08;
 pub const CAN_FLAG_MATCH_ANY: u8 = 0x80;
 
 pub const IFACE_TYPE_CAN: u8 = types::IFACE_CAN;
@@ -425,7 +430,7 @@ mod tests {
             header: FrameHeader::Can {
                 can_id: 0x18FF00FE,
                 dlc: 8,
-                flags: 0x04,
+                flags: CAN_FLAG_BRS,
             },
             signals: vec![
                 FrameSignalDef {
@@ -458,7 +463,7 @@ mod tests {
             FrameHeader::Can { can_id, dlc, flags } => {
                 assert_eq!(*can_id, 0x18FF00FE);
                 assert_eq!(*dlc, 8);
-                assert_eq!(*flags, 0x04);
+                assert_eq!(*flags, CAN_FLAG_BRS);
             }
             _ => panic!("expected CAN header"),
         }
@@ -514,7 +519,7 @@ mod tests {
             header: FrameHeader::Can {
                 can_id: 0x100,
                 dlc: 64,
-                flags: 0x01,
+                flags: CAN_FLAG_EXTENDED,
             },
             signals: vec![FrameSignalDef {
                 signal_id: 0xABCD,
@@ -536,7 +541,7 @@ mod tests {
             FrameHeader::Can { can_id, dlc, flags } => {
                 assert_eq!(*can_id, 0x100);
                 assert_eq!(*dlc, 64);
-                assert_eq!(*flags, 0x01);
+                assert_eq!(*flags, CAN_FLAG_EXTENDED);
             }
             _ => panic!("expected CAN header"),
         }

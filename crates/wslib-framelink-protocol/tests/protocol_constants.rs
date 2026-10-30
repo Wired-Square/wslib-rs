@@ -176,6 +176,15 @@ fn value_types_are_pinned() {
 }
 
 #[test]
+fn can_frame_def_flags_are_pinned() {
+    assert_eq!(frame_def::CAN_FLAG_EXTENDED, 0x01);
+    assert_eq!(frame_def::CAN_FLAG_FD, 0x02);
+    assert_eq!(frame_def::CAN_FLAG_BRS, 0x04);
+    assert_eq!(frame_def::CAN_FLAG_RTR, 0x08);
+    assert_eq!(frame_def::CAN_FLAG_MATCH_ANY, 0x80);
+}
+
+#[test]
 fn can_id_layout_is_pinned() {
     assert_eq!(can_id::CAN_HOST_BIT, 0x1000_0000);
     assert_eq!(can_id::CAN_DEVICE_ID_MASK, 0x0FFF_FF00);

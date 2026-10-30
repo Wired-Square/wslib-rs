@@ -6,6 +6,13 @@ use crate::toml_schema;
 use wslib_framelink_protocol::dsig::{format_signal_key, parse_signal_key};
 use wslib_framelink_protocol::{capabilities, dsig, frame_def, generator, types, xform};
 
+const CAN_FLAG_LABELS: [(u8, &str); 4] = [
+    (frame_def::CAN_FLAG_EXTENDED, "extended"),
+    (frame_def::CAN_FLAG_FD, "fd"),
+    (frame_def::CAN_FLAG_BRS, "brs"),
+    (frame_def::CAN_FLAG_RTR, "rtr"),
+];
+
 /// What a sync added, and what the TOML has that the device does not.
 #[derive(Debug, Default)]
 pub struct SyncResult {
@@ -181,14 +188,10 @@ pub fn sync_frame_defs(
                     can_table.insert("can_id", toml_edit::Item::Value((*can_id as i64).into()));
                     can_table.insert("dlc", toml_edit::Item::Value((*dlc as i64).into()));
                     let mut flag_arr = toml_edit::Array::new();
-                    if flags & 0x01 != 0 {
-                        flag_arr.push("extended");
-                    }
-                    if flags & 0x02 != 0 {
-                        flag_arr.push("rtr");
-                    }
-                    if flags & 0x04 != 0 {
-                        flag_arr.push("fd");
+                    for (bit, label) in CAN_FLAG_LABELS {
+                        if flags & bit != 0 {
+                            flag_arr.push(label);
+                        }
                     }
                     can_table.insert(
                         "flags",
@@ -570,6 +573,63 @@ mod tests {
         let entry = fd_table.get("0x0001").unwrap().as_table().unwrap();
         assert_eq!(entry["name"].as_str().unwrap(), "Frame 0x0001");
         assert_eq!(entry["interface_type"].as_str().unwrap(), "can");
+    }
+
+    fn synced_can_flag_labels(flags: u8) -> Vec<String> {
+        let mut doc = empty_doc();
+        let fds = [frame_def::FrameDefInfo {
+            frame_def_id: 0x0001,
+            interface_type: frame_def::IFACE_TYPE_CAN,
+            header: frame_def::FrameHeader::Can {
+                can_id: 0x100,
+                dlc: 8,
+                flags,
+            },
+            signals: vec![],
+        }];
+        sync_frame_defs(&mut doc, &fds);
+        doc["frame_defs"]["0x0001"]["can"]["flags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn can_flag_extended_is_labelled_extended() {
+        assert_eq!(
+            synced_can_flag_labels(frame_def::CAN_FLAG_EXTENDED),
+            ["extended"]
+        );
+    }
+
+    #[test]
+    fn can_flag_fd_is_labelled_fd() {
+        assert_eq!(synced_can_flag_labels(frame_def::CAN_FLAG_FD), ["fd"]);
+    }
+
+    #[test]
+    fn can_flag_brs_is_labelled_brs() {
+        assert_eq!(synced_can_flag_labels(frame_def::CAN_FLAG_BRS), ["brs"]);
+    }
+
+    #[test]
+    fn can_flag_rtr_is_labelled_rtr() {
+        assert_eq!(synced_can_flag_labels(frame_def::CAN_FLAG_RTR), ["rtr"]);
+    }
+
+    #[test]
+    fn can_flags_combine_in_bit_order() {
+        let all = frame_def::CAN_FLAG_EXTENDED
+            | frame_def::CAN_FLAG_FD
+            | frame_def::CAN_FLAG_BRS
+            | frame_def::CAN_FLAG_RTR
+            | frame_def::CAN_FLAG_MATCH_ANY;
+        assert_eq!(
+            synced_can_flag_labels(all),
+            ["extended", "fd", "brs", "rtr"]
+        );
     }
 
     #[test]

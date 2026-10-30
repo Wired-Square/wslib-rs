@@ -20,3 +20,5 @@
   by `kind` as `FrameHeader` is.
 - `ts`: `ts_rs::TS` (ts-rs 12) on every serialised type.
 - Wire enums are `#[non_exhaustive]`.
+- `frame_def::CAN_FLAG_EXTENDED`, `CAN_FLAG_FD`, `CAN_FLAG_BRS` and
+  `CAN_FLAG_RTR`, the firmware's CAN frame-def flag bits, pinned by a test.

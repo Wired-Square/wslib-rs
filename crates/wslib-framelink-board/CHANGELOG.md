@@ -14,3 +14,6 @@
 - `IndicatorConfig::colour` and `display::ColourPreset` and
   `COLOUR_PRESETS`; `colour` still serialises as `color`.
 - TOML is read and written by toml_edit alone.
+- `sync` labels CAN frame-def flags as the firmware defines them:
+  `extended`, `fd`, `brs` and `rtr` (0x02 was written as `rtr` and 0x04 as
+  `fd`).

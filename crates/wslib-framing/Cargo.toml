@@ -11,4 +11,4 @@ repository.workspace = true
 publish = ["wired-square"]
 
 [dependencies]
-thiserror = "2.0.17"
+thiserror = "2.0.20"

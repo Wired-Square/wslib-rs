@@ -1,0 +1,39 @@
+[package]
+name = "wslib-framelink"
+version = "0.1.0"
+description = "A FrameLink device session over TCP, with discovery over mDNS and BLE, a device registry and Wi-Fi provisioning over BLE."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+discovery = ["dep:wslib-mdns", "dep:serde_json", "dep:futures-util", "dep:wslib-file-atomic"]
+ble = ["dep:btleplug", "dep:uuid", "dep:futures-util", "tokio/rt-multi-thread"]
+wifi-prov = ["ble", "discovery"]
+
+[dependencies]
+btleplug = { version = "0.13.5", optional = true }
+futures-util = { version = "0.3.34", default-features = false, optional = true }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.85", optional = true }
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", default-features = false, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+tracing = "0.1.41"
+uuid = { version = "1.26.1", default-features = false, optional = true }
+wslib-file-atomic = { path = "../wslib-file-atomic", version = "0.1.6", registry = "wired-square", optional = true }
+wslib-framelink-board = { path = "../wslib-framelink-board", version = "0.1", registry = "wired-square" }
+wslib-framelink-protocol = { path = "../wslib-framelink-protocol", version = "0.1", registry = "wired-square" }
+wslib-framing = { path = "../wslib-framing", version = "0.1", registry = "wired-square" }
+wslib-mdns = { path = "../wslib-mdns", version = "0.1", registry = "wired-square", features = ["in-process"], optional = true }
+
+[dev-dependencies]
+serde_json = "1.0.85"
+tokio = { version = "1.53.1", features = ["io-util", "macros", "net", "rt", "time"] }
+
+[[test]]
+name = "goldens"
+required-features = ["wifi-prov"]

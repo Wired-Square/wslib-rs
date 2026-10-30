@@ -14,8 +14,8 @@ publish = ["wired-square"]
 ts = ["dep:ts-rs"]
 
 [dependencies]
-serde = { version = "1.0.225", features = ["derive"] }
-thiserror = "2.0.17"
+serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "2.0.20"
 ts-rs = { version = "12", optional = true, features = ["no-serde-warnings"] }
 wslib-checksum = { path = "../wslib-checksum", version = "0.1", registry = "wired-square" }
 wslib-framing = { path = "../wslib-framing", version = "0.1", registry = "wired-square" }

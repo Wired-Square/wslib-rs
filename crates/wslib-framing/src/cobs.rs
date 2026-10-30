@@ -15,9 +15,15 @@ pub const DELIMITER: u8 = 0x00;
 #[error("malformed COBS block")]
 pub struct CobsError;
 
+/// The longest block [`stuff`] makes of `len` bytes: a code byte per 254
+/// and one more. A cap for [`CobsDecoder::with_max_frame_len`].
+pub const fn max_stuffed_len(len: usize) -> usize {
+    len + len / 254 + 1
+}
+
 /// Stuffs `data` into a block holding no `0x00`, without delimiters.
 pub fn stuff(data: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(data.len() + data.len() / 254 + 1);
+    let mut out = Vec::with_capacity(max_stuffed_len(data.len()));
     stuff_into(&mut out, data);
     out
 }
@@ -75,7 +81,7 @@ pub fn encode_into(out: &mut Vec<u8>, data: &[u8]) {
 }
 
 pub fn encode(data: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(data.len() + data.len() / 254 + 3);
+    let mut out = Vec::with_capacity(max_stuffed_len(data.len()) + 2);
     encode_into(&mut out, data);
     out
 }
@@ -200,6 +206,15 @@ mod tests {
         assert_eq!(block[0], 0xFF);
         assert_eq!(block.len(), 256);
         assert_eq!(block[255], 0x01);
+    }
+
+    #[test]
+    fn no_block_outgrows_max_stuffed_len() {
+        for len in [0, 1, 253, 254, 255, 508, 1000] {
+            let worst = stuff(&vec![0x11; len]).len();
+            assert_eq!(worst, max_stuffed_len(len), "{len}");
+            assert!(stuff(&vec![0x00; len]).len() <= worst, "{len}");
+        }
     }
 
     #[test]

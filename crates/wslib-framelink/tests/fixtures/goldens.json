@@ -1,0 +1,21 @@
+{
+  "capability_other": "{\"other\":12}",
+  "capability_set": "[\"wifi-prov\",\"smp\",\"frame-link-ble\",\"caps\",\"pairing-required\",{\"other\":9}]",
+  "device_ble": "{\"id\":\"ble:14:23:45:67:89:AB\",\"name\":\"WiredFlexLink-9C1C\",\"transports\":[\"ble\"],\"capabilities\":[\"wifi-prov\",\"frame-link-ble\"],\"rssi\":-67,\"address\":null}",
+  "device_id": "\"mdns:udp:wfl._mcumgr._udp.local.\"",
+  "device_mdns": "{\"id\":\"mdns:tcp:wfl-1234._framelink._tcp.local.\",\"name\":\"wfl-1234\",\"transports\":[\"tcp\"],\"capabilities\":[],\"rssi\":null,\"address\":\"192.168.1.42:120\"}",
+  "device_record_auto": "{\"name\":\"WFL-2\",\"resolution\":\"auto\",\"framelink_port\":120,\"smp_port\":1337}",
+  "device_record_manual": "{\"name\":\"WFL-1\",\"resolution\":\"manual\",\"host\":\"10.0.0.9\",\"framelink_port\":120,\"smp_port\":1337}",
+  "event_error": "[{\"kind\":\"error\",\"source\":\"ble\",\"message\":\"scan start\"},{\"kind\":\"error\",\"source\":\"mdns\",\"message\":\"no IPv4 address\"}]",
+  "event_lost": "{\"kind\":\"lost\",\"id\":\"mdns:tcp:wfl-1234._framelink._tcp.local.\"}",
+  "event_seen": "{\"kind\":\"seen\",\"device\":{\"id\":\"ble:14:23:45:67:89:AB\",\"name\":\"WiredFlexLink-9C1C\",\"transports\":[\"ble\"],\"capabilities\":[\"wifi-prov\",\"frame-link-ble\"],\"rssi\":-67,\"address\":null}}",
+  "event_updated": "{\"kind\":\"updated\",\"id\":\"ble:abc\",\"name\":\"WFL\",\"capabilities\":[\"smp\"],\"rssi\":null}",
+  "provisioning_events": "[{\"kind\":\"status\",\"status\":\"connecting\"},{\"kind\":\"ip-address\",\"address\":\"10.0.0.7\"}]",
+  "provisioning_status": "{\"ssid\":\"Workshop\",\"security\":2,\"status\":\"connected\",\"ip_address\":\"192.168.1.42\"}",
+  "registry_file": "{\n  \"devices\": {\n    \"WiredFlexLink-4CD4\": {\n      \"name\": \"WiredFlexLink-4CD4\",\n      \"resolution\": \"manual\",\n      \"host\": \"10.0.52.162\",\n      \"framelink_port\": 120,\n      \"smp_port\": 1337\n    },\n    \"wfl-1234\": {\n      \"name\": \"wfl-1234\",\n      \"resolution\": \"auto\",\n      \"framelink_port\": 120,\n      \"smp_port\": 1337\n    }\n  }\n}",
+  "resolutions": "[\"auto\",\"manual\"]",
+  "transports": "[\"ble\",\"tcp\",\"udp\"]",
+  "wifi_credentials": "[{\"ssid\":\"Workshop\",\"passphrase\":null,\"security\":0},{\"ssid\":\"Workshop\",\"passphrase\":\"secret\",\"security\":2}]",
+  "wifi_securities": "[0,2,7]",
+  "wifi_statuses": "[\"disconnected\",\"connecting\",\"connected\",\"error\"]"
+}

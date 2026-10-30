@@ -24,7 +24,8 @@ use crate::Error;
 pub struct CanFilter {
     pub can_id: u32,
     pub can_mask: u32,
-    /// Bit 0: the filter matches extended ids.
+    /// [`CAN_FLAG_EXTENDED`](crate::frame_def::CAN_FLAG_EXTENDED): the
+    /// filter matches extended ids.
     pub flags: u8,
 }
 
@@ -59,9 +60,19 @@ pub enum StreamConfig {
 #[non_exhaustive]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum FrameMetadata {
-    Can { can_id: u32, dlc: u8, flags: u8 },
-    Rs485 { framing_mode: u8 },
-    Unknown { meta_len: u8, raw: Vec<u8> },
+    /// `flags` are the `frame_def::CAN_FLAG_*` bits.
+    Can {
+        can_id: u32,
+        dlc: u8,
+        flags: u8,
+    },
+    Rs485 {
+        framing_mode: u8,
+    },
+    Unknown {
+        meta_len: u8,
+        raw: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -310,7 +321,7 @@ mod tests {
             CanFilter {
                 can_id: 0x18ABCDEF,
                 can_mask: 0x1FFFFFFF,
-                flags: 1,
+                flags: CAN_FLAG_EXTENDED,
             },
         ];
         let payload = build_stream_start(1, Some(StreamConfig::Can { filters }));
@@ -334,7 +345,7 @@ mod tests {
         assert_eq!(id1, 0x18ABCDEF);
         let mask1 = u32::from_le_bytes([payload[16], payload[17], payload[18], payload[19]]);
         assert_eq!(mask1, 0x1FFFFFFF);
-        assert_eq!(payload[20], 1); // flags: extended
+        assert_eq!(payload[20], CAN_FLAG_EXTENDED);
     }
 
     #[test]

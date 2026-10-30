@@ -7,6 +7,8 @@
   payload in `types`, `dsig`, `capabilities`, `stream`, `frame_def`,
   `bridge`, `xform`, `generator`, `counter`, `persist`, `file_xfer`,
   `board_def` and `can_id`, with BLE `manufacturer_data`.
+- `frame::parse_unstuffed`, the parser `parse_frame` runs after unstuffing,
+  for a frame a stream decoder has already released.
 - `PROTOCOL_VERSION` (4), `RULE_FORMAT` (2) and `SCHEMA_VERSION_MAX` (1) at
   the root, pinned by a test; changing one is a breaking release.
 - `dsig::format_signal_key` and `parse_signal_key`, the board TOML's slug for

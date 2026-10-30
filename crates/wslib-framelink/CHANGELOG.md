@@ -30,6 +30,8 @@
   `board::list_selectable_signals` sits beside them.
 - Discovery browses through wslib-mdns (mdns-sd 0.21) in place of mdns-sd
   0.13. BLE is btleplug 0.13.
+- `Discovery::start_with` browses on a caller's `wslib_mdns::InProcess`
+  responder instead of opening one of its own.
 - `Capability`, `Transport`, `DiscoveryEvent`, `ErrorSource`, `Resolution`,
   `ConnectTarget`, `WifiStatus` and `ProvisioningEvent` are
   `#[non_exhaustive]`.

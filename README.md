@@ -161,15 +161,17 @@ the PR. Once that is merged, on `main`, with `.env` filled in from
 `.env.example`:
 
 ```sh
-scripts/release.sh -p wslib-build-id --execute
-git push origin wslib-build-id-v<version>
-scripts/mirror.sh
+scripts/release.sh <crate> ... [--execute] [--no-mirror]
 ```
 
-Both scripts read the `write:package` token from 1Password at
-`WSLIB_REGISTRY_TOKEN_REF`, so it never sits on disk; `credentials.toml` holds
-only the read token. `scripts/release.sh` runs `cargo release`, which runs
-`scripts/ci.sh --tag`, publishes to the registry and tags
-`<crate>-v<version>`; `scripts/mirror.sh` copies the registry to the mirror
-consumers read from. The tag records what was published; consumers
-pin the registry version, not the tag.
+It releases only the crates named; with none it lists the crates whose
+version the registry lacks. It runs `scripts/ci.sh --tag`, tags each
+`<crate>-v<version>` and pushes the tags, then publishes dependencies first
+and runs `scripts/mirror.sh`, which copies the registry to the mirror
+consumers read from. Nothing is published without its tag on `main`: a failed
+push publishes nothing, and a failed publish withdraws the tags of the crates
+not yet published. Without `--execute` it stops before tagging, and with
+`--no-mirror` after publishing. The `write:package` token is read from 1Password
+(`WSLIB_OP_ACCOUNT`, `WSLIB_REGISTRY_TOKEN_REF`), so it never sits on disk;
+`credentials.toml` holds only the read token. The tag records what was
+published; consumers pin the registry version, not the tag.

@@ -14,7 +14,7 @@ publish = ["wired-square"]
 ihex = "3"
 thiserror = "2.0.20"
 
-async-trait = { version = "0.1.7", optional = true }
+async-trait = { version = "0.1.92", optional = true }
 dfu-nusb = { version = "0.1", optional = true }
 espflash = { version = "4", default-features = false, features = ["serialport"], optional = true }
 # `dfu-nusb` 0.1 pins nusb 0.1; consumers that also use nusb 0.2 alias this copy.

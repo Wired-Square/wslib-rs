@@ -98,6 +98,22 @@ pub enum Error {
     #[error("BLE link dropped")]
     BleLinkDropped,
 
+    #[cfg(feature = "smp")]
+    #[error("SMP: {0}")]
+    Smp(#[from] wslib_mcumgr::Error),
+
+    #[cfg(feature = "smp")]
+    #[error("SMP over {0} is not available in this build")]
+    SmpUnavailable(crate::Transport),
+
+    #[cfg(feature = "smp")]
+    #[error("an update of {0} is already running")]
+    OtaInProgress(crate::DeviceId),
+
+    #[cfg(feature = "smp")]
+    #[error("after the reset the device runs another image than the one uploaded")]
+    OtaVerifyMismatch { expected: Vec<u8>, found: Vec<u8> },
+
     #[cfg(feature = "wifi-prov")]
     #[error("device reported a Wi-Fi provisioning error (status code 0x03)")]
     WifiProvFailed,

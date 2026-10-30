@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.1.1
+
+- `smp`: SMP sessions and firmware updates over wslib-mcumgr.
+  `Discovery::open_smp_udp`, `open_smp`, `ota_udp` and `ota`, and
+  `ota_udp_addr`, streaming `OtaEvent`s; with `ble`, `open_smp_ble` and
+  `ota_ble`. Their errors are `Error::Smp`, `SmpUnavailable` and
+  `OtaVerifyMismatch`. `OtaEvent` is `#[non_exhaustive]`, and so are the
+  re-exported `UploadProgress` and `ImageSlot`.
+  Opens of one device's session, SMP or Wi-Fi provisioning, take turns
+  without holding the other devices' sessions, and a cached session whose
+  link has closed is opened again, over UDP as over BLE. A failed open
+  removes the entry it made for the device.
+- `ota_ble` and `ota_udp` return `OtaStream`, as `ota` does, and
+  `Discovery::open_smp_on` opens a seen device's session over a transport
+  chosen at run time. `Discovery::ota_on` updates one the same way.
+- `OtaOptions` is `#[non_exhaustive]`, built from `default()` with
+  `with_reconnect_timeout` and `with_upload`; its `upload` field takes the
+  update's `UploadOptions`, now re-exported, for the image number and the
+  chunk timeouts.
+- Dropping an OTA stream stops its update at the next wait (the upload,
+  a reply, the wait for the reset device) rather than at its next event,
+  and never mid-frame. It cancels the update only before `Activating`.
+  Dropped after `Activated` but before `Resetting`, no reset is sent and the
+  device boots the test image at its next reset; dropped after `ResetSent`,
+  nothing confirms the image, so swap-mode MCUboot reverts at the next boot.
+- A second update under a device id whose update is running fails at once
+  with `Error::OtaInProgress`. The guard is per id, so it spans neither
+  transports, nor the device's other ids, nor `ota_udp_addr`.
+- `OtaEvent` serialises, tagged by `kind` in kebab case as
+  `DiscoveryEvent` is; a hash is an array of bytes, as in `UploadProgress`.
+  `OtaEvent::UploadProgress` carries wslib-mcumgr's `UploadProgress`, so the
+  two crates release together.
+- `WifiStatus::as_byte`, the inverse of `from_byte`.
+- `probe` tells a device that answers in a version (`Probe::Answered`) from
+  one that sends bytes no frame parses from (`Unparseable`) and one that
+  says nothing (`Silent`). `probe_version` is unchanged.
+
 ## 0.1.0
 
 - The FrameLink session, moved in with every serialised shape unchanged:

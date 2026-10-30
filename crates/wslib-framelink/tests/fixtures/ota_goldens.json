@@ -1,0 +1,14 @@
+{
+  "activated": "{\"kind\":\"activated\",\"hash\":[171,205]}",
+  "activating": "{\"kind\":\"activating\"}",
+  "confirmed": "{\"kind\":\"confirmed\"}",
+  "confirming": "{\"kind\":\"confirming\"}",
+  "reconnected": "{\"kind\":\"reconnected\",\"device_id\":\"mdns:udp:wfl-1234._mcumgr._udp.local.\"}",
+  "reconnecting": "{\"kind\":\"reconnecting\",\"name\":\"WFL-1234\"}",
+  "reset_sent": "{\"kind\":\"reset-sent\"}",
+  "resetting": "{\"kind\":\"resetting\"}",
+  "session_opened": "{\"kind\":\"session-opened\"}",
+  "upload_progress": "{\"kind\":\"upload-progress\",\"bytes_sent\":512,\"total_bytes\":1024,\"resumed_from\":256}",
+  "upload_progress_final": "{\"kind\":\"upload-progress\",\"bytes_sent\":1024,\"total_bytes\":1024,\"image_hash\":[171,205]}",
+  "verified": "{\"kind\":\"verified\",\"active_hash\":[171,205]}"
+}

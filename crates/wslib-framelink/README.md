@@ -22,7 +22,8 @@ println!("{} {}", identity.board_name, identity.board_revision);
   when the device reports none), its embedded `BoardDef` and live signals.
 - `probe_version`: the protocol version a device replies in, after a
   session to it has failed. A device drops a frame of a version it does not
-  speak, so a PING goes out at every version.
+  speak, so a PING goes out at every version. `probe` also tells a silent
+  device from one whose reply no frame parses from.
 - `board`: the board TOML a device stores, up and down, and its signals for a
   picker.
 - `Error`: one error for the crate.
@@ -44,6 +45,11 @@ None is on by default.
 - `wifi-prov` (with `ble` and `discovery`): `Discovery::open_wifi_prov`, a
   session writing Wi-Fi credentials to a device over BLE and streaming its
   progress.
+- `smp` (with `discovery`): `Discovery::open_smp_udp` and `open_smp`, SMP
+  sessions over wslib-mcumgr, and `ota_udp`, `ota` and `ota_udp_addr`, a
+  firmware update as a stream of `OtaEvent`s: upload, test, reset,
+  reconnect, verify the running image, confirm. With `ble`, `open_smp_ble`
+  and `ota_ble` too.
 
 `Device`, `DiscoveryEvent`, the registry's records and the Wi-Fi types
 serialise as they did before the move; `tests/goldens.rs` pins them.

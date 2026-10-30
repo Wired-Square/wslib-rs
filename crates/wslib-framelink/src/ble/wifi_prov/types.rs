@@ -81,6 +81,16 @@ impl WifiStatus {
         }
     }
 
+    /// The byte the device reports, the inverse of [`from_byte`](Self::from_byte).
+    pub const fn as_byte(self) -> u8 {
+        match self {
+            Self::Disconnected => 0,
+            Self::Connecting => 1,
+            Self::Connected => 2,
+            Self::Error => 3,
+        }
+    }
+
     /// Whether a provisioning attempt has ended, connected or failed.
     pub const fn is_terminal(self) -> bool {
         matches!(self, Self::Connected | Self::Error)
@@ -149,6 +159,18 @@ mod tests {
                 sec.name().is_some(),
                 "named constant {sec:?} should have a name"
             );
+        }
+    }
+
+    #[test]
+    fn wifi_status_bytes_round_trip() {
+        for status in [
+            WifiStatus::Disconnected,
+            WifiStatus::Connecting,
+            WifiStatus::Connected,
+            WifiStatus::Error,
+        ] {
+            assert_eq!(WifiStatus::from_byte(status.as_byte()), status);
         }
     }
 

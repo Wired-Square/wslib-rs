@@ -23,7 +23,7 @@ use tracing::{debug, warn};
 /// disconnected when the last drops. The scanner pauses while any lease
 /// lives (see [`ScanController`]). A dropped link is noticed by the next
 /// operation on it, not watched for.
-#[cfg_attr(not(feature = "wifi-prov"), allow(dead_code))]
+#[cfg_attr(not(any(feature = "wifi-prov", feature = "smp")), allow(dead_code))]
 pub(crate) struct PeripheralLease {
     peripheral: Peripheral,
     ready: tokio::sync::Mutex<bool>,
@@ -42,7 +42,7 @@ impl PeripheralLease {
 
     /// Connects and discovers services, again if the peripheral has dropped
     /// since.
-    #[cfg_attr(not(feature = "wifi-prov"), allow(dead_code))]
+    #[cfg_attr(not(any(feature = "wifi-prov", feature = "smp")), allow(dead_code))]
     pub(crate) async fn ensure_ready(&self) -> Result<&Peripheral, btleplug::Error> {
         let mut guard = self.ready.lock().await;
         let connected = self.peripheral.is_connected().await?;
@@ -145,7 +145,7 @@ impl BlePeripheralStore {
 
     /// The live lease, else a new one over the latest handle; `None` for a
     /// device the scanner never saw.
-    #[cfg_attr(not(feature = "wifi-prov"), allow(dead_code))]
+    #[cfg_attr(not(any(feature = "wifi-prov", feature = "smp")), allow(dead_code))]
     pub async fn acquire_lease(&self, id: &DeviceId) -> Option<Arc<PeripheralLease>> {
         let mut entries = self.entries.lock().expect("BlePeripheralStore lock");
         let entry = entries.get_mut(id)?;

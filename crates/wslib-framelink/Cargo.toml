@@ -1,7 +1,7 @@
 [package]
 name = "wslib-framelink"
-version = "0.1.0"
-description = "A FrameLink device session over TCP, with discovery over mDNS and BLE, a device registry and Wi-Fi provisioning over BLE."
+version = "0.1.1"
+description = "A FrameLink device session over TCP, with discovery over mDNS and BLE, a device registry, Wi-Fi provisioning over BLE and firmware updates over SMP."
 readme = "README.md"
 edition.workspace = true
 rust-version.workspace = true
@@ -12,8 +12,9 @@ publish = ["wired-square"]
 
 [features]
 discovery = ["dep:wslib-mdns", "dep:serde_json", "dep:futures-util", "dep:wslib-file-atomic"]
-ble = ["dep:btleplug", "dep:uuid", "dep:futures-util", "tokio/rt-multi-thread"]
+ble = ["dep:btleplug", "dep:uuid", "dep:futures-util", "tokio/rt-multi-thread", "wslib-mcumgr?/ble"]
 wifi-prov = ["ble", "discovery"]
+smp = ["discovery", "dep:wslib-mcumgr", "wslib-mcumgr/udp"]
 
 [dependencies]
 btleplug = { version = "0.13.5", optional = true }
@@ -28,6 +29,7 @@ wslib-file-atomic = { path = "../wslib-file-atomic", version = "0.1.6", registry
 wslib-framelink-board = { path = "../wslib-framelink-board", version = "0.1", registry = "wired-square" }
 wslib-framelink-protocol = { path = "../wslib-framelink-protocol", version = "0.1", registry = "wired-square" }
 wslib-framing = { path = "../wslib-framing", version = "0.1", registry = "wired-square" }
+wslib-mcumgr = { path = "../wslib-mcumgr", version = "0.1", registry = "wired-square", optional = true }
 wslib-mdns = { path = "../wslib-mdns", version = "0.1", registry = "wired-square", features = ["in-process"], optional = true }
 
 [dev-dependencies]

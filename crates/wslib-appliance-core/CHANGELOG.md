@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- libc's floor is 0.2.183, the workspace's.
+
 ## 0.1.1
 
 - Every http/1.1 listener serves upgrades; the connection was reset right

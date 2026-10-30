@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- libc's floor is 0.2.183, the workspace's.
+- Pins `wslib-appliance-core` 0.1.2.
+
 ## 0.1.1
 
 - Pins `wslib-appliance-core` 0.1.1.

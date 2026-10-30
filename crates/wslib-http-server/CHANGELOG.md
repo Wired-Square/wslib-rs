@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.6
+
+- libc's floor is 0.2.183, the workspace's.
+
 ## 0.1.5
 
 - `serve_local` serves http/1.1 upgrades; the connection was reset right

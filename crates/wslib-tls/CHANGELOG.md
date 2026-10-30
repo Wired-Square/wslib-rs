@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.5
+
+- libc's floor is 0.2.183, the workspace's.
+
 ## 0.2.4
 
 - `Location::discard_pending()`: moves an interrupted write's record aside to

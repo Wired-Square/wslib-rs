@@ -1,0 +1,47 @@
+[package]
+name = "wslib-instruments"
+version = "0.1.0"
+description = "Bench-instrument readers behind one blocking probe: the EEVblog 121GW over BLE and a WiredReflow board over CAN, each reading a FrameLink signal."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+ble = ["dep:btleplug", "dep:uuid", "dep:futures-util", "dep:tokio"]
+can-slcan = ["dep:wslib-can", "dep:tokio", "dep:wslib-can-slcan", "wslib-can-slcan/transport", "dep:wslib-serial"]
+can-socketcan = ["dep:wslib-can", "dep:tokio", "dep:wslib-can-socketcan", "wslib-can-socketcan/transport"]
+can-gsusb = ["dep:wslib-can", "dep:tokio", "dep:wslib-can-gsusb", "wslib-can-gsusb/transport"]
+can-pcan = ["dep:wslib-can", "dep:tokio", "dep:wslib-can-pcan", "wslib-can-pcan/transport"]
+can-gvret = ["dep:wslib-can", "dep:tokio", "dep:wslib-can-gvret", "wslib-can-gvret/transport"]
+serde = ["dep:serde"]
+
+[dependencies]
+btleplug = { version = "0.13.5", optional = true }
+futures-util = { version = "0.3.34", default-features = false, optional = true }
+serde = { version = "1.0.228", features = ["derive"], optional = true }
+tokio = { version = "1.53.3", default-features = false, features = ["macros", "rt", "sync", "time"], optional = true }
+uuid = { version = "1.26.1", default-features = false, optional = true }
+wslib-can = { path = "../wslib-can", version = "0.1.1", registry = "wired-square", features = ["task"], optional = true }
+wslib-can-gsusb = { path = "../wslib-can-gsusb", version = "0.1", registry = "wired-square", optional = true }
+wslib-can-gvret = { path = "../wslib-can-gvret", version = "0.1", registry = "wired-square", optional = true }
+wslib-can-pcan = { path = "../wslib-can-pcan", version = "0.1", registry = "wired-square", optional = true }
+wslib-can-slcan = { path = "../wslib-can-slcan", version = "0.1", registry = "wired-square", optional = true }
+wslib-can-socketcan = { path = "../wslib-can-socketcan", version = "0.1", registry = "wired-square", optional = true }
+wslib-framelink-protocol = { path = "../wslib-framelink-protocol", version = "0.1", registry = "wired-square" }
+wslib-serial = { path = "../wslib-serial", version = "0.1.1", registry = "wired-square", optional = true }
+
+[dev-dependencies]
+serde_json = "1.0.85"
+tokio = { version = "1.53.3", default-features = false, features = ["rt", "time"] }
+
+[[test]]
+name = "gvret"
+required-features = ["can-gvret"]
+
+[[test]]
+name = "serde"
+required-features = ["serde"]

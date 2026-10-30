@@ -8380,6 +8380,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-instruments"
+version = "0.1.0"
+dependencies = [
+ "btleplug",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+ "wslib-can",
+ "wslib-can-gsusb",
+ "wslib-can-gvret",
+ "wslib-can-pcan",
+ "wslib-can-slcan",
+ "wslib-can-socketcan",
+ "wslib-framelink-protocol",
+ "wslib-serial",
+]
+
+[[package]]
 name = "wslib-mcp"
 version = "0.2.1"
 dependencies = [

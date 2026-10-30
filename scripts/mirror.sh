@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Copies every crate in a Forgejo Cargo registry to a read-only mirror. Index
 # files are replaced; a .crate already on the mirror is never rewritten.
-# Settings come from .env (see .env.example).
+# Reads with the read token in ~/.cargo/credentials.toml; settings come from
+# .env (see .env.example).
 #
 #   scripts/mirror.sh [--dry-run]
 set -euo pipefail
@@ -44,9 +45,7 @@ stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 
 # A header file rather than an argument, which `ps` would show.
-token=$(scripts/registry-token.sh)
-printf 'Authorization: %s\n' "$token" >"$stage/auth"
-unset token
+scripts/read-auth.sh >"$stage/auth"
 get() { curl -fsS -H "@$stage/auth" "$@"; }
 
 dl=$(get "$index/config.json" | jq -r .dl)

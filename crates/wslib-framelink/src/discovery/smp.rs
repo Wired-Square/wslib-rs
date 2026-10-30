@@ -789,6 +789,68 @@ mod tests {
         frames_once_quiet(&senders).await;
     }
 
+    /// Exhaustive, so a new variant does not compile until it has a golden.
+    fn golden_name(event: &OtaEvent) -> &'static str {
+        match event {
+            OtaEvent::SessionOpened => "session_opened",
+            OtaEvent::UploadProgress(p) if p.image_hash.is_some() => "upload_progress_final",
+            OtaEvent::UploadProgress(_) => "upload_progress",
+            OtaEvent::Activating => "activating",
+            OtaEvent::Activated { .. } => "activated",
+            OtaEvent::Resetting => "resetting",
+            OtaEvent::ResetSent => "reset_sent",
+            OtaEvent::Reconnecting { .. } => "reconnecting",
+            OtaEvent::Reconnected { .. } => "reconnected",
+            OtaEvent::Verified { .. } => "verified",
+            OtaEvent::Confirming => "confirming",
+            OtaEvent::Confirmed => "confirmed",
+        }
+    }
+
+    #[test]
+    fn every_ota_event_serialises_as_its_golden() {
+        let goldens: std::collections::BTreeMap<String, String> =
+            serde_json::from_str(include_str!("../../tests/fixtures/ota_goldens.json")).unwrap();
+        let progress = |json| OtaEvent::UploadProgress(serde_json::from_str(json).unwrap());
+        let samples = [
+            OtaEvent::SessionOpened,
+            progress(r#"{"bytes_sent":512,"total_bytes":1024,"resumed_from":256}"#),
+            progress(r#"{"bytes_sent":1024,"total_bytes":1024,"image_hash":[171,205]}"#),
+            OtaEvent::Activating,
+            OtaEvent::Activated {
+                hash: vec![0xAB, 0xCD],
+            },
+            OtaEvent::Resetting,
+            OtaEvent::ResetSent,
+            OtaEvent::Reconnecting {
+                name: "WFL-1234".into(),
+            },
+            OtaEvent::Reconnected {
+                device_id: DeviceId::new("mdns:udp:wfl-1234._mcumgr._udp.local."),
+            },
+            OtaEvent::Verified {
+                active_hash: vec![0xAB, 0xCD],
+            },
+            OtaEvent::Confirming,
+            OtaEvent::Confirmed,
+        ];
+
+        let checked: std::collections::BTreeSet<&str> = samples
+            .iter()
+            .map(|event| {
+                let name = golden_name(event);
+                assert_eq!(
+                    serde_json::to_string(event).unwrap(),
+                    goldens[name],
+                    "{name}"
+                );
+                name
+            })
+            .collect();
+
+        assert!(goldens.keys().map(String::as_str).eq(checked));
+    }
+
     #[tokio::test]
     async fn smp_over_tcp_is_refused() {
         let discovery = Discovery::idle();

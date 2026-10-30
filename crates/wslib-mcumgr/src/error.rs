@@ -18,6 +18,9 @@ pub enum Error {
     #[error("SMP encode failed: {0}")]
     Encode(String),
 
+    #[error("every sequence number awaits a reply")]
+    SequenceExhausted,
+
     #[error("SMP decode failed: {0}")]
     Decode(String),
 

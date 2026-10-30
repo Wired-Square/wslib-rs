@@ -24,7 +24,7 @@ pub struct ImageSlot {
     pub active: bool,
     pub permanent: bool,
     /// Which image, on a device with more than one.
-    pub image: Option<i32>,
+    pub image: Option<u8>,
 }
 
 /// How [`Session::upload`](crate::Session::upload) sends an image.
@@ -83,7 +83,7 @@ pub struct UploadProgress {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_hash: Option<Vec<u8>>,
     /// On the first event after the upload lost ground, the offset it lost.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resumed_from: Option<usize>,
 }
 
@@ -111,7 +111,7 @@ pub(crate) struct StateResponse {
 #[derive(Deserialize)]
 pub(crate) struct SlotWire {
     #[serde(default)]
-    image: Option<i32>,
+    image: Option<u8>,
     slot: i32,
     #[serde(default)]
     version: String,
@@ -310,5 +310,35 @@ mod tests {
         assert_eq!(slot.hash, [0xde, 0xad]);
         assert!(slot.bootable && !slot.active && !slot.confirmed);
         assert_eq!(slot.image, None);
+    }
+
+    // {"images": [{"image": 300, "slot": 0}]}, by hand per RFC 8949.
+    #[test]
+    fn an_image_number_past_u8_is_a_decode_error() {
+        let mut payload = vec![0xa1, 0x66];
+        payload.extend_from_slice(b"images");
+        payload.extend_from_slice(&[0x81, 0xa2, 0x65]);
+        payload.extend_from_slice(b"image");
+        payload.extend_from_slice(&[0x19, 0x01, 0x2c, 0x64]);
+        payload.extend_from_slice(b"slot");
+        payload.push(0x00);
+        let mut frame = crate::Header::new(
+            crate::Op::ReadResponse,
+            crate::Group::Image,
+            CMD_STATE,
+            0,
+            payload.len() as u16,
+        )
+        .encode()
+        .to_vec();
+        frame.extend_from_slice(&payload);
+
+        let result = crate::frame::decode_reply::<StateResponse>(&frame, "image state");
+
+        assert!(
+            matches!(result, Err(Error::Decode(_))),
+            "{:?}",
+            result.err()
+        );
     }
 }

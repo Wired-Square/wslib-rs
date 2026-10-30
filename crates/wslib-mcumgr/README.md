@@ -39,7 +39,8 @@ session.reset().await?;
 None is on by default; without one there is no socket.
 
 - `udp`: `Session::connect_udp`, binding the peer's address family, with
-  chunks that fit one datagram.
+  chunks that fit one datagram. Any receive error, an ICMP refusal among
+  them, ends the session; a fresh one recovers.
 - `ble`: `BleTransport` over btleplug, on a connected peripheral and the SMP
   characteristic's notifications, which the caller supplies.
   A frame larger than the MTU needs the device built with

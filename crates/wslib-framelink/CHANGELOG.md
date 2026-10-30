@@ -19,6 +19,8 @@
   and never mid-frame.
 - `OtaEvent` serialises, tagged by `kind` in kebab case as
   `DiscoveryEvent` is; a hash is an array of bytes, as in `UploadProgress`.
+  `OtaEvent::UploadProgress` carries wslib-mcumgr's `UploadProgress`, so the
+  two crates release together.
 - `WifiStatus::as_byte`, the inverse of `from_byte`.
 - `probe` tells a device that answers in a version (`Probe::Answered`) from
   one that sends bytes no frame parses from (`Unparseable`) and one that

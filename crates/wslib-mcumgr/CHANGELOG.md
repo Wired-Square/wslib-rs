@@ -25,6 +25,10 @@
   dropping bytes that start no reply, frames left unfinished, and a frame
   whose tail was lost once the next reply begins).
 - `UploadProgress`, `ImageSlot`, `FsProgress` and `FsHash` serialise and
-  deserialise with serde; a hash is an array of bytes.
+  deserialise with serde; a hash is an array of bytes, and an absent
+  `image_hash` or `resumed_from` is left out.
+- An image number is a `u8`, in `UploadOptions` and `ImageSlot` alike; a
+  state read naming one past 255 is a decode error.
+- `Error::SequenceExhausted` when every sequence number awaits a reply.
 - `Header::new`. `Header`, `UploadOptions`, `UploadProgress`, `ImageSlot`,
   `McumgrParams`, `FsProgress` and `FsHash` are `#[non_exhaustive]`.

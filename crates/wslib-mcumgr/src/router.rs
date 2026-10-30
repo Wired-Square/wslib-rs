@@ -186,7 +186,7 @@ impl Sequences {
                 return Ok(seq);
             }
         }
-        Err(Error::Encode("every sequence number awaits a reply".into()))
+        Err(Error::SequenceExhausted)
     }
 
     /// Stops waiting for every reply still due.
@@ -208,5 +208,37 @@ impl Inbox {
     /// The next reply, in the order they arrive.
     pub(crate) async fn next(&mut self) -> Result<Vec<u8>, Error> {
         self.0.recv().await.unwrap_or(Err(Error::LinkClosed))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::BoxFuture;
+
+    struct Silent;
+
+    impl Transport for Silent {
+        fn send(&self, _: Vec<u8>) -> BoxFuture<'_, Result<(), Error>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn receive(&self) -> BoxFuture<'_, Result<Vec<u8>, Error>> {
+            Box::pin(std::future::pending())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_request_past_every_sequence_number_is_refused() {
+        let router = Router::start(Arc::new(Silent));
+        let replies = router.replies();
+        for _ in 0..=u8::MAX {
+            replies.expect(Group::Os, 0).unwrap();
+        }
+
+        assert!(matches!(
+            replies.expect(Group::Os, 0),
+            Err(Error::SequenceExhausted)
+        ));
     }
 }

@@ -9,6 +9,6 @@
   "resetting": "{\"kind\":\"resetting\"}",
   "session_opened": "{\"kind\":\"session-opened\"}",
   "upload_progress": "{\"kind\":\"upload-progress\",\"bytes_sent\":512,\"total_bytes\":1024,\"resumed_from\":256}",
-  "upload_progress_final": "{\"kind\":\"upload-progress\",\"bytes_sent\":1024,\"total_bytes\":1024,\"image_hash\":[171,205],\"resumed_from\":null}",
+  "upload_progress_final": "{\"kind\":\"upload-progress\",\"bytes_sent\":1024,\"total_bytes\":1024,\"image_hash\":[171,205]}",
   "verified": "{\"kind\":\"verified\",\"active_hash\":[171,205]}"
 }

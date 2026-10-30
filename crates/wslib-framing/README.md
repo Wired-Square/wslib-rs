@@ -18,7 +18,8 @@ assert_eq!(frames[0].bytes, [0x11, 0x00, 0x22]);
 
 A decoder has `feed`, a `flush` that ends a stream but not the decoder,
 `bytes_fed`, and each frame's `end_offset`. `CobsDecoder` drops and counts a
-malformed block, and `with_max_frame_len` caps a frame.
+malformed block, and `with_max_frame_len` caps a frame; `max_stuffed_len`
+gives the cap for the largest payload a protocol allows.
 
 ```toml
 wslib-framing = { version = "0.1", registry = "wired-square" }

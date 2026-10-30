@@ -163,6 +163,15 @@ if grep -qx wslib-framing <<<"$selected"; then
     || die "wslib-framing depends on more than thiserror"
 fi
 
+# The FrameLink wire crate is sans-io on every target.
+for crate in wslib-framelink-protocol; do
+  if grep -qx $crate <<<"$selected"; then
+    step "$crate has no serial port, tokio or btleplug"
+    tree=$(normal_tree $crate --target all)
+    ! grep -E '^(serialport|tokio|btleplug) ' <<<"$tree" || die "$crate pulls in serialport, tokio or btleplug"
+  fi
+done
+
 # The gateway's types are serde-only, a Windows client's included.
 if grep -qx wslib-wiretap-gateway <<<"$selected"; then
   step "wslib-wiretap-gateway on Windows has no serial port or SQLite"

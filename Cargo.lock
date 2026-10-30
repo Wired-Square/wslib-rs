@@ -8089,6 +8089,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-framelink-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "ts-rs 12.0.1",
+ "wslib-checksum",
+ "wslib-framing",
+]
+
+[[package]]
 name = "wslib-framing"
 version = "0.1.0"
 dependencies = [

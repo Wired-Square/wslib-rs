@@ -70,6 +70,8 @@ pub enum OtaEvent {
     Confirmed,
 }
 
+/// Dropping the stream cancels the update only before `Activating`; after
+/// that the device keeps the test image and resets.
 pub type OtaStream = Pin<Box<dyn Stream<Item = Result<OtaEvent, Error>> + Send + 'static>>;
 
 impl Discovery {
@@ -190,7 +192,8 @@ impl Discovery {
         }
     }
 
-    /// A firmware update over BLE, as a stream of its stages.
+    /// A firmware update over BLE, as a stream of its stages; see
+    /// [`OtaStream`] for what dropping it cancels.
     #[cfg(feature = "ble")]
     pub fn ota_ble(
         &self,
@@ -202,7 +205,8 @@ impl Discovery {
         run_ota(source, image, options)
     }
 
-    /// A firmware update over UDP, as a stream of its stages.
+    /// A firmware update over UDP, as a stream of its stages; see
+    /// [`OtaStream`] for what dropping it cancels.
     pub fn ota_udp(
         &self,
         device_id: &DeviceId,
@@ -214,7 +218,8 @@ impl Discovery {
     }
 
     /// A firmware update by registry, as [`open_smp`](Self::open_smp) finds
-    /// the device; a `Manual` one is reached at its address throughout.
+    /// the device; a `Manual` one is reached at its address throughout. See
+    /// [`OtaStream`] for what dropping it cancels.
     pub fn ota(
         &self,
         id: &DeviceId,
@@ -224,7 +229,15 @@ impl Discovery {
     ) -> OtaStream {
         if let ConnectTarget::Direct(addr) = registry::target_for(id, transport) {
             let label = registry::canonical_name(id.as_str()).to_owned();
-            return run_ota(async move { Ok(Source::at(addr, label)) }, image, options);
+            let (discovery, id) = (self.clone(), id.clone());
+            let source = async move {
+                let claim = discovery.claim_update(&id)?;
+                Ok(Source {
+                    _claim: Some(claim),
+                    ..Source::at(addr, label)
+                })
+            };
+            return run_ota(source, image, options);
         }
         let (discovery, id) = (self.clone(), id.clone());
         let source = async move {
@@ -239,7 +252,8 @@ impl Discovery {
 
 /// A firmware update over UDP to `addr`, with no discovery: after the reset
 /// it polls `addr` until the new image is running. `label` names the device
-/// in `Reconnecting`.
+/// in `Reconnecting`. Dropping the stream cancels it only before
+/// `Activating`; after that the device keeps the test image and resets.
 pub fn ota_udp_addr(
     addr: SocketAddr,
     label: String,
@@ -255,6 +269,36 @@ struct Source {
     label: String,
     device_id: DeviceId,
     kind: SourceKind,
+    _claim: Option<UpdateClaim>,
+}
+
+/// One update per device at a time: the device has a single upload in
+/// progress, and the update's session is shared with any other open.
+struct UpdateClaim {
+    discovery: Discovery,
+    id: DeviceId,
+}
+
+impl Discovery {
+    fn claim_update(&self, id: &DeviceId) -> Result<UpdateClaim, Error> {
+        if !self.updating().insert(id.clone()) {
+            return Err(Error::OtaInProgress(id.clone()));
+        }
+        Ok(UpdateClaim {
+            discovery: self.clone(),
+            id: id.clone(),
+        })
+    }
+
+    fn updating(&self) -> std::sync::MutexGuard<'_, std::collections::HashSet<DeviceId>> {
+        (self.inner.updating.lock()).unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+impl Drop for UpdateClaim {
+    fn drop(&mut self) {
+        self.discovery.updating().remove(&self.id);
+    }
 }
 
 enum SourceKind {
@@ -278,6 +322,7 @@ impl Source {
             .get(&device_id)
             .await
             .ok_or_else(|| Error::UnknownDevice(device_id.clone()))?;
+        let claim = discovery.claim_update(&device_id)?;
         Ok(Self {
             label: device.name().to_owned(),
             device_id,
@@ -285,6 +330,7 @@ impl Source {
                 discovery,
                 transport,
             },
+            _claim: Some(claim),
         })
     }
 
@@ -293,6 +339,7 @@ impl Source {
             label,
             device_id: DeviceId::new(format!("udp:{addr}")),
             kind: SourceKind::At(addr),
+            _claim: None,
         }
     }
 
@@ -443,7 +490,8 @@ async fn until_dropped<T>(
 
 /// `set_state(test)` then reset suits both overwrite-only and swap MCUboot;
 /// the confirm after the reset is a no-op on the first and makes the swap
-/// permanent on the second. A dropped stream ends the update.
+/// permanent on the second. A dropped stream ends the update, but a test or
+/// reset already begun still reaches the device.
 async fn ota(
     source: &Source,
     id: &mut DeviceId,
@@ -849,6 +897,46 @@ mod tests {
             .collect();
 
         assert!(goldens.keys().map(String::as_str).eq(checked));
+    }
+
+    #[tokio::test]
+    async fn a_second_update_of_a_device_is_refused_until_the_first_ends() {
+        let (addr, _) = smp_device(false).await;
+        let discovery = Discovery::idle();
+        let id = DeviceId::new("mdns:udp:wfl-1");
+        discovery.observe(
+            crate::Device::builder(id.clone(), "WFL-1")
+                .transport(Transport::Udp)
+                .capabilities(CapabilitySet::SMP)
+                .address(addr)
+                .build(),
+        );
+        let update = || {
+            let image = mcuboot_image([0xAB; 32], &IMAGE_BODY);
+            discovery.ota_udp(&id, image, OtaOptions::default())
+        };
+        let mut first = update();
+        until_event(&mut first, |e| matches!(e, OtaEvent::SessionOpened)).await;
+
+        let mut second = update();
+        assert!(
+            matches!(second.next().await, Some(Err(Error::OtaInProgress(ref busy))) if *busy == id)
+        );
+        assert!(second.next().await.is_none());
+
+        drop(first);
+        let after_the_first = async {
+            loop {
+                match update().next().await {
+                    Some(Err(Error::OtaInProgress(_))) => tokio::time::sleep(SETTLE).await,
+                    other => return other,
+                }
+            }
+        };
+        let third = tokio::time::timeout(Duration::from_secs(1), after_the_first)
+            .await
+            .expect("the first update lets go of the device");
+        assert!(matches!(third, Some(Ok(OtaEvent::SessionOpened))));
     }
 
     #[tokio::test]

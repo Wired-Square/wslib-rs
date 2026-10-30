@@ -107,6 +107,10 @@ pub enum Error {
     SmpUnavailable(crate::Transport),
 
     #[cfg(feature = "smp")]
+    #[error("an update of {0} is already running")]
+    OtaInProgress(crate::DeviceId),
+
+    #[cfg(feature = "smp")]
     #[error("after the reset the device runs another image than the one uploaded")]
     OtaVerifyMismatch { expected: Vec<u8>, found: Vec<u8> },
 

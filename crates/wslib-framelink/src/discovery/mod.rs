@@ -69,6 +69,8 @@ struct DiscoveryInner {
     /// A device's open sessions; repeated opens share them.
     #[cfg(any(feature = "wifi-prov", feature = "smp"))]
     sessions: tokio::sync::Mutex<std::collections::HashMap<DeviceId, ActiveSessions>>,
+    #[cfg(feature = "smp")]
+    updating: Mutex<std::collections::HashSet<DeviceId>>,
 }
 
 /// Each session holds the device's BLE lease; the link closes when the last
@@ -148,6 +150,8 @@ impl Discovery {
                 ble_store: Arc::default(),
                 #[cfg(any(feature = "wifi-prov", feature = "smp"))]
                 sessions: tokio::sync::Mutex::default(),
+                #[cfg(feature = "smp")]
+                updating: Mutex::default(),
             }),
         }
     }
@@ -396,7 +400,7 @@ mod tests {
             Self::with(Arc::new(Mutex::new(tracker)), event_tx, Vec::new(), None)
         }
 
-        fn observe(&self, device: Device) {
+        pub(crate) fn observe(&self, device: Device) {
             self.tracker().observe(device);
         }
     }

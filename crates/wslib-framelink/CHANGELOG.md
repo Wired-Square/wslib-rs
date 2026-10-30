@@ -16,7 +16,10 @@
   chosen at run time.
 - Dropping an OTA stream stops its update at the next wait (the upload,
   a reply, the wait for the reset device) rather than at its next event,
-  and never mid-frame.
+  and never mid-frame. It cancels the update only before `Activating`;
+  after that the device keeps the test image and resets.
+- A second update of a device whose update is running fails at once with
+  `Error::OtaInProgress`.
 - `OtaEvent` serialises, tagged by `kind` in kebab case as
   `DiscoveryEvent` is; a hash is an array of bytes, as in `UploadProgress`.
   `OtaEvent::UploadProgress` carries wslib-mcumgr's `UploadProgress`, so the

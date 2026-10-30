@@ -109,6 +109,7 @@ impl Transport for BleTransport {
 }
 
 impl Session {
+    /// Must be called within a tokio runtime, as [`Session::new`] is.
     pub fn ble(transport: BleTransport) -> Self {
         Self::new(Arc::new(transport), BLE_CHUNK_SIZE)
     }

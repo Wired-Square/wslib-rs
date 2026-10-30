@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -18,6 +18,7 @@ use crate::image::{
     CMD_STATE, CMD_UPLOAD, ImageSlot, StateResponse, StateWrite, UploadAck, UploadChunk,
     UploadProgress, mcuboot_image_hash,
 };
+use crate::router::{Replies, Router};
 use crate::{Error, Group, Transport};
 
 const CMD_ECHO: u8 = 0;
@@ -38,12 +39,15 @@ const MAX_RESUMES_WITHOUT_PROGRESS: usize = 3;
 
 pub(crate) const PROGRESS_CHANNEL_DEPTH: usize = 32;
 
-/// One device buffer stays free for the reply. In-flight chunks are keyed by
-/// a `u8` sequence number.
+/// Half the sequence numbers, so a pass's unanswered chunks and the next
+/// pass's fit beside each other.
+const MAX_WINDOW: usize = 128;
+
+/// One device buffer stays free for the reply.
 fn upload_window(transport_cap: usize, device_buf_count: usize) -> usize {
     transport_cap
         .min(device_buf_count.saturating_sub(1))
-        .clamp(1, u8::MAX as usize)
+        .clamp(1, MAX_WINDOW)
 }
 
 /// What a device's `os/mcumgr-params` reports of its SMP buffers.
@@ -54,11 +58,10 @@ pub struct McumgrParams {
     pub buf_count: usize,
 }
 
-/// An SMP client on one transport. Requests may come from several tasks; a
-/// reply is matched to its request by sequence number.
+/// An SMP client on one transport. Requests may come from several tasks; one
+/// task reads every reply and hands it to its request by sequence number.
 pub struct Session {
-    transport: Arc<dyn Transport>,
-    seq: Arc<AtomicU8>,
+    router: Arc<Router>,
     chunk_size: AtomicUsize,
     buf_count: AtomicUsize,
     chunk_timeout: Duration,
@@ -67,10 +70,12 @@ pub struct Session {
 impl Session {
     /// `chunk_size` is the image data per upload request until
     /// [`negotiate_params`](Self::negotiate_params) learns the device's.
+    ///
+    /// Must be called within a tokio runtime: it spawns the task that reads
+    /// the transport, which a receive error ends, closing the session.
     pub fn new(transport: Arc<dyn Transport>, chunk_size: usize) -> Self {
         Self {
-            transport,
-            seq: Arc::new(AtomicU8::new(0)),
+            router: Router::start(transport),
             chunk_size: AtomicUsize::new(chunk_size),
             buf_count: AtomicUsize::new(1),
             chunk_timeout: CHUNK_TIMEOUT,
@@ -78,7 +83,7 @@ impl Session {
     }
 
     pub async fn is_connected(&self) -> bool {
-        self.transport.is_connected().await
+        self.router.is_open() && self.router.transport().is_connected().await
     }
 
     /// Sizes uploads to the device's buffers. A device without the command
@@ -126,6 +131,8 @@ impl Session {
     /// Dropping the stream cancels the upload: no chunk is sent after it.
     /// A device that stops answering mid-upload is resumed from the offset
     /// it reports, a few times before [`Error::UploadStalled`].
+    ///
+    /// Must be called within a tokio runtime: the upload runs as a task.
     pub fn upload(
         &self,
         image: Arc<[u8]>,
@@ -133,12 +140,11 @@ impl Session {
     ) -> impl Stream<Item = Result<UploadProgress, Error>> + Send + Unpin + 'static {
         let (events, rx) = mpsc::channel(PROGRESS_CHANNEL_DEPTH);
         let upload = Upload {
-            transport: Arc::clone(&self.transport),
-            seq: Arc::clone(&self.seq),
+            router: Arc::clone(&self.router),
             chunk_size: self.chunk_size.load(Ordering::Acquire),
             chunk_timeout: self.chunk_timeout,
             window: upload_window(
-                self.transport.max_in_flight(),
+                self.router.transport().max_in_flight(),
                 self.buf_count.load(Ordering::Acquire),
             ),
             image,
@@ -179,33 +185,26 @@ impl Session {
             .map(drop)
     }
 
-    /// Reboots the device. A missing reply is not an error, since the device
-    /// may restart before it sends one.
+    /// Reboots the device. A reply refusing it is an error, but a link that
+    /// fails or stays silent once the request is sent is not, since the
+    /// device may restart before it answers.
     pub async fn reset(&self) -> Result<(), Error> {
-        self.transport.send(reset_frame(self.next_seq())?).await?;
-        if tokio::time::timeout(ROUND_TRIP_TIMEOUT, self.transport.receive())
-            .await
-            .is_err()
-        {
-            warn!("no reply to reset; the device has likely rebooted");
+        let mut replies = self.send(reset_frame).await?;
+        match tokio::time::timeout(ROUND_TRIP_TIMEOUT, replies.next()).await {
+            Ok(Ok(reply)) => decode_reply::<Empty>(&reply, "reset").map(drop),
+            _ => {
+                warn!("no reply to reset; the device has likely rebooted");
+                Ok(())
+            }
         }
-        Ok(())
     }
 
-    pub(crate) fn transport(&self) -> Arc<dyn Transport> {
-        Arc::clone(&self.transport)
-    }
-
-    pub(crate) fn seq_counter(&self) -> Arc<AtomicU8> {
-        Arc::clone(&self.seq)
+    pub(crate) fn router(&self) -> Arc<Router> {
+        Arc::clone(&self.router)
     }
 
     pub(crate) fn chunk_budget(&self) -> usize {
         self.chunk_size.load(Ordering::Acquire)
-    }
-
-    pub(crate) fn next_seq(&self) -> u8 {
-        self.seq.fetch_add(1, Ordering::Relaxed)
     }
 
     pub(crate) async fn request<Q: Serialize, R: DeserializeOwned>(
@@ -216,24 +215,25 @@ impl Session {
         payload: &Q,
         context: &str,
     ) -> Result<R, Error> {
-        let frame = frame::encode(op, group, command, self.next_seq(), payload)?;
-        decode_reply(&self.round_trip(frame).await?, context)
+        let mut replies = self
+            .send(|seq| frame::encode(op, group, command, seq, payload))
+            .await?;
+        let reply = tokio::time::timeout(ROUND_TRIP_TIMEOUT, replies.next())
+            .await
+            .map_err(|_| Error::Timeout)??;
+        decode_reply(&reply, context)
     }
 
-    /// Skips frames carrying another request's sequence number, left over
-    /// from one that timed out.
-    async fn round_trip(&self, frame: Vec<u8>) -> Result<Vec<u8>, Error> {
-        let seq = Header::decode(&frame)?.seq;
-        self.transport.send(frame).await?;
-        let deadline = tokio::time::Instant::now() + ROUND_TRIP_TIMEOUT;
-        loop {
-            let reply = tokio::time::timeout_at(deadline, self.transport.receive())
-                .await
-                .map_err(|_| Error::Timeout)??;
-            if Header::decode(&reply)?.seq == seq {
-                return Ok(reply);
-            }
-        }
+    /// Sends the frame `encode` builds for a free sequence number, whose
+    /// reply then comes to the returned [`Replies`].
+    async fn send(
+        &self,
+        encode: impl FnOnce(u8) -> Result<Vec<u8>, Error>,
+    ) -> Result<Replies, Error> {
+        let replies = self.router.replies();
+        let frame = encode(replies.expect()?)?;
+        self.router.send(frame).await?;
+        Ok(replies)
     }
 }
 
@@ -250,8 +250,7 @@ impl<T> Stream for Events<T> {
 }
 
 struct Upload {
-    transport: Arc<dyn Transport>,
-    seq: Arc<AtomicU8>,
+    router: Arc<Router>,
     chunk_size: usize,
     chunk_timeout: Duration,
     window: usize,
@@ -297,10 +296,6 @@ impl Drop for EndPass<'_> {
 }
 
 impl Upload {
-    fn next_seq(&self) -> u8 {
-        self.seq.fetch_add(1, Ordering::Relaxed)
-    }
-
     async fn emit(&self, progress: UploadProgress) -> bool {
         self.events.send(Ok(progress)).await.is_ok()
     }
@@ -339,6 +334,7 @@ impl Upload {
             resumed_from,
             ..self.progress(total)
         };
+        let mut replies = self.router.replies();
         let mut probe_at = 0;
         let mut stalls = Stalls::default();
         let mut resumed_from = None;
@@ -351,8 +347,8 @@ impl Upload {
                 self.emit(complete(resumed_from)).await;
                 return Ok(());
             }
-            let seq = self.next_seq();
-            self.transport
+            let seq = replies.expect()?;
+            self.router
                 .send(self.chunk_frame(seq, probe_at, Some(&sha))?)
                 .await?;
             let timeout = if probe_at == 0 {
@@ -360,7 +356,10 @@ impl Upload {
             } else {
                 self.chunk_timeout
             };
-            let Some(ack) = self.probe_ack(seq, probe_at, timeout).await? else {
+            let Some(ack) = self.probe_ack(&mut replies, seq, probe_at, timeout).await? else {
+                if self.events.is_closed() {
+                    return Ok(());
+                }
                 stalls.record(probe_at, total)?;
                 resumed_from = Some(probe_at);
                 continue;
@@ -390,7 +389,7 @@ impl Upload {
             if !self.emit(event).await {
                 return Ok(());
             }
-            let Some(resume_from) = self.pipeline(ack.off, &image_hash).await? else {
+            let Some(resume_from) = self.pipeline(&mut replies, ack.off, &image_hash).await? else {
                 return Ok(());
             };
             stalls.record(resume_from, total)?;
@@ -399,21 +398,27 @@ impl Upload {
         }
     }
 
-    /// `None` when the chunk timer runs out first.
+    /// `None` when the chunk timer runs out or the stream is dropped first.
+    /// The replies still due from earlier passes are stale once it answers.
     async fn probe_ack(
         &self,
+        replies: &mut Replies,
         seq: u8,
         off: usize,
         timeout: Duration,
     ) -> Result<Option<UploadAck>, Error> {
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
-            let Ok(frame) = tokio::time::timeout_at(deadline, self.transport.receive()).await
-            else {
+            let received = tokio::select! {
+                received = tokio::time::timeout_at(deadline, replies.next()) => received,
+                () = self.events.closed() => return Ok(None),
+            };
+            let Ok(frame) = received else {
                 return Ok(None);
             };
             let frame = frame?;
             if Header::decode(&frame)?.seq == seq {
+                replies.forget();
                 return decode_reply(&frame, &format!("upload chunk at {off}")).map(Some);
             }
             reject_stale_mismatch(&frame)?;
@@ -422,7 +427,13 @@ impl Upload {
 
     /// Sends from `start` to the end, at most `window` chunks unanswered.
     /// `Some(offset)` when the device lost ground, to resume from there.
-    async fn pipeline(&self, start: usize, image_hash: &[u8]) -> Result<Option<usize>, Error> {
+    async fn pipeline(
+        &self,
+        replies: &mut Replies,
+        start: usize,
+        image_hash: &[u8],
+    ) -> Result<Option<usize>, Error> {
+        let Replies { sequences, inbox } = replies;
         let total = self.image.len();
         let in_flight = Mutex::new(HashMap::<u8, ChunkInFlight>::new());
         let credits = Semaphore::new(self.window);
@@ -438,12 +449,12 @@ impl Upload {
                 if stop.load(Ordering::Acquire) || self.events.is_closed() {
                     return Ok(());
                 }
-                let seq = self.next_seq();
+                let seq = sequences.expect()?;
                 let end = (off + self.chunk_size).min(total);
                 let frame = self.chunk_frame(seq, off, None)?;
                 let mut in_flight = in_flight.lock().await;
                 in_flight.insert(seq, ChunkInFlight { start: off, end });
-                self.transport.send(frame).await?;
+                self.router.send(frame).await?;
                 off = end;
             }
             Ok::<_, Error>(())
@@ -456,7 +467,7 @@ impl Upload {
             };
             loop {
                 let received = tokio::select! {
-                    received = tokio::time::timeout(self.chunk_timeout, self.transport.receive()) => received,
+                    received = tokio::time::timeout(self.chunk_timeout, inbox.next()) => received,
                     _ = self.events.closed() => return Ok(None),
                 };
                 let Ok(frame) = received else {
@@ -547,15 +558,15 @@ mod tests {
     const SETTLE: Duration = Duration::from_millis(150);
     const HELD_ACK_TIMEOUT: Duration = Duration::from_secs(5);
     const STALE_SEQ: u8 = 0xEE;
+    const RC_REFUSED: i32 = 1;
 
     // The spec's upload request: {data, off} plus {image, len, sha} on the first,
     // hand-encoded per RFC 8949; framelink-rs's previous codec sent the same bytes.
-    #[test]
-    fn a_first_chunk_carries_image_len_and_sha_and_a_later_one_does_not() {
+    #[tokio::test]
+    async fn a_first_chunk_carries_image_len_and_sha_and_a_later_one_does_not() {
         let (events, _rx) = mpsc::channel(1);
         let upload = Upload {
-            transport: Arc::new(ImageDevice::default()),
-            seq: Arc::default(),
+            router: Router::start(Arc::new(ImageDevice::default())),
             chunk_size: 3,
             chunk_timeout: CHUNK_TIMEOUT,
             window: 1,
@@ -621,7 +632,7 @@ mod tests {
         assert_eq!(upload_window(1, 4), 1);
         assert_eq!(upload_window(usize::MAX, 1), 1);
         assert_eq!(upload_window(usize::MAX, 0), 1);
-        assert_eq!(upload_window(usize::MAX, 400), u8::MAX as usize);
+        assert_eq!(upload_window(usize::MAX, 400), MAX_WINDOW);
     }
 
     #[derive(Deserialize)]
@@ -813,6 +824,166 @@ mod tests {
         Ok(reported)
     }
 
+    #[derive(Serialize, Deserialize)]
+    struct EchoPayload {
+        #[serde(alias = "d")]
+        r: String,
+    }
+
+    #[derive(Serialize)]
+    struct RcReply {
+        rc: i32,
+    }
+
+    /// Answers echoes `batch` at a time, last first; never answers an image
+    /// chunk; answers a reset with `reset_rc`, or closes the link at it.
+    #[derive(Default)]
+    struct OsDevice {
+        batch: usize,
+        reset_rc: Option<i32>,
+        held: std::sync::Mutex<Vec<Vec<u8>>>,
+        received: std::sync::Mutex<VecDeque<Result<Vec<u8>, Error>>>,
+        wake: Notify,
+    }
+
+    impl OsDevice {
+        fn answering_echoes_in_batches_of(batch: usize) -> Arc<Self> {
+            Arc::new(Self {
+                batch,
+                ..Self::default()
+            })
+        }
+
+        fn answering_reset_with(rc: Option<i32>) -> Arc<Self> {
+            Arc::new(Self {
+                reset_rc: rc,
+                ..Self::default()
+            })
+        }
+
+        fn deliver(&self, received: Result<Vec<u8>, Error>) {
+            self.received.lock().unwrap().push_back(received);
+            self.wake.notify_one();
+        }
+
+        fn close(&self) {
+            self.deliver(Err(Error::LinkClosed));
+        }
+    }
+
+    impl Transport for OsDevice {
+        fn send(&self, frame: Vec<u8>) -> BoxFuture<'_, Result<(), Error>> {
+            let header = Header::decode(&frame).unwrap();
+            match (header.group, header.command) {
+                (Group::Os, CMD_ECHO) => {
+                    let (_, echo): (_, EchoPayload) = frame::decode(&frame).unwrap();
+                    let reply =
+                        frame::encode(Op::WriteResponse, Group::Os, CMD_ECHO, header.seq, &echo)
+                            .unwrap();
+                    let mut held = self.held.lock().unwrap();
+                    held.push(reply);
+                    if held.len() >= self.batch {
+                        held.drain(..).rev().for_each(|r| self.deliver(Ok(r)));
+                    }
+                }
+                (Group::Os, CMD_RESET) => match self.reset_rc {
+                    Some(rc) => self.deliver(frame::encode(
+                        Op::WriteResponse,
+                        Group::Os,
+                        CMD_RESET,
+                        header.seq,
+                        &RcReply { rc },
+                    )),
+                    None => self.close(),
+                },
+                _ => {}
+            }
+            Box::pin(async { Ok(()) })
+        }
+
+        fn receive(&self) -> BoxFuture<'_, Result<Vec<u8>, Error>> {
+            Box::pin(async {
+                loop {
+                    if let Some(received) = self.received.lock().unwrap().pop_front() {
+                        return received;
+                    }
+                    self.wake.notified().await;
+                }
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_requests_each_get_their_own_reply() {
+        let session = Session::new(OsDevice::answering_echoes_in_batches_of(2), TEST_CHUNK);
+
+        let (a, b) = tokio::join!(session.echo("a"), session.echo("b"));
+
+        assert_eq!(a.unwrap(), "a");
+        assert_eq!(b.unwrap(), "b");
+    }
+
+    #[tokio::test]
+    async fn a_dropped_upload_stops_waiting_and_leaves_the_next_request_its_reply() {
+        let session = Session::new(OsDevice::answering_echoes_in_batches_of(1), TEST_CHUNK);
+        let stream = session.upload(test_image(), None);
+        tokio::time::sleep(SETTLE).await;
+        assert_eq!(
+            session.router.awaited(),
+            1,
+            "the first chunk awaits its ack"
+        );
+
+        drop(stream);
+        tokio::time::sleep(SETTLE).await;
+
+        assert_eq!(session.router.awaited(), 0);
+        assert_eq!(session.echo("hi").await.unwrap(), "hi");
+    }
+
+    #[tokio::test]
+    async fn a_closed_link_fails_the_waiting_request_and_every_later_one() {
+        let device = OsDevice::answering_echoes_in_batches_of(usize::MAX);
+        let session = Session::new(Arc::clone(&device) as Arc<dyn Transport>, TEST_CHUNK);
+        let waiting = session.echo("never answered");
+        let close = async {
+            tokio::time::sleep(SETTLE).await;
+            device.close();
+        };
+
+        let (result, ()) = tokio::join!(waiting, close);
+
+        assert!(matches!(result, Err(Error::LinkClosed)), "{result:?}");
+        assert!(!session.is_connected().await);
+        assert!(matches!(session.echo("hi").await, Err(Error::LinkClosed)));
+    }
+
+    #[tokio::test]
+    async fn a_reset_the_device_refuses_is_an_error() {
+        let session = Session::new(OsDevice::answering_reset_with(Some(RC_REFUSED)), TEST_CHUNK);
+
+        let result = session.reset().await;
+
+        assert!(
+            matches!(result, Err(Error::Rejected { rc: RC_REFUSED, .. })),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_reset_the_device_accepts_succeeds() {
+        let session = Session::new(OsDevice::answering_reset_with(Some(0)), TEST_CHUNK);
+
+        session.reset().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_reset_that_takes_the_link_down_is_not_an_error() {
+        let session = Session::new(OsDevice::answering_reset_with(None), TEST_CHUNK);
+
+        session.reset().await.unwrap();
+    }
+
     #[tokio::test]
     async fn upload_resumes_from_the_device_offset_after_a_dropped_chunk() {
         let dropped_at = 3 * TEST_CHUNK;
@@ -900,7 +1071,6 @@ mod tests {
         device.responses.lock().unwrap().push_back(leftover);
         let device = Arc::new(device);
         let session = session_on(Arc::clone(&device));
-        assert_ne!(session.seq.load(Ordering::Relaxed), STALE_SEQ);
         let image = test_image();
 
         run_upload(&session, &image).await.unwrap();

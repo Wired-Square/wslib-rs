@@ -7,6 +7,7 @@ mod frame;
 mod fs;
 mod header;
 mod image;
+mod router;
 mod session;
 mod transport;
 

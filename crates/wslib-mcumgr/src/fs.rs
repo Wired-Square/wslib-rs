@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 
 use futures_core::Stream;
 use serde::{Deserialize, Serialize};
@@ -152,13 +151,14 @@ impl Session {
     /// Writes `data` to `remote_path`, one event per acknowledged chunk.
     /// Completion means acknowledged, not correct: follow with
     /// [`fs_verify`](Self::fs_verify). Dropping the stream cancels it.
+    ///
+    /// Must be called within a tokio runtime: the upload runs as a task.
     pub fn fs_upload(
         &self,
         data: Arc<[u8]>,
         remote_path: String,
     ) -> impl Stream<Item = Result<FsProgress, Error>> + Send + Unpin + 'static {
-        let transport = self.transport();
-        let seq = self.seq_counter();
+        let router = self.router();
         let budget = self.fs_chunk_budget(&remote_path);
         let (events, rx) = mpsc::channel(PROGRESS_CHANNEL_DEPTH);
         let run = {
@@ -166,6 +166,7 @@ impl Session {
             async move {
                 let budget = budget?;
                 let total = data.len();
+                let mut replies = router.replies();
                 let mut offset = 0;
                 loop {
                     let request = WriteRequest {
@@ -174,8 +175,8 @@ impl Session {
                         name: &remote_path,
                         len: (offset == 0).then_some(total),
                     };
-                    let seq = seq.fetch_add(1, Ordering::Relaxed);
-                    transport
+                    let seq = replies.expect()?;
+                    router
                         .send(frame::encode(
                             Op::Write,
                             Group::Fs,
@@ -189,9 +190,11 @@ impl Session {
                     } else {
                         CHUNK_TIMEOUT
                     };
-                    let reply = tokio::time::timeout(timeout, transport.receive())
-                        .await
-                        .map_err(|_| Error::UploadStalled { offset, total })??;
+                    let reply = tokio::select! {
+                        reply = tokio::time::timeout(timeout, replies.next()) => reply,
+                        () = events.closed() => return Ok(()),
+                    };
+                    let reply = reply.map_err(|_| Error::UploadStalled { offset, total })??;
                     let ack: Offset = decode_reply(&reply, &context_at("upload", offset))?;
                     if ack.off <= offset && total > 0 {
                         return Err(Error::FsNoProgress { offset });
@@ -397,6 +400,8 @@ mod tests {
     use crate::session::{FRAME_OVERHEAD, next};
     use std::collections::{HashMap, VecDeque};
     use std::sync::Mutex;
+    use std::time::Duration;
+    use tokio::sync::Notify;
 
     const TEST_CHUNK_BUDGET: usize = 512;
     const TEST_DEVICE_BUF_SIZE: usize = TEST_CHUNK_BUDGET + FRAME_OVERHEAD;
@@ -408,6 +413,8 @@ mod tests {
     const RC_NOT_SUPPORTED: i32 = 8;
     const READ_CHUNK: usize = 400;
     const STALE_SEQ: u8 = 0xEE;
+    const STALE_SEQ_OFFSET: u8 = 0x80;
+    const SETTLE: Duration = Duration::from_millis(100);
 
     // The spec's file upload request, hand-encoded per RFC 8949.
     #[test]
@@ -516,6 +523,9 @@ mod tests {
         offset_cap: Option<usize>,
         largest_request: Mutex<usize>,
         v2_errors: bool,
+        silent_writes: bool,
+        stale_before_each_write_reply: bool,
+        wake: Notify,
     }
 
     impl FakeFsDevice {
@@ -532,6 +542,9 @@ mod tests {
                 offset_cap,
                 largest_request: Mutex::new(0),
                 v2_errors: false,
+                silent_writes: false,
+                stale_before_each_write_reply: false,
+                wake: Notify::new(),
             }
         }
 
@@ -566,6 +579,25 @@ mod tests {
             })
         }
 
+        fn with_silent_writes() -> Arc<Self> {
+            Arc::new(Self {
+                silent_writes: true,
+                ..Self::build(usize::MAX, HashSupport::Sha256AndCrc32, None)
+            })
+        }
+
+        fn with_a_stale_reply_before_each_write_reply() -> Arc<Self> {
+            Arc::new(Self {
+                stale_before_each_write_reply: true,
+                ..Self::build(usize::MAX, HashSupport::Sha256AndCrc32, None)
+            })
+        }
+
+        fn push(&self, frame: Vec<u8>) {
+            self.responses.lock().unwrap().push_back(frame);
+            self.wake.notify_one();
+        }
+
         fn put(&self, path: &str, contents: Vec<u8>) {
             self.files.lock().unwrap().insert(path.to_owned(), contents);
         }
@@ -580,8 +612,7 @@ mod tests {
         }
 
         fn reply<T: Serialize>(&self, op: Op, seq: u8, command: u8, payload: T) {
-            let frame = frame::encode(op, Group::Fs, command, seq, &payload).unwrap();
-            self.responses.lock().unwrap().push_back(frame);
+            self.push(frame::encode(op, Group::Fs, command, seq, &payload).unwrap());
         }
 
         fn handle_supported_hashes(&self, seq: u8) {
@@ -664,6 +695,13 @@ mod tests {
         }
 
         fn handle_write(&self, seq: u8, request: AnyRequest) {
+            if self.silent_writes {
+                return;
+            }
+            if self.stale_before_each_write_reply {
+                let stale = seq.wrapping_add(STALE_SEQ_OFFSET);
+                self.reply(Op::WriteResponse, stale, CMD_FILE, OffReply { off: 1 });
+            }
             let name = request.name.expect("write request without a name");
             let off = request.off.expect("write request without an offset");
             if self.offset_cap.is_some_and(|cap| off >= cap) {
@@ -742,8 +780,14 @@ mod tests {
         }
 
         fn receive(&self) -> BoxFuture<'_, Result<Vec<u8>, Error>> {
-            let queued = self.responses.lock().unwrap().pop_front();
-            Box::pin(async move { queued.ok_or(Error::Timeout) })
+            Box::pin(async {
+                loop {
+                    if let Some(frame) = self.responses.lock().unwrap().pop_front() {
+                        return Ok(frame);
+                    }
+                    self.wake.notified().await;
+                }
+            })
         }
 
         fn max_in_flight(&self) -> usize {
@@ -1059,19 +1103,48 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_reply_too_short_to_carry_a_sequence_number_is_a_decode_error() {
+    async fn a_reply_too_short_to_carry_a_sequence_number_is_dropped() {
         let device = FakeFsDevice::new();
         device.put("/lfs/target1.bin", vec![0xAB; 1234]);
-        device
-            .responses
-            .lock()
-            .unwrap()
-            .push_back(vec![0; HEADER_LEN - 2]);
+        device.push(vec![0; HEADER_LEN - 2]);
         let session = session_for(Arc::clone(&device));
 
-        let err = session.fs_status("/lfs/target1.bin").await.unwrap_err();
+        let len = session.fs_status("/lfs/target1.bin").await.unwrap();
 
-        assert!(matches!(err, Error::Decode(_)), "{err:?}");
+        assert_eq!(len, 1234);
+    }
+
+    #[tokio::test]
+    async fn fs_upload_takes_only_its_own_reply_as_the_ack() {
+        let device = FakeFsDevice::with_a_stale_reply_before_each_write_reply();
+        let session = session_for(Arc::clone(&device));
+        let contents: Vec<u8> = (0..2000u32).map(|i| (i % 251) as u8).collect();
+
+        upload_to_completion(&session, contents.clone(), "/lfs/target1.bin")
+            .await
+            .unwrap();
+
+        assert_eq!(device.contents("/lfs/target1.bin"), contents);
+    }
+
+    #[tokio::test]
+    async fn a_dropped_fs_upload_stops_waiting_and_leaves_the_next_request_its_reply() {
+        let device = FakeFsDevice::with_silent_writes();
+        device.put("/lfs/target1.bin", vec![0xAB; 1234]);
+        let session = session_for(Arc::clone(&device));
+        let stream = session.fs_upload(Arc::from(vec![0x11; 300]), "/lfs/target2.bin".into());
+        tokio::time::sleep(SETTLE).await;
+        assert_eq!(
+            session.router().awaited(),
+            1,
+            "the first chunk awaits its ack"
+        );
+
+        drop(stream);
+        tokio::time::sleep(SETTLE).await;
+
+        assert_eq!(session.router().awaited(), 0);
+        assert_eq!(session.fs_status("/lfs/target1.bin").await.unwrap(), 1234);
     }
 
     #[tokio::test]

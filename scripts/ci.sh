@@ -2,22 +2,33 @@
 # The CI definition. A future Actions workflow calls this rather than restating it.
 # Everyday: workspace-wide cheap gates, then per-crate checks on crates changed
 # since their last release tag plus their reverse dependencies. --tag: every crate,
-# once per clean commit.
+# once per clean commit. A crate whose inputs already passed in this mode is
+# skipped; --no-cache reruns it.
 #
-#   scripts/ci.sh [--tag]
+#   scripts/ci.sh [--tag] [--no-cache]
 set -euo pipefail
 cd "$(dirname "$0")/.."
-
-all=false
-[[ ${1:-} == --tag ]] && all=true
 
 die() { printf 'ci: %s\n' "$*" >&2; exit 1; }
 step() { printf '\n== %s\n' "$*"; }
 normal_tree() { cargo tree -e normal --prefix none --locked -p "$@"; }
 
+all=false
+cache=true
+for arg; do
+  case $arg in
+    --tag) all=true ;;
+    --no-cache) cache=false ;;
+    *) die "usage: scripts/ci.sh [--tag] [--no-cache]" ;;
+  esac
+done
+mode=default
+! $all || mode=tag
+target=${CARGO_TARGET_DIR:-target}
+
 stamp=
 if $all && [[ -z $(git status --porcelain) ]]; then
-  stamp="${CARGO_TARGET_DIR:-target}/ci-tag-passed/$(git rev-parse HEAD)"
+  stamp="$target/ci-tag-passed/$(git rev-parse HEAD)"
   [[ ! -e $stamp ]] || { printf 'ci: --tag already passed at %s\n' "$(git rev-parse --short HEAD)"; exit 0; }
 fi
 
@@ -29,14 +40,15 @@ cross_windows=false
 ! $cross_windows || rustup target list --installed | grep -qx $win || die "$win missing: rustup target add $win"
 ! $cross_windows || ! $all || rustup +nightly target list --installed | grep -qx $win \
   || die "nightly $win missing: rustup +nightly target add $win"
+msrv=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
 # Clippy and check need no object code, and sqlite3.c cannot be cross-compiled for msvc off Windows.
-stubs=
 if $cross_windows; then
-  stubs=$(mktemp -d)
-  trap 'rm -rf "$stubs"' EXIT
-  printf '#!/bin/sh\nfor a; do case $a in -out:*) touch "${a#-out:}";; esac; done\n' >"$stubs/ar"
-  chmod +x "$stubs/ar"
-  export CC_x86_64_pc_windows_msvc=true AR_x86_64_pc_windows_msvc="$stubs/ar"
+  # shellcheck disable=SC2016
+  printf '#!/bin/sh\nfor a; do case $a in -out:*) touch "${a#-out:}";; esac; done\n' >"$tmp/ar"
+  chmod +x "$tmp/ar"
+  export CC_x86_64_pc_windows_msvc=true AR_x86_64_pc_windows_msvc="$tmp/ar"
 fi
 
 step "No consumer is named"
@@ -94,17 +106,12 @@ step "No control socket reaches every rung"
 step "Format"
 cargo fmt --all --check
 
-crates() {
-  cargo metadata --format-version 1 --no-deps --locked \
-    | jq -r --argjson all "$all" '
-        .packages as $p
-        | ($p | map(.name)) as $names
-        | def changed($n): $all or ($n | IN($ENV.CHANGED | split(" ")[]));
-          def rdeps($n): [$p[] | select(any(.dependencies[]; .name == $n)) | .name];
-          def dependants: (. + map(rdeps(.)[]) | unique) as $next
-            | if $next == . then . else $next | dependants end;
-          [$names[] | select(changed(.))] | unique | dependants | .[]'
-}
+if $all; then
+  step "Docs"
+  RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
+  step "Check on the stated rust-version"
+  cargo "+$msrv" check --workspace --locked
+fi
 
 # A crate counts as changed if its directory differs from its newest release tag,
 # or it has never been released.
@@ -117,26 +124,70 @@ for dir in crates/*/; do
   fi
 done
 export CHANGED="${changed[*]:-}"
+selected=$(jq -r --argjson all "$all" '
+  .packages as $p
+  | ($p | map(.name)) as $names
+  | def changed($n): $all or ($n | IN($ENV.CHANGED | split(" ")[]));
+    def rdeps($n): [$p[] | select(any(.dependencies[]; .name == $n)) | .name];
+    def dependants: (. + map(rdeps(.)[]) | unique) as $next
+      | if $next == . then . else $next | dependants end;
+    [$names[] | select(changed(.))] | unique | dependants | .[]' <<<"$metadata")
 
-selected=$(crates)
-if [[ -n $selected ]]; then
-  step Clippy: $selected
-  cargo clippy $(printf -- ' -p %s' $selected) --all-targets --all-features --locked -- -D warnings
+# A crate's key covers its own tree and every workspace crate it reaches through
+# any dependency kind, taken from the working tree so a dirty tree counts as it stands.
+index=$tmp/index
+cp "$(git rev-parse --git-path index)" "$index"
+GIT_INDEX_FILE=$index git add -A
+worktree=$(GIT_INDEX_FILE=$index git write-tree)
+inputs=$({
+  echo "$mode"
+  rustc -vV
+  ! $all || { rustc +nightly -vV; rustc "+$msrv" -vV; }
+  cargo hack --version
+  git rev-parse "$worktree:Cargo.lock" "$worktree:Cargo.toml" "$worktree:.cargo" \
+    "$worktree:scripts/ci.sh" "$worktree:scripts/floor-pins.txt"
+} | git hash-object --stdin)
+passed=$target/ci-passed/$mode
+pending=
+skipped=0
+closures=$(jq -r --arg trees "$(git ls-tree "$worktree" crates/)" --arg selected "$selected" '
+  ($trees | split("\n") | map(select(. != "") | split("\t")
+    | {key: (.[1] | ltrimstr("crates/")), value: (.[0] | split(" ")[2])}) | from_entries) as $tree
+  | (.packages | map({key: .name, value: [.dependencies[].name]}) | from_entries) as $deps
+  | def closure: (. + map($deps[.][] | select($deps[.])) | unique) as $next
+      | if $next == . then . else $next | closure end;
+  .packages[] | .name | select(IN($selected | split("\n")[]))
+  | "\(.) \([.] | closure | map("\(.)=\($tree[.] // error("no crates/\(.)"))") | join(" "))"' <<<"$metadata")
+while read -r name closure; do
+  [[ -n $name ]] || continue
+  key="$passed/$name-$(git hash-object --stdin <<<"$inputs $closure")"
+  if $cache && [[ -e $key ]]; then
+    skipped=$((skipped + 1))
+  else
+    pending+="$name $key"$'\n'
+  fi
+done <<<"$closures"
+todo=$(cut -d' ' -f1 <<<"$pending")
+((skipped == 0)) || printf '\nci: %d crates already passed with these inputs; skipping their checks\n' "$skipped"
+
+packages=()
+for crate in $todo; do packages+=(-p "$crate"); done
+if [[ -n $todo ]]; then
+  step Clippy: "${todo//$'\n'/ }"
+  cargo clippy "${packages[@]}" --all-targets --all-features --locked -- -D warnings
 fi
 
-# Per crate: built together, features unify, so a sibling's can mask a missing one
-# or add a second rustls provider that a test's process default can't choose between.
-for crate in $selected; do
-  step "$crate: test"
-  cargo test -p "$crate" --all-features --locked
-  step "$crate: each feature"
-  cargo hack check -p "$crate" --each-feature --locked
-done
+# A build on this host skips cfg(windows) code, and a crate breaks on Windows without
+# any Windows-only dependency.
+if $cross_windows && [[ -n $todo ]]; then
+  step "Clippy for $win:" "${todo//$'\n'/ }"
+  cargo clippy "${packages[@]}" --target $win --all-features --locked -- -D warnings
+fi
 
 # A read-only build takes `tcp` or `task` without `write`; wslib-modbus's
 # compile_fail doctests fail if a write path is compiled into either. A sans-io
 # consumer takes its RTU side with no features.
-if grep -qx wslib-modbus <<<"$selected"; then
+if grep -qx wslib-modbus <<<"$todo"; then
   step "wslib-modbus without write has no write path"
   for features in tcp task; do
     cargo test -p wslib-modbus --no-default-features --features "$features" --doc --locked
@@ -150,13 +201,13 @@ if grep -qx wslib-modbus <<<"$selected"; then
 fi
 
 # A read-only port on Linux needs neither serialport nor libudev.
-if grep -qx wslib-serial <<<"$selected"; then
+if grep -qx wslib-serial <<<"$todo"; then
   step "wslib-serial's task has no serialport on Linux"
   tree=$(normal_tree wslib-serial --no-default-features --features task --target x86_64-unknown-linux-gnu)
   ! grep -E '^(serialport|libudev(-sys)?) ' <<<"$tree" || die "wslib-serial's task pulls in serialport on Linux"
 fi
 
-if grep -qx wslib-framing <<<"$selected"; then
+if grep -qx wslib-framing <<<"$todo"; then
   step "wslib-framing depends on thiserror alone"
   tree=$(normal_tree wslib-framing --target all)
   ! grep -vE '^(wslib-framing|thiserror|thiserror-impl|proc-macro2|quote|syn|unicode-ident) ' <<<"$tree" \
@@ -165,7 +216,7 @@ fi
 
 # The FrameLink wire and board crates are sans-io on every target.
 for crate in wslib-framelink-protocol wslib-framelink-board; do
-  if grep -qx $crate <<<"$selected"; then
+  if grep -qx $crate <<<"$todo"; then
     step "$crate has no serial port, tokio or btleplug"
     tree=$(normal_tree $crate --target all)
     ! grep -E '^(serialport|tokio|btleplug) ' <<<"$tree" || die "$crate pulls in serialport, tokio or btleplug"
@@ -173,7 +224,7 @@ for crate in wslib-framelink-protocol wslib-framelink-board; do
 done
 
 # The gateway's types are serde-only, a Windows client's included.
-if grep -qx wslib-wiretap-gateway <<<"$selected"; then
+if grep -qx wslib-wiretap-gateway <<<"$todo"; then
   step "wslib-wiretap-gateway on Windows has no serial port or SQLite"
   tree=$(normal_tree wslib-wiretap-gateway --target x86_64-pc-windows-msvc)
   ! grep -E '^(serialport|sqlx[a-z_-]*|rusqlite|libsqlite3-sys) ' <<<"$tree" \
@@ -186,7 +237,7 @@ if grep -qx wslib-wiretap-gateway <<<"$selected"; then
 fi
 
 # gs_usb is the kernel's on Linux and nusb's elsewhere, never libusb's.
-if grep -qx wslib-can-gsusb <<<"$selected"; then
+if grep -qx wslib-can-gsusb <<<"$todo"; then
   step "wslib-can-gsusb has no libusb, and no nusb on Linux"
   tree=$(normal_tree wslib-can-gsusb --features transport --target all)
   ! grep -E '^(rusb|libusb[a-z0-9-]*) ' <<<"$tree" || die "wslib-can-gsusb pulls in libusb"
@@ -195,7 +246,7 @@ if grep -qx wslib-can-gsusb <<<"$selected"; then
 fi
 
 # PEAK's adapters are peak_usb's on Linux; only Windows loads PCANBasic.dll.
-if grep -qx wslib-can-pcan <<<"$selected"; then
+if grep -qx wslib-can-pcan <<<"$todo"; then
   step "wslib-can-pcan has no libusb, no nusb on Linux, and libloading only on Windows"
   tree=$(normal_tree wslib-can-pcan --features transport --target all)
   ! grep -E '^(rusb|libusb[a-z0-9-]*) ' <<<"$tree" || die "wslib-can-pcan pulls in libusb"
@@ -205,52 +256,54 @@ if grep -qx wslib-can-pcan <<<"$selected"; then
   ! grep -E '^libloading ' <<<"$tree" || die "wslib-can-pcan pulls in libloading on macOS"
 fi
 
-windows_only() {
-  cargo metadata --format-version 1 --no-deps --locked \
-    | jq -r --arg among "$*" '.packages[] | select(.name | IN($among | split(" ")[]))
-        | select(any(.dependencies[]; .target // "" | test("windows"))) | .name'
-}
-
-# A build on this host skips cfg(windows) code, and a crate breaks on Windows without
-# any Windows-only dependency.
-windows=
-! $cross_windows || windows=$selected
-if [[ -n $windows ]]; then
-  step "Clippy for $win:" $windows
-  cargo clippy $(printf -- ' -p %s' $windows) --target $win --all-features --locked -- -D warnings
-fi
-
-if $all; then
-  step "Docs"
-  RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
-  step "Check on the stated rust-version"
-  msrv=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
-  cargo "+$msrv" check --workspace --locked
-
-  # Per crate: one lock can't hold every crate's floors at once.
-  step "Dependency floors"
+if $all && [[ -n $todo ]]; then
   # A Windows-only dependency's floor is resolved only for Windows.
-  windows_deps=$(! $cross_windows || windows_only $selected)
-  floors=$(mktemp -d)
-  trap 'rm -rf "$floors" ${stubs:+"$stubs"}' EXIT
+  windows_deps=$(! $cross_windows || jq -r '.packages[]
+    | select(any(.dependencies[]; .target // "" | test("windows"))) | .name' <<<"$metadata")
+  # One fixed workspace path and target dir for every crate and run, so each floor build
+  # reuses what the others compiled; tar keeps mtimes, so unchanged sources stay fresh.
+  floors=$target/floors/workspace
+  rm -rf "$floors"
+  mkdir -p "$floors"
+  floors_target=$(cd "$target/floors" && pwd)/target
   git ls-files -z -co --exclude-standard \
     | while IFS= read -r -d '' f; do [[ -e $f ]] && printf '%s\0' "$f"; done \
     | tar -c --null -T - | tar -x -C "$floors"
-  for dir in crates/*/; do
-    name=$(basename "$dir")
-    sed -i.bak "s|^members = .*|members = [\"crates/$name\"]|" "$floors/Cargo.toml"
-    rm -f "$floors/Cargo.lock"
-    pins=$(sed -n "s/^$name \([^ ]*\)@\([^ ]*\)$/\1 \2/p" scripts/floor-pins.txt 2>/dev/null)
-    (cd "$floors" && cargo +nightly update -Z direct-minimal-versions -q \
-      && while read -r package version; do
-           [[ -z $package ]] || cargo +nightly update -q -p "$package" --precise "$version"
-         done <<<"$pins" \
-      && cargo +nightly check --workspace --all-features --all-targets -q \
-      && { ! grep -qx "$name" <<<"$windows_deps" \
-           || cargo +nightly check --target $win --workspace --all-features -q; }) \
-      || die "$name does not build at its dependency floors"
-  done
 fi
+
+# Per crate: one lock can't hold every crate's floors at once.
+floor_check() {
+  local name=$1 pins
+  sed -i.bak "s|^members = .*|members = [\"crates/$name\"]|" "$floors/Cargo.toml"
+  rm -f "$floors/Cargo.lock"
+  pins=$(sed -n "s/^$name \([^ ]*\)@\([^ ]*\)$/\1 \2/p" scripts/floor-pins.txt 2>/dev/null)
+  (cd "$floors" && export CARGO_TARGET_DIR=$floors_target \
+    && cargo +nightly update -Z direct-minimal-versions -q \
+    && while read -r package version; do
+         [[ -z $package ]] || cargo +nightly update -q -p "$package" --precise "$version"
+       done <<<"$pins" \
+    && cargo +nightly check --workspace --all-features --all-targets -q \
+    && { ! grep -qx "$name" <<<"$windows_deps" \
+         || cargo +nightly check --target $win --workspace --all-features -q; }) \
+    || die "$name does not build at its dependency floors"
+}
+
+# Per crate: built together, features unify, so a sibling's can mask a missing one
+# or add a second rustls provider that a test's process default can't choose between.
+# A key is written only here, after the crate's last check has passed.
+mkdir -p "$passed"
+while read -r crate key <&3; do
+  [[ -n $crate ]] || continue
+  step "$crate: test"
+  cargo test -p "$crate" --all-features --locked
+  step "$crate: each feature"
+  cargo hack check -p "$crate" --each-feature --locked
+  if $all; then
+    step "$crate: dependency floors"
+    floor_check "$crate"
+  fi
+  touch "$key"
+done 3<<<"$pending"
 
 [[ -z $stamp ]] || { mkdir -p "$(dirname "$stamp")" && touch "$stamp"; }
 printf '\nci: ok\n'

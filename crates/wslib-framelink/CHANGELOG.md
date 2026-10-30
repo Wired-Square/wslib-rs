@@ -14,7 +14,7 @@
   leaves nothing behind for the device.
 - `ota_ble` and `ota_udp` return `OtaStream`, as `ota` does, and
   `Discovery::open_smp_on` opens a seen device's session over a transport
-  chosen at run time.
+  chosen at run time. `Discovery::ota_on` updates one the same way.
 - Dropping an OTA stream stops its update at the next wait (the upload,
   a reply, the wait for the reset device) rather than at its next event,
   and never mid-frame. It cancels the update only before `Activating`;

@@ -177,8 +177,7 @@ impl Discovery {
         image: Arc<[u8]>,
         options: OtaOptions,
     ) -> OtaStream {
-        let source = Source::discovered(self.clone(), device_id.clone(), Transport::Ble);
-        run_ota(source, image, options)
+        self.ota_on(device_id, image, options, Transport::Ble)
     }
 
     /// A firmware update over UDP, as a stream of its stages; see
@@ -189,7 +188,20 @@ impl Discovery {
         image: Arc<[u8]>,
         options: OtaOptions,
     ) -> OtaStream {
-        let source = Source::discovered(self.clone(), device_id.clone(), Transport::Udp);
+        self.ota_on(device_id, image, options, Transport::Udp)
+    }
+
+    /// A firmware update of the seen device `id` over `transport`, as
+    /// [`open_smp_on`](Self::open_smp_on) opens one; see [`OtaStream`] for
+    /// what dropping it cancels.
+    pub fn ota_on(
+        &self,
+        id: &DeviceId,
+        image: Arc<[u8]>,
+        options: OtaOptions,
+        transport: Transport,
+    ) -> OtaStream {
+        let source = Source::discovered(self.clone(), id.clone(), transport);
         run_ota(source, image, options)
     }
 
@@ -294,6 +306,9 @@ impl Source {
         device_id: DeviceId,
         transport: Transport,
     ) -> Result<Self, Error> {
+        if !(transport == Transport::Udp || cfg!(feature = "ble") && transport == Transport::Ble) {
+            return Err(Error::SmpUnavailable(transport));
+        }
         let device = discovery
             .get(&device_id)
             .await
@@ -911,9 +926,7 @@ mod tests {
         assert!(goldens.keys().map(String::as_str).eq(checked));
     }
 
-    #[tokio::test]
-    async fn a_second_update_of_a_device_is_refused_until_the_first_ends() {
-        let (addr, _) = smp_device(false).await;
+    fn seen_over_udp_at(addr: SocketAddr) -> (Discovery, DeviceId) {
         let discovery = Discovery::idle();
         let id = DeviceId::new("mdns:udp:wfl-1");
         discovery.observe(
@@ -923,6 +936,32 @@ mod tests {
                 .address(addr)
                 .build(),
         );
+        (discovery, id)
+    }
+
+    #[tokio::test]
+    async fn ota_on_updates_over_the_transport_it_is_given() {
+        let (addr, senders) = smp_device(false).await;
+        let (discovery, id) = seen_over_udp_at(addr);
+        let image = || mcuboot_image([0xAB; 32], &IMAGE_BODY);
+
+        let mut over_tcp = discovery.ota_on(&id, image(), OtaOptions::default(), Transport::Tcp);
+        assert!(matches!(
+            over_tcp.next().await,
+            Some(Err(Error::SmpUnavailable(Transport::Tcp)))
+        ));
+        assert!(over_tcp.next().await.is_none());
+
+        let mut over_udp = discovery.ota_on(&id, image(), OtaOptions::default(), Transport::Udp);
+        until_event(&mut over_udp, |e| matches!(e, OtaEvent::SessionOpened)).await;
+        tokio::time::sleep(SETTLE).await;
+        assert_eq!(senders.lock().unwrap().len(), 1, "the first chunk");
+    }
+
+    #[tokio::test]
+    async fn a_second_update_of_a_device_is_refused_until_the_first_ends() {
+        let (addr, _) = smp_device(false).await;
+        let (discovery, id) = seen_over_udp_at(addr);
         let update = || {
             let image = mcuboot_image([0xAB; 32], &IMAGE_BODY);
             discovery.ota_udp(&id, image, OtaOptions::default())

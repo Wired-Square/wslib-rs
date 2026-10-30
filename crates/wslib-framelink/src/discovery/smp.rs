@@ -75,26 +75,22 @@ impl Discovery {
     /// keep the UDP chunk size: the buffer size a device reports is sized for
     /// BLE and would fragment a datagram.
     pub async fn open_smp_udp(&self, id: &DeviceId) -> Result<Arc<Session>, Error> {
-        let mut sessions = self.inner.sessions.lock().await;
-        let active = sessions.entry(id.clone()).or_default();
-        if let Some(existing) = &active.smp {
-            return Ok(Arc::clone(existing));
-        }
-        let wrong_transport = || Error::WrongTransport {
-            id: id.clone(),
-            required: Transport::Udp,
-        };
-        let device = self
-            .get(id)
-            .await
-            .ok_or_else(|| Error::UnknownDevice(id.clone()))?;
-        if !device.transports().contains(&Transport::Udp) {
-            return Err(wrong_transport());
-        }
-        let addr = device.address().ok_or_else(wrong_transport)?;
-        let session = Arc::new(Session::connect_udp(addr).await?);
-        active.smp = Some(Arc::clone(&session));
-        Ok(session)
+        self.open_smp_shared(id, async {
+            let wrong_transport = || Error::WrongTransport {
+                id: id.clone(),
+                required: Transport::Udp,
+            };
+            let device = self
+                .get(id)
+                .await
+                .ok_or_else(|| Error::UnknownDevice(id.clone()))?;
+            if !device.transports().contains(&Transport::Udp) {
+                return Err(wrong_transport());
+            }
+            let addr = device.address().ok_or_else(wrong_transport)?;
+            Ok(Session::connect_udp(addr).await?)
+        })
+        .await
     }
 
     /// An SMP session over BLE to a device that advertises `SMP`, sharing
@@ -103,37 +99,60 @@ impl Discovery {
     pub async fn open_smp_ble(&self, id: &DeviceId) -> Result<Arc<Session>, Error> {
         use wslib_mcumgr::ble::{BleTransport, SMP_CHARACTERISTIC_UUID};
 
-        let mut sessions = self.inner.sessions.lock().await;
-        let active = sessions.entry(id.clone()).or_default();
-        if let Some(existing) = &active.smp {
+        self.open_smp_shared(id, async {
+            let lease = self.resolve_ble_lease(id, crate::Capability::Smp).await?;
+            let peripheral = lease.ensure_ready().await?.clone();
+            let dispatcher =
+                crate::ble::notify_dispatcher::NotifyDispatcher::start(&peripheral).await?;
+            let rx = dispatcher.subscribe(SMP_CHARACTERISTIC_UUID).await;
+            // The stream holds the lease and the dispatcher for the transport's life.
+            let notifications = futures_util::stream::unfold(
+                (rx, dispatcher, lease),
+                |(mut rx, dispatcher, lease)| async move {
+                    match rx.recv().await {
+                        Some(Ok(bytes)) => Some((bytes, (rx, dispatcher, lease))),
+                        _ => None,
+                    }
+                },
+            );
+            let session = Session::ble(BleTransport::open(peripheral, notifications).await?);
+            if let Err(e) = session.negotiate_params().await {
+                tracing::warn!("mcumgr params unavailable; keeping the fallback chunk size: {e}");
+            }
+            Ok(session)
+        })
+        .await
+    }
+
+    /// The device's session while it is connected, else the one `open`
+    /// makes. Opens of one device wait their turn, but the session map is
+    /// not held across one; a device released meanwhile does not keep it.
+    async fn open_smp_shared(
+        &self,
+        id: &DeviceId,
+        open: impl Future<Output = Result<Session, Error>>,
+    ) -> Result<Arc<Session>, Error> {
+        let opening = {
+            let mut sessions = self.inner.sessions.lock().await;
+            Arc::clone(&sessions.entry(id.clone()).or_default().smp_opening)
+        };
+        let _one_open_per_device = opening.lock().await;
+        let cached = (self.inner.sessions.lock().await)
+            .get(id)
+            .and_then(|active| active.smp.clone());
+        if let Some(existing) = cached {
             if existing.is_connected().await {
-                return Ok(Arc::clone(existing));
+                return Ok(existing);
             }
             tracing::debug!(id = %id, "cached SMP session disconnected; re-opening");
-            active.smp = None;
         }
-        let lease = self.resolve_ble_lease(id, crate::Capability::Smp).await?;
-        let peripheral = lease.ensure_ready().await?.clone();
-        let dispatcher =
-            crate::ble::notify_dispatcher::NotifyDispatcher::start(&peripheral).await?;
-        let rx = dispatcher.subscribe(SMP_CHARACTERISTIC_UUID).await;
-        // The stream holds the lease and the dispatcher for the transport's life.
-        let notifications = futures_util::stream::unfold(
-            (rx, dispatcher, lease),
-            |(mut rx, dispatcher, lease)| async move {
-                match rx.recv().await {
-                    Some(Ok(bytes)) => Some((bytes, (rx, dispatcher, lease))),
-                    _ => None,
-                }
-            },
-        );
-        let session = Arc::new(Session::ble(
-            BleTransport::open(peripheral, notifications).await?,
-        ));
-        if let Err(e) = session.negotiate_params().await {
-            tracing::warn!("mcumgr params unavailable; keeping the fallback chunk size: {e}");
+        let session = Arc::new(open.await?);
+        match self.inner.sessions.lock().await.get_mut(id) {
+            Some(active) if Arc::ptr_eq(&active.smp_opening, &opening) => {
+                active.smp = Some(Arc::clone(&session));
+            }
+            _ => tracing::debug!(id = %id, "released while its SMP session opened; not kept"),
         }
-        active.smp = Some(Arc::clone(&session));
         Ok(session)
     }
 
@@ -531,6 +550,79 @@ mod tests {
             Some(Err(Error::UnknownDevice(_)))
         ));
         assert!(events.next().await.is_none());
+    }
+
+    const SETTLE: Duration = Duration::from_millis(50);
+
+    async fn loopback_session() -> Session {
+        let silent = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        Session::connect_udp(silent.local_addr().unwrap())
+            .await
+            .unwrap()
+    }
+
+    async fn cached(discovery: &Discovery, id: &DeviceId) -> Option<Arc<Session>> {
+        let sessions = discovery.inner.sessions.lock().await;
+        sessions.get(id).and_then(|active| active.smp.clone())
+    }
+
+    #[tokio::test]
+    async fn opening_one_device_does_not_hold_up_releasing_another() {
+        let discovery = Discovery::idle();
+        let a = DeviceId::new("a");
+        let opening = discovery.open_smp_shared(&a, std::future::pending());
+        let release = async {
+            tokio::time::sleep(SETTLE).await;
+            tokio::time::timeout(
+                Duration::from_secs(1),
+                discovery.release_device(&DeviceId::new("b")),
+            )
+            .await
+        };
+
+        tokio::select! {
+            _ = opening => panic!("the open never completes"),
+            released = release => assert!(released.is_ok(), "release waited on the open"),
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_opens_of_one_device_share_one_session() {
+        let discovery = Discovery::idle();
+        let id = DeviceId::new("a");
+        let opens = std::sync::atomic::AtomicUsize::new(0);
+        let open = || async {
+            opens.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            tokio::time::sleep(SETTLE).await;
+            Ok(loopback_session().await)
+        };
+
+        let (first, second) = tokio::join!(
+            discovery.open_smp_shared(&id, open()),
+            discovery.open_smp_shared(&id, open())
+        );
+
+        assert!(Arc::ptr_eq(&first.unwrap(), &second.unwrap()));
+        assert_eq!(opens.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn a_device_released_while_its_session_opens_does_not_keep_it() {
+        let discovery = Discovery::idle();
+        let id = DeviceId::new("a");
+        let opening = discovery.open_smp_shared(&id, async {
+            tokio::time::sleep(SETTLE * 2).await;
+            Ok(loopback_session().await)
+        });
+        let release = async {
+            tokio::time::sleep(SETTLE).await;
+            discovery.release_device(&id).await;
+        };
+
+        let (opened, ()) = tokio::join!(opening, release);
+
+        assert!(opened.is_ok());
+        assert!(cached(&discovery, &id).await.is_none());
     }
 
     #[tokio::test]

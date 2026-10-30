@@ -80,6 +80,8 @@ struct ActiveSessions {
     wifi_prov: Option<Arc<crate::ble::wifi_prov::WifiProvSession>>,
     #[cfg(feature = "smp")]
     smp: Option<Arc<wslib_mcumgr::Session>>,
+    #[cfg(feature = "smp")]
+    smp_opening: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Discovery {

@@ -8,6 +8,9 @@
   `ota_ble`. Their errors are `Error::Smp`, `SmpUnavailable` and
   `OtaVerifyMismatch`. `OtaEvent` is `#[non_exhaustive]`, and so are the
   re-exported `UploadProgress` and `ImageSlot`.
+  Opens of one device's SMP session take turns without holding the other
+  devices' sessions, and a cached session whose link has closed is opened
+  again, over UDP as over BLE.
 
 ## 0.1.0
 

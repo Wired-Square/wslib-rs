@@ -7,3 +7,5 @@ wiretap.?app
 wiretap.?can.?cli
 wiretap.?desktop
 accessmanager
+area.?52
+instruments.?rs

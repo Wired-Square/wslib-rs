@@ -59,6 +59,7 @@ appliance chassis and every app beside it.
 | `wslib-wiretap-gateway`  | A capture gateway's HTTP API, as serde types                  |
 | `wslib-framelink-protocol` | FrameLink's wire, sans-io: frames, messages, signal identity |
 | `wslib-framelink-board`  | FrameLink board TOML: parse, edit, scaffold, display names    |
+| `wslib-mcumgr`           | SMP (mcumgr): image upload, test and confirm, files, UDP, BLE |
 | `wslib-framelink`        | A FrameLink session over TCP, discovery, BLE Wi-Fi setup      |
 | `wslib-instruments`      | Blocking bench-instrument probes: a 121GW, a WiredReflow      |
 | `wslib-appliance-types`  | An appliance's wire contract, shared by daemon and browser    |

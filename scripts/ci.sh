@@ -246,6 +246,13 @@ if grep -qx wslib-instruments <<<"$todo"; then
   ! grep -E '^(btleplug|tokio|wslib-can[a-z-]*) ' <<<"$tree" || die "wslib-instruments' default build pulls in a backend"
 fi
 
+# mio is tokio's socket layer.
+if grep -qx wslib-mcumgr <<<"$todo"; then
+  step "wslib-mcumgr has no btleplug or socket by default"
+  tree=$(normal_tree wslib-mcumgr --target all)
+  ! grep -E '^(btleplug|mio) ' <<<"$tree" || die "wslib-mcumgr's default build pulls in btleplug or a socket"
+fi
+
 # The gateway's types are serde-only, a Windows client's included.
 if grep -qx wslib-wiretap-gateway <<<"$todo"; then
   step "wslib-wiretap-gateway on Windows has no serial port or SQLite"

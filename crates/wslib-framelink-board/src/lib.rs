@@ -76,6 +76,17 @@ pub enum UsbAccess {
     None,
 }
 
+#[cfg(feature = "mcu-flash")]
+impl From<UsbAccess> for wslib_mcu_flash::endpoint::UsbAccess {
+    fn from(access: UsbAccess) -> Self {
+        match access {
+            UsbAccess::Native => Self::Native,
+            UsbAccess::CdcInterface { interface } => Self::CdcInterface { interface },
+            UsbAccess::None => Self::None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McuInfo {
     pub chip: String,
@@ -1004,5 +1015,17 @@ mod tests {
             assert_ne!(led.blink_period_signal_id, 0);
             assert_ne!(led.toggle_signal_id, 0);
         }
+    }
+
+    #[cfg(feature = "mcu-flash")]
+    #[test]
+    fn usb_access_maps_onto_the_flasher_variant_for_variant() {
+        use wslib_mcu_flash::endpoint::UsbAccess as Flash;
+        assert_eq!(Flash::from(UsbAccess::Native), Flash::Native);
+        assert_eq!(
+            Flash::from(UsbAccess::CdcInterface { interface: 3 }),
+            Flash::CdcInterface { interface: 3 }
+        );
+        assert_eq!(Flash::from(UsbAccess::None), Flash::None);
     }
 }

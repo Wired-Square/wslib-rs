@@ -10,12 +10,16 @@ authors.workspace = true
 repository.workspace = true
 publish = ["wired-square"]
 
+[features]
+mcu-flash = ["dep:wslib-mcu-flash"]
+
 [dependencies]
-flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+flate2 = { version = "1.1.2", default-features = false, features = ["rust_backend"] }
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.20"
 toml_edit = { version = "0.25", default-features = false, features = ["display", "parse", "serde"] }
 wslib-framelink-protocol = { path = "../wslib-framelink-protocol", version = "0.1", registry = "wired-square" }
+wslib-mcu-flash = { path = "../wslib-mcu-flash", version = "0.1", registry = "wired-square", default-features = false, optional = true }
 
 [dev-dependencies]
 serde_json = "1.0.85"

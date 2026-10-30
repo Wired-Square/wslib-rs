@@ -41,8 +41,11 @@ pub fn build_frame(msg_type: u8, flags: u8, seq: u8, payload: &[u8]) -> Vec<u8> 
 /// unstuffed before the version is read, so a corrupt block is
 /// [`Error::CobsDecode`], never a wrong version.
 pub fn parse_frame(cobs_data: &[u8]) -> Result<Frame, Error> {
-    let decoded = cobs::decode(cobs_data)?;
+    parse_unstuffed(&cobs::decode(cobs_data)?)
+}
 
+/// Parses one frame already unstuffed, as a stream decoder releases it.
+pub fn parse_unstuffed(decoded: &[u8]) -> Result<Frame, Error> {
     if decoded.len() < HEADER_SIZE {
         return Err(Error::TooShort);
     }
@@ -67,13 +70,11 @@ pub fn parse_frame(cobs_data: &[u8]) -> Result<Frame, Error> {
         });
     }
 
-    let payload = decoded[HEADER_SIZE..HEADER_SIZE + length].to_vec();
-
     Ok(Frame {
         flags,
         msg_type,
         seq,
-        payload,
+        payload: decoded[HEADER_SIZE..].to_vec(),
     })
 }
 
@@ -121,6 +122,30 @@ mod tests {
         let mut cobs_data = wire[1..wire.len() - 1].to_vec();
         cobs_data.insert(cobs_data.len() - 1, 0x42);
         assert!(parse_frame(&cobs_data).is_err());
+    }
+
+    #[test]
+    fn parse_frame_is_decode_then_parse_unstuffed() {
+        let payload = [0x00, 0x11, 0x00, 0x22];
+        let mut raw = vec![(PROTOCOL_VERSION << 4) | FLAG_ACK_REQ, MSG_PING, 7];
+        raw.extend_from_slice(&(payload.len() as u16).to_le_bytes());
+        raw.extend_from_slice(&payload);
+        let wire = cobs::encode(&raw);
+
+        let framed = parse_frame(&wire[1..wire.len() - 1]).unwrap();
+        let unstuffed = parse_unstuffed(&raw).unwrap();
+
+        for frame in [&framed, &unstuffed] {
+            assert_eq!(
+                (frame.flags, frame.msg_type, frame.seq),
+                (FLAG_ACK_REQ, MSG_PING, 7)
+            );
+            assert_eq!(frame.payload, payload);
+        }
+        assert_eq!(
+            parse_unstuffed(&raw[..raw.len() - 1]).unwrap_err(),
+            parse_frame(&cobs::stuff(&raw[..raw.len() - 1])).unwrap_err()
+        );
     }
 
     #[test]

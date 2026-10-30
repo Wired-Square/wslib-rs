@@ -19,8 +19,10 @@ impl Stamp {
 }
 
 /// Under `serde`, `key` is its slug and `wall_clock` microseconds since the
-/// Unix epoch; `at` is not serialised, and deserialising maps `wall_clock`
-/// onto this process's clock, or onto now when that clock can't reach back to it.
+/// Unix epoch. `at` is exact only in the process that took the reading: it is
+/// not serialised, and deserialising estimates it from `wall_clock` (or now, if
+/// this clock can't reach back), so it carries any skew between the two wall
+/// clocks. A receiver orders and ages samples by `wall_clock`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(

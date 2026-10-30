@@ -114,6 +114,7 @@ pub enum CancelOutcome {
 pub type OtaStream = Pin<Box<dyn Stream<Item = Result<OtaEvent, Error>> + Send + 'static>>;
 
 /// Cancels the update of the [`OtaStream`] it came with; dropping it changes nothing.
+#[derive(Debug)]
 pub struct OtaCancel {
     state: Arc<CancelState>,
     task: JoinHandle<()>,
@@ -134,7 +135,7 @@ impl OtaCancel {
 }
 
 /// Whichever of the cancel and the test request comes first decides the outcome.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct CancelState {
     fate: OnceLock<CancelOutcome>,
     wake: Notify,

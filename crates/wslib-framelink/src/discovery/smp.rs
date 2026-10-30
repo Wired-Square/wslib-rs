@@ -4,11 +4,11 @@
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use futures_util::{Stream, StreamExt};
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 use tokio::task::JoinHandle;
 use wslib_mcumgr::{Session, UploadOptions};
 
@@ -88,16 +88,70 @@ pub enum OtaEvent {
     Confirmed,
 }
 
+/// What [`OtaCancel::cancel`] did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
+pub enum CancelOutcome {
+    /// The update stopped, or had ended, before asking the device to test the image.
+    Cancelled,
+    /// The update had begun asking the device to test the image, whether or not
+    /// `Activating` was read; it carries on until its stream is dropped.
+    TooLate,
+}
+
 /// Dropping the stream cancels the update only before `Activating`. Dropped
 /// after `Activated` but before `Resetting`, no reset is sent and the device
 /// boots the test image at its next reset; dropped after `ResetSent`,
 /// nothing confirms the image, so swap-mode MCUboot reverts at the next boot.
+/// The `_cancellable` variants also return an [`OtaCancel`], which cancels and
+/// reports whether that was in time.
 ///
 /// A second update under the same [`DeviceId`] fails with
 /// [`Error::OtaInProgress`]. The guard is per id: it spans neither transports,
 /// nor other ids of the device (its id after the reset included), nor
 /// [`ota_udp_addr`].
 pub type OtaStream = Pin<Box<dyn Stream<Item = Result<OtaEvent, Error>> + Send + 'static>>;
+
+/// Cancels the update of the [`OtaStream`] it came with; dropping it changes nothing.
+#[derive(Debug)]
+pub struct OtaCancel {
+    state: Arc<CancelState>,
+    task: JoinHandle<()>,
+}
+
+impl OtaCancel {
+    /// Cancels the update unless it has begun asking the device to test the
+    /// image; once `Cancelled` is returned, the update has ended, its stream
+    /// ends after any events it holds, and its device is free for the next.
+    pub async fn cancel(self) -> CancelOutcome {
+        let outcome = *self.state.fate.get_or_init(|| CancelOutcome::Cancelled);
+        if outcome == CancelOutcome::Cancelled {
+            self.state.wake.notify_one();
+            let _ = self.task.await;
+        }
+        outcome
+    }
+}
+
+/// Whichever of the cancel and the test request comes first decides the outcome.
+#[derive(Debug, Default)]
+struct CancelState {
+    fate: OnceLock<CancelOutcome>,
+    wake: Notify,
+}
+
+impl CancelState {
+    async fn requested(&self) {
+        while self.fate.get() != Some(&CancelOutcome::Cancelled) {
+            self.wake.notified().await;
+        }
+    }
+
+    fn commit_to_testing(&self) -> bool {
+        *self.fate.get_or_init(|| CancelOutcome::TooLate) == CancelOutcome::TooLate
+    }
+}
 
 impl Discovery {
     /// An SMP session over UDP to a device seen as `_mcumgr._udp`. Uploads
@@ -226,6 +280,17 @@ impl Discovery {
         options: OtaOptions,
         transport: Transport,
     ) -> OtaStream {
+        self.ota_on_cancellable(id, image, options, transport).0
+    }
+
+    /// [`ota_on`](Self::ota_on), with an [`OtaCancel`] for the update.
+    pub fn ota_on_cancellable(
+        &self,
+        id: &DeviceId,
+        image: Arc<[u8]>,
+        options: OtaOptions,
+        transport: Transport,
+    ) -> (OtaStream, OtaCancel) {
         let source = Source::discovered(self.clone(), id.clone(), transport);
         run_ota(source, image, options)
     }
@@ -240,6 +305,17 @@ impl Discovery {
         options: OtaOptions,
         transport: Transport,
     ) -> OtaStream {
+        self.ota_cancellable(id, image, options, transport).0
+    }
+
+    /// [`ota`](Self::ota), with an [`OtaCancel`] for the update.
+    pub fn ota_cancellable(
+        &self,
+        id: &DeviceId,
+        image: Arc<[u8]>,
+        options: OtaOptions,
+        transport: Transport,
+    ) -> (OtaStream, OtaCancel) {
         if let ConnectTarget::Direct(addr) = registry::target_for(id, transport) {
             let label = registry::canonical_name(id.as_str()).to_owned();
             let (discovery, id) = (self.clone(), id.clone());
@@ -272,6 +348,16 @@ pub fn ota_udp_addr(
     image: Arc<[u8]>,
     options: OtaOptions,
 ) -> impl Stream<Item = Result<OtaEvent, Error>> + Send + Unpin + 'static {
+    ota_udp_addr_cancellable(addr, label, image, options).0
+}
+
+/// [`ota_udp_addr`], with an [`OtaCancel`] for the update.
+pub fn ota_udp_addr_cancellable(
+    addr: SocketAddr,
+    label: String,
+    image: Arc<[u8]>,
+    options: OtaOptions,
+) -> (OtaStream, OtaCancel) {
     run_ota(async move { Ok(Source::at(addr, label)) }, image, options)
 }
 
@@ -453,21 +539,16 @@ impl Source {
     }
 }
 
-fn run_ota<F>(source: F, image: Arc<[u8]>, options: OtaOptions) -> OtaStream
-where
-    F: Future<Output = Result<Source, Error>> + Send + 'static,
-{
-    spawn_ota(source, image, options).0
-}
-
-/// Dropping the stream stops the task at its next wait.
-fn spawn_ota<F>(source: F, image: Arc<[u8]>, options: OtaOptions) -> (OtaStream, JoinHandle<()>)
+/// Dropping the stream, or cancelling, stops the task at its next wait.
+fn run_ota<F>(source: F, image: Arc<[u8]>, options: OtaOptions) -> (OtaStream, OtaCancel)
 where
     F: Future<Output = Result<Source, Error>> + Send + 'static,
 {
     let (tx, rx) = mpsc::channel(OTA_EVENT_CHANNEL_CAPACITY);
+    let state = Arc::new(CancelState::default());
+    let cancel = Arc::clone(&state);
     let task = spawn(async move {
-        let source = match until_dropped(&tx, source).await {
+        let source = match until_stopped(&tx, &cancel, source).await {
             Some(Ok(source)) => source,
             Some(Err(e)) => {
                 let _ = tx.send(Err(e)).await;
@@ -476,7 +557,8 @@ where
             None => return,
         };
         let mut id = source.device_id.clone();
-        let result = until_dropped(&tx, ota(&source, &mut id, image, options, &tx)).await;
+        let update = ota(&source, &mut id, image, options, &cancel, &tx);
+        let result = until_stopped(&tx, &cancel, update).await;
         source.release(&id).await;
         if let Some(Err(e)) = result {
             let _ = tx.send(Err(e)).await;
@@ -485,19 +567,24 @@ where
     let events = Box::pin(futures_util::stream::unfold(rx, |mut rx| async move {
         rx.recv().await.map(|event| (event, rx))
     }));
-    (events, task)
+    (events, OtaCancel { state, task })
 }
 
-/// `None` once the stream is dropped. Dropping `work` mid-request is safe:
-/// the session finishes writing a frame it has begun.
-async fn until_dropped<T>(
+/// `None` once the stream is dropped or the update cancelled. Dropping `work`
+/// mid-request is safe: the session finishes writing a frame it has begun.
+async fn until_stopped<T>(
     tx: &mpsc::Sender<Result<OtaEvent, Error>>,
+    cancel: &CancelState,
     work: impl Future<Output = T>,
 ) -> Option<T> {
     tokio::select! {
         done = work => Some(done),
         () = tx.closed() => {
             tracing::debug!("OTA stream dropped; stopping");
+            None
+        }
+        () = cancel.requested() => {
+            tracing::debug!("OTA cancelled; stopping");
             None
         }
     }
@@ -512,6 +599,7 @@ async fn ota(
     id: &mut DeviceId,
     image: Arc<[u8]>,
     options: OtaOptions,
+    cancel: &CancelState,
     tx: &mpsc::Sender<Result<OtaEvent, Error>>,
 ) -> Result<(), Error> {
     macro_rules! emit {
@@ -537,6 +625,9 @@ async fn ota(
         .ok_or_else(|| Error::Protocol("the upload ended without the image hash".into()))?;
 
     emit!(OtaEvent::Activating);
+    if !cancel.commit_to_testing() {
+        return Ok(());
+    }
     session.test(&staged_hash).await?;
     emit!(OtaEvent::Activated {
         hash: staged_hash.clone()
@@ -838,11 +929,18 @@ mod tests {
         (addr, senders)
     }
 
-    fn update_at(addr: SocketAddr) -> (OtaStream, JoinHandle<()>) {
+    fn update_at(addr: SocketAddr) -> (OtaStream, OtaCancel) {
         let image = mcuboot_image([0xAB; 32], &IMAGE_BODY);
         assert_eq!(image.len(), usize::from(IMAGE_LEN));
         let source = async move { Ok(Source::at(addr, "test-device".into())) };
-        spawn_ota(source, image, OtaOptions::default())
+        run_ota(source, image, OtaOptions::default())
+    }
+
+    async fn the_task_ends(task: JoinHandle<()>) {
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .expect("the task ends promptly")
+            .unwrap();
     }
 
     async fn until_event(events: &mut OtaStream, wanted: fn(&OtaEvent) -> bool) {
@@ -872,7 +970,7 @@ mod tests {
     #[tokio::test]
     async fn dropping_an_update_mid_upload_stops_it_and_leaves_the_device_to_the_next() {
         let (addr, senders) = smp_device(false).await;
-        let (mut events, task) = update_at(addr);
+        let (mut events, cancel) = update_at(addr);
         until_event(&mut events, |e| matches!(e, OtaEvent::SessionOpened)).await;
         tokio::time::sleep(SETTLE).await;
         assert_eq!(
@@ -883,13 +981,10 @@ mod tests {
 
         drop(events);
 
-        tokio::time::timeout(Duration::from_secs(1), task)
-            .await
-            .expect("the task ends promptly")
-            .unwrap();
+        the_task_ends(cancel.task).await;
         let quiet = frames_once_quiet(&senders).await;
 
-        let (mut next, _task) = update_at(addr);
+        let (mut next, _) = update_at(addr);
         until_event(&mut next, |e| matches!(e, OtaEvent::SessionOpened)).await;
         tokio::time::sleep(SETTLE).await;
         let senders = senders.lock().unwrap();
@@ -903,16 +998,110 @@ mod tests {
     #[tokio::test]
     async fn dropping_an_update_while_it_waits_for_the_reset_device_stops_it() {
         let (addr, senders) = smp_device(true).await;
-        let (mut events, task) = update_at(addr);
+        let (mut events, cancel) = update_at(addr);
         until_event(&mut events, |e| matches!(e, OtaEvent::Reconnecting { .. })).await;
 
         drop(events);
 
-        tokio::time::timeout(Duration::from_secs(1), task)
-            .await
-            .expect("the task ends promptly")
-            .unwrap();
+        the_task_ends(cancel.task).await;
         frames_once_quiet(&senders).await;
+    }
+
+    #[tokio::test]
+    async fn cancelling_before_the_first_chunk_releases_the_device_by_the_time_it_returns() {
+        let (addr, senders) = smp_device(false).await;
+        let (discovery, id) = seen_over_udp_at(addr);
+        struct SlowToLetGo;
+        impl Drop for SlowToLetGo {
+            fn drop(&mut self) {
+                std::thread::sleep(SETTLE);
+            }
+        }
+        let (claimed, claimed_rx) = tokio::sync::oneshot::channel();
+        let source = {
+            let (discovery, id) = (discovery.clone(), id.clone());
+            async move {
+                let claim = discovery.claim_update(&id)?;
+                let _slow = SlowToLetGo;
+                claimed.send(()).unwrap();
+                std::future::pending::<()>().await;
+                Ok(Source {
+                    _claim: Some(claim),
+                    ..Source::at(addr, "test-device".into())
+                })
+            }
+        };
+        let (mut events, cancel) = run_ota(
+            source,
+            mcuboot_image([0xAB; 32], &IMAGE_BODY),
+            OtaOptions::default(),
+        );
+        claimed_rx.await.unwrap();
+
+        assert_eq!(cancel.cancel().await, CancelOutcome::Cancelled);
+
+        drop(discovery.claim_update(&id).expect("the device is free"));
+        assert!(events.next().await.is_none());
+        assert!(senders.lock().unwrap().is_empty());
+        let mut next = discovery.ota_udp(
+            &id,
+            mcuboot_image([0xAB; 32], &IMAGE_BODY),
+            OtaOptions::default(),
+        );
+        assert!(matches!(
+            next.next().await,
+            Some(Ok(OtaEvent::SessionOpened))
+        ));
+    }
+
+    #[tokio::test]
+    async fn cancelling_mid_upload_stops_the_update_and_releases_the_device() {
+        let (addr, senders) = smp_device(false).await;
+        let (discovery, id) = seen_over_udp_at(addr);
+        let update = || {
+            let image = mcuboot_image([0xAB; 32], &IMAGE_BODY);
+            discovery.ota_on_cancellable(&id, image, OtaOptions::default(), Transport::Udp)
+        };
+        let (mut events, cancel) = update();
+        until_event(&mut events, |e| matches!(e, OtaEvent::SessionOpened)).await;
+
+        assert_eq!(cancel.cancel().await, CancelOutcome::Cancelled);
+
+        drop(discovery.claim_update(&id).expect("the device is free"));
+        assert!(events.next().await.is_none());
+        frames_once_quiet(&senders).await;
+        assert!(matches!(
+            update().0.next().await,
+            Some(Ok(OtaEvent::SessionOpened))
+        ));
+    }
+
+    #[tokio::test]
+    async fn cancelling_once_the_test_request_is_out_is_too_late_though_activating_is_unread() {
+        let (addr, senders) = smp_device(true).await;
+        let (mut events, cancel) = update_at(addr);
+        let test_request_sent = async {
+            while senders.lock().unwrap().len() < 2 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(5), test_request_sent)
+            .await
+            .expect("the upload and the test request reach the device");
+
+        assert_eq!(cancel.cancel().await, CancelOutcome::TooLate);
+        until_event(&mut events, |e| matches!(e, OtaEvent::Activated { .. })).await;
+    }
+
+    #[test]
+    fn every_cancel_outcome_serialises_as_its_golden() {
+        for outcome in [CancelOutcome::Cancelled, CancelOutcome::TooLate] {
+            let golden = match outcome {
+                CancelOutcome::Cancelled => r#""cancelled""#,
+                CancelOutcome::TooLate => r#""too-late""#,
+            };
+            assert_eq!(serde_json::to_string(&outcome).unwrap(), golden);
+        }
     }
 
     /// Exhaustive, so a new variant does not compile until it has a golden.

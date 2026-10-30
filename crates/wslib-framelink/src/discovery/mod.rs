@@ -28,7 +28,10 @@ mod smp;
 pub use events::{DiscoveryEvent, ErrorSource};
 pub use legacy::{FrameLinkDevice, discover};
 #[cfg(feature = "smp")]
-pub use smp::{OtaEvent, OtaOptions, OtaStream, ota_udp_addr};
+pub use smp::{
+    CancelOutcome, OtaCancel, OtaEvent, OtaOptions, OtaStream, ota_udp_addr,
+    ota_udp_addr_cancellable,
+};
 
 use std::future::Future;
 use std::sync::{Arc, Mutex};

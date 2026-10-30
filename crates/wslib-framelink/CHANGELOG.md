@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.2
+
+- An update can be cancelled with its outcome reported:
+  `Discovery::ota_cancellable` and `ota_on_cancellable`, and
+  `ota_udp_addr_cancellable`, take the same arguments as `ota`, `ota_on` and
+  `ota_udp_addr` and also return an `OtaCancel`. `OtaCancel::cancel` returns
+  `CancelOutcome::Cancelled` if the update stopped before it asked the device
+  to test the image, by which time the update has ended and its device id is
+  free for the next; and `TooLate` once that request is out, whether or not
+  `Activating` was read, leaving the update running until its stream is
+  dropped. It works whether or not the stream is still held, and dropping an
+  `OtaCancel` changes nothing. `CancelOutcome` is `#[non_exhaustive]` and
+  serialises as `"cancelled"` or `"too-late"`. `OtaStream` and dropping it are
+  unchanged.
+
 ## 0.1.1
 
 - `smp`: SMP sessions and firmware updates over wslib-mcumgr.

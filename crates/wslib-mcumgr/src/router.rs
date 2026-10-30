@@ -47,8 +47,13 @@ impl Router {
         &*self.transport
     }
 
+    /// Runs as a task of its own, so a caller dropped mid-write still leaves
+    /// whole frames on the link.
     pub(crate) async fn send(&self, frame: Vec<u8>) -> Result<(), Error> {
-        self.transport.send(frame).await
+        let transport = Arc::clone(&self.transport);
+        tokio::spawn(async move { transport.send(frame).await })
+            .await
+            .unwrap_or(Err(Error::LinkClosed))
     }
 
     pub(crate) fn is_open(&self) -> bool {

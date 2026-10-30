@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use futures_util::{Stream, StreamExt};
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use wslib_mcumgr::{Session, UploadOptions};
 
 use super::{Discovery, DiscoveryEvent};
@@ -393,25 +394,50 @@ fn run_ota<F>(source: F, image: Arc<[u8]>, options: OtaOptions) -> OtaStream
 where
     F: Future<Output = Result<Source, Error>> + Send + 'static,
 {
+    spawn_ota(source, image, options).0
+}
+
+/// Dropping the stream stops the task at its next wait.
+fn spawn_ota<F>(source: F, image: Arc<[u8]>, options: OtaOptions) -> (OtaStream, JoinHandle<()>)
+where
+    F: Future<Output = Result<Source, Error>> + Send + 'static,
+{
     let (tx, rx) = mpsc::channel(OTA_EVENT_CHANNEL_CAPACITY);
-    spawn(async move {
-        let source = match source.await {
-            Ok(source) => source,
-            Err(e) => {
+    let task = spawn(async move {
+        let source = match until_dropped(&tx, source).await {
+            Some(Ok(source)) => source,
+            Some(Err(e)) => {
                 let _ = tx.send(Err(e)).await;
                 return;
             }
+            None => return,
         };
         let mut id = source.device_id.clone();
-        let result = ota(&source, &mut id, image, options, &tx).await;
+        let result = until_dropped(&tx, ota(&source, &mut id, image, options, &tx)).await;
         source.release(&id).await;
-        if let Err(e) = result {
+        if let Some(Err(e)) = result {
             let _ = tx.send(Err(e)).await;
         }
     });
-    Box::pin(futures_util::stream::unfold(rx, |mut rx| async move {
+    let events = Box::pin(futures_util::stream::unfold(rx, |mut rx| async move {
         rx.recv().await.map(|event| (event, rx))
-    }))
+    }));
+    (events, task)
+}
+
+/// `None` once the stream is dropped. Dropping `work` mid-request is safe:
+/// the session finishes writing a frame it has begun.
+async fn until_dropped<T>(
+    tx: &mpsc::Sender<Result<OtaEvent, Error>>,
+    work: impl Future<Output = T>,
+) -> Option<T> {
+    tokio::select! {
+        done = work => Some(done),
+        () = tx.closed() => {
+            tracing::debug!("OTA stream dropped; stopping");
+            None
+        }
+    }
 }
 
 /// `set_state(test)` then reset suits both overwrite-only and swap MCUboot;
@@ -493,11 +519,11 @@ async fn ota(
     Ok(())
 }
 
-fn spawn(task: impl Future<Output = ()> + Send + 'static) {
+fn spawn(task: impl Future<Output = ()> + Send + 'static) -> JoinHandle<()> {
     #[cfg(feature = "ble")]
-    crate::runtime::ble_runtime().spawn(task);
+    return crate::runtime::ble_runtime().spawn(task);
     #[cfg(not(feature = "ble"))]
-    tokio::spawn(task);
+    tokio::spawn(task)
 }
 
 #[cfg(test)]
@@ -624,6 +650,142 @@ mod tests {
 
         assert!(opened.is_ok());
         assert!(cached(&discovery, &id).await.is_none());
+    }
+
+    /// An MCUboot image with `body` and an IMAGE_TLV_SHA256 of `hash`.
+    fn mcuboot_image(hash: [u8; 32], body: &[u8]) -> Arc<[u8]> {
+        let mut bin = Vec::new();
+        bin.extend_from_slice(&0x96f3_b83d_u32.to_le_bytes());
+        bin.extend_from_slice(&0_u32.to_le_bytes());
+        bin.extend_from_slice(&16_u16.to_le_bytes());
+        bin.extend_from_slice(&0_u16.to_le_bytes());
+        bin.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        bin.extend_from_slice(body);
+        bin.extend_from_slice(&0x6907_u16.to_le_bytes());
+        bin.extend_from_slice(&40_u16.to_le_bytes());
+        bin.extend_from_slice(&[0x10, 0x00]);
+        bin.extend_from_slice(&32_u16.to_le_bytes());
+        bin.extend_from_slice(&hash);
+        Arc::from(bin)
+    }
+
+    const IMAGE_BODY: [u8; 16] = [0x5A; 16];
+    /// The header, the body and the 40-byte TLV area; under 256, for the
+    /// hand-made CBOR below.
+    const IMAGE_LEN: u8 = 16 + IMAGE_BODY.len() as u8 + 4 + 36;
+
+    /// An SMP device on loopback that answers by header alone: an upload
+    /// whole in its first chunk (unless `answer_uploads` is off), and any
+    /// other request with an empty map, so it never lists the new image.
+    /// Returns where each frame came from.
+    async fn smp_device(
+        answer_uploads: bool,
+    ) -> (SocketAddr, Arc<std::sync::Mutex<Vec<SocketAddr>>>) {
+        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let addr = socket.local_addr().unwrap();
+        let senders = Arc::<std::sync::Mutex<Vec<SocketAddr>>>::default();
+        let seen = Arc::clone(&senders);
+        tokio::spawn(async move {
+            let mut buf = [0u8; 2048];
+            while let Ok((_, from)) = socket.recv_from(&mut buf).await {
+                seen.lock().unwrap().push(from);
+                let upload = buf[4..6] == [0, 1] && buf[7] == 1;
+                let payload = match upload {
+                    false => vec![0xa0],
+                    true if answer_uploads => {
+                        // {"off": IMAGE_LEN, "match": true}
+                        let mut ack = vec![0xa2, 0x63, b'o', b'f', b'f', 0x18, IMAGE_LEN, 0x65];
+                        ack.extend_from_slice(b"match");
+                        ack.push(0xf5);
+                        ack
+                    }
+                    true => continue,
+                };
+                let mut reply = vec![buf[0] + 1, 0];
+                reply.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+                reply.extend_from_slice(&buf[4..8]);
+                reply.extend_from_slice(&payload);
+                socket.send_to(&reply, from).await.ok();
+            }
+        });
+        (addr, senders)
+    }
+
+    fn update_at(addr: SocketAddr) -> (OtaStream, JoinHandle<()>) {
+        let image = mcuboot_image([0xAB; 32], &IMAGE_BODY);
+        assert_eq!(image.len(), usize::from(IMAGE_LEN));
+        let source = async move { Ok(Source::at(addr, "test-device".into())) };
+        spawn_ota(source, image, OtaOptions::default())
+    }
+
+    async fn until_event(events: &mut OtaStream, wanted: fn(&OtaEvent) -> bool) {
+        let found = async {
+            while let Some(event) = events.next().await {
+                if wanted(&event.unwrap()) {
+                    return;
+                }
+            }
+            panic!("the update ended first");
+        };
+        tokio::time::timeout(Duration::from_secs(5), found)
+            .await
+            .expect("the event in time");
+    }
+
+    /// A write already begun when the update was dropped still lands.
+    async fn frames_once_quiet(senders: &std::sync::Mutex<Vec<SocketAddr>>) -> usize {
+        tokio::time::sleep(SETTLE).await;
+        let before = senders.lock().unwrap().len();
+        tokio::time::sleep(UDP_RECONNECT_POLL_INTERVAL + SETTLE * 4).await;
+        let after = senders.lock().unwrap().len();
+        assert_eq!(before, after, "the dropped update is still talking");
+        after
+    }
+
+    #[tokio::test]
+    async fn dropping_an_update_mid_upload_stops_it_and_leaves_the_device_to_the_next() {
+        let (addr, senders) = smp_device(false).await;
+        let (mut events, task) = update_at(addr);
+        until_event(&mut events, |e| matches!(e, OtaEvent::SessionOpened)).await;
+        tokio::time::sleep(SETTLE).await;
+        assert_eq!(
+            senders.lock().unwrap().len(),
+            1,
+            "the first chunk, unanswered"
+        );
+
+        drop(events);
+
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .expect("the task ends promptly")
+            .unwrap();
+        let quiet = frames_once_quiet(&senders).await;
+
+        let (mut next, _task) = update_at(addr);
+        until_event(&mut next, |e| matches!(e, OtaEvent::SessionOpened)).await;
+        tokio::time::sleep(SETTLE).await;
+        let senders = senders.lock().unwrap();
+        assert_eq!(senders.len(), quiet + 1);
+        assert_ne!(
+            senders[quiet], senders[0],
+            "the next update is a session of its own"
+        );
+    }
+
+    #[tokio::test]
+    async fn dropping_an_update_while_it_waits_for_the_reset_device_stops_it() {
+        let (addr, senders) = smp_device(true).await;
+        let (mut events, task) = update_at(addr);
+        until_event(&mut events, |e| matches!(e, OtaEvent::Reconnecting { .. })).await;
+
+        drop(events);
+
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .expect("the task ends promptly")
+            .unwrap();
+        frames_once_quiet(&senders).await;
     }
 
     #[tokio::test]

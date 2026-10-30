@@ -14,6 +14,9 @@
 - `ota_ble` and `ota_udp` return `OtaStream`, as `ota` does, and
   `Discovery::open_smp_on` opens a seen device's session over a transport
   chosen at run time.
+- Dropping an OTA stream stops its update at the next wait (the upload,
+  a reply, the wait for the reset device) rather than at its next event,
+  and never mid-frame.
 - `WifiStatus::as_byte`, the inverse of `from_byte`.
 - `probe` tells a device that answers in a version (`Probe::Answered`) from
   one that sends bytes no frame parses from (`Unparseable`) and one that

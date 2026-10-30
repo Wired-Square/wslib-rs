@@ -12,7 +12,8 @@
   the request is sent.
 - One task per session reads every reply and routes it to its request by
   sequence number, so concurrent requests, uploads and file transfers keep
-  their own replies; a receive error closes the session. A session is made
+  their own replies; a receive error closes the session. A request
+  dropped mid-write still writes its whole frame. A session is made
   within a tokio runtime.
 - The file system group: `fs_upload`, `fs_download`, `fs_status`, `fs_hash`
   and `fs_verify`, which checks by SHA-256, CRC-32 or a read-back.

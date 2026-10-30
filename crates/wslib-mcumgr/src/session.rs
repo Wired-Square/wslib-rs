@@ -946,6 +946,38 @@ mod tests {
         assert!(matches!(session.echo("hi").await, Err(Error::LinkClosed)));
     }
 
+    /// Takes a moment over each write, and counts the frames it finishes.
+    #[derive(Default)]
+    struct SlowLink {
+        written: std::sync::Mutex<Vec<Vec<u8>>>,
+    }
+
+    impl Transport for SlowLink {
+        fn send(&self, frame: Vec<u8>) -> BoxFuture<'_, Result<(), Error>> {
+            Box::pin(async move {
+                tokio::time::sleep(SETTLE).await;
+                self.written.lock().unwrap().push(frame);
+                Ok(())
+            })
+        }
+
+        fn receive(&self) -> BoxFuture<'_, Result<Vec<u8>, Error>> {
+            Box::pin(std::future::pending())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_request_dropped_mid_write_still_writes_its_whole_frame() {
+        let link = Arc::new(SlowLink::default());
+        let session = Session::new(Arc::clone(&link) as Arc<dyn Transport>, TEST_CHUNK);
+
+        let dropped = tokio::time::timeout(SETTLE / 3, session.echo("hi")).await;
+        assert!(dropped.is_err());
+        tokio::time::sleep(SETTLE * 2).await;
+
+        assert_eq!(link.written.lock().unwrap().len(), 1);
+    }
+
     #[tokio::test]
     async fn a_reset_the_device_refuses_is_an_error() {
         let session = Session::new(OsDevice::answering_reset_with(Some(RC_REFUSED)), TEST_CHUNK);

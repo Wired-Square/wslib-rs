@@ -7,12 +7,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use wslib_framelink_protocol::types::{ASPECT_DC, ASPECT_DEFAULT, QTY_TEMPERATURE, QTY_VOLTAGE};
 use wslib_instruments::{
     cluster::{Cluster, Latest},
     probe::{Probe, ProbeError},
     sample::{Sample, Stamp},
-    signal::{self, SignalKey},
+    signal::{self, ASPECT_DC, ASPECT_DEFAULT, QTY_TEMPERATURE, QTY_VOLTAGE, SignalKey},
     value::Value,
 };
 

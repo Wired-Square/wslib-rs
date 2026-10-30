@@ -4,7 +4,7 @@ use wslib_instruments::{
     gw121::decode::{METER_TEMPERATURE, STATUS, THERMOCOUPLE},
     probe::{Probe, ProbeError},
     sample::{Sample, Stamp},
-    signal::SignalKey,
+    signal::{self, SignalKey},
     uri::narrowed,
     value::Value,
 };
@@ -53,7 +53,11 @@ fn a_selection_narrows_the_signals_and_the_samples_to_the_selected_keys() {
         .map(|s| s.key)
         .collect();
     assert_eq!(keys, [THERMOCOUPLE]);
-    assert_eq!(probe.name(), "everything");
+    assert_eq!(
+        probe.name(),
+        format!("everything/{}", signal::slug(&THERMOCOUPLE)),
+        "the selection is part of the name"
+    );
     assert_eq!(probe.max_interval(), MAX_INTERVAL);
 }
 
@@ -61,5 +65,6 @@ fn a_selection_narrows_the_signals_and_the_samples_to_the_selected_keys() {
 fn no_selection_passes_everything_through() {
     let mut probe = narrowed(Box::new(Everything), &[]);
     assert_eq!(probe.signals(), ALL);
+    assert_eq!(probe.name(), "everything");
     assert_eq!(probe.next(Instant::now()).unwrap().len(), ALL.len());
 }

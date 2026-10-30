@@ -11,6 +11,7 @@ use std::{
 
 use wslib_instruments::{
     probe::{Probe, ProbeError},
+    uri::ProbeUri,
     wiredreflow::{
         bus::{Bus, BusError, CanBus, PortDirectory, SerialPort},
         frame::{CJ1, CJ2, RawFrame, TC1, TC1_FAULT, TC2, TC2_FAULT},
@@ -79,9 +80,13 @@ fn script(steps: Vec<Step>) -> Script {
 
 fn probe(steps: Vec<Step>) -> (WiredReflowProbe, Script) {
     let shared = script(steps);
-    let probe =
-        WiredReflowProbe::with_bus(BENCH_DEVICE, Box::new(Scripted(Arc::clone(&shared))), FAST)
-            .unwrap();
+    let probe = WiredReflowProbe::with_bus(
+        &can0(),
+        BENCH_DEVICE,
+        Box::new(Scripted(Arc::clone(&shared))),
+        FAST,
+    )
+    .unwrap();
     (probe, shared)
 }
 
@@ -184,9 +189,9 @@ fn two_boards_on_the_bus_are_refused_naming_both() {
 }
 
 #[test]
-fn the_probe_is_named_by_its_device() {
+fn the_probe_is_named_by_its_canonical_uri_which_parses_back() {
     let (probe, _) = probe(vec![]);
-    assert_eq!(probe.name(), "WiredReflow 028F08");
+    assert_eq!(probe.name(), "wiredreflow:can0@028F08");
     assert_eq!(probe.display_name(&TC1), Some("TC1"));
 }
 
@@ -282,9 +287,13 @@ fn frames_from_another_board_never_reach_a_bound_probe() {
 #[test]
 fn dropping_the_probe_stops_its_link_and_releases_the_bus_within_a_few_polls() {
     let released = Arc::new(AtomicBool::new(false));
-    let probe =
-        WiredReflowProbe::with_bus(BENCH_DEVICE, Box::new(Watched(Arc::clone(&released))), FAST)
-            .unwrap();
+    let probe = WiredReflowProbe::with_bus(
+        &can0(),
+        BENCH_DEVICE,
+        Box::new(Watched(Arc::clone(&released))),
+        FAST,
+    )
+    .unwrap();
     drop(probe);
     let dropped = Instant::now();
     let within = FAST.poll * STOP_WITHIN_POLLS;
@@ -311,7 +320,7 @@ fn started(steps: Vec<Step>, device: Option<u32>) -> (io::Result<WiredReflowProb
 fn discovery_on_the_link_thread_binds_the_one_board_names_the_probe_at_once_and_reads_on() {
     let (started, shared) = started(vec![broadcast(THERMOCOUPLE_ID, &ROOM)], None);
     let mut probe = started.unwrap();
-    assert_eq!(probe.name(), "WiredReflow 028F08");
+    assert_eq!(probe.name(), "wiredreflow:can0@028F08");
     shared
         .lock()
         .unwrap()
@@ -347,7 +356,15 @@ fn discovery_on_the_link_thread_that_finds_two_boards_fails_the_start_naming_bot
 #[test]
 fn a_named_device_skips_discovery_and_the_probe_starts_at_once() {
     let probe = started(vec![], Some(BENCH_DEVICE)).0.unwrap();
-    assert_eq!(probe.name(), "WiredReflow 028F08");
+    assert_eq!(probe.name(), "wiredreflow:can0@028F08");
+    assert_eq!(
+        probe.name().parse::<ProbeUri>().unwrap(),
+        ProbeUri::WiredReflow {
+            bus: can0(),
+            device: Some(BENCH_DEVICE),
+            selected: vec![]
+        }
+    );
 }
 
 #[test]

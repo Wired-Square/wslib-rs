@@ -130,7 +130,12 @@ fn an_unrecognised_probe_lists_the_wiredreflow_form_and_its_buses() {
         .unwrap_err()
         .to_string();
     assert!(error.contains("wiredreflow:<bus>[@<device-id>]"), "{error}");
-    assert!(error.contains("slcan=by-id:<name>"), "{error}");
+    assert!(error.contains("slcan=<name>"), "{error}");
+    assert_eq!(
+        error.contains("by-id"),
+        cfg!(target_os = "linux"),
+        "/dev/serial/by-id is Linux's: {error}"
+    );
 }
 
 #[cfg(feature = "can-slcan")]
@@ -151,6 +156,7 @@ fn a_socketcan_bus_off_linux_says_to_use_another_adapter() {
     let error = open_error("wiredreflow:can0@028F08");
     assert_eq!(error.kind(), io::ErrorKind::Unsupported);
     assert!(error.to_string().contains("slcan="), "{error}");
+    assert!(!error.to_string().contains("by-id"), "{error}");
 }
 
 #[cfg(all(feature = "can-gsusb", target_os = "linux"))]

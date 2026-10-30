@@ -84,3 +84,15 @@ fn a_probe_opens_reads_and_drops_in_spawn_blocking() {
         .block_on(async { tokio::task::spawn_blocking(move || thermocouples(address)).await });
     assert_eq!(keys.unwrap(), [TC1, TC2]);
 }
+
+#[test]
+fn a_discovered_board_names_the_probe_by_the_device_found_and_the_selection() {
+    let address = board_on_a_gvret_device();
+    let uri: ProbeUri = format!("wiredreflow:gvret={address}/TC1").parse().unwrap();
+    let name = open(&uri).unwrap().name();
+    assert_eq!(
+        name,
+        format!("wiredreflow:gvret={address}@028F08/device.0.measurement.temperature.ch0")
+    );
+    assert_eq!(name.parse::<ProbeUri>().unwrap().to_string(), name);
+}

@@ -263,10 +263,15 @@ fn only_an_unknown_scheme_is_unrecognised_so_a_consumer_can_try_its_own() {
 }
 
 #[test]
-fn bare_wiredreflow_is_refused_for_want_of_a_bus() {
+fn bare_wiredreflow_is_refused_for_want_of_a_bus_with_an_example_for_this_platform() {
     let error = "wiredreflow".parse::<ProbeUri>().unwrap_err();
+    let example = if cfg!(target_os = "linux") {
+        "wiredreflow:can0"
+    } else {
+        "wiredreflow:slcan="
+    };
     assert!(
-        matches!(&error, ProbeUriError::Target(why) if why.contains("wiredreflow:can0")),
+        matches!(&error, ProbeUriError::Target(why) if why.contains(example)),
         "{error}"
     );
 }
@@ -409,7 +414,8 @@ fn an_slcan_port_written_as_a_by_id_path_is_refused_quoting_its_by_id_uri() {
 }
 
 #[test]
-fn an_slcan_path_naming_no_port_this_probe_can_open_is_refused_naming_both_forms() {
+fn an_slcan_path_naming_no_port_this_probe_can_open_is_refused_naming_the_forms_this_platform_has()
+{
     for bad in [
         "wiredreflow:slcan=/dev/serial/by-path/pci-0000:00:14.0-usb-0:1:1.0",
         "wiredreflow:slcan=/dev/serial/by-id/usb-Foo@Bar_X-if00",
@@ -417,8 +423,10 @@ fn an_slcan_path_naming_no_port_this_probe_can_open_is_refused_naming_both_forms
         "wiredreflow:slcan=/dev/by-id:usb-Foo",
     ] {
         let why = refusal(bad);
-        assert!(
-            why.contains("slcan=<name>") && why.contains("slcan=by-id:<name>"),
+        assert!(why.contains("slcan=<name>"), "{bad}: {why}");
+        assert_eq!(
+            why.contains("slcan=by-id:<name>"),
+            cfg!(target_os = "linux"),
             "{bad}: {why}"
         );
     }

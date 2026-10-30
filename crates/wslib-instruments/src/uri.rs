@@ -13,7 +13,10 @@ use crate::{
     signal::{self, SignalKey},
     wiredreflow::{
         self,
-        bus::{CanBus, DEVICE_SEPARATOR, PATH_SEPARATOR, SLCAN_PREFIX, SerialPort, port_forms},
+        bus::{
+            CanBus, DEVICE_SEPARATOR, PATH_SEPARATOR, SLCAN_PREFIX, SerialPort, example_bus,
+            port_forms,
+        },
         frame::{DEVICE_ID_MAX, device_text},
         link::WiredReflowProbe,
     },
@@ -43,7 +46,7 @@ pub const BUS_FORMS: &[&str] = &[
     "a SocketCAN interface such as can0",
     #[cfg(feature = "can-slcan")]
     "slcan=<name>",
-    #[cfg(feature = "can-slcan")]
+    #[cfg(all(feature = "can-slcan", target_os = "linux"))]
     "slcan=by-id:<name>",
     #[cfg(all(feature = "can-gsusb", any(target_os = "macos", target_os = "windows")))]
     "gsusb[=<serial>]",
@@ -58,7 +61,7 @@ const WIREDREFLOW: &str = "wiredreflow";
 const HEX_PREFIX: &str = "0x";
 const HEX: u32 = 16;
 const SCHEME_SEPARATOR: char = ':';
-const SELECTOR_SEPARATOR: char = '/';
+pub(crate) const SELECTOR_SEPARATOR: char = '/';
 const STATUS_OK: &str = "ok";
 const LIST_SEPARATOR: &str = ", ";
 
@@ -261,7 +264,8 @@ impl FromStr for ProbeUri {
         }
         if s == WIREDREFLOW {
             return Err(ProbeUriError::Target(format!(
-                "{WIREDREFLOW} needs a bus after a colon, e.g. {WIREDREFLOW}{SCHEME_SEPARATOR}can0"
+                "{WIREDREFLOW} needs a bus after a colon, e.g. {WIREDREFLOW}{SCHEME_SEPARATOR}{}",
+                example_bus()
             )));
         }
         if let Some(rest) = s

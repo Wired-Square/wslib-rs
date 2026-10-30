@@ -18,6 +18,7 @@ use crate::{
     probe::{Probe, ProbeError},
     sample::{Sample, Stamp},
     signal::SignalKey,
+    uri::ProbeUri,
 };
 
 pub const DISCOVERY_WINDOW: Duration = Duration::from_secs(2);
@@ -136,6 +137,7 @@ fn link(
 }
 
 pub struct WiredReflowProbe {
+    on: CanBus,
     device: u32,
     readings: Receiver<Delivery>,
     held: Option<ProbeError>,
@@ -166,7 +168,7 @@ impl WiredReflowProbe {
         timing: Timing,
     ) -> io::Result<Self> {
         let on = bus.clone();
-        Self::spawned(format!("wiredreflow {bus}"), timing, move || {
+        Self::spawned(bus.clone(), timing, move || {
             let mut opened = opener()?;
             let device = match device {
                 Some(device) => device,
@@ -176,16 +178,17 @@ impl WiredReflowProbe {
         })
     }
 
-    pub fn with_bus(device: u32, bus: Box<dyn Bus>, timing: Timing) -> io::Result<Self> {
-        Self::spawned(
-            format!("wiredreflow {}", device_text(device)),
-            timing,
-            move || Ok((bus, device)),
-        )
+    pub fn with_bus(
+        on: &CanBus,
+        device: u32,
+        bus: Box<dyn Bus>,
+        timing: Timing,
+    ) -> io::Result<Self> {
+        Self::spawned(on.clone(), timing, move || Ok((bus, device)))
     }
 
     fn spawned(
-        name: String,
+        on: CanBus,
         timing: Timing,
         open: impl FnOnce() -> Opened + Send + 'static,
     ) -> io::Result<Self> {
@@ -194,7 +197,7 @@ impl WiredReflowProbe {
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = Arc::clone(&stop);
         thread::Builder::new()
-            .name(name)
+            .name(format!("wiredreflow {on}"))
             .spawn(move || match open() {
                 Ok((bus, device)) => {
                     if outcome_tx.send(Ok(device)).is_ok() {
@@ -209,6 +212,7 @@ impl WiredReflowProbe {
             io::Error::other("the WiredReflow link thread stopped before it opened the bus")
         })??;
         Ok(Self {
+            on,
             device,
             readings,
             held: None,
@@ -225,7 +229,12 @@ impl Drop for WiredReflowProbe {
 
 impl Probe for WiredReflowProbe {
     fn name(&self) -> String {
-        format!("WiredReflow {}", device_text(self.device))
+        ProbeUri::WiredReflow {
+            bus: self.on.clone(),
+            device: Some(self.device),
+            selected: vec![],
+        }
+        .to_string()
     }
 
     fn signals(&self) -> Vec<SignalKey> {

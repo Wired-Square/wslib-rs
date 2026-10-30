@@ -17,6 +17,8 @@ for sample in probe.next(Instant::now() + Duration::from_secs(2))? {
 }
 ```
 
+- `Probe::name` is the probe's canonical URI, e.g. `wiredreflow:can0@028F08`
+  with the device it found, which parses back to the same probe.
 - `Probe::next` blocks until a reading or the deadline. A probe runs its own
   runtime on its own thread, so it may be opened, read and dropped inside a
   tokio runtime, a current-thread one included.
@@ -42,8 +44,8 @@ for sample in probe.next(Instant::now() + Duration::from_secs(2))? {
 | Bus                                 | Feature         | Where                 |
 | ----------------------------------- | --------------- | --------------------- |
 | `can0`, any SocketCAN interface     | `can-socketcan` | Linux                 |
-| `slcan=<name>`, `/dev/<name>`       | `can-slcan`     | anywhere              |
-| `slcan=by-id:<name>`                | `can-slcan`     | `/dev/serial/by-id/`  |
+| `slcan=<name>`, `/dev/<name>`       | `can-slcan`     | anywhere; bare `COM3` on Windows |
+| `slcan=by-id:<name>`                | `can-slcan`     | Linux                 |
 | `gsusb[=<serial>]`                  | `can-gsusb`     | macOS, Windows        |
 | `pcan[=<serial>]`                   | `can-pcan`      | macOS, Windows        |
 | `gvret=<host>[:<port>]`, port 23    | `can-gvret`     | anywhere, over TCP    |

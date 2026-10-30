@@ -13,9 +13,18 @@ const GSUSB: &str = "gsusb";
 const PCAN: &str = "pcan";
 const SERIAL_SEPARATOR: char = '=';
 const PORT_SEPARATOR: char = ':';
+#[cfg(not(windows))]
 const DEVICES_PATH: &str = "/dev/";
+// serialport opens a bare name on Windows, under `\\.\`.
+#[cfg(windows)]
+const DEVICES_PATH: &str = "";
 const BY_ID_PATH: &str = "/dev/serial/by-id/";
 const BY_ID_TAG: &str = "by-id:";
+#[cfg(target_os = "linux")]
+const EXAMPLE_PORT: &str = "ttyACM0";
+#[cfg(windows)]
+const EXAMPLE_PORT: &str = "COM3";
+#[cfg(not(any(target_os = "linux", windows)))]
 const EXAMPLE_PORT: &str = "cu.usbmodem2101";
 const NAME_PLACEHOLDER: &str = "<name>";
 const FORM_SEPARATOR: &str = ", or ";
@@ -70,18 +79,45 @@ impl SerialPort {
     }
 }
 
+/// The serial-port forms that name a port on this platform; `/dev/serial/by-id`
+/// is Linux's.
 pub fn port_forms() -> String {
     let forms: Vec<String> = DIRECTORIES
         .into_iter()
+        .filter(|directory| *directory != PortDirectory::ById || cfg!(target_os = "linux"))
         .map(|directory| {
             let tag = directory.tag().unwrap_or_default();
-            format!(
-                "{SLCAN_PREFIX}{tag}{NAME_PLACEHOLDER} for {}{NAME_PLACEHOLDER}",
-                directory.path()
-            )
+            match directory.path() {
+                "" => format!("{SLCAN_PREFIX}{tag}{NAME_PLACEHOLDER}"),
+                path => {
+                    format!("{SLCAN_PREFIX}{tag}{NAME_PLACEHOLDER} for {path}{NAME_PLACEHOLDER}")
+                }
+            }
         })
         .collect();
     forms.join(FORM_SEPARATOR)
+}
+
+/// The bus forms that name an adapter on this platform.
+fn bus_hints() -> String {
+    let mut hints = Vec::new();
+    if cfg!(target_os = "linux") {
+        hints.push("a SocketCAN interface such as can0".to_owned());
+    }
+    hints.push(port_forms());
+    if cfg!(any(target_os = "macos", target_os = "windows")) {
+        hints.push(usb_forms());
+    }
+    hints.push(gvret_form());
+    hints.join(FORM_SEPARATOR)
+}
+
+pub(crate) fn example_bus() -> String {
+    if cfg!(target_os = "linux") {
+        "can0".into()
+    } else {
+        format!("{SLCAN_PREFIX}{EXAMPLE_PORT}")
+    }
 }
 
 fn usb_forms() -> String {
@@ -253,10 +289,8 @@ pub(crate) fn refusal(bus: &CanBus) -> io::Error {
              driver makes each a SocketCAN interface, so name that, e.g. can0"
         ),
         _ => format!(
-            "{bus}: SocketCAN needs Linux; here, name the adapter as {}, or {}, or {}",
-            port_forms(),
-            usb_forms(),
-            gvret_form()
+            "{bus}: SocketCAN needs Linux; here, name the adapter as {}",
+            bus_hints()
         ),
     };
     io::Error::new(io::ErrorKind::Unsupported, why)
@@ -280,12 +314,7 @@ impl FromStr for CanBus {
                 .parse()
                 .map(|port| CanBus::Slcan { port })
                 .map_err(|why| format!("{s}: {why}")),
-            None if s.is_empty() => Err(format!(
-                "name the CAN interface, e.g. can0, or {}, or {}, or {}",
-                port_forms(),
-                usb_forms(),
-                gvret_form()
-            )),
+            None if s.is_empty() => Err(format!("name the CAN bus as {}", bus_hints())),
             None => Ok(CanBus::SocketCan {
                 interface: s.to_owned(),
             }),

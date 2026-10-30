@@ -30,6 +30,7 @@ use crate::{
     probe::{Probe, ProbeError},
     sample::{Sample, Stamp},
     signal::SignalKey,
+    uri::ProbeUri,
 };
 
 pub const SERVICE: Uuid = Uuid::from_u128(0x0bd51666_e7cb_469b_8e4d_2742f1ba77cc);
@@ -126,7 +127,7 @@ fn choose<'a, Id: Eq + Hash>(
     }
 }
 
-pub type Chunk = (Instant, Vec<u8>);
+pub type Chunk = (Stamp, Vec<u8>);
 type Delivery = Result<Vec<Sample>, ProbeError>;
 type StopRx = watch::Receiver<bool>;
 type Tap = Option<Sender<Chunk>>;
@@ -138,11 +139,11 @@ enum Halt {
     Failed(String),
 }
 
-impl Halt {
-    fn into_message(self) -> String {
-        match self {
-            Halt::Stopped => "stopped".into(),
-            Halt::Failed(why) => why,
+impl From<Halt> for io::Error {
+    fn from(halt: Halt) -> Self {
+        match halt {
+            Halt::Stopped => io::Error::new(io::ErrorKind::Interrupted, "stopped"),
+            Halt::Failed(why) => io::Error::other(why),
         }
     }
 }
@@ -437,7 +438,7 @@ async fn pump(
         match next {
             Ok(Some(chunk)) => {
                 if let Some(tap) = tap {
-                    let _ = tap.send((Instant::now(), chunk.clone()));
+                    let _ = tap.send((Stamp::now(), chunk.clone()));
                 }
                 let first_chunk = *first_chunk.get_or_insert_with(tokio::time::Instant::now);
                 let frames = assembler.push(&chunk);
@@ -665,7 +666,11 @@ impl Drop for Gw121Probe {
 
 impl Probe for Gw121Probe {
     fn name(&self) -> String {
-        format!("121gw:{}", self.target)
+        ProbeUri::Gw121 {
+            target: self.target.clone(),
+            selected: vec![],
+        }
+        .to_string()
     }
 
     fn signals(&self) -> Vec<SignalKey> {
@@ -697,6 +702,7 @@ impl Probe for Gw121Probe {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Seen {
     pub name: String,
     pub address: Option<String>,
@@ -725,17 +731,21 @@ async fn overhear(events: &mut Events, duration: Duration) -> HashSet<Peripheral
     heard
 }
 
-pub async fn scan(duration: Duration) -> Result<Vec<Seen>, String> {
+pub async fn scan(duration: Duration) -> io::Result<Vec<Seen>> {
     let (_running, stop) = watch::channel(false);
-    let (_manager, adapter) = acquire_adapter(&stop).await.map_err(Halt::into_message)?;
+    let (_manager, adapter) = acquire_adapter(&stop).await?;
     let heard = while_scanning(&adapter, &stop, async |events: &mut Events| {
         Ok(overhear(events, duration).await)
     })
-    .await
-    .map_err(Halt::into_message)?;
+    .await?;
     let (advertisers, _) = tokio::time::timeout(DESCRIBE_TIMEOUT, describe(&adapter, &heard))
         .await
-        .map_err(|_| format!("describing what was heard: timed out after {DESCRIBE_TIMEOUT:?}"))?;
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("describing what was heard: timed out after {DESCRIBE_TIMEOUT:?}"),
+            )
+        })?;
     Ok(seen_meters(&heard, &advertisers))
 }
 
@@ -1017,6 +1027,13 @@ mod tests {
             None,
             "a connected device BlueZ can only name by its address might be a 121GW"
         );
+    }
+
+    #[test]
+    fn the_probe_is_named_by_its_canonical_uri_which_parses_back() {
+        let name = probe_on(mpsc::channel().1, unexpected_link).name();
+        assert_eq!(name, "121gw:121GW");
+        assert_eq!(name.parse::<ProbeUri>().unwrap().to_string(), name);
     }
 
     #[test]
@@ -1492,5 +1509,21 @@ mod tests {
             addresses,
             vec![Some(BDAddr::from(METER_A).to_string()), None]
         );
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn a_meter_seen_in_a_scan_serialises_for_json() {
+        let seen = Seen {
+            name: METER_NAME.into(),
+            address: None,
+            rssi: Some(HEARD_RSSI),
+        };
+        let text = serde_json::to_value(&seen).unwrap();
+        assert_eq!(
+            text,
+            serde_json::json!({ "name": METER_NAME, "address": null, "rssi": HEARD_RSSI })
+        );
+        assert_eq!(serde_json::from_value::<Seen>(text).unwrap(), seen);
     }
 }

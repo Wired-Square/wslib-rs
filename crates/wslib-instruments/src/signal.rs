@@ -1,4 +1,10 @@
-pub use wslib_framelink_protocol::dsig::SignalKey;
+pub use wslib_framelink_protocol::{
+    dsig::SignalKey,
+    types::{
+        ASPECT_AC, ASPECT_DC, ASPECT_DEFAULT, ASPECT_INTEGRITY, ASPECT_REFERENCE, QTY_BITMASK,
+        QTY_COUNT, QTY_CURRENT, QTY_RATIO, QTY_TEMPERATURE, QTY_VOLTAGE, SIGNAL_CHANNEL_NONE,
+    },
+};
 use wslib_framelink_protocol::{
     dsig::{format_signal_key, parse_signal_key, semantic_signal_name},
     types::{ROLE_DIAGNOSTIC, ROLE_MEASUREMENT, ROLE_STATUS, SIGNAL_TARGET_DEVICE, quantity_unit},

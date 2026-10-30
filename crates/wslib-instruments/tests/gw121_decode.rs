@@ -1,7 +1,3 @@
-use wslib_framelink_protocol::types::{
-    ASPECT_AC, ASPECT_DC, ASPECT_DEFAULT, QTY_CURRENT, QTY_TEMPERATURE, QTY_VOLTAGE,
-    SIGNAL_CHANNEL_NONE,
-};
 use wslib_instruments::{
     gw121::{
         decode::{
@@ -12,7 +8,10 @@ use wslib_instruments::{
         frame::{Assembler, FRAME_LEN, Frame},
     },
     sample::{Sample, Stamp},
-    signal::{self, SignalKey},
+    signal::{
+        self, ASPECT_AC, ASPECT_DC, ASPECT_DEFAULT, QTY_CURRENT, QTY_TEMPERATURE, QTY_VOLTAGE,
+        SIGNAL_CHANNEL_NONE, SignalKey,
+    },
     value::Value,
 };
 

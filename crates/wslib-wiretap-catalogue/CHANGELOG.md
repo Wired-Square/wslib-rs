@@ -3,6 +3,7 @@
 ## 0.1.1
 
 - serde's floor is 1.0.228.
+- thiserror's floor is 2.0.20.
 
 ## 0.1.0
 

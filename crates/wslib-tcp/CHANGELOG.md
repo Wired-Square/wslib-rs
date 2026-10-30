@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- thiserror's floor is 2.0.20.
+
 ## 0.1.0
 
 - `connect`: a TCP stream to `host:port`, resolved on every call, each

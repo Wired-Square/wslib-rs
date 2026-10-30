@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- thiserror's floor is 2.0.20.
+
 ## 0.1.1
 
 - `CanWriter::submit` and `send_when_ready` hand back a future that no

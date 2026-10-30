@@ -1,7 +1,7 @@
 //! FrameLink devices over BLE: a one-shot scan, the GATT UUIDs and, with
 //! `wifi-prov`, Wi-Fi provisioning.
 
-#[cfg(feature = "wifi-prov")]
+#[cfg(any(feature = "wifi-prov", feature = "smp"))]
 pub(crate) mod notify_dispatcher;
 mod scan;
 mod uuids;

@@ -44,6 +44,11 @@ None is on by default.
 - `wifi-prov` (with `ble` and `discovery`): `Discovery::open_wifi_prov`, a
   session writing Wi-Fi credentials to a device over BLE and streaming its
   progress.
+- `smp` (with `discovery`): `Discovery::open_smp_udp` and `open_smp`, SMP
+  sessions over wslib-mcumgr, and `ota_udp`, `ota` and `ota_udp_addr`, a
+  firmware update as a stream of `OtaEvent`s: upload, test, reset,
+  reconnect, verify the running image, confirm. With `ble`, `open_smp_ble`
+  and `ota_ble` too.
 
 `Device`, `DiscoveryEvent`, the registry's records and the Wi-Fi types
 serialise as they did before the move; `tests/goldens.rs` pins them.

@@ -8294,7 +8294,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-framelink"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "btleplug",
  "futures-util",
@@ -8308,6 +8308,7 @@ dependencies = [
  "wslib-framelink-board",
  "wslib-framelink-protocol",
  "wslib-framing",
+ "wslib-mcumgr",
  "wslib-mdns",
 ]
 

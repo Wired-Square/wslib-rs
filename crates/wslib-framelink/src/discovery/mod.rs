@@ -22,9 +22,13 @@ mod events;
 mod legacy;
 mod mdns;
 mod presence;
+#[cfg(feature = "smp")]
+mod smp;
 
 pub use events::{DiscoveryEvent, ErrorSource};
 pub use legacy::{FrameLinkDevice, discover};
+#[cfg(feature = "smp")]
+pub use smp::{OtaEvent, OtaOptions, OtaStream, ota_udp_addr};
 
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -63,16 +67,19 @@ struct DiscoveryInner {
     #[cfg(feature = "ble")]
     ble_store: Arc<ble::BlePeripheralStore>,
     /// A device's open sessions; repeated opens share them.
-    #[cfg(feature = "wifi-prov")]
+    #[cfg(any(feature = "wifi-prov", feature = "smp"))]
     sessions: tokio::sync::Mutex<std::collections::HashMap<DeviceId, ActiveSessions>>,
 }
 
 /// Each session holds the device's BLE lease; the link closes when the last
 /// is dropped.
-#[cfg(feature = "wifi-prov")]
+#[cfg(any(feature = "wifi-prov", feature = "smp"))]
 #[derive(Default)]
 struct ActiveSessions {
+    #[cfg(feature = "wifi-prov")]
     wifi_prov: Option<Arc<crate::ble::wifi_prov::WifiProvSession>>,
+    #[cfg(feature = "smp")]
+    smp: Option<Arc<wslib_mcumgr::Session>>,
 }
 
 impl Discovery {
@@ -137,7 +144,7 @@ impl Discovery {
                 mdns,
                 #[cfg(feature = "ble")]
                 ble_store: Arc::default(),
-                #[cfg(feature = "wifi-prov")]
+                #[cfg(any(feature = "wifi-prov", feature = "smp"))]
                 sessions: tokio::sync::Mutex::default(),
             }),
         }
@@ -245,13 +252,19 @@ impl Discovery {
         active.wifi_prov = Some(Arc::clone(&session));
         Ok(session)
     }
+}
 
+#[cfg(any(feature = "wifi-prov", feature = "smp"))]
+impl Discovery {
     /// Drops the device's sessions; its BLE link closes once nothing in
     /// flight holds one.
     pub async fn release_device(&self, id: &DeviceId) {
         self.inner.sessions.lock().await.remove(id);
     }
+}
 
+#[cfg(any(feature = "wifi-prov", all(feature = "smp", feature = "ble")))]
+impl Discovery {
     async fn resolve_ble_lease(
         &self,
         id: &DeviceId,
@@ -375,7 +388,7 @@ mod tests {
     use futures_util::StreamExt;
 
     impl Discovery {
-        fn idle() -> Self {
+        pub(crate) fn idle() -> Self {
             let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
             let tracker = PresenceTracker::new(event_tx.clone(), presence::DEFAULT_STALE_AFTER);
             Self::with(Arc::new(Mutex::new(tracker)), event_tx, Vec::new(), None)

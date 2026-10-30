@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1
+
+- `smp`: SMP sessions and firmware updates over wslib-mcumgr.
+  `Discovery::open_smp_udp`, `open_smp`, `ota_udp` and `ota`, and
+  `ota_udp_addr`, streaming `OtaEvent`s; with `ble`, `open_smp_ble` and
+  `ota_ble`. Their errors are `Error::Smp`, `SmpUnavailable` and
+  `OtaVerifyMismatch`. `OtaEvent` is `#[non_exhaustive]`.
+
 ## 0.1.0
 
 - The FrameLink session, moved in with every serialised shape unchanged:

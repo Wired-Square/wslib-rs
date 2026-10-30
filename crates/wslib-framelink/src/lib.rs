@@ -1,6 +1,7 @@
 //! A FrameLink device over TCP: [`FrameLinkSession`] serialises requests and
 //! replies and carries the device's stream. With `discovery`, [`Discovery`]
-//! finds devices over mDNS, and over BLE with `ble`.
+//! finds devices over mDNS, and over BLE with `ble`; with `smp`, it opens
+//! their SMP sessions and updates their firmware.
 
 pub mod board;
 mod capability;
@@ -32,3 +33,7 @@ pub use session::{
 
 #[cfg(feature = "discovery")]
 pub use discovery::{Discovery, DiscoveryEvent, ErrorSource};
+#[cfg(feature = "smp")]
+pub use discovery::{OtaEvent, OtaOptions, OtaStream, ota_udp_addr};
+#[cfg(feature = "smp")]
+pub use wslib_mcumgr::{self as mcumgr, ImageSlot, UploadProgress};

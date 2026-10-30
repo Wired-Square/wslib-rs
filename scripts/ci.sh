@@ -230,10 +230,13 @@ if grep -qx wslib-framelink <<<"$todo"; then
   ! grep -E '^(btleplug|mdns-sd) ' <<<"$tree" || die "wslib-framelink's default build pulls in btleplug or mdns-sd"
   tree=$(normal_tree wslib-framelink --features discovery --target all --depth 1)
   ! grep -E '^mdns-sd ' <<<"$tree" || die "wslib-framelink depends on mdns-sd other than through wslib-mdns"
+  step "wslib-framelink's smp has no btleplug without ble"
+  tree=$(normal_tree wslib-framelink --features smp --target all)
+  ! grep -E '^btleplug ' <<<"$tree" || die "wslib-framelink's smp pulls in btleplug"
   ios=aarch64-apple-ios
   if [[ -d $(rustc --print target-libdir --target $ios 2>/dev/null) ]]; then
     step "wslib-framelink's BLE for $ios"
-    cargo check -p wslib-framelink --features ble,wifi-prov --target $ios --locked
+    cargo check -p wslib-framelink --features ble,wifi-prov,smp --target $ios --locked
   else
     step "wslib-framelink's BLE for $ios skipped: its std is missing (rustup target add $ios)"
   fi

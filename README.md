@@ -48,6 +48,7 @@ appliance chassis and every app beside it.
 | `wslib-tcp`              | A TCP connect that tries each resolved address in one budget  |
 | `wslib-modbus`           | Modbus register maps, poll schedules, RTU framing, TCP poller |
 | `wslib-serial`           | Serial line settings, SLIP and delimiters, a reopening port   |
+| `wslib-framing`          | Framing codecs for byte streams: COBS, with a capped decoder  |
 | `wslib-can`              | CAN frames, length codes, logs, and the task transports share |
 | `wslib-can-socketcan`    | SocketCAN frame layouts, and a raw-socket task on Linux       |
 | `wslib-can-gvret`        | GVRET, both ends, and a task over TCP or a serial port        |
@@ -56,6 +57,8 @@ appliance chassis and every app beside it.
 | `wslib-can-pcan`         | PCAN-USB and the FD family, a task over nusb or PCAN-Basic    |
 | `wslib-wiretap-catalogue` | Device catalogues: parse, validate, decode, edit, frame, DBC |
 | `wslib-wiretap-gateway`  | A capture gateway's HTTP API, as serde types                  |
+| `wslib-framelink-protocol` | FrameLink's wire, sans-io: frames, messages, signal identity |
+| `wslib-framelink-board`  | FrameLink board TOML: parse, edit, scaffold, display names    |
 | `wslib-appliance-types`  | An appliance's wire contract, shared by daemon and browser    |
 | `wslib-appliance-config` | An appliance's bootstrap settings: flags, env and files       |
 | `wslib-appliance-store`  | An appliance's tables, in one SQLite file its product shares  |

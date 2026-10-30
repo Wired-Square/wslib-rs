@@ -11,6 +11,9 @@
   Opens of one device's SMP session take turns without holding the other
   devices' sessions, and a cached session whose link has closed is opened
   again, over UDP as over BLE.
+- `ota_ble` and `ota_udp` return `OtaStream`, as `ota` does, and
+  `Discovery::open_smp_on` opens a seen device's session over a transport
+  chosen at run time.
 - `WifiStatus::as_byte`, the inverse of `from_byte`.
 - `probe` tells a device that answers in a version (`Probe::Answered`) from
   one that sends bytes no frame parses from (`Unparseable`) and one that

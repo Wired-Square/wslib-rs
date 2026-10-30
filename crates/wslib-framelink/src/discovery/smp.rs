@@ -174,7 +174,8 @@ impl Discovery {
         }
     }
 
-    async fn open_smp_on(
+    /// An SMP session to the seen device `id` over `transport`.
+    pub async fn open_smp_on(
         &self,
         id: &DeviceId,
         transport: Transport,
@@ -194,7 +195,7 @@ impl Discovery {
         device_id: &DeviceId,
         image: Arc<[u8]>,
         options: OtaOptions,
-    ) -> impl Stream<Item = Result<OtaEvent, Error>> + Send + Unpin + 'static {
+    ) -> OtaStream {
         let source = Source::discovered(self.clone(), device_id.clone(), Transport::Ble);
         run_ota(source, image, options)
     }
@@ -205,7 +206,7 @@ impl Discovery {
         device_id: &DeviceId,
         image: Arc<[u8]>,
         options: OtaOptions,
-    ) -> impl Stream<Item = Result<OtaEvent, Error>> + Send + Unpin + 'static {
+    ) -> OtaStream {
         let source = Source::discovered(self.clone(), device_id.clone(), Transport::Udp);
         run_ota(source, image, options)
     }

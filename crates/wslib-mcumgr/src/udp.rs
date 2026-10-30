@@ -51,11 +51,16 @@ impl Transport for UdpTransport {
     fn max_in_flight(&self) -> usize {
         1
     }
+
+    /// A device's buffers are sized for BLE and would fragment a datagram.
+    fn max_chunk_size(&self) -> usize {
+        UDP_CHUNK_SIZE
+    }
 }
 
 impl Session {
-    /// A session over UDP. It keeps its chunk size whatever the device's
-    /// buffers, which are sized for BLE and would fragment a datagram.
+    /// A session over UDP. Its chunks stay within one unfragmented datagram
+    /// whatever the device's buffers.
     pub async fn connect_udp(peer: SocketAddr) -> Result<Self, Error> {
         Ok(Self::new(
             Arc::new(UdpTransport::connect(peer).await?),
@@ -98,5 +103,42 @@ mod tests {
 
         assert_eq!(session.echo("hi").await.unwrap(), "hi");
         echo.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn negotiated_chunks_stay_within_one_datagram() {
+        #[derive(serde::Serialize)]
+        struct Params {
+            buf_size: usize,
+            buf_count: usize,
+        }
+        let device = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let session = Session::connect_udp(device.local_addr().unwrap())
+            .await
+            .unwrap();
+
+        let answer = tokio::spawn(async move {
+            let mut buf = [0; RECV_BUF_LEN];
+            let (len, from) = device.recv_from(&mut buf).await.unwrap();
+            let header = crate::Header::decode(&buf[..len]).unwrap();
+            let params = Params {
+                buf_size: 4 * UDP_CHUNK_SIZE,
+                buf_count: 4,
+            };
+            let reply = frame::encode(
+                Op::ReadResponse,
+                header.group,
+                header.command,
+                header.seq,
+                &params,
+            )
+            .unwrap();
+            device.send_to(&reply, from).await.unwrap();
+        });
+
+        session.negotiate_params().await.unwrap();
+        answer.await.unwrap();
+
+        assert_eq!(session.chunk_budget(), UDP_CHUNK_SIZE);
     }
 }

@@ -1,7 +1,10 @@
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 
 use crate::Error;
 use crate::frame::{Bytes, BytesRef};
+use crate::session::{CHUNK_TIMEOUT, FIRST_CHUNK_TIMEOUT};
 
 /// The image group's commands.
 pub(crate) const CMD_STATE: u8 = 0;
@@ -9,6 +12,7 @@ pub(crate) const CMD_UPLOAD: u8 = 1;
 
 /// One image slot, as the image group's state read reports it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ImageSlot {
     pub slot: i32,
     pub version: String,
@@ -23,8 +27,52 @@ pub struct ImageSlot {
     pub image: Option<i32>,
 }
 
+/// How [`Session::upload`](crate::Session::upload) sends an image.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct UploadOptions {
+    /// Which image, on a device with more than one; 0 by default.
+    pub image: u8,
+    /// How long the first chunk's reply may take, while the device erases
+    /// the slot.
+    pub first_chunk_timeout: Duration,
+    /// How long a later chunk's reply may take before the upload resumes.
+    pub chunk_timeout: Duration,
+}
+
+impl Default for UploadOptions {
+    fn default() -> Self {
+        Self {
+            image: 0,
+            first_chunk_timeout: FIRST_CHUNK_TIMEOUT,
+            chunk_timeout: CHUNK_TIMEOUT,
+        }
+    }
+}
+
+impl UploadOptions {
+    pub fn with_image(self, image: u8) -> Self {
+        Self { image, ..self }
+    }
+
+    pub fn with_first_chunk_timeout(self, first_chunk_timeout: Duration) -> Self {
+        Self {
+            first_chunk_timeout,
+            ..self
+        }
+    }
+
+    pub fn with_chunk_timeout(self, chunk_timeout: Duration) -> Self {
+        Self {
+            chunk_timeout,
+            ..self
+        }
+    }
+}
+
 /// One acknowledged step of an upload.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct UploadProgress {
     pub bytes_sent: usize,
     pub total_bytes: usize,

@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use futures_util::{Stream, StreamExt};
 use tokio::sync::mpsc;
-use wslib_mcumgr::Session;
+use wslib_mcumgr::{Session, UploadOptions};
 
 use super::{Discovery, DiscoveryEvent};
 use crate::registry::{self, ConnectTarget};
@@ -417,7 +417,7 @@ async fn ota(
     emit!(OtaEvent::SessionOpened);
 
     let mut staged_hash = None;
-    let mut upload = session.upload(image, None);
+    let mut upload = session.upload(image, UploadOptions::default());
     while let Some(progress) = upload.next().await {
         let progress = progress?;
         staged_hash = progress.image_hash.clone().or(staged_hash);

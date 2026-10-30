@@ -6,7 +6,7 @@ use std::fmt;
 use serde::de::{self, DeserializeOwned, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::header::{HEADER_LEN, Header, Op, Version};
+use crate::header::{HEADER_LEN, Header, Op};
 use crate::{Error, Group};
 
 #[derive(Serialize, Deserialize)]
@@ -23,16 +23,7 @@ pub(crate) fn encode<T: Serialize>(
     ciborium::into_writer(payload, &mut frame).map_err(|e| Error::Encode(e.to_string()))?;
     let len = u16::try_from(frame.len() - HEADER_LEN)
         .map_err(|_| Error::Encode(format!("{}-byte payload overflows the header", frame.len())))?;
-    let header = Header {
-        version: Version::V1,
-        op,
-        flags: 0,
-        len,
-        group,
-        seq,
-        command,
-    };
-    frame[..HEADER_LEN].copy_from_slice(&header.encode());
+    frame[..HEADER_LEN].copy_from_slice(&Header::new(op, group, command, seq, len).encode());
     Ok(frame)
 }
 
@@ -139,6 +130,7 @@ impl<'de> Deserialize<'de> for Bytes {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::header::Version;
 
     // The spec's image state read: op 0, group 1, command 0, an empty map (0xa0).
     #[test]

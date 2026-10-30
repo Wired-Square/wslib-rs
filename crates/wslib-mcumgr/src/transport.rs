@@ -19,6 +19,12 @@ pub trait Transport: Send + Sync {
         usize::MAX
     }
 
+    /// The most image data per upload request the link carries whole,
+    /// whatever buffers the device reports.
+    fn max_chunk_size(&self) -> usize {
+        usize::MAX
+    }
+
     fn is_connected(&self) -> BoxFuture<'_, bool> {
         Box::pin(async { true })
     }

@@ -7,10 +7,10 @@ CBOR is ciborium's.
 ```rust
 use std::sync::Arc;
 use futures_util::StreamExt;
-use wslib_mcumgr::Session;
+use wslib_mcumgr::{Session, UploadOptions};
 
 let session = Session::connect_udp("192.168.1.42:1337".parse()?).await?;
-let mut upload = session.upload(Arc::from(image), None);
+let mut upload = session.upload(Arc::from(image), UploadOptions::default());
 let mut hash = None;
 while let Some(progress) = upload.next().await {
     let progress = progress?;
@@ -22,22 +22,28 @@ session.reset().await?;
 
 - `Session`: `list_images`; `upload`, pipelined to the device's buffers,
   resumed from the offset the device reports, one event per acknowledged
-  chunk and cancelled by dropping the stream; `test`, `confirm`,
-  `confirm_running`, `reset`, `echo` and `negotiate_params`.
+  chunk and cancelled by dropping the stream, with `UploadOptions` for the
+  image number and timeouts; `test`, `confirm`, `confirm_running`, `reset`,
+  `echo` and `negotiate_params`. Requests may run at once from several
+  tasks: one task per session reads the replies and routes each by sequence
+  number, so a session is made within a tokio runtime.
 - The file system group: `fs_upload`, `fs_download`, `fs_status`, `fs_hash`,
   and `fs_verify`, by SHA-256 or CRC-32 when the device offers one and by
   reading the file back when not.
 - `Transport`: whole frames each way, and how many upload chunks may be
   unanswered. Implement it for a link of your own.
-- `Header`, `Op`, `Group`: the 8-byte header.
+- `Header`, `Op`, `Group`: the 8-byte header; `Header::new` builds one.
 
 ## Features
 
 None is on by default; without one there is no socket.
 
-- `udp`: `Session::connect_udp`, binding the peer's address family.
+- `udp`: `Session::connect_udp`, binding the peer's address family, with
+  chunks that fit one datagram.
 - `ble`: `BleTransport` over btleplug, on a connected peripheral and the SMP
   characteristic's notifications, which the caller supplies.
+  A frame larger than the MTU needs the device built with
+  `CONFIG_MCUMGR_TRANSPORT_BT_REASSEMBLY`.
 
 ```toml
 wslib-mcumgr = { version = "0.1", registry = "wired-square" }

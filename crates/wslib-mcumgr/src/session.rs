@@ -16,7 +16,7 @@ use crate::frame::{self, BytesRef, Empty, decode_reply};
 use crate::header::{Header, Op};
 use crate::image::{
     CMD_STATE, CMD_UPLOAD, ImageSlot, StateResponse, StateWrite, UploadAck, UploadChunk,
-    UploadProgress, mcuboot_image_hash,
+    UploadOptions, UploadProgress, mcuboot_image_hash,
 };
 use crate::router::{Replies, Router};
 use crate::{Error, Group, Transport};
@@ -52,6 +52,7 @@ fn upload_window(transport_cap: usize, device_buf_count: usize) -> usize {
 
 /// What a device's `os/mcumgr-params` reports of its SMP buffers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[non_exhaustive]
 pub struct McumgrParams {
     /// The largest SMP message it takes, header included.
     pub buf_size: usize,
@@ -64,7 +65,6 @@ pub struct Session {
     router: Arc<Router>,
     chunk_size: AtomicUsize,
     buf_count: AtomicUsize,
-    chunk_timeout: Duration,
 }
 
 impl Session {
@@ -78,7 +78,6 @@ impl Session {
             router: Router::start(transport),
             chunk_size: AtomicUsize::new(chunk_size),
             buf_count: AtomicUsize::new(1),
-            chunk_timeout: CHUNK_TIMEOUT,
         }
     }
 
@@ -86,8 +85,9 @@ impl Session {
         self.router.is_open() && self.router.transport().is_connected().await
     }
 
-    /// Sizes uploads to the device's buffers. A device without the command
-    /// returns an error, and the session keeps the size it has.
+    /// Sizes uploads to the device's buffers, within what the transport
+    /// carries whole. A device without the command returns an error, and the
+    /// session keeps the size it has.
     pub async fn negotiate_params(&self) -> Result<McumgrParams, Error> {
         let params: McumgrParams = self
             .request(Op::Read, Group::Os, CMD_PARAMS, &Empty {}, "mcumgr params")
@@ -95,6 +95,7 @@ impl Session {
         let chunk = params
             .buf_size
             .saturating_sub(FRAME_OVERHEAD)
+            .min(self.router.transport().max_chunk_size())
             .max(MIN_CHUNK_SIZE);
         self.chunk_size.store(chunk, Ordering::Release);
         self.buf_count
@@ -125,8 +126,8 @@ impl Session {
         Ok(state.images.into_iter().map(ImageSlot::from).collect())
     }
 
-    /// Uploads `image` to `slot` (the device's default when `None`), one
-    /// event per acknowledged chunk; the last carries the image hash.
+    /// Uploads `firmware` as `options.image`, one event per acknowledged
+    /// chunk; the last carries the image hash.
     ///
     /// Dropping the stream cancels the upload: no chunk is sent after it.
     /// A device that stops answering mid-upload is resumed from the offset
@@ -135,20 +136,19 @@ impl Session {
     /// Must be called within a tokio runtime: the upload runs as a task.
     pub fn upload(
         &self,
-        image: Arc<[u8]>,
-        slot: Option<u8>,
+        firmware: Arc<[u8]>,
+        options: UploadOptions,
     ) -> impl Stream<Item = Result<UploadProgress, Error>> + Send + Unpin + 'static {
         let (events, rx) = mpsc::channel(PROGRESS_CHANNEL_DEPTH);
         let upload = Upload {
             router: Arc::clone(&self.router),
             chunk_size: self.chunk_size.load(Ordering::Acquire),
-            chunk_timeout: self.chunk_timeout,
             window: upload_window(
                 self.router.transport().max_in_flight(),
                 self.buf_count.load(Ordering::Acquire),
             ),
-            image,
-            slot,
+            firmware,
+            options,
             events,
         };
         tokio::spawn(async move {
@@ -252,10 +252,9 @@ impl<T> Stream for Events<T> {
 struct Upload {
     router: Arc<Router>,
     chunk_size: usize,
-    chunk_timeout: Duration,
     window: usize,
-    image: Arc<[u8]>,
-    slot: Option<u8>,
+    firmware: Arc<[u8]>,
+    options: UploadOptions,
     events: mpsc::Sender<Result<UploadProgress, Error>>,
 }
 
@@ -303,20 +302,20 @@ impl Upload {
     fn progress(&self, bytes_sent: usize) -> UploadProgress {
         UploadProgress {
             bytes_sent,
-            total_bytes: self.image.len(),
+            total_bytes: self.firmware.len(),
             image_hash: None,
             resumed_from: None,
         }
     }
 
     fn chunk_frame(&self, seq: u8, off: usize, sha: Option<&[u8]>) -> Result<Vec<u8>, Error> {
-        let end = (off + self.chunk_size).min(self.image.len());
+        let end = (off + self.chunk_size).min(self.firmware.len());
         let first = off == 0;
         let chunk = UploadChunk {
-            data: BytesRef(&self.image[off..end]),
+            data: BytesRef(&self.firmware[off..end]),
             off,
-            image: first.then(|| self.slot.unwrap_or(0)),
-            len: first.then_some(self.image.len()),
+            image: first.then_some(self.options.image),
+            len: first.then_some(self.firmware.len()),
             sha: sha.filter(|_| first).map(BytesRef),
         };
         frame::encode(Op::Write, Group::Image, CMD_UPLOAD, seq, &chunk)
@@ -326,9 +325,9 @@ impl Upload {
     /// a device keyed on the first chunk's `sha` resumes an upload it holds
     /// part of, then pipelines the rest.
     async fn run(&self) -> Result<(), Error> {
-        let total = self.image.len();
-        let sha = Sha256::digest(&self.image).to_vec();
-        let image_hash = mcuboot_image_hash(&self.image)?;
+        let total = self.firmware.len();
+        let sha = Sha256::digest(&self.firmware).to_vec();
+        let image_hash = mcuboot_image_hash(&self.firmware)?;
         let complete = |resumed_from| UploadProgress {
             image_hash: Some(image_hash.clone()),
             resumed_from,
@@ -352,9 +351,9 @@ impl Upload {
                 .send(self.chunk_frame(seq, probe_at, Some(&sha))?)
                 .await?;
             let timeout = if probe_at == 0 {
-                FIRST_CHUNK_TIMEOUT
+                self.options.first_chunk_timeout
             } else {
-                self.chunk_timeout
+                self.options.chunk_timeout
             };
             let Some(ack) = self.probe_ack(&mut replies, seq, probe_at, timeout).await? else {
                 if self.events.is_closed() {
@@ -434,7 +433,7 @@ impl Upload {
         image_hash: &[u8],
     ) -> Result<Option<usize>, Error> {
         let Replies { sequences, inbox } = replies;
-        let total = self.image.len();
+        let total = self.firmware.len();
         let in_flight = std::sync::Mutex::new(HashMap::<u8, ChunkInFlight>::new());
         let in_flight = || in_flight.lock().expect("in-flight chunks lock");
         let credits = Semaphore::new(self.window);
@@ -467,7 +466,7 @@ impl Upload {
             };
             loop {
                 let received = tokio::select! {
-                    received = tokio::time::timeout(self.chunk_timeout, inbox.next()) => received,
+                    received = tokio::time::timeout(self.options.chunk_timeout, inbox.next()) => received,
                     _ = self.events.closed() => return Ok(None),
                 };
                 let Ok(frame) = received else {
@@ -531,14 +530,6 @@ fn beyond_image(off: usize, total: usize) -> Error {
 }
 
 #[cfg(test)]
-impl Session {
-    pub(crate) fn with_chunk_timeout(mut self, chunk_timeout: Duration) -> Self {
-        self.chunk_timeout = chunk_timeout;
-        self
-    }
-}
-
-#[cfg(test)]
 pub(crate) async fn next<S: Stream + Unpin>(stream: &mut S) -> Option<S::Item> {
     std::future::poll_fn(|cx| Pin::new(&mut *stream).poll_next(cx)).await
 }
@@ -568,10 +559,9 @@ mod tests {
         let upload = Upload {
             router: Router::start(Arc::new(ImageDevice::default())),
             chunk_size: 3,
-            chunk_timeout: CHUNK_TIMEOUT,
             window: 1,
-            image: Arc::from(&[1u8, 2, 3, 4][..]),
-            slot: None,
+            firmware: Arc::from(&[1u8, 2, 3, 4][..]),
+            options: UploadOptions::default(),
             events,
         };
         let first = upload.chunk_frame(7, 0, Some(&[0x11; 4])).unwrap();
@@ -798,11 +788,7 @@ mod tests {
     }
 
     fn session_on(device: Arc<ImageDevice>) -> Session {
-        session_with_timeout(device, TEST_CHUNK_TIMEOUT)
-    }
-
-    fn session_with_timeout(device: Arc<ImageDevice>, chunk_timeout: Duration) -> Session {
-        let session = Session::new(device, TEST_CHUNK).with_chunk_timeout(chunk_timeout);
+        let session = Session::new(device, TEST_CHUNK);
         session.buf_count.store(DEVICE_BUFFERS, Ordering::Release);
         session
     }
@@ -815,8 +801,10 @@ mod tests {
     async fn run_upload(
         session: &Session,
         image: &Arc<[u8]>,
+        chunk_timeout: Duration,
     ) -> Result<Vec<UploadProgress>, Error> {
-        let mut stream = session.upload(Arc::clone(image), None);
+        let options = UploadOptions::default().with_chunk_timeout(chunk_timeout);
+        let mut stream = session.upload(Arc::clone(image), options);
         let mut reported = Vec::new();
         while let Some(event) = next(&mut stream).await {
             reported.push(event?);
@@ -926,7 +914,7 @@ mod tests {
     #[tokio::test]
     async fn a_dropped_upload_stops_waiting_and_leaves_the_next_request_its_reply() {
         let session = Session::new(OsDevice::answering_echoes_in_batches_of(1), TEST_CHUNK);
-        let stream = session.upload(test_image(), None);
+        let stream = session.upload(test_image(), UploadOptions::default());
         tokio::time::sleep(SETTLE).await;
         assert_eq!(
             session.router.awaited(),
@@ -991,7 +979,9 @@ mod tests {
         let session = session_on(Arc::clone(&device));
         let image = test_image();
 
-        let reported = run_upload(&session, &image).await.unwrap();
+        let reported = run_upload(&session, &image, TEST_CHUNK_TIMEOUT)
+            .await
+            .unwrap();
 
         assert_eq!(*device.written.lock().unwrap(), image.to_vec());
         assert_eq!(
@@ -1024,7 +1014,9 @@ mod tests {
         let session = session_on(Arc::clone(&device));
         let image = test_image();
 
-        let reported = run_upload(&session, &image).await.unwrap();
+        let reported = run_upload(&session, &image, TEST_CHUNK_TIMEOUT)
+            .await
+            .unwrap();
 
         assert_eq!(*device.written.lock().unwrap(), image.to_vec());
         assert_eq!(
@@ -1043,7 +1035,9 @@ mod tests {
         let session = session_on(Arc::clone(&device));
         let image = test_image();
 
-        let reported = run_upload(&session, &image).await.unwrap();
+        let reported = run_upload(&session, &image, TEST_CHUNK_TIMEOUT)
+            .await
+            .unwrap();
 
         assert_eq!(*device.written.lock().unwrap(), image.to_vec());
         let recovery = reported
@@ -1073,7 +1067,9 @@ mod tests {
         let session = session_on(Arc::clone(&device));
         let image = test_image();
 
-        run_upload(&session, &image).await.unwrap();
+        run_upload(&session, &image, TEST_CHUNK_TIMEOUT)
+            .await
+            .unwrap();
 
         assert_eq!(*device.written.lock().unwrap(), image.to_vec());
     }
@@ -1086,10 +1082,7 @@ mod tests {
         let upload = tokio::spawn({
             let device = Arc::clone(&device);
             let image = Arc::clone(&image);
-            async move {
-                let session = session_with_timeout(device, HELD_ACK_TIMEOUT);
-                run_upload(&session, &image).await
-            }
+            async move { run_upload(&session_on(device), &image, HELD_ACK_TIMEOUT).await }
         });
         tokio::time::sleep(SETTLE).await;
 
@@ -1104,8 +1097,9 @@ mod tests {
     #[tokio::test]
     async fn dropping_the_stream_sends_no_further_chunk() {
         let device = ImageDevice::holding_continuation_acks();
-        let session = session_with_timeout(Arc::clone(&device), HELD_ACK_TIMEOUT);
-        let mut stream = session.upload(test_image(), None);
+        let session = session_on(Arc::clone(&device));
+        let options = UploadOptions::default().with_chunk_timeout(HELD_ACK_TIMEOUT);
+        let mut stream = session.upload(test_image(), options);
         next(&mut stream).await.unwrap().unwrap();
         tokio::time::sleep(SETTLE).await;
         let sent = device.offsets_seen.lock().unwrap().len();
@@ -1122,7 +1116,7 @@ mod tests {
         let device = ImageDevice::reporting_a_hash_mismatch();
         let session = session_on(Arc::clone(&device));
 
-        let result = run_upload(&session, &test_image()).await;
+        let result = run_upload(&session, &test_image(), TEST_CHUNK_TIMEOUT).await;
 
         assert!(matches!(result, Err(Error::HashMismatch)), "got {result:?}");
     }
@@ -1131,7 +1125,7 @@ mod tests {
     async fn upload_refuses_an_image_that_is_not_mcuboot() {
         let session = session_on(Arc::new(ImageDevice::default()));
 
-        let result = run_upload(&session, &Arc::from(&[0u8; 64][..])).await;
+        let result = run_upload(&session, &Arc::from(&[0u8; 64][..]), TEST_CHUNK_TIMEOUT).await;
 
         assert!(
             matches!(result, Err(Error::NotMcuboot(_))),
@@ -1145,7 +1139,7 @@ mod tests {
         let device = ImageDevice::dropping_always_at(dropped_at);
         let session = session_on(Arc::clone(&device));
 
-        let result = run_upload(&session, &test_image()).await;
+        let result = run_upload(&session, &test_image(), TEST_CHUNK_TIMEOUT).await;
 
         assert!(
             matches!(result, Err(Error::UploadStalled { offset, .. }) if offset == dropped_at),
@@ -1166,7 +1160,9 @@ mod tests {
         let session = session_on(Arc::clone(&device));
         let started = std::time::Instant::now();
 
-        run_upload(&session, &image).await.unwrap();
+        run_upload(&session, &image, TEST_CHUNK_TIMEOUT)
+            .await
+            .unwrap();
 
         assert!(
             started.elapsed() >= TEST_CHUNK_TIMEOUT,
@@ -1185,7 +1181,9 @@ mod tests {
         let session = session_on(Arc::clone(&device));
         let image = test_image();
 
-        run_upload(&session, &image).await.unwrap();
+        run_upload(&session, &image, TEST_CHUNK_TIMEOUT)
+            .await
+            .unwrap();
 
         assert_eq!(*device.written.lock().unwrap(), image.to_vec());
         assert!(device.drops.lock().unwrap().is_empty());

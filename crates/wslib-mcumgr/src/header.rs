@@ -106,6 +106,7 @@ impl From<u16> for Group {
 
 /// `len` counts the CBOR payload that follows, not the header.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct Header {
     pub version: Version,
     pub op: Op,
@@ -117,6 +118,19 @@ pub struct Header {
 }
 
 impl Header {
+    /// A version 1 header with no flags set.
+    pub fn new(op: Op, group: Group, command: u8, seq: u8, len: u16) -> Self {
+        Self {
+            version: Version::V1,
+            op,
+            flags: 0,
+            len,
+            group,
+            seq,
+            command,
+        }
+    }
+
     pub fn encode(&self) -> [u8; HEADER_LEN] {
         let version = match self.version {
             Version::V1 => 0,

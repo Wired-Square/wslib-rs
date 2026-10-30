@@ -6,7 +6,8 @@
   `Discovery::open_smp_udp`, `open_smp`, `ota_udp` and `ota`, and
   `ota_udp_addr`, streaming `OtaEvent`s; with `ble`, `open_smp_ble` and
   `ota_ble`. Their errors are `Error::Smp`, `SmpUnavailable` and
-  `OtaVerifyMismatch`. `OtaEvent` is `#[non_exhaustive]`.
+  `OtaVerifyMismatch`. `OtaEvent` is `#[non_exhaustive]`, and so are the
+  re-exported `UploadProgress` and `ImageSlot`.
 
 ## 0.1.0
 

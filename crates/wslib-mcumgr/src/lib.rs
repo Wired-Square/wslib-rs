@@ -19,6 +19,6 @@ pub mod udp;
 pub use error::Error;
 pub use fs::{FsHash, FsHashAlgorithm, FsProgress, FsVerification};
 pub use header::{Group, HEADER_LEN, Header, Op, Version};
-pub use image::{ImageSlot, UploadProgress};
+pub use image::{ImageSlot, UploadOptions, UploadProgress};
 pub use session::{McumgrParams, Session};
 pub use transport::{BoxFuture, Transport};

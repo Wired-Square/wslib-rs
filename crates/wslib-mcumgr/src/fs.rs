@@ -23,6 +23,7 @@ const CMD_SUPPORTED_HASHES: u8 = 3;
 const SMALL_OFFSET_LIMIT: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct FsProgress {
     pub bytes_done: usize,
     pub total_bytes: usize,
@@ -69,6 +70,7 @@ impl FsHashAlgorithm {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct FsHash {
     pub algorithm: FsHashAlgorithm,
     /// A CRC-32 is big-endian here; compare with `to_be_bytes()`.

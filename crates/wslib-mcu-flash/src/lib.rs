@@ -5,7 +5,8 @@
 //! The external-tool backends (`tool`, features `esptool` / `dfu-util`) are
 //! `async` over a tokio process. The in-process backends (`esp`, `dfu`,
 //! `stm32_uart`) block on a port or a USB handle; the caller wraps them in
-//! `spawn_blocking`, and the crate picks no runtime for them.
+//! `spawn_blocking`, and the crate picks no runtime for them. `mcumgr` is
+//! `async` on the caller's SMP session.
 
 pub mod artefact;
 pub mod chip;
@@ -26,6 +27,11 @@ pub mod dfu;
 
 #[cfg(feature = "stm32-uart")]
 pub mod stm32_uart;
+
+#[cfg(feature = "mcumgr")]
+pub mod mcumgr;
+#[cfg(feature = "mcumgr")]
+pub use wslib_mcumgr;
 
 #[cfg(any(feature = "espflash", feature = "stm32-uart"))]
 mod output;

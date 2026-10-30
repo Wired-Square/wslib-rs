@@ -256,6 +256,12 @@ if grep -qx wslib-mcumgr <<<"$todo"; then
   ! grep -E '^(btleplug|mio) ' <<<"$tree" || die "wslib-mcumgr's default build pulls in btleplug or a socket"
 fi
 
+if grep -qx wslib-mcu-flash <<<"$todo"; then
+  step "wslib-mcu-flash's mcumgr has no btleplug or socket without a transport"
+  tree=$(normal_tree wslib-mcu-flash --features mcumgr --target all)
+  ! grep -E '^(btleplug|mio) ' <<<"$tree" || die "wslib-mcu-flash's mcumgr pulls in btleplug or a socket"
+fi
+
 # The gateway's types are serde-only, a Windows client's included.
 if grep -qx wslib-wiretap-gateway <<<"$todo"; then
   step "wslib-wiretap-gateway on Windows has no serial port or SQLite"

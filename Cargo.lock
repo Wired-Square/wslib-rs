@@ -8467,8 +8467,10 @@ name = "wslib-mcu-flash"
 version = "0.1.1"
 dependencies = [
  "async-trait",
+ "ciborium",
  "dfu-nusb",
  "espflash",
+ "futures-core",
  "ihex",
  "nusb 0.1.14",
  "serde",
@@ -8476,6 +8478,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "wslib-file-atomic",
+ "wslib-mcumgr",
 ]
 
 [[package]]

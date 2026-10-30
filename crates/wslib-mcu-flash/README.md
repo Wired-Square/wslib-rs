@@ -42,6 +42,7 @@ Behind features:
 | `espflash` | `esp` — the Espressif serial bootloader in process: `detect_chip`, `flash`, `read_flash`, `erase` | `espflash`, `serialport` |
 | `dfu` | `dfu` — USB DFU 1.1 / DfuSe in process: `list_devices`, `flash` | `dfu-nusb`, `dfu-core`, `nusb` 0.1 |
 | `stm32-uart` | `stm32_uart` — ST AN3155 over a USB-UART with RTS/DTR bootloader entry: `detect_chip`, `flash`, `read_flash`, `erase`; `detect` when `espflash` is on too | `serialport` |
+| `mcumgr` | `mcumgr` — an MCUboot image over SMP on a `wslib_mcumgr::Session`: `flash`, then test or confirm and reset; `wslib_mcumgr` re-exported. `mcumgr-udp` and `mcumgr-ble` add its transports | `wslib-mcumgr` |
 | `serde` | `Serialize` / `Deserialize` on the stage, family, port and chip-info types | `serde` |
 
 ## Using it
@@ -87,11 +88,23 @@ tokio::task::spawn_blocking(move || {
 }).await??;
 ```
 
+`mcumgr` is `async` on the caller's session, whatever its transport:
+
+```rust
+use wslib_mcu_flash::mcumgr::{self, Activation, McumgrOptions};
+use wslib_mcu_flash::wslib_mcumgr::Session;
+
+let session = Session::connect_udp("192.168.1.42:1337".parse()?).await?;
+let options = McumgrOptions { activation: Activation::Confirm, ..Default::default() };
+mcumgr::flash(&session, "zephyr.signed.bin".as_ref(), &options, &mut sink).await?;
+```
+
 ## Gotchas
 
-- **Two kinds of backend.** `tool::*` spawn a process and are `async`; `esp`,
-  `dfu` and `stm32_uart` are synchronous and must not run on an async executor
-  thread. The crate deliberately picks no runtime for them.
+- **Two kinds of backend.** `tool::*` spawn a process and `mcumgr` talks
+  SMP, both `async`; `esp`, `dfu` and `stm32_uart` are synchronous and must
+  not run on an async executor thread. The crate deliberately picks no
+  runtime for them.
 - **Cancellation is co-operative.** A backend asks `progress.cancelled()`
   between chunks (and, for DFU, on each progress event, where it also resets
   the device to fail the transfer). A sink that never returns `true` is

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1
+
+- `gw121::notify` reads and writes the `.notify` capture format, one chunk per
+  line, for `Replay` to decode. A parse error names its line.
+- Dropping a probe or a `Cluster` waits for its thread, so the adapter is free
+  to reopen once the drop returns. A thread still running after 15 s is left
+  to finish alone.
+
 ## 0.1.0
 
 - Bench-instrument probes behind one blocking `Probe`, each reading

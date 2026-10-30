@@ -1,6 +1,6 @@
 [package]
 name = "wslib-instruments"
-version = "0.1.0"
+version = "0.1.1"
 description = "Bench-instrument readers behind one blocking probe: the EEVblog 121GW over BLE and a WiredReflow board over CAN, each reading a FrameLink signal."
 readme = "README.md"
 edition.workspace = true

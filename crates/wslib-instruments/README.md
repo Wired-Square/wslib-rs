@@ -22,7 +22,8 @@ for sample in probe.next(Instant::now() + Duration::from_secs(2))? {
   probe's name: the selection is not part of its identity.
 - `Probe::next` blocks until a reading or the deadline. A probe runs its own
   runtime on its own thread, so it may be opened, read and dropped inside a
-  tokio runtime, a current-thread one included.
+  tokio runtime, a current-thread one included. Dropping it waits for that
+  thread, so its adapter is free to reopen once the drop returns.
 - `Cluster` polls several probes, each on its own thread, and holds each
   signal's latest sample, stale once older than the probe's maximum interval.
 - `uri::narrowed` and the `/<signal>` selectors keep only the signals asked for.
@@ -33,8 +34,9 @@ for sample in probe.next(Instant::now() + Duration::from_secs(2))? {
   `121gw:<address-or-name>`. Thermocouple temperature, the meter's internal
   temperature, and the meter status (APO, low battery, OL). The stale burst
   the meter replays on connecting is dropped. `Gw121Probe::start_tapped`
-  copies every raw notification out for capture, `gw121::Replay` decodes a
-  capture again, and `ble::scan` lists the meters in range.
+  copies every raw notification out for capture, `gw121::notify` reads and
+  writes a capture as text, `gw121::Replay` decodes it again, and `ble::scan`
+  lists the meters in range.
 - **WiredReflow board over CAN**: `wiredreflow:<bus>[@<device-id>]`. TC1, TC2,
   CJ1 and CJ2 at 0.1 °C every 500 ms, and each channel's MAX31856 fault byte.
   TC1 and TC2 are published only when the board's fault report for the same

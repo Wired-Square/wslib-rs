@@ -23,3 +23,4 @@ pub mod signal;
 pub mod uri;
 pub mod value;
 pub mod wiredreflow;
+mod worker;

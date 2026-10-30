@@ -27,6 +27,7 @@ use crate::{
     sample::{Sample, Stamp},
     signal::SignalKey,
     uri::ProbeUri,
+    worker::Worker,
 };
 
 pub(crate) const DATA_CHARACTERISTIC: Uuid =
@@ -126,7 +127,8 @@ fn choose<'a, Id: Eq + Hash>(
 type Delivery = Result<Vec<Sample>, ProbeError>;
 type StopRx = watch::Receiver<bool>;
 type Tap = Option<Sender<Chunk>>;
-type SpawnLink = fn(Target, StopRx, Tap) -> io::Result<Receiver<Delivery>>;
+type Link = (Receiver<Delivery>, Worker);
+type SpawnLink = fn(Target, StopRx, Tap) -> io::Result<Link>;
 type Events = Pin<Box<dyn Stream<Item = CentralEvent> + Send>>;
 
 enum Halt {
@@ -582,9 +584,9 @@ async fn link(target: &Target, tx: &Sender<Delivery>, tap: &Tap, stop: &StopRx) 
     while carry_on(session(&adapter, target, tx, tap, stop).await, tx) && back_off(stop).await {}
 }
 
-fn spawn_link(target: Target, stop: StopRx, tap: Tap) -> io::Result<Receiver<Delivery>> {
+fn spawn_link(target: Target, stop: StopRx, tap: Tap) -> io::Result<Link> {
     let (tx, readings) = mpsc::channel();
-    thread::Builder::new().name("121gw".into()).spawn(move || {
+    let worker = Worker::spawn("121gw", move || {
         let runtime = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -597,7 +599,7 @@ fn spawn_link(target: Target, stop: StopRx, tap: Tap) -> io::Result<Receiver<Del
         };
         runtime.block_on(link(&target, &tx, &tap, &stop));
     })?;
-    Ok(readings)
+    Ok((readings, worker))
 }
 
 pub struct Gw121Probe {
@@ -606,6 +608,7 @@ pub struct Gw121Probe {
     stop: watch::Sender<bool>,
     spawn: SpawnLink,
     tap: Tap,
+    link: Worker,
 }
 
 impl Gw121Probe {
@@ -619,13 +622,14 @@ impl Gw121Probe {
 
     fn spawned(target: Target, tap: Tap) -> io::Result<Self> {
         let (stop, stopping) = watch::channel(false);
-        let readings = spawn_link(target.clone(), stopping, tap.clone())?;
+        let (readings, link) = spawn_link(target.clone(), stopping, tap.clone())?;
         Ok(Self {
             target,
             readings,
             stop,
             spawn: spawn_link,
             tap,
+            link,
         })
     }
 
@@ -634,8 +638,9 @@ impl Gw121Probe {
             return ProbeError::Disconnected("the link thread stopped".into());
         }
         match (self.spawn)(self.target.clone(), self.stop.subscribe(), self.tap.clone()) {
-            Ok(readings) => {
+            Ok((readings, link)) => {
                 self.readings = readings;
+                self.link = link;
                 ProbeError::Disconnected("the link thread stopped; restarting".into())
             }
             Err(e) => ProbeError::Disconnected(format!(
@@ -741,8 +746,8 @@ pub async fn scan(duration: Duration) -> io::Result<Vec<Seen>> {
 #[cfg(test)]
 mod tests {
     use std::sync::{
-        Mutex,
-        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     };
 
     use super::*;
@@ -775,18 +780,22 @@ mod tests {
     static RESPAWNS: AtomicUsize = AtomicUsize::new(0);
     static RESPAWNED_STOP: Mutex<Option<StopRx>> = Mutex::new(None);
 
-    fn dead_link(_: Target, _: StopRx, _: Tap) -> io::Result<Receiver<Delivery>> {
-        RESPAWNS.fetch_add(1, Ordering::Relaxed);
-        Ok(mpsc::channel().1)
+    fn finished_link() -> Link {
+        (mpsc::channel().1, Worker::spawn("121gw", || {}).unwrap())
     }
 
-    fn unexpected_link(_: Target, _: StopRx, _: Tap) -> io::Result<Receiver<Delivery>> {
+    fn dead_link(_: Target, _: StopRx, _: Tap) -> io::Result<Link> {
+        RESPAWNS.fetch_add(1, Ordering::Relaxed);
+        Ok(finished_link())
+    }
+
+    fn unexpected_link(_: Target, _: StopRx, _: Tap) -> io::Result<Link> {
         panic!("the link was respawned although its channel was still open")
     }
 
-    fn stop_capturing_link(_: Target, stop: StopRx, _: Tap) -> io::Result<Receiver<Delivery>> {
+    fn stop_capturing_link(_: Target, stop: StopRx, _: Tap) -> io::Result<Link> {
         *RESPAWNED_STOP.lock().unwrap() = Some(stop);
-        Ok(mpsc::channel().1)
+        Ok(finished_link())
     }
 
     fn probe_on(readings: Receiver<Delivery>, spawn: SpawnLink) -> Gw121Probe {
@@ -796,6 +805,7 @@ mod tests {
             stop: watch::channel(false).0,
             spawn,
             tap: None,
+            link: finished_link().1,
         }
     }
 
@@ -1381,6 +1391,25 @@ mod tests {
             *respawned.borrow(),
             "dropping the probe did not stop the respawned link"
         );
+    }
+
+    #[test]
+    fn dropping_the_probe_waits_for_its_link_to_let_the_meter_go() {
+        let (stop, stopping) = running();
+        let released = Arc::new(AtomicBool::new(false));
+        let releasing = Arc::clone(&released);
+        let mut probe = probe_on(mpsc::channel().1, unexpected_link);
+        probe.stop = stop;
+        probe.link = Worker::spawn("121gw", move || {
+            while !*stopping.borrow() {
+                thread::sleep(STOP_DELAY);
+            }
+            thread::sleep(STOP_DELAY);
+            releasing.store(true, Ordering::Relaxed);
+        })
+        .unwrap();
+        drop(probe);
+        assert!(released.load(Ordering::Relaxed));
     }
 
     #[test]

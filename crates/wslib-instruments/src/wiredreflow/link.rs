@@ -19,6 +19,7 @@ use crate::{
     sample::{Sample, Stamp},
     signal::SignalKey,
     uri::ProbeUri,
+    worker::Worker,
 };
 
 pub(crate) const DISCOVERY_WINDOW: Duration = Duration::from_secs(2);
@@ -142,6 +143,7 @@ pub struct WiredReflowProbe {
     readings: Receiver<Delivery>,
     held: Option<ProbeError>,
     stop: Arc<AtomicBool>,
+    _link: Worker,
 }
 
 pub(crate) type Opener = Box<dyn FnOnce() -> io::Result<Box<dyn Bus>> + Send>;
@@ -197,18 +199,16 @@ impl WiredReflowProbe {
         let (tx, readings) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = Arc::clone(&stop);
-        thread::Builder::new()
-            .name("wiredreflow".into())
-            .spawn(move || match open() {
-                Ok((bus, device)) => {
-                    if outcome_tx.send(Ok(device)).is_ok() {
-                        link(bus, device, timing, tx, stopping);
-                    }
+        let worker = Worker::spawn("wiredreflow", move || match open() {
+            Ok((bus, device)) => {
+                if outcome_tx.send(Ok(device)).is_ok() {
+                    link(bus, device, timing, tx, stopping);
                 }
-                Err(error) => {
-                    let _ = outcome_tx.send(Err(error));
-                }
-            })?;
+            }
+            Err(error) => {
+                let _ = outcome_tx.send(Err(error));
+            }
+        })?;
         let device = outcome.recv().map_err(|_| {
             io::Error::other("the WiredReflow link thread stopped before it opened the bus")
         })??;
@@ -218,6 +218,7 @@ impl WiredReflowProbe {
             readings,
             held: None,
             stop,
+            _link: worker,
         })
     }
 }

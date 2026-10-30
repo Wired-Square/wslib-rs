@@ -2,6 +2,7 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver},
     },
     thread,
     time::{Duration, Instant},
@@ -16,7 +17,6 @@ use wslib_instruments::{
 };
 
 const SETTLE: Duration = Duration::from_millis(200);
-const STALL: Duration = Duration::from_secs(3_600);
 const LATEST_BOUND: Duration = Duration::from_millis(50);
 const STEADY_PERIOD: Duration = Duration::from_millis(10);
 const QUIET_WAIT: Duration = Duration::from_millis(1_500);
@@ -85,7 +85,7 @@ impl Probe for Steady {
     }
 }
 
-struct Stuck;
+struct Stuck(Receiver<()>);
 
 impl Probe for Stuck {
     fn name(&self) -> String {
@@ -97,7 +97,7 @@ impl Probe for Stuck {
     }
 
     fn next(&mut self, _: Instant) -> Result<Vec<Sample>, ProbeError> {
-        thread::sleep(STALL);
+        let _ = self.0.recv();
         Err(ProbeError::Timeout)
     }
 
@@ -158,7 +158,12 @@ impl Probe for DialTurns {
 
 #[test]
 fn a_blocked_probe_never_stalls_the_cluster() {
-    let cluster = Cluster::start(vec![Box::new(Stuck), Box::new(Steady(ROOM_TENTHS))]).unwrap();
+    let (unblock, blocked) = mpsc::channel();
+    let cluster = Cluster::start(vec![
+        Box::new(Stuck(blocked)),
+        Box::new(Steady(ROOM_TENTHS)),
+    ])
+    .unwrap();
     thread::sleep(SETTLE);
     let asked = Instant::now();
     let stuck = cluster.latest(FIRST_PROBE, &TEMPERATURE).unwrap();
@@ -170,6 +175,7 @@ fn a_blocked_probe_never_stalls_the_cluster() {
     );
     assert!(stuck.sample.is_none());
     assert_eq!(tenths(&steady), Some(ROOM_TENTHS));
+    drop(unblock);
 }
 
 #[test]
@@ -341,4 +347,40 @@ impl Probe for Named {
 fn a_probe_named_with_a_control_character_still_starts() {
     let cluster = Cluster::start(vec![Box::new(Named("odd\u{0}name"))]).unwrap();
     assert_eq!(cluster.names(), ["odd\u{0}name"]);
+}
+
+struct Holds(Arc<AtomicBool>);
+
+impl Probe for Holds {
+    fn name(&self) -> String {
+        "holds".into()
+    }
+
+    fn signals(&self) -> Vec<SignalKey> {
+        vec![]
+    }
+
+    fn next(&mut self, deadline: Instant) -> Result<Vec<Sample>, ProbeError> {
+        thread::sleep(deadline.saturating_duration_since(Instant::now()));
+        Err(ProbeError::Timeout)
+    }
+
+    fn max_interval(&self) -> Duration {
+        TEST_MAX_INTERVAL
+    }
+}
+
+impl Drop for Holds {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+#[test]
+fn dropping_the_cluster_drops_its_probes_before_it_returns() {
+    let released = Arc::new(AtomicBool::new(false));
+    let cluster = Cluster::start(vec![Box::new(Holds(Arc::clone(&released)))]).unwrap();
+    thread::sleep(STEADY_PERIOD);
+    drop(cluster);
+    assert!(released.load(Ordering::Relaxed));
 }

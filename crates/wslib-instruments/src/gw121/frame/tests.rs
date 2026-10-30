@@ -1,4 +1,10 @@
-use crate::gw121::frame::{Assembler, FRAME_LEN};
+use crate::{
+    gw121::{
+        frame::{Assembler, FRAME_LEN},
+        notify,
+    },
+    sample::Stamp,
+};
 
 const ROOM: &str = include_str!("../../../tests/fixtures/121gw-room-2026-09-26.notify");
 const HEAT: &str = include_str!("../../../tests/fixtures/121gw-heat-2026-09-26.notify");
@@ -11,24 +17,12 @@ const TEMP_ROOM: [u8; FRAME_LEN] = [
 ];
 const START: u8 = 0xF2;
 
-fn chunks(fixture: &str) -> Vec<Vec<u8>> {
-    fixture
-        .lines()
-        .map(|line| {
-            let hex = line.split_once(' ').unwrap().1;
-            (0..hex.len())
-                .step_by(2)
-                .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
-                .collect()
-        })
-        .collect()
-}
-
 fn frames(fixture: &str) -> Vec<[u8; FRAME_LEN]> {
     let mut assembler = Assembler::default();
-    chunks(fixture)
+    notify::parse(fixture, Stamp::now())
+        .unwrap()
         .iter()
-        .flat_map(|c| assembler.push(c))
+        .flat_map(|(_, bytes)| assembler.push(bytes))
         .collect()
 }
 

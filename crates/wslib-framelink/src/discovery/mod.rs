@@ -33,6 +33,7 @@ use std::time::Duration;
 use futures_util::Stream;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
+use wslib_mdns::{InProcess, Options};
 
 use crate::{Device, DeviceId, Error, Transport};
 use presence::PresenceTracker;
@@ -79,6 +80,16 @@ impl Discovery {
     /// then on it keeps re-verifying devices so a stationary one stays seen,
     /// and respawns a scanner that exits, reporting each as an `Error` event.
     pub async fn start() -> Result<Self, Error> {
+        Self::start_on(|| Ok(InProcess::new(Options::default())?)).await
+    }
+
+    /// [`start`](Self::start), browsing on `responder` instead of a responder
+    /// of its own.
+    pub async fn start_with(responder: InProcess) -> Result<Self, Error> {
+        Self::start_on(|| Ok(responder.clone())).await
+    }
+
+    async fn start_on(responder: impl Fn() -> Result<InProcess, Error>) -> Result<Self, Error> {
         let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
         let tracker = Arc::new(Mutex::new(PresenceTracker::new(
             event_tx.clone(),
@@ -86,7 +97,7 @@ impl Discovery {
         )));
         let (mdns, tasks) =
             init_with_backoff("mDNS responder", &event_tx, ErrorSource::Mdns, || async {
-                mdns::start(Arc::clone(&tracker))
+                mdns::start(responder()?, Arc::clone(&tracker))
             })
             .await?;
         let discovery = Self::with(tracker, event_tx, tasks, Some(mdns));

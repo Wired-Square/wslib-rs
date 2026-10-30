@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::{debug, warn};
-use wslib_mdns::{Browse, BrowseEvent, InProcess, InstanceName, Options, Resolved, ServiceType};
+use wslib_mdns::{Browse, BrowseEvent, InProcess, InstanceName, Resolved, ServiceType};
 
 use super::ErrorSource;
 use super::presence::PresenceTracker;
@@ -98,9 +98,9 @@ impl Mdns {
 }
 
 pub(super) fn start(
+    responder: InProcess,
     tracker: Arc<Mutex<PresenceTracker>>,
 ) -> Result<(Mdns, Vec<JoinHandle<()>>), Error> {
-    let responder = InProcess::new(Options::default())?;
     let mut verify = Vec::new();
     let mut tasks = Vec::new();
     for spec in SERVICE_SPECS {
@@ -268,6 +268,24 @@ mod tests {
     #[test]
     fn a_service_with_no_ipv4_address_is_no_device() {
         assert!(build_device(TCP, &resolved("wfl", &["fe80::1"])).is_none());
+    }
+
+    #[tokio::test]
+    async fn browses_on_the_responder_it_is_given() {
+        let responder = InProcess::new(wslib_mdns::Options {
+            interfaces: wslib_mdns::Interfaces::Matching(Arc::new(|_| false)),
+            ..Default::default()
+        })
+        .unwrap();
+        let (tx, _) = tokio::sync::broadcast::channel(4);
+        let tracker = PresenceTracker::new(tx, Duration::from_secs(10));
+        let _started = start(responder.clone(), Arc::new(Mutex::new(tracker))).unwrap();
+        for spec in SERVICE_SPECS {
+            assert!(matches!(
+                responder.browse(&spec.kind()),
+                Err(wslib_mdns::Error::Unsupported(_))
+            ));
+        }
     }
 
     #[test]

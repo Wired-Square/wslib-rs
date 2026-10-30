@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- serde's floor is 1.0.228, thiserror's 2.0.20, tokio's 1.53.1, async-trait's 0.1.92 and wslib-file-atomic's 0.1.6.
+
 ## 0.1.0
 
 - Moved from wslib-mcu-rs, where it was distributed by git tag. This is the

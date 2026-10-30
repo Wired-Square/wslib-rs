@@ -17,3 +17,5 @@
 - `sync` labels CAN frame-def flags as the firmware defines them:
   `extended`, `fd`, `brs` and `rtr` (0x02 was written as `rtr` and 0x04 as
   `fd`).
+- `UsbAccess` converts into wslib-mcu-flash's `endpoint::UsbAccess` with the
+  `mcu-flash` feature.

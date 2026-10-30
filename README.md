@@ -60,6 +60,7 @@ appliance chassis and every app beside it.
 | `wslib-framelink-protocol` | FrameLink's wire, sans-io: frames, messages, signal identity |
 | `wslib-framelink-board`  | FrameLink board TOML: parse, edit, scaffold, display names    |
 | `wslib-framelink`        | A FrameLink session over TCP, discovery, BLE Wi-Fi setup      |
+| `wslib-instruments`      | Blocking bench-instrument probes: a 121GW, a WiredReflow      |
 | `wslib-appliance-types`  | An appliance's wire contract, shared by daemon and browser    |
 | `wslib-appliance-config` | An appliance's bootstrap settings: flags, env and files       |
 | `wslib-appliance-store`  | An appliance's tables, in one SQLite file its product shares  |

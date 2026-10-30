@@ -418,7 +418,7 @@ impl Upload {
             let frame = frame?;
             if Header::decode(&frame)?.seq == seq {
                 replies.forget();
-                return decode_reply(&frame, &format!("upload chunk at {off}")).map(Some);
+                return ack_or_lost(&frame, off);
             }
             reject_stale_mismatch(&frame)?;
         }
@@ -479,8 +479,9 @@ impl Upload {
                     reject_stale_mismatch(&frame)?;
                     continue;
                 };
-                let ack: UploadAck =
-                    decode_reply(&frame, &format!("upload chunk at {}", chunk.start))?;
+                let Some(ack) = ack_or_lost(&frame, chunk.start)? else {
+                    return Ok(Some(chunk.start));
+                };
                 if ack.matched == Some(false) {
                     return Err(Error::HashMismatch);
                 }
@@ -515,6 +516,19 @@ fn reset_frame(seq: u8) -> Result<Vec<u8>, Error> {
     frame::encode(Op::Write, Group::Os, CMD_RESET, seq, &Reset { force: 0 })
 }
 
+/// An ack that does not decode is as good as lost: the next probe learns
+/// where the device is.
+fn ack_or_lost(frame: &[u8], off: usize) -> Result<Option<UploadAck>, Error> {
+    match decode_reply(frame, &format!("upload chunk at {off}")) {
+        Ok(ack) => Ok(Some(ack)),
+        Err(Error::Decode(e)) => {
+            warn!("an undecodable upload ack: {e}");
+            Ok(None)
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// A late final ack from an earlier pass still carries the device's verdict.
 fn reject_stale_mismatch(frame: &[u8]) -> Result<(), Error> {
     match frame::decode::<UploadAck>(frame) {
@@ -539,6 +553,7 @@ mod tests {
     use super::*;
     use crate::BoxFuture;
     use crate::frame::Bytes;
+    use crate::header::HEADER_LEN;
     use crate::image::make_image;
     use std::collections::VecDeque;
     use tokio::sync::Notify;
@@ -550,6 +565,7 @@ mod tests {
     const HELD_ACK_TIMEOUT: Duration = Duration::from_secs(5);
     const STALE_SEQ: u8 = 0xEE;
     const RC_REFUSED: i32 = 1;
+    const CBOR_BREAK: u8 = 0xff;
 
     // The spec's upload request: {data, off} plus {image, len, sha} on the first,
     // hand-encoded per RFC 8949; framelink-rs's previous codec sent the same bytes.
@@ -649,6 +665,7 @@ mod tests {
         drop_always_at: Option<usize>,
         hold_continuation_acks: std::sync::Mutex<bool>,
         forget_once_at: std::sync::Mutex<Option<usize>>,
+        garble_once_at: std::sync::Mutex<VecDeque<usize>>,
         held: std::sync::Mutex<Vec<Vec<u8>>>,
         responses: std::sync::Mutex<VecDeque<Vec<u8>>>,
         wake: Notify,
@@ -680,6 +697,13 @@ mod tests {
             Arc::new(Self {
                 drops: std::sync::Mutex::new(VecDeque::from([offset])),
                 forget_once_at: std::sync::Mutex::new(Some(offset)),
+                ..Self::default()
+            })
+        }
+
+        fn garbling_the_ack_once_at(offsets: &[usize]) -> Arc<Self> {
+            Arc::new(Self {
+                garble_once_at: std::sync::Mutex::new(offsets.iter().copied().collect()),
                 ..Self::default()
             })
         }
@@ -752,7 +776,7 @@ mod tests {
                     .then_some(self.verdict)
                     .flatten(),
             };
-            let ack = frame::encode(
+            let mut ack = frame::encode(
                 Op::WriteResponse,
                 Group::Image,
                 CMD_UPLOAD,
@@ -760,6 +784,11 @@ mod tests {
                 &ack,
             )
             .unwrap();
+            let mut garble = self.garble_once_at.lock().unwrap();
+            if let Some(i) = garble.iter().position(|&o| o == chunk.off) {
+                garble.remove(i);
+                ack[HEADER_LEN] = CBOR_BREAK;
+            }
             if chunk.off != 0 && *self.hold_continuation_acks.lock().unwrap() {
                 self.held.lock().unwrap().push(ack);
             } else {
@@ -1104,6 +1133,20 @@ mod tests {
             .unwrap();
 
         assert_eq!(*device.written.lock().unwrap(), image.to_vec());
+    }
+
+    #[tokio::test]
+    async fn an_undecodable_ack_is_a_stall_the_upload_recovers_from() {
+        let device = ImageDevice::garbling_the_ack_once_at(&[0, 3 * TEST_CHUNK]);
+        let session = session_on(Arc::clone(&device));
+        let image = test_image();
+
+        run_upload(&session, &image, TEST_CHUNK_TIMEOUT)
+            .await
+            .unwrap();
+
+        assert_eq!(*device.written.lock().unwrap(), image.to_vec());
+        assert!(device.garble_once_at.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

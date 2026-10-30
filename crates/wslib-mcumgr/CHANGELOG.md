@@ -5,7 +5,8 @@
 - An SMP (mcumgr) client, its codec written to Zephyr's SMP Protocol
   Specification: `Header`, `Op`, `Group` and `Version`.
 - `Session`: `list_images`, a pipelined `upload` that resumes from the
-  device's offset and is cancelled by dropping its stream, `test`, `confirm`,
+  device's offset, takes an ack that does not decode as a lost one, and is
+  cancelled by dropping its stream, `test`, `confirm`,
   `confirm_running`, `reset`, `echo` and `negotiate_params`. `upload` takes
   `UploadOptions`: the image number and the chunk timeouts. `reset` fails on
   a reply refusing it, and succeeds when the link goes or stays silent once
@@ -20,7 +21,8 @@
 - `Transport`, dyn-safe, with `max_in_flight` and `max_chunk_size`, and
   `udp` (`UdpTransport`, chunks capped to one datagram) and `ble`
   (`BleTransport`, over btleplug 0.13 and a caller's notification stream,
-  dropping bytes that start no reply and frames left unfinished).
+  dropping bytes that start no reply, frames left unfinished, and a frame
+  whose tail was lost once the next reply begins).
 - `UploadProgress`, `ImageSlot`, `FsProgress` and `FsHash` serialise and
   deserialise with serde; a hash is an array of bytes.
 - `Header::new`. `Header`, `UploadOptions`, `UploadProgress`, `ImageSlot`,

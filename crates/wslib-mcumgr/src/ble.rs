@@ -151,9 +151,26 @@ struct Reassembly {
 }
 
 impl Reassembly {
+    /// A notification too long to finish the frame in hand, that opens a
+    /// reply of its own, means that frame lost its tail.
     fn push(&mut self, notification: &[u8]) {
+        if self.still_needs().is_some_and(|n| notification.len() > n) && opens_a_reply(notification)
+        {
+            debug!(
+                dropped = self.buf.len(),
+                "SMP over BLE: a reply began before the last was whole"
+            );
+            self.buf.clear();
+        }
         self.latest_notification_at = self.buf.len();
         self.buf.extend_from_slice(notification);
+    }
+
+    fn still_needs(&self) -> Option<usize> {
+        let header = Header::decode(&self.buf).ok()?;
+        (HEADER_LEN + usize::from(header.len))
+            .checked_sub(self.buf.len())
+            .filter(|&n| n > 0)
     }
 
     fn take(&mut self) -> Option<Vec<u8>> {
@@ -186,6 +203,18 @@ impl Reassembly {
         }
     }
 }
+
+/// A response header with its reserved bits clear, then a CBOR map, as
+/// every SMP payload is.
+fn opens_a_reply(notification: &[u8]) -> bool {
+    Header::decode(notification).is_ok_and(|h| matches!(h.op, Op::ReadResponse | Op::WriteResponse))
+        && notification[0] >> 5 == 0
+        && notification
+            .get(HEADER_LEN)
+            .is_none_or(|&first| first >> 5 == CBOR_MAP)
+}
+
+const CBOR_MAP: u8 = 5;
 
 #[cfg(test)]
 mod tests {
@@ -245,6 +274,24 @@ mod tests {
         let mut frames = reassembly_of(&[&[0x02; HEADER_LEN + 4]]);
         assert_eq!(frames.take(), None);
         assert!(frames.buf.is_empty());
+    }
+
+    #[test]
+    fn a_reply_after_one_that_lost_its_tail_is_not_glued_to_it() {
+        let lost_its_tail = frame(&[0xa1; 10]);
+        let next = frame(&[0xa1, 0x61, b'x', 0x01]);
+        let mut frames = reassembly_of(&[&lost_its_tail[..10], &next]);
+        assert_eq!(frames.take(), Some(next));
+        assert!(frames.buf.is_empty());
+    }
+
+    #[test]
+    fn a_continuation_that_looks_like_a_header_still_finishes_its_frame() {
+        let whole = frame(&[
+            0xaa, 0xbb, 0x03, 0x00, 0x00, 0x04, 0x00, 0x01, 0x42, 0x00, 0xa0,
+        ]);
+        let mut frames = reassembly_of(&[&whole[..HEADER_LEN + 2], &whole[HEADER_LEN + 2..]]);
+        assert_eq!(frames.take(), Some(whole));
     }
 
     #[tokio::test]

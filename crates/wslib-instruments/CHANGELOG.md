@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- `gw121::notify` reads and writes the `.notify` capture format, one chunk per
+  line, for `Replay` to decode. A parse error names its line.
+
 ## 0.1.0
 
 - Bench-instrument probes behind one blocking `Probe`, each reading

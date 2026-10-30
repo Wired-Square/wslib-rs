@@ -2,6 +2,7 @@
 pub mod ble;
 pub mod decode;
 pub(crate) mod frame;
+pub mod notify;
 mod replay;
 mod target;
 

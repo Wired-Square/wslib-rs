@@ -6,6 +6,7 @@ use crate::{
             Unit, fahrenheit_to_celsius, samples, signals, signals_of, status_flags,
         },
         frame::{Assembler, FRAME_LEN, Frame},
+        notify,
     },
     sample::{Sample, Stamp},
     signal::{
@@ -47,24 +48,12 @@ const COLD_HIGH: u8 = 0x03;
 const COLD_LOW: u8 = 0xE8;
 const SEVENTEEN_BIT: i64 = 0x1_0000;
 
-fn chunks(fixture: &str) -> Vec<Vec<u8>> {
-    fixture
-        .lines()
-        .map(|line| {
-            let hex = line.split_once(' ').unwrap().1;
-            (0..hex.len())
-                .step_by(2)
-                .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
-                .collect()
-        })
-        .collect()
-}
-
 fn frames(fixture: &str) -> Vec<Frame> {
     let mut assembler = Assembler::default();
-    chunks(fixture)
+    notify::parse(fixture, Stamp::now())
+        .unwrap()
         .iter()
-        .flat_map(|c| assembler.push(c))
+        .flat_map(|(_, bytes)| assembler.push(bytes))
         .map(|bytes| Frame::decode(&bytes))
         .collect()
 }

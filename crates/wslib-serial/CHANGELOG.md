@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- thiserror's floor is 2.0.20.
+
 ## 0.1.1
 
 - `SerialPort::try_clone`: a second handle on an idle port, for a write

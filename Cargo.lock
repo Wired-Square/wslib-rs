@@ -8051,7 +8051,7 @@ version = "0.1.0"
 
 [[package]]
 name = "wslib-can"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "thiserror 2.0.21",
  "tokio",
@@ -8478,7 +8478,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-serial"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "libc",
  "serialport",
@@ -8565,7 +8565,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-tcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "thiserror 2.0.21",
  "tokio",

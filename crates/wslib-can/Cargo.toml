@@ -1,6 +1,6 @@
 [package]
 name = "wslib-can"
-version = "0.1.1"
+version = "0.1.2"
 description = "CAN: the frame on the bus, its data length codes, bit timing, candump and SavvyCAN text, and the task every CAN transport runs, reopening its device with backoff."
 readme = "README.md"
 edition.workspace = true
@@ -15,7 +15,7 @@ task = ["dep:tokio", "dep:thiserror", "dep:wslib-backoff"]
 tcp = ["task", "dep:wslib-tcp"]
 
 [dependencies]
-thiserror = { version = "2.0.17", optional = true }
+thiserror = { version = "2.0.20", optional = true }
 tokio = { version = "1.53.3", default-features = false, features = ["macros", "rt", "sync", "time"], optional = true }
 wslib-backoff = { path = "../wslib-backoff", version = "0.1.2", registry = "wired-square", optional = true }
 wslib-tcp = { path = "../wslib-tcp", version = "0.1", registry = "wired-square", optional = true }

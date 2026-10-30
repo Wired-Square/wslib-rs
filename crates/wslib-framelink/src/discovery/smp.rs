@@ -41,8 +41,9 @@ impl Default for OtaOptions {
 }
 
 /// The stages of a firmware update, in order; `Confirmed` ends one that
-/// succeeded.
-#[derive(Clone, Debug)]
+/// succeeded. Hashes serialise as arrays of bytes, as in `UploadProgress`.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum OtaEvent {
     SessionOpened,

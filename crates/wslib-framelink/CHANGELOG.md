@@ -17,6 +17,8 @@
 - Dropping an OTA stream stops its update at the next wait (the upload,
   a reply, the wait for the reset device) rather than at its next event,
   and never mid-frame.
+- `OtaEvent` serialises, tagged by `kind` in kebab case as
+  `DiscoveryEvent` is; a hash is an array of bytes, as in `UploadProgress`.
 - `WifiStatus::as_byte`, the inverse of `from_byte`.
 - `probe` tells a device that answers in a version (`Probe::Answered`) from
   one that sends bytes no frame parses from (`Unparseable`) and one that

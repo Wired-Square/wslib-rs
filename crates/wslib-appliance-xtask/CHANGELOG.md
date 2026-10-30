@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2
+
+- Renders for `wslib-appliance-server` 0.1.2, so `gates` no longer warns on a
+  lock that holds it.
+
 ## 0.2.1
 
 - `manifest.json` may declare `devices`, at schema 2, with

@@ -1,6 +1,6 @@
 [package]
 name = "wslib-tls"
-version = "0.2.4"
+version = "0.2.5"
 description = "TLS over the caller's rustls CryptoProvider: outbound trust in OS roots, CA anchors and pins by host, reloaded live with typed rejections, and the serving pair minted, kept and replaced."
 readme = "README.md"
 edition.workspace = true
@@ -31,7 +31,7 @@ wslib-file-atomic = { version = "0.1.5", path = "../wslib-file-atomic", registry
 wslib-secret = { version = "0.1", path = "../wslib-secret", registry = "wired-square" }
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2.174"
+libc = "0.2.183"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }

@@ -1,6 +1,6 @@
 [package]
 name = "wslib-appliance"
-version = "0.1.3"
+version = "0.1.4"
 description = "The appliance family in one dependency: its wire types and bootstrap settings, and each other crate behind a feature."
 readme = "README.md"
 edition.workspace = true
@@ -23,11 +23,11 @@ client = ["dep:wslib-appliance-client"]
 
 [dependencies]
 wslib-appliance-auth = { path = "../wslib-appliance-auth", version = "=0.1.1", registry = "wired-square", optional = true }
-wslib-appliance-core = { path = "../wslib-appliance-core", version = "=0.1.1", registry = "wired-square", optional = true }
-wslib-appliance-server = { path = "../wslib-appliance-server", version = "=0.1.1", registry = "wired-square", optional = true }
-wslib-appliance-https = { path = "../wslib-appliance-https", version = "=0.1.1", registry = "wired-square", optional = true }
-wslib-appliance-service = { path = "../wslib-appliance-service", version = "=0.1.1", registry = "wired-square", optional = true }
-wslib-appliance-backup = { path = "../wslib-appliance-backup", version = "=0.1.1", registry = "wired-square", optional = true }
+wslib-appliance-core = { path = "../wslib-appliance-core", version = "=0.1.2", registry = "wired-square", optional = true }
+wslib-appliance-server = { path = "../wslib-appliance-server", version = "=0.1.2", registry = "wired-square", optional = true }
+wslib-appliance-https = { path = "../wslib-appliance-https", version = "=0.1.2", registry = "wired-square", optional = true }
+wslib-appliance-service = { path = "../wslib-appliance-service", version = "=0.1.2", registry = "wired-square", optional = true }
+wslib-appliance-backup = { path = "../wslib-appliance-backup", version = "=0.1.2", registry = "wired-square", optional = true }
 wslib-appliance-client = { path = "../wslib-appliance-client", version = "=0.1.0", registry = "wired-square", optional = true }
 wslib-appliance-config = { path = "../wslib-appliance-config", version = "=0.1.1", registry = "wired-square" }
 wslib-appliance-store = { path = "../wslib-appliance-store", version = "=0.1.1", registry = "wired-square", optional = true }

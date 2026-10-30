@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.9
+
+- libc's floor is 0.2.183, the workspace's.
+
 ## 0.1.8
 
 - On Windows, a roll-back leaves a junction or directory symlink found at a

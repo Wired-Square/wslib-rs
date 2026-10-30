@@ -1,6 +1,6 @@
 [package]
 name = "wslib-service"
-version = "0.1.4"
+version = "0.1.5"
 description = "A background service on launchd, systemd or the Windows service control manager from one call, and its private state and log."
 readme = "README.md"
 edition.workspace = true
@@ -24,7 +24,7 @@ tracing = "0.1.41"
 # The installer's layout checked: the process's uid, and opening the log
 # without following a link.
 [target.'cfg(unix)'.dependencies]
-libc = "0.2.174"
+libc = "0.2.183"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 wslib-systemd-notify = { version = "0.1.1", path = "../wslib-systemd-notify", registry = "wired-square", features = ["tokio"] }

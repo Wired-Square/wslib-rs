@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- Pins `wslib-appliance-core` 0.1.2.
+
 ## 0.1.1
 
 - Pins `wslib-appliance-core` 0.1.1.

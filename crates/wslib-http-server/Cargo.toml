@@ -1,6 +1,6 @@
 [package]
 name = "wslib-http-server"
-version = "0.1.5"
+version = "0.1.6"
 description = "The listeners under an axum app: HTTP, TLS with h1 and h2, a redirect to it, bounded and drained on a token."
 readme = "README.md"
 edition.workspace = true
@@ -24,7 +24,7 @@ tower = { version = "0.5.2", default-features = false, features = ["util"] }
 tracing = "0.1.41"
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2.174"
+libc = "0.2.183"
 wslib-host = { path = "../wslib-host", version = "0.1.1", registry = "wired-square" }
 
 [dev-dependencies]

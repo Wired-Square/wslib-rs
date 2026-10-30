@@ -1,6 +1,6 @@
 [package]
 name = "wslib-appliance-xtask"
-version = "0.2.1"
+version = "0.2.2"
 description = "Renders a product's packaging scaffolding from appliance.toml, and stands in for a console in development."
 readme = "README.md"
 edition.workspace = true

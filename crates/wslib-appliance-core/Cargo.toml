@@ -1,6 +1,6 @@
 [package]
 name = "wslib-appliance-core"
-version = "0.1.1"
+version = "0.1.2"
 description = "The router, the authority and the workers an appliance needs, beneath the backends that serve them behind a console, on their own TLS listener and as a desktop service."
 readme = "README.md"
 edition.workspace = true
@@ -58,7 +58,7 @@ wslib-telemetry = { path = "../wslib-telemetry", version = "0.1.9", registry = "
 wslib-tls = { path = "../wslib-tls", version = "0.2.4", registry = "wired-square" }
 
 [target.'cfg(unix)'.dependencies]
-libc = { version = "0.2.174", optional = true }
+libc = { version = "0.2.183", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
@@ -83,7 +83,7 @@ wslib-telemetry = { path = "../wslib-telemetry", version = "0.1.9", registry = "
 wslib-tls = { path = "../wslib-tls", version = "0.2.4", registry = "wired-square", features = ["testing"] }
 
 [target.'cfg(unix)'.dev-dependencies]
-libc = "0.2.174"
+libc = "0.2.183"
 
 [target.'cfg(windows)'.dev-dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_Threading"] }

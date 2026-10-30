@@ -82,8 +82,41 @@ struct ActiveSessions {
     wifi_prov: Option<Arc<crate::ble::wifi_prov::WifiProvSession>>,
     #[cfg(feature = "smp")]
     smp: Option<Arc<wslib_mcumgr::Session>>,
-    #[cfg(feature = "smp")]
-    smp_opening: Arc<tokio::sync::Mutex<()>>,
+    opening: Arc<tokio::sync::Mutex<()>>,
+}
+
+#[cfg(any(feature = "wifi-prov", feature = "smp"))]
+impl ActiveSessions {
+    fn is_empty(&self) -> bool {
+        #[cfg(feature = "wifi-prov")]
+        if self.wifi_prov.is_some() {
+            return false;
+        }
+        #[cfg(feature = "smp")]
+        if self.smp.is_some() {
+            return false;
+        }
+        true
+    }
+}
+
+#[cfg(any(feature = "wifi-prov", feature = "smp"))]
+trait Connected {
+    fn is_connected(&self) -> impl Future<Output = bool> + Send;
+}
+
+#[cfg(feature = "wifi-prov")]
+impl Connected for crate::ble::wifi_prov::WifiProvSession {
+    fn is_connected(&self) -> impl Future<Output = bool> + Send {
+        crate::ble::wifi_prov::WifiProvSession::is_connected(self)
+    }
+}
+
+#[cfg(feature = "smp")]
+impl Connected for wslib_mcumgr::Session {
+    fn is_connected(&self) -> impl Future<Output = bool> + Send {
+        wslib_mcumgr::Session::is_connected(self)
+    }
 }
 
 impl Discovery {
@@ -242,26 +275,62 @@ impl Discovery {
         &self,
         id: &DeviceId,
     ) -> Result<Arc<crate::ble::wifi_prov::WifiProvSession>, Error> {
-        let mut sessions = self.inner.sessions.lock().await;
-        let active = sessions.entry(id.clone()).or_default();
-        if let Some(existing) = active.wifi_prov.as_ref() {
-            if existing.is_connected().await {
-                return Ok(Arc::clone(existing));
-            }
-            tracing::debug!(id = %id, "cached wifi-prov session disconnected; re-opening");
-            active.wifi_prov = None;
-        }
-        let lease = self
-            .resolve_ble_lease(id, crate::Capability::WifiProv)
-            .await?;
-        let session = Arc::new(crate::ble::wifi_prov::open_session(lease).await?);
-        active.wifi_prov = Some(Arc::clone(&session));
-        Ok(session)
+        self.open_shared(id, |active| &mut active.wifi_prov, async {
+            let lease = self
+                .resolve_ble_lease(id, crate::Capability::WifiProv)
+                .await?;
+            crate::ble::wifi_prov::open_session(lease).await
+        })
+        .await
     }
 }
 
 #[cfg(any(feature = "wifi-prov", feature = "smp"))]
 impl Discovery {
+    /// The device's session in `slot` while it is connected, else the one
+    /// `open` makes. Opens of one device wait their turn, but the session map
+    /// is not held across one; a device released meanwhile does not keep it,
+    /// and one whose open fails is left as it was found.
+    async fn open_shared<S: Connected>(
+        &self,
+        id: &DeviceId,
+        slot: fn(&mut ActiveSessions) -> &mut Option<Arc<S>>,
+        open: impl Future<Output = Result<S, Error>>,
+    ) -> Result<Arc<S>, Error> {
+        let opening = {
+            let mut sessions = self.inner.sessions.lock().await;
+            Arc::clone(&sessions.entry(id.clone()).or_default().opening)
+        };
+        let _one_open_per_device = opening.lock().await;
+        let cached = (self.inner.sessions.lock().await)
+            .get_mut(id)
+            .and_then(|active| slot(active).clone());
+        if let Some(existing) = cached {
+            if existing.is_connected().await {
+                return Ok(existing);
+            }
+            tracing::debug!(id = %id, "cached session disconnected; re-opening");
+        }
+        let opened = open.await.map(Arc::new);
+        let mut sessions = self.inner.sessions.lock().await;
+        match (sessions.get_mut(id), &opened) {
+            (Some(active), Ok(session)) if Arc::ptr_eq(&active.opening, &opening) => {
+                *slot(active) = Some(Arc::clone(session));
+            }
+            // Two holders, the map and this open, so no other open waits.
+            (Some(active), Err(_))
+                if active.is_empty()
+                    && Arc::ptr_eq(&active.opening, &opening)
+                    && Arc::strong_count(&opening) == 2 =>
+            {
+                sessions.remove(id);
+            }
+            (_, Ok(_)) => tracing::debug!(id = %id, "released while its session opened; not kept"),
+            (_, Err(_)) => {}
+        }
+        opened
+    }
+
     /// Drops the device's sessions; its BLE link closes once nothing in
     /// flight holds one.
     pub async fn release_device(&self, id: &DeviceId) {

@@ -8,9 +8,10 @@
   `ota_ble`. Their errors are `Error::Smp`, `SmpUnavailable` and
   `OtaVerifyMismatch`. `OtaEvent` is `#[non_exhaustive]`, and so are the
   re-exported `UploadProgress` and `ImageSlot`.
-  Opens of one device's SMP session take turns without holding the other
-  devices' sessions, and a cached session whose link has closed is opened
-  again, over UDP as over BLE.
+  Opens of one device's session, SMP or Wi-Fi provisioning, take turns
+  without holding the other devices' sessions, and a cached session whose
+  link has closed is opened again, over UDP as over BLE. An open that fails
+  leaves nothing behind for the device.
 - `ota_ble` and `ota_udp` return `OtaStream`, as `ota` does, and
   `Discovery::open_smp_on` opens a seen device's session over a transport
   chosen at run time.

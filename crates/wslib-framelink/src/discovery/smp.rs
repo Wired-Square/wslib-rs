@@ -128,36 +128,12 @@ impl Discovery {
         .await
     }
 
-    /// The device's session while it is connected, else the one `open`
-    /// makes. Opens of one device wait their turn, but the session map is
-    /// not held across one; a device released meanwhile does not keep it.
     async fn open_smp_shared(
         &self,
         id: &DeviceId,
         open: impl Future<Output = Result<Session, Error>>,
     ) -> Result<Arc<Session>, Error> {
-        let opening = {
-            let mut sessions = self.inner.sessions.lock().await;
-            Arc::clone(&sessions.entry(id.clone()).or_default().smp_opening)
-        };
-        let _one_open_per_device = opening.lock().await;
-        let cached = (self.inner.sessions.lock().await)
-            .get(id)
-            .and_then(|active| active.smp.clone());
-        if let Some(existing) = cached {
-            if existing.is_connected().await {
-                return Ok(existing);
-            }
-            tracing::debug!(id = %id, "cached SMP session disconnected; re-opening");
-        }
-        let session = Arc::new(open.await?);
-        match self.inner.sessions.lock().await.get_mut(id) {
-            Some(active) if Arc::ptr_eq(&active.smp_opening, &opening) => {
-                active.smp = Some(Arc::clone(&session));
-            }
-            _ => tracing::debug!(id = %id, "released while its SMP session opened; not kept"),
-        }
-        Ok(session)
+        self.open_shared(id, |active| &mut active.smp, open).await
     }
 
     /// An SMP session by registry: a `Manual` record's address directly,
@@ -659,6 +635,42 @@ mod tests {
         tokio::select! {
             _ = opening => panic!("the open never completes"),
             released = release => assert!(released.is_ok(), "release waited on the open"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_open_leaves_the_session_map_as_it_was() {
+        let discovery = Discovery::idle();
+
+        let result = discovery.open_smp_udp(&DeviceId::new("absent")).await;
+
+        assert!(matches!(result, Err(Error::UnknownDevice(_))));
+        assert!(discovery.inner.sessions.lock().await.is_empty());
+    }
+
+    #[cfg(feature = "wifi-prov")]
+    #[tokio::test]
+    async fn opening_wifi_on_one_device_holds_up_neither_an_smp_open_nor_a_release_of_another() {
+        let discovery = Discovery::idle();
+        let a = DeviceId::new("a");
+        let opening_wifi =
+            discovery.open_shared(&a, |active| &mut active.wifi_prov, std::future::pending());
+        let b = DeviceId::new("b");
+        let on_b = async {
+            tokio::time::sleep(SETTLE).await;
+            tokio::time::timeout(Duration::from_secs(1), async {
+                discovery
+                    .open_smp_shared(&b, async { Ok(loopback_session().await) })
+                    .await
+                    .unwrap();
+                discovery.release_device(&b).await;
+            })
+            .await
+        };
+
+        tokio::select! {
+            _ = opening_wifi => panic!("the open never completes"),
+            done = on_b => assert!(done.is_ok(), "device b waited on device a"),
         }
     }
 

@@ -223,6 +223,22 @@ for crate in wslib-framelink-protocol wslib-framelink-board; do
   fi
 done
 
+# The session crate's default build is TCP alone, and its mDNS is wslib-mdns's.
+if grep -qx wslib-framelink <<<"$todo"; then
+  step "wslib-framelink has no btleplug or mdns-sd by default, and mdns-sd only through wslib-mdns"
+  tree=$(normal_tree wslib-framelink --target all)
+  ! grep -E '^(btleplug|mdns-sd) ' <<<"$tree" || die "wslib-framelink's default build pulls in btleplug or mdns-sd"
+  tree=$(normal_tree wslib-framelink --features discovery --target all --depth 1)
+  ! grep -E '^mdns-sd ' <<<"$tree" || die "wslib-framelink depends on mdns-sd other than through wslib-mdns"
+  ios=aarch64-apple-ios
+  if [[ -d $(rustc --print target-libdir --target $ios 2>/dev/null) ]]; then
+    step "wslib-framelink's BLE for $ios"
+    cargo check -p wslib-framelink --features ble,wifi-prov --target $ios --locked
+  else
+    step "wslib-framelink's BLE for $ios skipped: its std is missing (rustup target add $ios)"
+  fi
+fi
+
 # The gateway's types are serde-only, a Windows client's included.
 if grep -qx wslib-wiretap-gateway <<<"$todo"; then
   step "wslib-wiretap-gateway on Windows has no serial port or SQLite"

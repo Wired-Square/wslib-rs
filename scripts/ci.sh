@@ -156,6 +156,13 @@ if grep -qx wslib-serial <<<"$selected"; then
   ! grep -E '^(serialport|libudev(-sys)?) ' <<<"$tree" || die "wslib-serial's task pulls in serialport on Linux"
 fi
 
+if grep -qx wslib-framing <<<"$selected"; then
+  step "wslib-framing depends on thiserror alone"
+  tree=$(normal_tree wslib-framing --target all)
+  ! grep -vE '^(wslib-framing|thiserror|thiserror-impl|proc-macro2|quote|syn|unicode-ident) ' <<<"$tree" \
+    || die "wslib-framing depends on more than thiserror"
+fi
+
 # The gateway's types are serde-only, a Windows client's included.
 if grep -qx wslib-wiretap-gateway <<<"$selected"; then
   step "wslib-wiretap-gateway on Windows has no serial port or SQLite"

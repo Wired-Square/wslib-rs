@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- tokio's floor is 1.53.1, futures-util's 0.3.34.
+
 ## 0.1.0
 
 - `ServiceType`, `Subtype`, `InstanceName`, `Txt` and `HostName`, checked

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- serde's floor is 1.0.228.
+
 ## 0.1.0
 
 - `extract_bits` and `extract_field`: a bit field by position, byte order and

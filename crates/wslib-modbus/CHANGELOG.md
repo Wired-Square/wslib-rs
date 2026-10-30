@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.2
+
+- serde's floor is 1.0.228.
+
 ## 0.2.1
 
 - On Windows, a device closing the connection is `TransportError::Closed`,

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- serde's floor is 1.0.228.
+
 ## 0.1.0
 
 - The WireTAP catalogue, moved from `wiretap-catalog` at v0.10.2: the model,

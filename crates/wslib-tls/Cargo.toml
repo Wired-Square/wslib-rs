@@ -34,7 +34,7 @@ wslib-secret = { version = "0.1", path = "../wslib-secret", registry = "wired-sq
 libc = "0.2.183"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 rcgen = { version = "0.14.10", default-features = false }

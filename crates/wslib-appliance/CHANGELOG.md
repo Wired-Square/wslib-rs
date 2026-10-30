@@ -3,6 +3,7 @@
 ## 0.1.4
 
 - Pins `wslib-appliance-core`, `-service`, `-backup`, `-server` and `-https` at 0.1.2.
+- Pins `wslib-appliance-client` at 0.1.1.
 
 ## 0.1.3
 

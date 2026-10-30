@@ -34,7 +34,7 @@ wslib-systemd-notify = { version = "0.1.1", path = "../wslib-systemd-notify", re
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.8"
 wslib-file-atomic = { version = "0.1.5", path = "../wslib-file-atomic", registry = "wired-square" }
-windows-sys = { version = "0.61", features = [
+windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",

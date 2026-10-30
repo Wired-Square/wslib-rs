@@ -11,6 +11,7 @@
   Opens of one device's SMP session take turns without holding the other
   devices' sessions, and a cached session whose link has closed is opened
   again, over UDP as over BLE.
+- `WifiStatus::as_byte`, the inverse of `from_byte`.
 
 ## 0.1.0
 

@@ -177,7 +177,7 @@ impl Session {
                         name: &remote_path,
                         len: (offset == 0).then_some(total),
                     };
-                    let seq = replies.expect()?;
+                    let seq = replies.expect(Group::Fs, CMD_FILE)?;
                     router
                         .send(frame::encode(
                             Op::Write,

@@ -189,7 +189,7 @@ impl Session {
     /// fails or stays silent once the request is sent is not, since the
     /// device may restart before it answers.
     pub async fn reset(&self) -> Result<(), Error> {
-        let mut replies = self.send(reset_frame).await?;
+        let mut replies = self.send(Group::Os, CMD_RESET, reset_frame).await?;
         match tokio::time::timeout(ROUND_TRIP_TIMEOUT, replies.next()).await {
             Ok(Ok(reply)) => decode_reply::<Empty>(&reply, "reset").map(drop),
             _ => {
@@ -216,7 +216,9 @@ impl Session {
         context: &str,
     ) -> Result<R, Error> {
         let mut replies = self
-            .send(|seq| frame::encode(op, group, command, seq, payload))
+            .send(group, command, |seq| {
+                frame::encode(op, group, command, seq, payload)
+            })
             .await?;
         let reply = tokio::time::timeout(ROUND_TRIP_TIMEOUT, replies.next())
             .await
@@ -228,10 +230,12 @@ impl Session {
     /// reply then comes to the returned [`Replies`].
     async fn send(
         &self,
+        group: Group,
+        command: u8,
         encode: impl FnOnce(u8) -> Result<Vec<u8>, Error>,
     ) -> Result<Replies, Error> {
         let replies = self.router.replies();
-        let frame = encode(replies.expect()?)?;
+        let frame = encode(replies.expect(group, command)?)?;
         self.router.send(frame).await?;
         Ok(replies)
     }
@@ -346,7 +350,7 @@ impl Upload {
                 self.emit(complete(resumed_from)).await;
                 return Ok(());
             }
-            let seq = replies.expect()?;
+            let seq = replies.expect(Group::Image, CMD_UPLOAD)?;
             self.router
                 .send(self.chunk_frame(seq, probe_at, Some(&sha))?)
                 .await?;
@@ -449,7 +453,7 @@ impl Upload {
                 if stop.load(Ordering::Acquire) || self.events.is_closed() {
                     return Ok(());
                 }
-                let seq = sequences.expect()?;
+                let seq = sequences.expect(Group::Image, CMD_UPLOAD)?;
                 let end = (off + self.chunk_size).min(total);
                 let frame = self.chunk_frame(seq, off, None)?;
                 in_flight().insert(seq, ChunkInFlight { start: off, end });
@@ -852,11 +856,14 @@ mod tests {
         rc: i32,
     }
 
-    /// Answers echoes `batch` at a time, last first; never answers an image
-    /// chunk; answers a reset with `reset_rc`, or closes the link at it.
+    /// Answers echoes `batch` at a time, last first, each after an image
+    /// state reply under its sequence number if `stale_reply_first`; never
+    /// answers an image chunk; answers a reset with `reset_rc`, or closes the
+    /// link at it.
     #[derive(Default)]
     struct OsDevice {
         batch: usize,
+        stale_reply_first: bool,
         reset_rc: Option<i32>,
         held: std::sync::Mutex<Vec<Vec<u8>>>,
         received: std::sync::Mutex<VecDeque<Result<Vec<u8>, Error>>>,
@@ -867,6 +874,14 @@ mod tests {
         fn answering_echoes_in_batches_of(batch: usize) -> Arc<Self> {
             Arc::new(Self {
                 batch,
+                ..Self::default()
+            })
+        }
+
+        fn answering_echoes_after_a_stale_reply() -> Arc<Self> {
+            Arc::new(Self {
+                batch: 1,
+                stale_reply_first: true,
                 ..Self::default()
             })
         }
@@ -894,6 +909,15 @@ mod tests {
             match (header.group, header.command) {
                 (Group::Os, CMD_ECHO) => {
                     let (_, echo): (_, EchoPayload) = frame::decode(&frame).unwrap();
+                    if self.stale_reply_first {
+                        self.deliver(frame::encode(
+                            Op::ReadResponse,
+                            Group::Image,
+                            CMD_STATE,
+                            header.seq,
+                            &Empty {},
+                        ));
+                    }
                     let reply =
                         frame::encode(Op::WriteResponse, Group::Os, CMD_ECHO, header.seq, &echo)
                             .unwrap();
@@ -938,6 +962,13 @@ mod tests {
 
         assert_eq!(a.unwrap(), "a");
         assert_eq!(b.unwrap(), "b");
+    }
+
+    #[tokio::test]
+    async fn a_reply_under_the_right_sequence_number_to_another_command_is_ignored() {
+        let session = Session::new(OsDevice::answering_echoes_after_a_stale_reply(), TEST_CHUNK);
+
+        assert_eq!(session.echo("hi").await.unwrap(), "hi");
     }
 
     #[tokio::test]

@@ -10,9 +10,17 @@ use tokio::task::AbortHandle;
 use tracing::debug;
 
 use crate::header::Header;
-use crate::{Error, Transport};
+use crate::{Error, Group, Transport};
 
-type Route = mpsc::UnboundedSender<Result<Vec<u8>, Error>>;
+type Reply = mpsc::UnboundedSender<Result<Vec<u8>, Error>>;
+
+/// A sequence number comes round again, so a reply late past its request's
+/// timeout must also answer the same command to be taken.
+struct Route {
+    group: Group,
+    command: u8,
+    reply: Reply,
+}
 
 pub(crate) struct Router {
     transport: Arc<dyn Transport>,
@@ -76,21 +84,25 @@ impl Router {
     }
 
     fn deliver(&self, frame: Vec<u8>) {
-        let seq = match Header::decode(&frame) {
-            Ok(header) => header.seq,
+        let header = match Header::decode(&frame) {
+            Ok(header) => header,
             Err(e) => return debug!("dropping an undecodable SMP frame: {e}"),
         };
-        match self.lock().by_seq.remove(&seq) {
-            Some(route) => drop(route.send(Ok(frame))),
-            None => debug!(seq, "dropping an SMP reply no request awaits"),
+        let mut routes = self.lock();
+        let Entry::Occupied(route) = routes.by_seq.entry(header.seq) else {
+            return debug!(seq = header.seq, "dropping an SMP reply no request awaits");
+        };
+        if (route.get().group, route.get().command) != (header.group, header.command) {
+            return debug!(?header, "dropping an SMP reply to another command");
         }
+        let _ = route.remove().reply.send(Ok(frame));
     }
 
     fn close(&self) {
         let mut routes = self.lock();
         routes.open = false;
         for (_, route) in routes.by_seq.drain() {
-            let _ = route.send(Err(Error::LinkClosed));
+            let _ = route.reply.send(Err(Error::LinkClosed));
         }
     }
 
@@ -135,14 +147,14 @@ pub(crate) struct Replies {
 /// Dropping it forgets the replies still due.
 pub(crate) struct Sequences {
     router: Arc<Router>,
-    tx: Route,
+    tx: Reply,
 }
 
 pub(crate) struct Inbox(mpsc::UnboundedReceiver<Result<Vec<u8>, Error>>);
 
 impl Replies {
-    pub(crate) fn expect(&self) -> Result<u8, Error> {
-        self.sequences.expect()
+    pub(crate) fn expect(&self, group: Group, command: u8) -> Result<u8, Error> {
+        self.sequences.expect(group, command)
     }
 
     pub(crate) async fn next(&mut self) -> Result<Vec<u8>, Error> {
@@ -155,8 +167,9 @@ impl Replies {
 }
 
 impl Sequences {
-    /// A sequence number no other request awaits, routed here.
-    pub(crate) fn expect(&self) -> Result<u8, Error> {
+    /// A sequence number no other request awaits, whose reply to `group`
+    /// and `command` is routed here.
+    pub(crate) fn expect(&self, group: Group, command: u8) -> Result<u8, Error> {
         let mut routes = self.router.lock();
         if !routes.open {
             return Err(Error::LinkClosed);
@@ -165,7 +178,11 @@ impl Sequences {
             let seq = routes.next_seq;
             routes.next_seq = seq.wrapping_add(1);
             if let Entry::Vacant(slot) = routes.by_seq.entry(seq) {
-                slot.insert(self.tx.clone());
+                slot.insert(Route {
+                    group,
+                    command,
+                    reply: self.tx.clone(),
+                });
                 return Ok(seq);
             }
         }
@@ -177,7 +194,7 @@ impl Sequences {
         self.router
             .lock()
             .by_seq
-            .retain(|_, route| !route.same_channel(&self.tx));
+            .retain(|_, route| !route.reply.same_channel(&self.tx));
     }
 }
 

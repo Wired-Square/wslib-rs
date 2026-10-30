@@ -3,6 +3,7 @@
 ## 0.1.9
 
 - libc's floor is 0.2.183, the workspace's.
+- windows-sys's floor is 0.61.2.
 
 ## 0.1.8
 

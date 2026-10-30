@@ -1,6 +1,6 @@
 [package]
 name = "wslib-wiretap-gateway"
-version = "0.2.0"
+version = "0.2.1"
 description = "The WireTAP gateway's HTTP API as serde types: query results, the archive, events and admin endpoints, the request bodies and query strings, and a query spec with the request that asks it; an HTTP client behind the `client` feature."
 readme = "README.md"
 edition.workspace = true
@@ -16,7 +16,7 @@ client = ["dep:reqwest", "dep:serde_json", "dep:wslib-bits", "dep:wslib-can"]
 
 [dependencies]
 reqwest = { version = "0.12.28", default-features = false, features = ["json"], optional = true }
-serde = { version = "1.0.225", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.85", optional = true }
 ts-rs = { version = "12", optional = true, features = ["no-serde-warnings"] }
 wslib-bits = { path = "../wslib-bits", version = "0.1", registry = "wired-square", optional = true }

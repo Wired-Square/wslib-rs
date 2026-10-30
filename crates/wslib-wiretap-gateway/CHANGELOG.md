@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1
+
+- serde's floor is 1.0.228.
+
 ## 0.2.0
 
 - `client`, off by default: `GatewayClient`, its `Db` and `FrameCursor`, and

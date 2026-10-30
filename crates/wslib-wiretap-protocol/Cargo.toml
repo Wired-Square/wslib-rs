@@ -1,6 +1,6 @@
 [package]
 name = "wslib-wiretap-protocol"
-version = "0.2.1"
+version = "0.2.2"
 description = "The vocabulary captures share, the archive protocol and its stored names, frame keys and ids, frame selections and inventory rows, and the wire protocols they travel by: ingest, the capture-import body and Test Pattern."
 readme = "README.md"
 edition.workspace = true
@@ -11,7 +11,7 @@ repository.workspace = true
 publish = ["wired-square"]
 
 [dependencies]
-serde = { version = "1.0.225", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
 # 12, not 11: these crates' TS types nest only each other's, and their consumer needs `with_large_int`.
 ts-rs = { version = "12", optional = true, features = ["no-serde-warnings"] }
 wslib-can = { path = "../wslib-can", version = "0.1", registry = "wired-square" }

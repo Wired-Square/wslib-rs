@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- serde's floor is 1.0.228.
+
 ## 0.1.0
 
 - Eleven named algorithms (XOR, Sum8, seven CRC-8s, CRC-16 Modbus and CCITT),

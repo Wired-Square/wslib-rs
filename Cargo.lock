@@ -7610,7 +7610,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-client"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "thiserror 2.0.21",
  "tokio",
@@ -7878,7 +7878,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-bits"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rust_decimal",
  "rust_decimal_macros",
@@ -7953,7 +7953,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-checksum"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -8237,7 +8237,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-mdns"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "futures-util",
  "libc",
@@ -8248,7 +8248,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-modbus"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "rust_decimal",
  "rust_decimal_macros",
@@ -8431,7 +8431,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-wiretap-catalogue"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "can-dbc",
  "rust_decimal",
@@ -8452,7 +8452,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-wiretap-gateway"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "reqwest 0.12.28",
  "serde",
@@ -8466,7 +8466,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-wiretap-protocol"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "serde",
  "serde_json",

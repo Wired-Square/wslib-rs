@@ -20,7 +20,7 @@ btleplug = { version = "0.13.5", optional = true }
 futures-util = { version = "0.3.30", default-features = false, optional = true }
 serde = { version = "1.0.225", features = ["derive"] }
 serde_json = { version = "1.0.85", optional = true }
-thiserror = "2.0.17"
+thiserror = "2.0.20"
 tokio = { version = "1.47", default-features = false, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 tracing = "0.1.41"
 uuid = { version = "1.1", default-features = false, optional = true }

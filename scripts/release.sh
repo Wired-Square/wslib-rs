@@ -33,11 +33,7 @@ trap 'rm -rf "$stage"' EXIT
 umask 077
 
 index=${WSLIB_FORGE_URL:?set in .env}/api/packages/${WSLIB_FORGE_OWNER:?set in .env}/cargo
-# A header file rather than an argument, which `ps` would show.
-awk '/^\[/ { here = $0 == "[registries.wired-square]" }
-  here && /^token *=/ { sub(/^token *= *"/, ""); sub(/".*/, ""); print "Authorization: " $0; exit }' \
-  "${CARGO_HOME:-$HOME/.cargo}/credentials.toml" >"$stage/auth" 2>/dev/null || true
-[ -s "$stage/auth" ] || die "no wired-square read token in credentials.toml"
+scripts/read-auth.sh >"$stage/auth" || exit 1
 
 cargo metadata --no-deps --format-version 1 --locked >"$stage/meta"
 version() { jq -r --arg n "$1" '.packages[] | select(.name == $n) | .version' "$stage/meta"; }
@@ -98,7 +94,8 @@ for name in $names; do tags="$tags $(tag "$name")"; done
 # Read before the CI run so a wrong setting fails at once. Never exported, so
 # nothing the run starts sees it.
 if $execute; then
-  token=$(scripts/registry-token.sh) || die "could not read the publish token"
+  token=$(op read --account "${WSLIB_OP_ACCOUNT:?set to the 1Password account that holds the publish token}" \
+    "${WSLIB_REGISTRY_TOKEN_REF:?set to the op:// reference of your publish token}") || die "could not read the publish token"
 fi
 
 log=$(mktemp "${TMPDIR:-/tmp}/release-ci.XXXXXX")
@@ -123,7 +120,7 @@ say "pushed$tags"
 
 pending=$tags
 for name in $names; do
-  if ! CARGO_REGISTRIES_WIRED_SQUARE_TOKEN=$token cargo publish --locked --no-verify --registry wired-square \
+  if ! CARGO_REGISTRIES_WIRED_SQUARE_TOKEN="Bearer $token" cargo publish --locked --no-verify --registry wired-square \
     -p "$name" >>"$log" 2>&1; then
     # shellcheck disable=SC2086
     git tag -d $pending >/dev/null

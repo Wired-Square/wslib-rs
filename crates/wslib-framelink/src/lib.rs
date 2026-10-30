@@ -31,9 +31,12 @@ pub use session::{
     FileProgress, FileUploadOutcome, FrameLinkSession, SessionConfig, TransmitStats,
 };
 
+#[cfg(feature = "smp")]
+pub use discovery::{
+    CancelOutcome, OtaCancel, OtaEvent, OtaOptions, OtaStream, ota_udp_addr,
+    ota_udp_addr_cancellable,
+};
 #[cfg(feature = "discovery")]
 pub use discovery::{Discovery, DiscoveryEvent, ErrorSource};
-#[cfg(feature = "smp")]
-pub use discovery::{OtaEvent, OtaOptions, OtaStream, ota_udp_addr};
 #[cfg(feature = "smp")]
 pub use wslib_mcumgr::{self as mcumgr, ImageSlot, UploadOptions, UploadProgress};

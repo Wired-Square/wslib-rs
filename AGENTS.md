@@ -65,6 +65,6 @@ publishing them.
 - The version bump and its CHANGELOG entry move in the PR. The CHANGELOG
   heading is the version itself, with no "unreleased" marker. A new crate
   starts at 0.1.0.
-- A release runs from `main` after the merge. `scripts/release.sh -p <crate>
-  --execute` publishes and tags. Then run `git push origin
-  <crate>-v<version>` and `scripts/mirror.sh`.
+- A release runs from `main` after the merge. `scripts/release.sh <crate> ...
+  --execute` tags the crates named, pushes the tags, publishes and mirrors
+  the registry. Every published version has its tag on `main`.

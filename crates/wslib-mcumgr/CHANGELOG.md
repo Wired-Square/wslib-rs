@@ -23,7 +23,7 @@
   `udp` (`UdpTransport`, chunks capped to one datagram) and `ble`
   (`BleTransport`, over btleplug 0.13 and a caller's notification stream,
   dropping bytes that start no reply, frames left unfinished, and a frame
-  whose tail was lost once the next reply begins).
+  whose head or tail was lost once the next reply begins).
 - `UploadProgress`, `ImageSlot`, `FsProgress` and `FsHash` serialise and
   deserialise with serde; a hash is an array of bytes, and an absent
   `image_hash` or `resumed_from` is left out.

@@ -88,8 +88,15 @@ pub enum OtaEvent {
     Confirmed,
 }
 
-/// Dropping the stream cancels the update only before `Activating`; after
-/// that the device keeps the test image and resets.
+/// Dropping the stream cancels the update only before `Activating`. Dropped
+/// after `Activated` but before `Resetting`, no reset is sent and the device
+/// boots the test image at its next reset; dropped after `ResetSent`,
+/// nothing confirms the image, so swap-mode MCUboot reverts at the next boot.
+///
+/// A second update under the same [`DeviceId`] fails with
+/// [`Error::OtaInProgress`]. The guard is per id: it spans neither transports,
+/// nor other ids of the device (its id after the reset included), nor
+/// [`ota_udp_addr`].
 pub type OtaStream = Pin<Box<dyn Stream<Item = Result<OtaEvent, Error>> + Send + 'static>>;
 
 impl Discovery {
@@ -187,7 +194,7 @@ impl Discovery {
     }
 
     /// A firmware update over BLE, as a stream of its stages; see
-    /// [`OtaStream`] for what dropping it cancels.
+    /// [`OtaStream`] for cancelling and overlapping updates.
     #[cfg(feature = "ble")]
     pub fn ota_ble(
         &self,
@@ -199,7 +206,7 @@ impl Discovery {
     }
 
     /// A firmware update over UDP, as a stream of its stages; see
-    /// [`OtaStream`] for what dropping it cancels.
+    /// [`OtaStream`] for cancelling and overlapping updates.
     pub fn ota_udp(
         &self,
         device_id: &DeviceId,
@@ -211,7 +218,7 @@ impl Discovery {
 
     /// A firmware update of the seen device `id` over `transport`, as
     /// [`open_smp_on`](Self::open_smp_on) opens one; see [`OtaStream`] for
-    /// what dropping it cancels.
+    /// cancelling and overlapping updates.
     pub fn ota_on(
         &self,
         id: &DeviceId,
@@ -225,7 +232,7 @@ impl Discovery {
 
     /// A firmware update by registry, as [`open_smp`](Self::open_smp) finds
     /// the device; a `Manual` one is reached at its address throughout. See
-    /// [`OtaStream`] for what dropping it cancels.
+    /// [`OtaStream`] for cancelling and overlapping updates.
     pub fn ota(
         &self,
         id: &DeviceId,
@@ -258,8 +265,7 @@ impl Discovery {
 
 /// A firmware update over UDP to `addr`, with no discovery: after the reset
 /// it polls `addr` until the new image is running. `label` names the device
-/// in `Reconnecting`. Dropping the stream cancels it only before
-/// `Activating`; after that the device keeps the test image and resets.
+/// in `Reconnecting`. See [`OtaStream`] for cancelling it.
 pub fn ota_udp_addr(
     addr: SocketAddr,
     label: String,

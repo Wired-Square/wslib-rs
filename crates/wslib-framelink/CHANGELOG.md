@@ -10,8 +10,8 @@
   re-exported `UploadProgress` and `ImageSlot`.
   Opens of one device's session, SMP or Wi-Fi provisioning, take turns
   without holding the other devices' sessions, and a cached session whose
-  link has closed is opened again, over UDP as over BLE. An open that fails
-  leaves nothing behind for the device.
+  link has closed is opened again, over UDP as over BLE. A failed open
+  removes the entry it made for the device.
 - `ota_ble` and `ota_udp` return `OtaStream`, as `ota` does, and
   `Discovery::open_smp_on` opens a seen device's session over a transport
   chosen at run time. `Discovery::ota_on` updates one the same way.
@@ -21,10 +21,13 @@
   chunk timeouts.
 - Dropping an OTA stream stops its update at the next wait (the upload,
   a reply, the wait for the reset device) rather than at its next event,
-  and never mid-frame. It cancels the update only before `Activating`;
-  after that the device keeps the test image and resets.
-- A second update of a device whose update is running fails at once with
-  `Error::OtaInProgress`.
+  and never mid-frame. It cancels the update only before `Activating`.
+  Dropped after `Activated` but before `Resetting`, no reset is sent and the
+  device boots the test image at its next reset; dropped after `ResetSent`,
+  nothing confirms the image, so swap-mode MCUboot reverts at the next boot.
+- A second update under a device id whose update is running fails at once
+  with `Error::OtaInProgress`. The guard is per id, so it spans neither
+  transports, nor the device's other ids, nor `ota_udp_addr`.
 - `OtaEvent` serialises, tagged by `kind` in kebab case as
   `DiscoveryEvent` is; a hash is an array of bytes, as in `UploadProgress`.
   `OtaEvent::UploadProgress` carries wslib-mcumgr's `UploadProgress`, so the

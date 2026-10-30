@@ -151,11 +151,11 @@ struct Reassembly {
 }
 
 impl Reassembly {
-    /// A notification too long to finish the frame in hand, that opens a
-    /// reply of its own, means that frame lost its tail.
+    /// A notification that opens a reply of its own replaces a frame in hand
+    /// that it is too long to finish, or that never opened a reply: the
+    /// first lost its tail, the second its head.
     fn push(&mut self, notification: &[u8]) {
-        if self.still_needs().is_some_and(|n| notification.len() > n) && opens_a_reply(notification)
-        {
+        if opens_a_reply(notification) && self.cannot_continue_with(notification.len()) {
             debug!(
                 dropped = self.buf.len(),
                 "SMP over BLE: a reply began before the last was whole"
@@ -164,6 +164,12 @@ impl Reassembly {
         }
         self.latest_notification_at = self.buf.len();
         self.buf.extend_from_slice(notification);
+    }
+
+    fn cannot_continue_with(&self, notification_len: usize) -> bool {
+        !self.buf.is_empty()
+            && (!opens_a_reply(&self.buf)
+                || self.still_needs().is_some_and(|n| notification_len > n))
     }
 
     fn still_needs(&self) -> Option<usize> {
@@ -281,6 +287,15 @@ mod tests {
         let lost_its_tail = frame(&[0xa1; 10]);
         let next = frame(&[0xa1, 0x61, b'x', 0x01]);
         let mut frames = reassembly_of(&[&lost_its_tail[..10], &next]);
+        assert_eq!(frames.take(), Some(next));
+        assert!(frames.buf.is_empty());
+    }
+
+    #[test]
+    fn a_reply_after_a_continuation_that_reads_as_a_long_header_is_not_glued_to_it() {
+        let claims_0x400 = [0x03, 0x00, 0x04, 0x00, 0x00, 0x01, 0x42, 0x00, 0x42, 0x42];
+        let next = frame(&[0xa1, 0x61, b'x', 0x01]);
+        let mut frames = reassembly_of(&[&claims_0x400, &next]);
         assert_eq!(frames.take(), Some(next));
         assert!(frames.buf.is_empty());
     }

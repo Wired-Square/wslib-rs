@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2
+
+- `AppManifest::devices`: the hotplugged `DeviceClass`es the console passes in,
+  USB ones optionally by `UsbVendorId`. `MANIFEST_SCHEMA` is 2; a manifest is
+  written at `oldest_schema()`, 1 unless it declares devices.
+
 ## 0.1.1
 
 - Dependency floors: `wslib-auth-totp` 0.1.1, `wslib-http-error` 0.1.1 and

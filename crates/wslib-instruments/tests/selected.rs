@@ -4,7 +4,7 @@ use wslib_instruments::{
     gw121::decode::{METER_TEMPERATURE, STATUS, THERMOCOUPLE},
     probe::{Probe, ProbeError},
     sample::{Sample, Stamp},
-    signal::{self, SignalKey},
+    signal::SignalKey,
     uri::narrowed,
     value::Value,
 };
@@ -55,8 +55,8 @@ fn a_selection_narrows_the_signals_and_the_samples_to_the_selected_keys() {
     assert_eq!(keys, [THERMOCOUPLE]);
     assert_eq!(
         probe.name(),
-        format!("everything/{}", signal::slug(&THERMOCOUPLE)),
-        "the selection is part of the name"
+        "everything",
+        "a selection is not part of the probe's identity"
     );
     assert_eq!(probe.max_interval(), MAX_INTERVAL);
 }

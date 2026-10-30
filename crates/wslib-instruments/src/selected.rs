@@ -3,8 +3,7 @@ use std::time::{Duration, Instant};
 use crate::{
     probe::{Probe, ProbeError},
     sample::Sample,
-    signal::{self, SignalKey},
-    uri::SELECTOR_SEPARATOR,
+    signal::SignalKey,
 };
 
 pub struct Selected {
@@ -20,12 +19,7 @@ impl Selected {
 
 impl Probe for Selected {
     fn name(&self) -> String {
-        let mut name = self.inner.name();
-        for key in &self.keys {
-            name.push(SELECTOR_SEPARATOR);
-            name.push_str(&signal::slug(key));
-        }
-        name
+        self.inner.name()
     }
 
     fn signals(&self) -> Vec<SignalKey> {

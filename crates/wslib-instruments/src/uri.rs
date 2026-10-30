@@ -61,7 +61,7 @@ const WIREDREFLOW: &str = "wiredreflow";
 const HEX_PREFIX: &str = "0x";
 const HEX: u32 = 16;
 const SCHEME_SEPARATOR: char = ':';
-pub(crate) const SELECTOR_SEPARATOR: char = '/';
+const SELECTOR_SEPARATOR: char = '/';
 const STATUS_OK: &str = "ok";
 const LIST_SEPARATOR: &str = ", ";
 

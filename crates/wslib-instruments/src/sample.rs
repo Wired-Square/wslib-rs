@@ -16,6 +16,20 @@ impl Stamp {
             wall_clock: SystemTime::now(),
         }
     }
+
+    /// A stamp for `at`, its wall clock offset from now by as much as `at` is;
+    /// now's wall clock where that offset is out of range.
+    pub fn at(at: Instant) -> Self {
+        let now = Self::now();
+        let wall_clock = match now.at.checked_duration_since(at) {
+            Some(ago) => now.wall_clock.checked_sub(ago),
+            None => now.wall_clock.checked_add(at.duration_since(now.at)),
+        };
+        Self {
+            at,
+            wall_clock: wall_clock.unwrap_or(now.wall_clock),
+        }
+    }
 }
 
 /// Under `serde`, `key` is its slug and `wall_clock` microseconds since the
@@ -115,5 +129,32 @@ mod wire {
                 wall_clock,
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    const AGO: Duration = Duration::from_secs(90);
+    const SLACK: Duration = Duration::from_millis(100);
+
+    #[test]
+    fn a_stamp_for_a_past_instant_is_as_far_back_on_the_wall_clock() {
+        let now = Stamp::now();
+        let then = Stamp::at(now.at.checked_sub(AGO).unwrap());
+        let back = now.wall_clock.duration_since(then.wall_clock).unwrap();
+        assert!(back.abs_diff(AGO) < SLACK, "{back:?}");
+    }
+
+    #[test]
+    fn a_stamp_for_now_reads_now_on_the_wall_clock() {
+        let stamp = Stamp::at(Instant::now());
+        let skew = SystemTime::now()
+            .duration_since(stamp.wall_clock)
+            .unwrap_or_else(|ahead| ahead.duration());
+        assert!(skew < SLACK, "{skew:?}");
     }
 }

@@ -6,8 +6,8 @@
   `ProbeError`, `ProbeUri` with `open` and `narrowed`, `Cluster`, the 121GW
   over BLE with its raw-notify tap, and the WiredReflow over CAN.
 - `Probe::name` is the probe's canonical URI, which parses back:
-  `121gw:<target>`, `wiredreflow:<bus>@<device>` with the device found, and a
-  narrowed probe's `/<signal>` slugs after it.
+  `121gw:<target>`, or `wiredreflow:<bus>@<device>` with the device found. A
+  narrowed probe keeps its probe's name; the selection is not part of it.
 - Every backend is behind a feature, none on by default. A probe whose backend
   is left out still parses, and opening it fails with
   `ProbeError::FeatureDisabled` naming the feature. `URI_FORMS` is now a list
@@ -22,5 +22,6 @@
   read and dropped inside a tokio runtime.
 - `Sample` carries `wall_clock` beside `at`, both taken from one `Stamp`.
   `ble::Chunk` carries a `Stamp` too, so a capture feeds `decode::samples`.
+- `Stamp::at` stamps an earlier moment, its wall clock offset from now to match.
 - `serde`: `Sample`, `Value`, `ProbeUri` and `ble::Seen`.
 - btleplug 0.13. `ble::scan` returns `io::Result`.

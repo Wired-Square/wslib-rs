@@ -38,7 +38,7 @@ const TEMPERATURE: SignalKey = signal::measurement(QTY_TEMPERATURE, ASPECT_DEFAU
 const DC_VOLTAGE: SignalKey = signal::measurement(QTY_VOLTAGE, ASPECT_DC, CHANNEL_0);
 
 fn sample_at(key: SignalKey, value: Value, at: Instant) -> Sample {
-    Sample::new(key, value, Stamp { at, ..Stamp::now() })
+    Sample::new(key, value, Stamp::at(at))
 }
 
 fn taken_ago(age: Duration) -> Instant {

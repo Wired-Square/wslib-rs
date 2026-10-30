@@ -18,7 +18,8 @@ for sample in probe.next(Instant::now() + Duration::from_secs(2))? {
 ```
 
 - `Probe::name` is the probe's canonical URI, e.g. `wiredreflow:can0@028F08`
-  with the device it found, which parses back to the same probe.
+  with the device it found, which parses back. A narrowed probe keeps its
+  probe's name: the selection is not part of its identity.
 - `Probe::next` blocks until a reading or the deadline. A probe runs its own
   runtime on its own thread, so it may be opened, read and dropped inside a
   tokio runtime, a current-thread one included.

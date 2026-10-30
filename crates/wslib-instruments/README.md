@@ -67,4 +67,6 @@ feature. `URI_FORMS` and `BUS_FORMS` list only what this build opens.
 - `serde`: `Sample`, `Value` and `ProbeUri`. A sample serialises its key as
   the slug and `wall_clock` as microseconds since the Unix epoch.
 
-Linux builds with `ble` need `libdbus-1-dev` and `pkg-config`.
+Linux builds with `ble` need `libdbus-1-dev` and `pkg-config`. On macOS, a
+process without Bluetooth permission scans silently and finds nothing, with no
+error.

@@ -731,6 +731,7 @@ async fn overhear(events: &mut Events, duration: Duration) -> HashSet<Peripheral
     heard
 }
 
+/// On macOS, a process without Bluetooth permission finds nothing rather than failing.
 pub async fn scan(duration: Duration) -> io::Result<Vec<Seen>> {
     let (_running, stop) = watch::channel(false);
     let (_manager, adapter) = acquire_adapter(&stop).await?;

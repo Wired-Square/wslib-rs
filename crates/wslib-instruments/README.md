@@ -33,8 +33,8 @@ for sample in probe.next(Instant::now() + Duration::from_secs(2))? {
   `121gw:<address-or-name>`. Thermocouple temperature, the meter's internal
   temperature, and the meter status (APO, low battery, OL). The stale burst
   the meter replays on connecting is dropped. `Gw121Probe::start_tapped`
-  copies every raw notification out for capture, and `ble::scan` lists the
-  meters in range.
+  copies every raw notification out for capture, `gw121::Replay` decodes a
+  capture again, and `ble::scan` lists the meters in range.
 - **WiredReflow board over CAN**: `wiredreflow:<bus>[@<device-id>]`. TC1, TC2,
   CJ1 and CJ2 at 0.1 °C every 500 ms, and each channel's MAX31856 fault byte.
   TC1 and TC2 are published only when the board's fault report for the same

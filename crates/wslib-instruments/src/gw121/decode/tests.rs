@@ -1,9 +1,9 @@
-use wslib_instruments::{
+use crate::{
     gw121::{
         decode::{
             Aspect, CHANNEL_MICRO_MILLI_AMP, CHANNEL_V_OHM, METER_TEMPERATURE, MainRow, STATUS,
             STATUS_AUTO_POWER_OFF, STATUS_OVERLOAD, SubRow, SubSource, TABLE, THERMOCOUPLE, Table,
-            Unit, fahrenheit_to_celsius, samples, signals, status_flags,
+            Unit, fahrenheit_to_celsius, samples, signals, signals_of, status_flags,
         },
         frame::{Assembler, FRAME_LEN, Frame},
     },
@@ -15,8 +15,8 @@ use wslib_instruments::{
     value::Value,
 };
 
-const ROOM: &str = include_str!("fixtures/121gw-room-2026-09-26.notify");
-const HEAT: &str = include_str!("fixtures/121gw-heat-2026-09-26.notify");
+const ROOM: &str = include_str!("../../../tests/fixtures/121gw-room-2026-09-26.notify");
+const HEAT: &str = include_str!("../../../tests/fixtures/121gw-heat-2026-09-26.notify");
 const TEMP_ROOM: [u8; FRAME_LEN] = [
     0xF2, 0x17, 0x80, 0x00, 0x00, 0x05, 0x20, 0x00, 0xD2, 0x64, 0x01, 0x00, 0xD8, 0x15, 0x00, 0x02,
     0x40, 0x00, 0x78,
@@ -246,7 +246,7 @@ fn the_start_up_frames_after_connecting_publish_no_temperature() {
 
 #[test]
 fn the_table_lists_every_signal_it_can_publish_including_the_status() {
-    assert_eq!(signals(&TABLE), {
+    assert_eq!(signals(), {
         let mut keys = vec![THERMOCOUPLE, METER_TEMPERATURE, STATUS];
         keys.sort();
         keys
@@ -446,7 +446,7 @@ fn fahrenheit_conversion_rounds_half_away_from_zero_at_hundredths() {
 
 #[test]
 fn the_test_table_lists_both_low_z_aspects_and_the_burden_voltage_it_can_produce() {
-    let listed = signals(&TEST);
+    let listed = signals_of(&TEST);
     for key in [
         LOW_Z_DC,
         LOW_Z_AC,

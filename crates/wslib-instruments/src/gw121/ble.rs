@@ -21,11 +21,7 @@ use futures_util::{FutureExt as _, Stream, StreamExt, future::ready};
 use tokio::sync::watch;
 use uuid::Uuid;
 
-use super::{
-    Target,
-    decode::{self, TABLE},
-    frame::{Assembler, Frame},
-};
+use super::{Chunk, Replay, Target, decode};
 use crate::{
     probe::{Probe, ProbeError},
     sample::{Sample, Stamp},
@@ -33,8 +29,8 @@ use crate::{
     uri::ProbeUri,
 };
 
-pub const SERVICE: Uuid = Uuid::from_u128(0x0bd51666_e7cb_469b_8e4d_2742f1ba77cc);
-pub const DATA_CHARACTERISTIC: Uuid = Uuid::from_u128(0xe7add780_b042_4876_aae1_112855353cc1);
+pub(crate) const DATA_CHARACTERISTIC: Uuid =
+    Uuid::from_u128(0xe7add780_b042_4876_aae1_112855353cc1);
 
 const ADAPTER_TIMEOUT: Duration = Duration::from_secs(5);
 const SCAN_CONTROL_TIMEOUT: Duration = Duration::from_secs(2);
@@ -127,7 +123,6 @@ fn choose<'a, Id: Eq + Hash>(
     }
 }
 
-pub type Chunk = (Stamp, Vec<u8>);
 type Delivery = Result<Vec<Sample>, ProbeError>;
 type StopRx = watch::Receiver<bool>;
 type Tap = Option<Sender<Chunk>>;
@@ -426,7 +421,7 @@ async fn pump(
     connect_burst: Duration,
     stop: &StopRx,
 ) {
-    let mut assembler = Assembler::default();
+    let mut replay = Replay::default();
     let mut last_frame = tokio::time::Instant::now();
     let mut first_chunk = None;
     while let Some(next) = until_stopped(
@@ -436,27 +431,21 @@ async fn pump(
     .await
     {
         match next {
-            Ok(Some(chunk)) => {
+            Ok(Some(bytes)) => {
+                let chunk = (Stamp::now(), bytes);
+                let frames = replay.push(&chunk);
                 if let Some(tap) = tap {
-                    let _ = tap.send((Stamp::now(), chunk.clone()));
+                    let _ = tap.send(chunk);
                 }
                 let first_chunk = *first_chunk.get_or_insert_with(tokio::time::Instant::now);
-                let frames = assembler.push(&chunk);
                 if !frames.is_empty() {
                     last_frame = tokio::time::Instant::now();
                 }
                 if first_chunk.elapsed() < connect_burst {
                     continue;
                 }
-                for bytes in frames {
-                    if tx
-                        .send(Ok(decode::samples(
-                            &Frame::decode(&bytes),
-                            &TABLE,
-                            Stamp::now(),
-                        )))
-                        .is_err()
-                    {
+                for frame in frames {
+                    if tx.send(Ok(frame.samples)).is_err() {
                         return;
                     }
                 }
@@ -595,21 +584,19 @@ async fn link(target: &Target, tx: &Sender<Delivery>, tap: &Tap, stop: &StopRx) 
 
 fn spawn_link(target: Target, stop: StopRx, tap: Tap) -> io::Result<Receiver<Delivery>> {
     let (tx, readings) = mpsc::channel();
-    thread::Builder::new()
-        .name(format!("121gw {target}"))
-        .spawn(move || {
-            let runtime = match tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                Ok(runtime) => runtime,
-                Err(e) => {
-                    let _ = tx.send(Err(ProbeError::Disconnected(format!("tokio runtime: {e}"))));
-                    return;
-                }
-            };
-            runtime.block_on(link(&target, &tx, &tap, &stop));
-        })?;
+    thread::Builder::new().name("121gw".into()).spawn(move || {
+        let runtime = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(e) => {
+                let _ = tx.send(Err(ProbeError::Disconnected(format!("tokio runtime: {e}"))));
+                return;
+            }
+        };
+        runtime.block_on(link(&target, &tx, &tap, &stop));
+    })?;
     Ok(readings)
 }
 
@@ -674,7 +661,7 @@ impl Probe for Gw121Probe {
     }
 
     fn signals(&self) -> Vec<SignalKey> {
-        decode::signals(&TABLE)
+        decode::signals()
     }
 
     fn display_name(&self, key: &SignalKey) -> Option<&'static str> {
@@ -731,7 +718,8 @@ async fn overhear(events: &mut Events, duration: Duration) -> HashSet<Peripheral
     heard
 }
 
-/// On macOS, a process without Bluetooth permission finds nothing rather than failing.
+/// Runs on the caller's tokio runtime, which needs its time driver. On macOS, a
+/// process without Bluetooth permission finds nothing rather than failing.
 pub async fn scan(duration: Duration) -> io::Result<Vec<Seen>> {
     let (_running, stop) = watch::channel(false);
     let (_manager, adapter) = acquire_adapter(&stop).await?;
@@ -767,6 +755,7 @@ mod tests {
     };
 
     const MAC_OCTETS: usize = 6;
+    const SERVICE: Uuid = Uuid::from_u128(0x0bd51666_e7cb_469b_8e4d_2742f1ba77cc);
 
     const WATCHDOG: Duration = Duration::from_secs(1);
     const TEST_SILENCE: Duration = Duration::from_millis(50);

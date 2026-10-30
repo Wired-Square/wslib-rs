@@ -7,6 +7,7 @@ use std::{
 use crate::{sample::Sample, signal::SignalKey};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ProbeError {
     Timeout,
     Stale(Duration),
@@ -35,10 +36,19 @@ impl fmt::Display for ProbeError {
 
 impl Error for ProbeError {}
 
+/// An instrument read by blocking calls. Implement it for a probe of your own
+/// to run it in a [`Cluster`](crate::cluster::Cluster) beside these.
 pub trait Probe: Send + 'static {
     fn name(&self) -> String;
     fn signals(&self) -> Vec<SignalKey>;
-    fn display_name(&self, key: &SignalKey) -> Option<&'static str>;
+
+    /// The instrument's own name for a signal, where it has one.
+    fn display_name(&self, _key: &SignalKey) -> Option<&'static str> {
+        None
+    }
+
+    /// Blocks until a reading or `deadline`. The 121GW returns its newest
+    /// reading; a WiredReflow returns every one queued since the last call.
     fn next(&mut self, deadline: Instant) -> Result<Vec<Sample>, ProbeError>;
     fn max_interval(&self) -> Duration;
 }

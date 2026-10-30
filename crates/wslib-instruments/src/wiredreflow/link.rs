@@ -21,16 +21,16 @@ use crate::{
     uri::ProbeUri,
 };
 
-pub const DISCOVERY_WINDOW: Duration = Duration::from_secs(2);
+pub(crate) const DISCOVERY_WINDOW: Duration = Duration::from_secs(2);
 const MAX_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Timing {
-    pub poll: Duration,
-    pub silence: Duration,
+pub(crate) struct Timing {
+    pub(crate) poll: Duration,
+    pub(crate) silence: Duration,
 }
 
-pub const TIMING: Timing = Timing {
+pub(crate) const TIMING: Timing = Timing {
     poll: Duration::from_millis(100),
     silence: Duration::from_secs(5),
 };
@@ -41,7 +41,7 @@ fn is_thermocouple_broadcast(frame: &RawFrame) -> bool {
     known_slot(frame) == Some(SLOT_THERMOCOUPLES)
 }
 
-pub fn discover(bus: &mut dyn Bus, on: &CanBus, window: Duration) -> io::Result<u32> {
+pub(crate) fn discover(bus: &mut dyn Bus, on: &CanBus, window: Duration) -> io::Result<u32> {
     let started = Instant::now();
     let mut seen = BTreeSet::new();
     let mut lost = None;
@@ -144,7 +144,7 @@ pub struct WiredReflowProbe {
     stop: Arc<AtomicBool>,
 }
 
-pub type Opener = Box<dyn FnOnce() -> io::Result<Box<dyn Bus>> + Send>;
+pub(crate) type Opener = Box<dyn FnOnce() -> io::Result<Box<dyn Bus>> + Send>;
 
 type Opened = io::Result<(Box<dyn Bus>, u32)>;
 
@@ -160,7 +160,7 @@ impl WiredReflowProbe {
         )
     }
 
-    pub fn start_with(
+    pub(crate) fn start_with(
         opener: Opener,
         bus: &CanBus,
         device: Option<u32>,
@@ -178,7 +178,8 @@ impl WiredReflowProbe {
         })
     }
 
-    pub fn with_bus(
+    #[cfg(test)]
+    pub(crate) fn with_bus(
         on: &CanBus,
         device: u32,
         bus: Box<dyn Bus>,
@@ -197,7 +198,7 @@ impl WiredReflowProbe {
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = Arc::clone(&stop);
         thread::Builder::new()
-            .name(format!("wiredreflow {on}"))
+            .name("wiredreflow".into())
             .spawn(move || match open() {
                 Ok((bus, device)) => {
                     if outcome_tx.send(Ok(device)).is_ok() {
@@ -280,3 +281,6 @@ impl Probe for WiredReflowProbe {
         MAX_INTERVAL
     }
 }
+
+#[cfg(test)]
+mod tests;

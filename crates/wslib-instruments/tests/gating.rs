@@ -113,7 +113,7 @@ fn a_build_with_no_backend_says_so_when_a_probe_is_unrecognised() {
 #[cfg(feature = "ble")]
 #[test]
 fn every_refusal_of_a_malformed_or_unknown_uri_names_the_accepted_forms() {
-    for bad in ["", "siglent:10.0.0.5", "121GW", "121gw:"] {
+    for bad in ["", "siglent:10.0.0.5", "121gwx", "121gw:"] {
         let error = bad.parse::<ProbeUri>().unwrap_err().to_string();
         assert!(
             error.contains("121gw:<address-or-name>"),

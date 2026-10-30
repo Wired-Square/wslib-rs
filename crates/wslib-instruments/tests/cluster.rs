@@ -71,10 +71,6 @@ impl Probe for Steady {
         vec![TEMPERATURE]
     }
 
-    fn display_name(&self, _: &SignalKey) -> Option<&'static str> {
-        None
-    }
-
     fn next(&mut self, _: Instant) -> Result<Vec<Sample>, ProbeError> {
         thread::sleep(STEADY_PERIOD);
         Ok(vec![sample_at(
@@ -100,10 +96,6 @@ impl Probe for Stuck {
         vec![TEMPERATURE]
     }
 
-    fn display_name(&self, _: &SignalKey) -> Option<&'static str> {
-        None
-    }
-
     fn next(&mut self, _: Instant) -> Result<Vec<Sample>, ProbeError> {
         thread::sleep(STALL);
         Err(ProbeError::Timeout)
@@ -123,10 +115,6 @@ impl Probe for GoesQuiet {
 
     fn signals(&self) -> Vec<SignalKey> {
         vec![TEMPERATURE]
-    }
-
-    fn display_name(&self, _: &SignalKey) -> Option<&'static str> {
-        None
     }
 
     fn next(&mut self, deadline: Instant) -> Result<Vec<Sample>, ProbeError> {
@@ -151,10 +139,6 @@ impl Probe for DialTurns {
 
     fn signals(&self) -> Vec<SignalKey> {
         vec![TEMPERATURE, DC_VOLTAGE]
-    }
-
-    fn display_name(&self, _: &SignalKey) -> Option<&'static str> {
-        None
     }
 
     fn next(&mut self, _: Instant) -> Result<Vec<Sample>, ProbeError> {
@@ -330,4 +314,31 @@ fn a_sample_stamped_in_the_future_is_current_with_no_age() {
     };
     assert_eq!(early.age(), Some(Duration::ZERO));
     assert_eq!(early.current().map(|s| s.value.mantissa), Ok(ROOM_TENTHS));
+}
+
+struct Named(&'static str);
+
+impl Probe for Named {
+    fn name(&self) -> String {
+        self.0.into()
+    }
+
+    fn signals(&self) -> Vec<SignalKey> {
+        vec![]
+    }
+
+    fn next(&mut self, _: Instant) -> Result<Vec<Sample>, ProbeError> {
+        thread::sleep(STEADY_PERIOD);
+        Err(ProbeError::Timeout)
+    }
+
+    fn max_interval(&self) -> Duration {
+        TEST_MAX_INTERVAL
+    }
+}
+
+#[test]
+fn a_probe_named_with_a_control_character_still_starts() {
+    let cluster = Cluster::start(vec![Box::new(Named("odd\u{0}name"))]).unwrap();
+    assert_eq!(cluster.names(), ["odd\u{0}name"]);
 }

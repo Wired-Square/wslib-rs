@@ -39,49 +39,70 @@ const CELSIUS_PER_FAHRENHEIT_DENOMINATOR: i128 = 9;
 const HALF: i128 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Unit {
+pub(crate) enum Unit {
     Plain,
     TemperatureFlags,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no row in TABLE uses it until a capture confirms one"
+        )
+    )]
     Fahrenheit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Aspect {
+pub(crate) enum Aspect {
     Fixed(u8),
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no row in TABLE uses it until a capture confirms one"
+        )
+    )]
     Coupling,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MainRow {
-    pub mode: u8,
-    pub range: u8,
-    pub quantity: u8,
-    pub aspect: Aspect,
-    pub channel: u8,
-    pub exponent: i8,
-    pub unit: Unit,
+pub(crate) struct MainRow {
+    pub(crate) mode: u8,
+    pub(crate) range: u8,
+    pub(crate) quantity: u8,
+    pub(crate) aspect: Aspect,
+    pub(crate) channel: u8,
+    pub(crate) exponent: i8,
+    pub(crate) unit: Unit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SubSource {
+pub(crate) enum SubSource {
     Fixed(SignalKey),
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no row in TABLE uses it until a capture confirms one"
+        )
+    )]
     BurdenOfMain,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SubRow {
-    pub mode: u8,
-    pub source: SubSource,
-    pub unit: Unit,
+pub(crate) struct SubRow {
+    pub(crate) mode: u8,
+    pub(crate) source: SubSource,
+    pub(crate) unit: Unit,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Table {
-    pub main: &'static [MainRow],
-    pub sub: &'static [SubRow],
+pub(crate) struct Table {
+    pub(crate) main: &'static [MainRow],
+    pub(crate) sub: &'static [SubRow],
 }
 
-pub const TABLE: Table = Table {
+pub(crate) const TABLE: Table = Table {
     main: &[MainRow {
         mode: MODE_TEMPERATURE,
         range: RANGE_0,
@@ -136,13 +157,13 @@ pub fn display_name(key: &SignalKey) -> Option<&'static str> {
         .map(|(_, name)| *name)
 }
 
-pub fn key_named(name: &str) -> Option<SignalKey> {
-    signals(&TABLE)
+pub(crate) fn key_named(name: &str) -> Option<SignalKey> {
+    signals()
         .into_iter()
         .find(|key| display_name(key) == Some(name))
 }
 
-pub fn status_flags(bits: i64) -> Vec<&'static str> {
+pub(crate) fn status_flags(bits: i64) -> Vec<&'static str> {
     FLAG_NAMES
         .iter()
         .filter(|(bit, _)| bits & bit != 0)
@@ -168,7 +189,12 @@ fn burden_of(key: SignalKey) -> Option<SignalKey> {
     ))
 }
 
-pub fn signals(table: &Table) -> Vec<SignalKey> {
+/// Every signal the 121GW publishes.
+pub fn signals() -> Vec<SignalKey> {
+    signals_of(&TABLE)
+}
+
+pub(crate) fn signals_of(table: &Table) -> Vec<SignalKey> {
     let main: Vec<SignalKey> = table.main.iter().flat_map(row_keys).collect();
     let sub = table.sub.iter().flat_map(|row| match row.source {
         SubSource::Fixed(key) => vec![key],
@@ -180,7 +206,7 @@ pub fn signals(table: &Table) -> Vec<SignalKey> {
     keys
 }
 
-pub fn samples(frame: &Frame, table: &Table, stamp: Stamp) -> Vec<Sample> {
+pub(crate) fn samples(frame: &Frame, table: &Table, stamp: Stamp) -> Vec<Sample> {
     let status = Sample::new(
         STATUS,
         Value::new(status_bits(frame), STATUS_EXPONENT),
@@ -233,7 +259,7 @@ fn round_half_away(numerator: i128, denominator: i128) -> i128 {
     (numerator + numerator.signum() * denominator / HALF) / denominator
 }
 
-pub fn fahrenheit_to_celsius(value: Value) -> Option<Value> {
+pub(crate) fn fahrenheit_to_celsius(value: Value) -> Option<Value> {
     let shift = i32::from(value.exponent) - i32::from(CELSIUS_EXPONENT);
     let mantissa = i128::from(value.mantissa);
     let (above_freezing, scale) = if shift >= 0 {
@@ -322,3 +348,6 @@ fn sub_sample(
     let value = in_unit(frame, row.unit, Value::new(signed(&frame.sub), -point))?;
     Some(Sample::new(key, value, stamp))
 }
+
+#[cfg(test)]
+mod tests;

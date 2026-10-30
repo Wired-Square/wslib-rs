@@ -70,25 +70,22 @@ impl Cluster {
             let (name, max_interval) = (probe.name(), probe.max_interval());
             let slot = Arc::new(Mutex::new(Slot::default()));
             let (mine, stopping) = (Arc::clone(&slot), Arc::clone(&stop));
-            let spawned = thread::Builder::new()
-                .name(format!("probe {name}"))
-                .spawn(move || {
-                    while !stopping.load(Ordering::Relaxed) {
-                        let polled = Instant::now();
-                        let result =
-                            probe.next(polled.checked_add(POLL_DEADLINE).unwrap_or(polled));
-                        let mut slot = mine.lock().unwrap_or_else(PoisonError::into_inner);
-                        match result {
-                            Ok(samples) => {
-                                slot.samples
-                                    .extend(samples.into_iter().map(|sample| (sample.key, sample)));
-                                slot.error = None;
-                            }
-                            Err(ProbeError::Timeout) => {}
-                            Err(error) => slot.error = Some(error),
+            let spawned = thread::Builder::new().name("probe".into()).spawn(move || {
+                while !stopping.load(Ordering::Relaxed) {
+                    let polled = Instant::now();
+                    let result = probe.next(polled.checked_add(POLL_DEADLINE).unwrap_or(polled));
+                    let mut slot = mine.lock().unwrap_or_else(PoisonError::into_inner);
+                    match result {
+                        Ok(samples) => {
+                            slot.samples
+                                .extend(samples.into_iter().map(|sample| (sample.key, sample)));
+                            slot.error = None;
                         }
+                        Err(ProbeError::Timeout) => {}
+                        Err(error) => slot.error = Some(error),
                     }
-                });
+                }
+            });
             if let Err(e) = spawned {
                 stop.store(true, Ordering::Relaxed);
                 return Err(e);

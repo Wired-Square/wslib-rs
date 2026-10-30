@@ -11,12 +11,12 @@ use crate::{
     value::Value,
 };
 
-pub const SLOT_THERMOCOUPLES: u8 = 0x21;
-pub const SLOT_THERMOCOUPLE_FAULT: u8 = 0x25;
+pub(crate) const SLOT_THERMOCOUPLES: u8 = 0x21;
+pub(crate) const SLOT_THERMOCOUPLE_FAULT: u8 = 0x25;
 const THERMOCOUPLES_DLC: usize = 8;
 const THERMOCOUPLE_FAULT_DLC: usize = 2;
 const DEVICE_ID_SHIFT: u32 = CAN_DEVICE_ID_MASK.trailing_zeros();
-pub const DEVICE_ID_MAX: u32 = CAN_DEVICE_ID_MASK >> DEVICE_ID_SHIFT;
+pub(crate) const DEVICE_ID_MAX: u32 = CAN_DEVICE_ID_MASK >> DEVICE_ID_SHIFT;
 const DEVICE_ID_DIGITS: usize = 6;
 const DECI: i8 = -1;
 const UNITY: i8 = 0;
@@ -33,10 +33,10 @@ pub const TC1_FAULT: SignalKey = signal::diagnostic(QTY_COUNT, ASPECT_INTEGRITY,
 pub const TC2_FAULT: SignalKey = signal::diagnostic(QTY_COUNT, ASPECT_INTEGRITY, CHANNEL_2);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RawFrame {
-    pub id: u32,
-    pub extended: bool,
-    pub data: Vec<u8>,
+pub(crate) struct RawFrame {
+    pub(crate) id: u32,
+    pub(crate) extended: bool,
+    pub(crate) data: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -101,11 +101,11 @@ const FIELDS: [Field; 6] = [
     fault(TC2_FAULT_AT, TC2_FAULT, "TC2 fault", TC2),
 ];
 
-pub fn device_text(device: u32) -> String {
+pub(crate) fn device_text(device: u32) -> String {
     format!("{device:0width$X}", width = DEVICE_ID_DIGITS)
 }
 
-pub fn device_of(frame: &RawFrame) -> Option<u32> {
+pub(crate) fn device_of(frame: &RawFrame) -> Option<u32> {
     (frame.extended && !can_host(frame.id)).then(|| can_device_id(frame.id) >> DEVICE_ID_SHIFT)
 }
 
@@ -120,7 +120,7 @@ pub fn display_name(key: &SignalKey) -> Option<&'static str> {
         .map(|field| field.name)
 }
 
-pub fn key_named(name: &str) -> Option<SignalKey> {
+pub(crate) fn key_named(name: &str) -> Option<SignalKey> {
     FIELDS
         .iter()
         .find(|field| field.name == name)
@@ -137,7 +137,7 @@ fn raw(data: &[u8], field: &Field) -> Option<i64> {
     }
 }
 
-pub fn known_slot(frame: &RawFrame) -> Option<u8> {
+pub(crate) fn known_slot(frame: &RawFrame) -> Option<u8> {
     let slot = can_slot(frame.id);
     SLOTS
         .iter()
@@ -150,20 +150,20 @@ fn guarded(key: &SignalKey) -> bool {
 }
 
 #[derive(Debug)]
-pub struct Decoder {
+pub(crate) struct Decoder {
     device: u32,
     held: Vec<Sample>,
 }
 
 impl Decoder {
-    pub fn new(device: u32) -> Self {
+    pub(crate) fn new(device: u32) -> Self {
         Self {
             device,
             held: Vec::new(),
         }
     }
 
-    pub fn samples(&mut self, frame: &RawFrame, stamp: Stamp) -> Vec<Sample> {
+    pub(crate) fn samples(&mut self, frame: &RawFrame, stamp: Stamp) -> Vec<Sample> {
         if device_of(frame) != Some(self.device) {
             return Vec::new();
         }
@@ -196,3 +196,6 @@ impl Decoder {
         released
     }
 }
+
+#[cfg(test)]
+mod tests;

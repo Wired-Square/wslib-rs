@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use wslib_instruments::{
+use crate::{
     probe::{Probe, ProbeError},
     uri::ProbeUri,
     wiredreflow::{

@@ -17,7 +17,7 @@ owner=${WSLIB_FORGE_OWNER:?set in .env}
 dest=${WSLIB_MIRROR_DEST:?set in .env}
 [[ $dest == *[:/] ]] || die "WSLIB_MIRROR_DEST must end in : or /"
 index=$forge/api/packages/$owner/cargo
-rsync_opts=(-rt)
+rsync_opts=(-rtp)
 [[ ${1:-} == --dry-run ]] && rsync_opts+=(--dry-run --itemize-changes)
 
 index_path() {
@@ -70,5 +70,7 @@ for name in $names; do
   printf 'mirror: %s\n' "$name"
 done
 
+# Modes travel with -p, because the receiver otherwise makes new files 0600. openrsync has no --chmod.
+chmod -R u=rwX,go=rX "$stage/crates" "$stage/index"
 rsync "${rsync_opts[@]}" --ignore-existing "$stage/crates/" "${dest}crates/"
 rsync "${rsync_opts[@]}" "$stage/index/" "$dest"

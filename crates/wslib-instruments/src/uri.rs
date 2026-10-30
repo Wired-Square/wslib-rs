@@ -1,11 +1,11 @@
-use std::{convert::Infallible, error::Error, fmt, io, str::FromStr};
+use std::{error::Error, fmt, io, str::FromStr};
 
 #[cfg(not(feature = "ble"))]
 use crate::probe::ProbeError;
 use crate::{
     gw121::{
         METER_NAME, Target,
-        decode::{self, STATUS, TABLE},
+        decode::{self, STATUS},
     },
     probe::Probe,
     sample::Sample,
@@ -66,6 +66,7 @@ const STATUS_OK: &str = "ok";
 const LIST_SEPARATOR: &str = ", ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ProbeUri {
     Gw121 {
         target: Target,
@@ -79,6 +80,7 @@ pub enum ProbeUri {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ProbeUriError {
     Unrecognised(String),
     Target(String),
@@ -115,12 +117,8 @@ struct Scheme {
     display_name: fn(&SignalKey) -> Option<&'static str>,
 }
 
-fn gw121_signals() -> Vec<SignalKey> {
-    decode::signals(&TABLE)
-}
-
 const GW121_SCHEME: Scheme = Scheme {
-    signals: gw121_signals,
+    signals: decode::signals,
     key_named: decode::key_named,
     display_name: decode::display_name,
 };
@@ -174,9 +172,12 @@ fn selectors<'a>(
     Ok(keys)
 }
 
-fn target(text: &str) -> Target {
-    text.parse()
-        .unwrap_or_else(|never: Infallible| match never {})
+/// Refuses text holding a control character, which no name or path here needs.
+pub(crate) fn without_controls(text: &str) -> Result<&str, String> {
+    if text.contains(char::is_control) {
+        return Err(format!("{text:?} contains a control character"));
+    }
+    Ok(text)
 }
 
 fn device_id(text: &str) -> Result<u32, ProbeUriError> {
@@ -238,15 +239,16 @@ impl FromStr for ProbeUri {
     type Err = ProbeUriError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == GW121 {
+        if s.eq_ignore_ascii_case(GW121) {
             return Ok(ProbeUri::Gw121 {
                 target: Target::Name(METER_NAME.to_owned()),
                 selected: vec![],
             });
         }
         if let Some(rest) = s
-            .strip_prefix(GW121)
-            .and_then(|rest| rest.strip_prefix(SCHEME_SEPARATOR))
+            .split_at_checked(GW121.len())
+            .filter(|(scheme, _)| scheme.eq_ignore_ascii_case(GW121))
+            .and_then(|(_, rest)| rest.strip_prefix(SCHEME_SEPARATOR))
         {
             let mut parts = rest.split(SELECTOR_SEPARATOR);
             let target_text = parts.next().unwrap_or_default();
@@ -255,7 +257,7 @@ impl FromStr for ProbeUri {
                     "{GW121}{SCHEME_SEPARATOR}<address-or-name> needs an address or name after the colon"
                 )));
             }
-            let target = target(target_text);
+            let target: Target = target_text.parse().map_err(ProbeUriError::Target)?;
             let probe = format!("{GW121}{SCHEME_SEPARATOR}{target}");
             return Ok(ProbeUri::Gw121 {
                 selected: selectors(&GW121_SCHEME, &probe, parts)?,
@@ -381,3 +383,6 @@ pub fn value_text(uri: &ProbeUri, sample: &Sample) -> String {
         ProbeUri::Gw121 { .. } | ProbeUri::WiredReflow { .. } => sample.value.to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests;

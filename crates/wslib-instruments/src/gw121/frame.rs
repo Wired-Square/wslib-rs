@@ -165,3 +165,6 @@ impl Frame {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

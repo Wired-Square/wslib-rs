@@ -1,4 +1,4 @@
-use wslib_instruments::{
+use crate::{
     gw121::{
         Target,
         decode::{STATUS, STATUS_AUTO_POWER_OFF, STATUS_OVERLOAD, THERMOCOUPLE},
@@ -504,4 +504,28 @@ fn a_gvret_bus_without_a_usable_endpoint_is_refused_naming_its_form() {
         let why = refusal(bad);
         assert!(why.contains("gvret=<host>[:<port>]"), "{bad}: {why}");
     }
+}
+
+#[test]
+fn a_control_character_in_a_target_or_bus_is_refused_before_anything_opens() {
+    for bad in [
+        "wiredreflow:can\u{0}x",
+        "wiredreflow:slcan=tty\u{0}ACM0@028F08",
+        "wiredreflow:gvret=host\u{1b}:23",
+        "121gw:a\u{0}b",
+        "121gw:121GW\u{7f}",
+    ] {
+        let why = refusal(bad);
+        assert!(why.contains("control character"), "{bad:?}: {why}");
+    }
+    assert!("a\u{0}b".parse::<Target>().is_err());
+    assert!("can\u{0}x".parse::<CanBus>().is_err());
+}
+
+#[test]
+fn the_121gw_scheme_is_read_in_any_case_and_written_in_lower_case() {
+    assert_eq!(parsed("121GW"), parsed("121gw"));
+    let uri = parsed("121GW:88:6B:0F:81:A9:53");
+    assert_eq!(uri, parsed("121gw:88:6B:0F:81:A9:53"));
+    assert_eq!(uri.to_string(), "121gw:88:6B:0F:81:A9:53");
 }

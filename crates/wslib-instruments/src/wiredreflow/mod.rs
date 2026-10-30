@@ -26,7 +26,7 @@ mod task {
 
     use super::bus::{Bus, CanBus, refusal};
 
-    pub fn open_bus(bus: &CanBus) -> io::Result<Box<dyn Bus>> {
+    pub(crate) fn open_bus(bus: &CanBus) -> io::Result<Box<dyn Bus>> {
         Err(refusal(bus))
     }
 }

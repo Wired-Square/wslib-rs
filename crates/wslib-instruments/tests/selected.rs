@@ -25,10 +25,6 @@ impl Probe for Everything {
         ALL.to_vec()
     }
 
-    fn display_name(&self, _: &SignalKey) -> Option<&'static str> {
-        None
-    }
-
     fn next(&mut self, _: Instant) -> Result<Vec<Sample>, ProbeError> {
         let at = Stamp::now();
         Ok(ALL

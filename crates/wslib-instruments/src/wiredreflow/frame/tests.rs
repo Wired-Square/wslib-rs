@@ -1,4 +1,4 @@
-use wslib_instruments::{
+use crate::{
     sample::{Sample, Stamp},
     signal::SignalKey,
     value::Value,
@@ -8,7 +8,7 @@ use wslib_instruments::{
     },
 };
 
-const RUN_F: &str = include_str!("fixtures/wiredreflow-run-f-2026-10-15.candump");
+const RUN_F: &str = include_str!("../../../tests/fixtures/wiredreflow-run-f-2026-10-15.candump");
 const BENCH_DEVICE: u32 = 0x02_8F08;
 const OTHER_DEVICE: u32 = 0x03_1200;
 const DECI: i8 = -1;

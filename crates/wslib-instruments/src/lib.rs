@@ -18,7 +18,7 @@ pub mod cluster;
 pub mod gw121;
 pub mod probe;
 pub mod sample;
-pub mod selected;
+mod selected;
 pub mod signal;
 pub mod uri;
 pub mod value;

@@ -1,7 +1,7 @@
-use wslib_instruments::gw121::frame::{Assembler, FRAME_LEN};
+use crate::gw121::frame::{Assembler, FRAME_LEN};
 
-const ROOM: &str = include_str!("fixtures/121gw-room-2026-09-26.notify");
-const HEAT: &str = include_str!("fixtures/121gw-heat-2026-09-26.notify");
+const ROOM: &str = include_str!("../../../tests/fixtures/121gw-room-2026-09-26.notify");
+const HEAT: &str = include_str!("../../../tests/fixtures/121gw-heat-2026-09-26.notify");
 const ROOM_FRAMES: usize = 38;
 const HEAT_FRAMES: usize = 349;
 const GARBAGE_FRAMES: usize = 5;

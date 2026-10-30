@@ -1,18 +1,22 @@
-use std::{convert::Infallible, fmt, str::FromStr};
+use std::{fmt, str::FromStr};
+
+use crate::uri::without_controls;
 
 const MAC_OCTETS: usize = 6;
 const HEX_DIGITS_PER_OCTET: usize = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Target {
     Address(String),
     Name(String),
 }
 
 impl FromStr for Target {
-    type Err = Infallible;
+    type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = without_controls(s)?;
         let octets: Vec<&str> = s.split(':').collect();
         let is_mac = octets.len() == MAC_OCTETS
             && octets.iter().all(|o| {

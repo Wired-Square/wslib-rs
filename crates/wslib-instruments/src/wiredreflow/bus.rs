@@ -1,14 +1,14 @@
 use std::{fmt, io, net::Ipv6Addr, str::FromStr, time::Duration};
 
 use super::frame::RawFrame;
-pub use super::task::open_bus;
-use crate::probe::ProbeError;
+pub(crate) use super::task::open_bus;
+use crate::{probe::ProbeError, uri::without_controls};
 
-pub const SLCAN_PREFIX: &str = "slcan=";
-pub const GVRET_PREFIX: &str = "gvret=";
-pub const GVRET_PORT: u16 = 23;
-pub const PATH_SEPARATOR: char = '/';
-pub const DEVICE_SEPARATOR: char = '@';
+pub(crate) const SLCAN_PREFIX: &str = "slcan=";
+pub(crate) const GVRET_PREFIX: &str = "gvret=";
+pub(crate) const GVRET_PORT: u16 = 23;
+pub(crate) const PATH_SEPARATOR: char = '/';
+pub(crate) const DEVICE_SEPARATOR: char = '@';
 const GSUSB: &str = "gsusb";
 const PCAN: &str = "pcan";
 const SERIAL_SEPARATOR: char = '=';
@@ -30,7 +30,7 @@ const NAME_PLACEHOLDER: &str = "<name>";
 const FORM_SEPARATOR: &str = ", or ";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PortDirectory {
+pub(crate) enum PortDirectory {
     Devices,
     ById,
 }
@@ -38,7 +38,7 @@ pub enum PortDirectory {
 const DIRECTORIES: [PortDirectory; 2] = [PortDirectory::ById, PortDirectory::Devices];
 
 impl PortDirectory {
-    pub fn path(self) -> &'static str {
+    pub(crate) fn path(self) -> &'static str {
         match self {
             PortDirectory::Devices => DEVICES_PATH,
             PortDirectory::ById => BY_ID_PATH,
@@ -53,18 +53,20 @@ impl PortDirectory {
     }
 }
 
+/// A serial port named as a `slcan=` bus names it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SerialPort {
-    pub directory: PortDirectory,
-    pub name: String,
+    pub(crate) directory: PortDirectory,
+    pub(crate) name: String,
 }
 
 impl SerialPort {
+    /// The path the port opens at.
     pub fn path(&self) -> String {
         format!("{}{}", self.directory.path(), self.name)
     }
 
-    pub fn at(path: &str) -> Option<SerialPort> {
+    pub(crate) fn at(path: &str) -> Option<SerialPort> {
         DIRECTORIES.into_iter().find_map(|directory| {
             path.strip_prefix(directory.path())
                 .filter(|name| {
@@ -81,7 +83,7 @@ impl SerialPort {
 
 /// The serial-port forms that name a port on this platform; `/dev/serial/by-id`
 /// is Linux's.
-pub fn port_forms() -> String {
+pub(crate) fn port_forms() -> String {
     let forms: Vec<String> = DIRECTORIES
         .into_iter()
         .filter(|directory| *directory != PortDirectory::ById || cfg!(target_os = "linux"))
@@ -242,6 +244,7 @@ impl fmt::Display for SerialPort {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CanBus {
     SocketCan {
         interface: String,
@@ -300,6 +303,7 @@ impl FromStr for CanBus {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = without_controls(s)?;
         if let Some(serial) = usb_serial(s, GSUSB) {
             return serial.map(|serial| CanBus::GsUsb { serial });
         }
@@ -338,11 +342,12 @@ impl fmt::Display for CanBus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BusError {
+#[allow(dead_code, reason = "only a CAN backend's bus raises it")]
+pub(crate) enum BusError {
     Lost(String),
     Ended(String),
 }
 
-pub trait Bus: Send {
+pub(crate) trait Bus: Send {
     fn read(&mut self, timeout: Duration) -> Result<Option<RawFrame>, BusError>;
 }

@@ -173,37 +173,35 @@ fn named(bus: &CanBus, opened: Result<CanTask, wslib_can::CanError>) -> io::Resu
 
 /// Opens the bus on a thread of its own running its own runtime, so a caller
 /// inside a tokio runtime never blocks on it; dropping the bus ends both.
-pub fn open_bus(bus: &CanBus) -> io::Result<Box<dyn Bus>> {
+pub(crate) fn open_bus(bus: &CanBus) -> io::Result<Box<dyn Bus>> {
     let (opened_tx, opened) = mpsc::sync_channel(1);
     let (reads_tx, reads) = mpsc::channel();
     let (stop, stopping) = oneshot::channel();
     let on = bus.clone();
-    thread::Builder::new()
-        .name(format!("can {bus}"))
-        .spawn(move || {
-            let runtime = match tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                Ok(runtime) => runtime,
+    thread::Builder::new().name("can".into()).spawn(move || {
+        let runtime = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(e) => {
+                let _ = opened_tx.send(Err(e));
+                return;
+            }
+        };
+        runtime.block_on(async {
+            match open_task(&on).await {
+                Ok(task) => {
+                    if opened_tx.send(Ok(())).is_ok() {
+                        forward(task, reads_tx, stopping).await;
+                    }
+                }
                 Err(e) => {
                     let _ = opened_tx.send(Err(e));
-                    return;
                 }
-            };
-            runtime.block_on(async {
-                match open_task(&on).await {
-                    Ok(task) => {
-                        if opened_tx.send(Ok(())).is_ok() {
-                            forward(task, reads_tx, stopping).await;
-                        }
-                    }
-                    Err(e) => {
-                        let _ = opened_tx.send(Err(e));
-                    }
-                }
-            });
-        })?;
+            }
+        });
+    })?;
     opened.recv().map_err(|_| {
         io::Error::other(format!(
             "{bus}: the CAN thread stopped before it opened the bus"

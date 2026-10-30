@@ -9,7 +9,7 @@ use futures_core::Stream;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::sync::{Mutex, Semaphore, mpsc};
+use tokio::sync::{Semaphore, mpsc};
 use tracing::{debug, warn};
 
 use crate::frame::{self, BytesRef, Empty, decode_reply};
@@ -435,7 +435,8 @@ impl Upload {
     ) -> Result<Option<usize>, Error> {
         let Replies { sequences, inbox } = replies;
         let total = self.image.len();
-        let in_flight = Mutex::new(HashMap::<u8, ChunkInFlight>::new());
+        let in_flight = std::sync::Mutex::new(HashMap::<u8, ChunkInFlight>::new());
+        let in_flight = || in_flight.lock().expect("in-flight chunks lock");
         let credits = Semaphore::new(self.window);
         let stop = AtomicBool::new(false);
 
@@ -452,8 +453,7 @@ impl Upload {
                 let seq = sequences.expect()?;
                 let end = (off + self.chunk_size).min(total);
                 let frame = self.chunk_frame(seq, off, None)?;
-                let mut in_flight = in_flight.lock().await;
-                in_flight.insert(seq, ChunkInFlight { start: off, end });
+                in_flight().insert(seq, ChunkInFlight { start: off, end });
                 self.router.send(frame).await?;
                 off = end;
             }
@@ -471,12 +471,12 @@ impl Upload {
                     _ = self.events.closed() => return Ok(None),
                 };
                 let Ok(frame) = received else {
-                    let lowest = in_flight.lock().await.values().map(|c| c.start).min();
+                    let lowest = in_flight().values().map(|c| c.start).min();
                     return Ok(Some(lowest.unwrap_or(start)));
                 };
                 let frame = frame?;
                 let seq = Header::decode(&frame)?.seq;
-                let Some(chunk) = in_flight.lock().await.remove(&seq) else {
+                let Some(chunk) = in_flight().remove(&seq) else {
                     reject_stale_mismatch(&frame)?;
                     continue;
                 };

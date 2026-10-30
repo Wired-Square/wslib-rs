@@ -1,5 +1,6 @@
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use btleplug::api::{Characteristic, Peripheral as _, WriteType};
 use btleplug::platform::Peripheral;
@@ -8,7 +9,7 @@ use tokio::sync::Mutex;
 use tracing::debug;
 use uuid::Uuid;
 
-use crate::header::HEADER_LEN;
+use crate::header::{HEADER_LEN, Header, Op};
 use crate::{BoxFuture, Error, Session, Transport};
 
 /// The mcumgr SMP service, as Zephyr's SMP BLE transport defines it.
@@ -25,6 +26,10 @@ const MIN_WRITE: usize = 20;
 /// Conservative until the device's buffers are known.
 const BLE_CHUNK_SIZE: usize = 500;
 
+/// A frame's notifications come back to back; a gap this long means one was
+/// lost.
+const REASSEMBLY_TIMEOUT: Duration = Duration::from_secs(2);
+
 type Notifications = Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>;
 
 /// SMP over the mcumgr GATT characteristic.
@@ -32,12 +37,14 @@ pub struct BleTransport {
     peripheral: Peripheral,
     characteristic: Characteristic,
     max_write: usize,
+    tx: Mutex<()>,
     rx: Mutex<Rx>,
 }
 
 struct Rx {
     notifications: Notifications,
-    buf: Vec<u8>,
+    frames: Reassembly,
+    reassembly_timeout: Duration,
 }
 
 impl BleTransport {
@@ -63,19 +70,19 @@ impl BleTransport {
             peripheral,
             characteristic,
             max_write,
-            rx: Mutex::new(Rx {
-                notifications: Box::pin(notifications),
-                buf: Vec::new(),
-            }),
+            tx: Mutex::new(()),
+            rx: Mutex::new(Rx::new(Box::pin(notifications), REASSEMBLY_TIMEOUT)),
         })
     }
 }
 
 impl Transport for BleTransport {
     /// CoreBluetooth drops a write longer than the MTU allows; the device
-    /// reassembles the frame by the length in its header.
+    /// reassembles the frame by the length in its header, so one frame's
+    /// pieces go out before the next frame's.
     fn send(&self, frame: Vec<u8>) -> BoxFuture<'_, Result<(), Error>> {
         Box::pin(async move {
+            let _one_frame_at_a_time = self.tx.lock().await;
             for piece in frame.chunks(self.max_write) {
                 self.peripheral
                     .write(&self.characteristic, piece, WriteType::WithoutResponse)
@@ -85,22 +92,8 @@ impl Transport for BleTransport {
         })
     }
 
-    /// Some platforms split one notification in two, so bytes gather until
-    /// they hold a whole frame.
     fn receive(&self) -> BoxFuture<'_, Result<Vec<u8>, Error>> {
-        Box::pin(async {
-            let mut rx = self.rx.lock().await;
-            loop {
-                if let Some(frame) = take_frame(&mut rx.buf) {
-                    return Ok(frame);
-                }
-                let next = std::future::poll_fn(|cx| rx.notifications.as_mut().poll_next(cx));
-                match next.await {
-                    Some(bytes) => rx.buf.extend_from_slice(&bytes),
-                    None => return Err(Error::LinkClosed),
-                }
-            }
-        })
+        Box::pin(async { self.rx.lock().await.next_frame().await })
     }
 
     fn is_connected(&self) -> BoxFuture<'_, bool> {
@@ -115,14 +108,90 @@ impl Session {
     }
 }
 
-fn take_frame(buf: &mut Vec<u8>) -> Option<Vec<u8>> {
-    let len = HEADER_LEN + usize::from(u16::from_be_bytes([*buf.get(2)?, *buf.get(3)?]));
-    (buf.len() >= len).then(|| buf.drain(..len).collect())
+impl Rx {
+    fn new(notifications: Notifications, reassembly_timeout: Duration) -> Self {
+        Self {
+            notifications,
+            frames: Reassembly::default(),
+            reassembly_timeout,
+        }
+    }
+
+    /// Some platforms split one notification in two, so bytes gather until
+    /// they hold a whole frame; a frame left unfinished is dropped.
+    async fn next_frame(&mut self) -> Result<Vec<u8>, Error> {
+        loop {
+            if let Some(frame) = self.frames.take() {
+                return Ok(frame);
+            }
+            let next = std::future::poll_fn(|cx| self.notifications.as_mut().poll_next(cx));
+            let bytes = if self.frames.buf.is_empty() {
+                next.await
+            } else if let Ok(bytes) = tokio::time::timeout(self.reassembly_timeout, next).await {
+                bytes
+            } else {
+                debug!("SMP over BLE: dropping an unfinished frame");
+                self.frames = Reassembly::default();
+                continue;
+            };
+            match bytes {
+                Some(bytes) => self.frames.push(&bytes),
+                None => return Err(Error::LinkClosed),
+            }
+        }
+    }
+}
+
+/// A frame starts at the start of a notification, which is where a lost or
+/// stray notification lets it pick up again.
+#[derive(Default)]
+struct Reassembly {
+    buf: Vec<u8>,
+    latest_notification_at: usize,
+}
+
+impl Reassembly {
+    fn push(&mut self, notification: &[u8]) {
+        self.latest_notification_at = self.buf.len();
+        self.buf.extend_from_slice(notification);
+    }
+
+    fn take(&mut self) -> Option<Vec<u8>> {
+        loop {
+            if self.buf.len() < HEADER_LEN {
+                return None;
+            }
+            match Header::decode(&self.buf) {
+                Ok(header) if matches!(header.op, Op::ReadResponse | Op::WriteResponse) => {
+                    let len = HEADER_LEN + usize::from(header.len);
+                    if self.buf.len() < len {
+                        return None;
+                    }
+                    self.latest_notification_at = self.latest_notification_at.saturating_sub(len);
+                    return Some(self.buf.drain(..len).collect());
+                }
+                _ => {
+                    let resync_at = match self.latest_notification_at {
+                        0 => self.buf.len(),
+                        at => at,
+                    };
+                    debug!(
+                        dropped = resync_at,
+                        "SMP over BLE: bytes that start no reply"
+                    );
+                    self.buf.drain(..resync_at);
+                    self.latest_notification_at = 0;
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::Events;
+    use tokio::sync::mpsc;
 
     fn frame(payload: &[u8]) -> Vec<u8> {
         let mut v = vec![0x03, 0x00];
@@ -132,29 +201,69 @@ mod tests {
         v
     }
 
+    fn reassembly_of(notifications: &[&[u8]]) -> Reassembly {
+        let mut frames = Reassembly::default();
+        notifications.iter().for_each(|n| frames.push(n));
+        frames
+    }
+
     #[test]
     fn waits_for_a_whole_header() {
-        let mut buf = vec![0x03, 0x00, 0x00];
-        assert_eq!(take_frame(&mut buf), None);
-        assert_eq!(buf.len(), 3);
+        let mut frames = reassembly_of(&[&[0x03, 0x00, 0x00]]);
+        assert_eq!(frames.take(), None);
+        assert_eq!(frames.buf.len(), 3);
     }
 
     #[test]
     fn waits_for_the_whole_payload() {
         let whole = frame(&[0xaa; 5]);
-        let mut buf = whole[..HEADER_LEN + 2].to_vec();
-        assert_eq!(take_frame(&mut buf), None);
-        buf.extend_from_slice(&whole[HEADER_LEN + 2..]);
-        assert_eq!(take_frame(&mut buf), Some(whole));
-        assert!(buf.is_empty());
+        let mut frames = reassembly_of(&[&whole[..HEADER_LEN + 2]]);
+        assert_eq!(frames.take(), None);
+        frames.push(&whole[HEADER_LEN + 2..]);
+        assert_eq!(frames.take(), Some(whole));
+        assert!(frames.buf.is_empty());
     }
 
     #[test]
     fn leaves_the_next_frame_behind() {
-        let mut buf = frame(&[0xaa; 3]);
-        buf.extend_from_slice(&frame(&[]));
-        assert_eq!(take_frame(&mut buf), Some(frame(&[0xaa; 3])));
-        assert_eq!(take_frame(&mut buf), Some(frame(&[])));
-        assert!(buf.is_empty());
+        let mut frames = reassembly_of(&[&[frame(&[0xaa; 3]), frame(&[])].concat()]);
+        assert_eq!(frames.take(), Some(frame(&[0xaa; 3])));
+        assert_eq!(frames.take(), Some(frame(&[])));
+        assert!(frames.buf.is_empty());
+    }
+
+    #[test]
+    fn a_stray_fragment_before_a_frame_is_dropped() {
+        let good = frame(&[0xbb; 4]);
+        let mut frames = reassembly_of(&[&[0xaa; 5], &good]);
+        assert_eq!(frames.take(), Some(good));
+        assert!(frames.buf.is_empty());
+    }
+
+    #[test]
+    fn a_notification_that_starts_no_reply_is_dropped() {
+        let mut frames = reassembly_of(&[&[0x02; HEADER_LEN + 4]]);
+        assert_eq!(frames.take(), None);
+        assert!(frames.buf.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_frame_left_unfinished_gives_way_to_the_next() {
+        const TIMEOUT: Duration = Duration::from_millis(50);
+        let (tx, rx) = mpsc::channel(4);
+        let mut rx = Rx::new(Box::pin(Events(rx)), TIMEOUT);
+        let lost_its_tail = frame(&[0xaa; 8]);
+        let good = frame(&[0xbb; 4]);
+        tx.send(lost_its_tail[..HEADER_LEN + 2].to_vec())
+            .await
+            .unwrap();
+        let late = async {
+            tokio::time::sleep(TIMEOUT * 3).await;
+            tx.send(good.clone()).await.unwrap();
+        };
+
+        let (received, ()) = tokio::join!(rx.next_frame(), late);
+
+        assert_eq!(received.unwrap(), good);
     }
 }

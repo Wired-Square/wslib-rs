@@ -239,6 +239,13 @@ if grep -qx wslib-framelink <<<"$todo"; then
   fi
 fi
 
+# A default build of the instrument readers has no backend.
+if grep -qx wslib-instruments <<<"$todo"; then
+  step "wslib-instruments has no btleplug, tokio or CAN backend by default"
+  tree=$(normal_tree wslib-instruments --target all)
+  ! grep -E '^(btleplug|tokio|wslib-can[a-z-]*) ' <<<"$tree" || die "wslib-instruments' default build pulls in a backend"
+fi
+
 # The gateway's types are serde-only, a Windows client's included.
 if grep -qx wslib-wiretap-gateway <<<"$todo"; then
   step "wslib-wiretap-gateway on Windows has no serial port or SQLite"

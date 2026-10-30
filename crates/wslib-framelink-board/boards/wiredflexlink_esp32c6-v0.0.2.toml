@@ -1,0 +1,799 @@
+# Board definition: Wired Square Flexible Link — ESP32-C6
+# Copyright (c) 2026, Wired Square Pty Ltd
+# SPDX-License-Identifier: MIT
+
+[board]
+name = "wiredflexlink"
+revision = "esp32c6-v0.0.2"
+description = "Wired Square Flexible Link — ESP32-C6"
+
+# -----------------------------------------------------------------------
+# Interface definitions — keyed by target_index from capabilities
+# -----------------------------------------------------------------------
+
+[interfaces.0]
+name = "CAN0"
+type = "can"
+
+[interfaces.1]
+name = "CAN1"
+type = "can"
+
+[interfaces.2]
+name = "RS-485 Port 0"
+type = "rs485"
+
+[interfaces.3]
+name = "RS-485 Port 1"
+type = "rs485"
+
+# -----------------------------------------------------------------------
+# Peripheral definitions — keyed by target_index from capabilities
+# -----------------------------------------------------------------------
+
+[peripherals.0]
+name = "Status LEDs"
+kind = "actuator"
+
+[peripherals.1]
+name = "VN9D Load Switch"
+kind = "actuator"
+
+[peripherals.2]
+name = "SoC Temperature"
+kind = "sensor"
+
+# -----------------------------------------------------------------------
+# Signal definitions — keyed by the semantic tuple
+#   <target>.<index>.<role>.<quantity>[.<aspect>][.ch<N>]
+# (aspect omitted when default, channel omitted for target-level signals)
+# -----------------------------------------------------------------------
+
+# === CAN0 interface signals (target_index 0) ===
+
+[signals."interface.0.config.datarate"]
+name = "CAN0 Bitrate"
+group = "CAN0"
+unit = "bps"
+format = "number"
+
+[signals."interface.0.config.bool.termination"]
+name = "CAN0 Termination"
+group = "CAN0"
+format = "bool"
+
+[signals."interface.0.config.bool"]
+name = "CAN0 Enabled"
+group = "CAN0"
+format = "bool"
+
+[signals."interface.0.status.enum"]
+name = "CAN0 Direction"
+group = "CAN0"
+format = "enum"
+[signals."interface.0.status.enum".enum]
+1 = "RX"
+2 = "TX"
+3 = "Bidirectional"
+
+[signals."interface.0.config.bool.standby"]
+name = "CAN0 Transceiver Standby"
+group = "CAN0"
+format = "bool"
+
+[signals."interface.0.status.bool"]
+name = "CAN0 Running"
+group = "CAN0"
+format = "bool"
+
+[signals."interface.0.diagnostic.count.client"]
+name = "CAN0 Client Drops"
+group = "CAN0"
+format = "number"
+
+[signals."interface.0.diagnostic.count.forward"]
+name = "CAN0 Bridge Drops"
+group = "CAN0"
+format = "number"
+
+[signals."interface.0.diagnostic.count.ingress"]
+name = "CAN0 RX Queue Drops"
+group = "CAN0"
+format = "number"
+
+# === CAN1 interface signals (target_index 1) ===
+
+[signals."interface.1.config.datarate"]
+name = "CAN1 Bitrate"
+group = "CAN1"
+unit = "bps"
+format = "number"
+
+[signals."interface.1.config.bool.termination"]
+name = "CAN1 Termination"
+group = "CAN1"
+format = "bool"
+
+[signals."interface.1.config.bool"]
+name = "CAN1 Enabled"
+group = "CAN1"
+format = "bool"
+
+[signals."interface.1.status.enum"]
+name = "CAN1 Direction"
+group = "CAN1"
+format = "enum"
+[signals."interface.1.status.enum".enum]
+1 = "RX"
+2 = "TX"
+3 = "Bidirectional"
+
+[signals."interface.1.config.bool.standby"]
+name = "CAN1 Transceiver Standby"
+group = "CAN1"
+format = "bool"
+
+[signals."interface.1.status.bool"]
+name = "CAN1 Running"
+group = "CAN1"
+format = "bool"
+
+[signals."interface.1.diagnostic.count.client"]
+name = "CAN1 Client Drops"
+group = "CAN1"
+format = "number"
+
+[signals."interface.1.diagnostic.count.forward"]
+name = "CAN1 Bridge Drops"
+group = "CAN1"
+format = "number"
+
+[signals."interface.1.diagnostic.count.ingress"]
+name = "CAN1 RX Queue Drops"
+group = "CAN1"
+format = "number"
+
+# === RS0 interface signals (target_index 2) ===
+
+[signals."interface.2.config.datarate"]
+name = "RS0 Bitrate"
+group = "RS0"
+unit = "bps"
+format = "number"
+
+[signals."interface.2.config.bool.termination"]
+name = "RS0 Termination"
+group = "RS0"
+format = "bool"
+
+[signals."interface.2.config.bool"]
+name = "RS0 Enabled"
+group = "RS0"
+format = "bool"
+
+[signals."interface.2.status.enum"]
+name = "RS0 Direction"
+group = "RS0"
+format = "enum"
+[signals."interface.2.status.enum".enum]
+1 = "RX"
+2 = "TX"
+3 = "Bidirectional"
+
+[signals."interface.2.config.enum.parity"]
+name = "RS0 Parity"
+group = "RS0"
+format = "enum"
+[signals."interface.2.config.enum.parity".enum]
+0 = "None"
+1 = "Odd"
+2 = "Even"
+
+[signals."interface.2.config.enum.stop_bits"]
+name = "RS0 Stop Bits"
+group = "RS0"
+format = "enum"
+[signals."interface.2.config.enum.stop_bits".enum]
+0 = "0.5"
+1 = "1"
+2 = "1.5"
+3 = "2"
+
+[signals."interface.2.config.enum.data_bits"]
+name = "RS0 Data Bits"
+group = "RS0"
+format = "enum"
+[signals."interface.2.config.enum.data_bits".enum]
+0 = "5"
+1 = "6"
+2 = "7"
+3 = "8"
+
+[signals."interface.2.status.bool"]
+name = "RS0 Half Duplex"
+group = "RS0"
+format = "bool"
+
+[signals."interface.2.diagnostic.count.client"]
+name = "RS0 Client Drops"
+group = "RS0"
+format = "number"
+
+[signals."interface.2.diagnostic.count.forward"]
+name = "RS0 Bridge Drops"
+group = "RS0"
+format = "number"
+
+# === RS1 interface signals (target_index 3) ===
+
+[signals."interface.3.config.datarate"]
+name = "RS1 Bitrate"
+group = "RS1"
+unit = "bps"
+format = "number"
+
+[signals."interface.3.config.bool.termination"]
+name = "RS1 Termination"
+group = "RS1"
+format = "bool"
+
+[signals."interface.3.config.bool"]
+name = "RS1 Enabled"
+group = "RS1"
+format = "bool"
+
+[signals."interface.3.status.enum"]
+name = "RS1 Direction"
+group = "RS1"
+format = "enum"
+[signals."interface.3.status.enum".enum]
+1 = "RX"
+2 = "TX"
+3 = "Bidirectional"
+
+[signals."interface.3.config.enum.parity"]
+name = "RS1 Parity"
+group = "RS1"
+format = "enum"
+[signals."interface.3.config.enum.parity".enum]
+0 = "None"
+1 = "Odd"
+2 = "Even"
+
+[signals."interface.3.config.enum.stop_bits"]
+name = "RS1 Stop Bits"
+group = "RS1"
+format = "enum"
+[signals."interface.3.config.enum.stop_bits".enum]
+0 = "0.5"
+1 = "1"
+2 = "1.5"
+3 = "2"
+
+[signals."interface.3.config.enum.data_bits"]
+name = "RS1 Data Bits"
+group = "RS1"
+format = "enum"
+[signals."interface.3.config.enum.data_bits".enum]
+0 = "5"
+1 = "6"
+2 = "7"
+3 = "8"
+
+[signals."interface.3.status.bool"]
+name = "RS1 Half Duplex"
+group = "RS1"
+format = "bool"
+
+[signals."interface.3.diagnostic.count.client"]
+name = "RS1 Client Drops"
+group = "RS1"
+format = "number"
+
+[signals."interface.3.diagnostic.count.forward"]
+name = "RS1 Bridge Drops"
+group = "RS1"
+format = "number"
+
+# === Status LEDs — peripheral 0, channel = LED index ===
+
+[signals."peripheral.0.setpoint.colour_rgb.ch0"]
+name = "LED0 Colour (Status)"
+group = "LEDs"
+format = "color_brgb"
+
+[signals."peripheral.0.setpoint.enum.ch0"]
+name = "LED0 State"
+group = "LEDs"
+format = "enum"
+[signals."peripheral.0.setpoint.enum.ch0".enum]
+0 = "Off"
+1 = "On"
+2 = "Blink"
+
+[signals."peripheral.0.config.duration.ch0"]
+name = "LED0 Blink Period"
+group = "LEDs"
+unit = "ms"
+format = "number"
+
+[signals."peripheral.0.command.bool.ch0"]
+name = "LED0 Toggle"
+group = "LEDs"
+format = "bool"
+
+[signals."peripheral.0.setpoint.colour_rgb.ch1"]
+name = "LED1 Colour (SW0)"
+group = "LEDs"
+format = "color_brgb"
+
+[signals."peripheral.0.setpoint.enum.ch1"]
+name = "LED1 State"
+group = "LEDs"
+format = "enum"
+[signals."peripheral.0.setpoint.enum.ch1".enum]
+0 = "Off"
+1 = "On"
+2 = "Blink"
+
+[signals."peripheral.0.config.duration.ch1"]
+name = "LED1 Blink Period"
+group = "LEDs"
+unit = "ms"
+format = "number"
+
+[signals."peripheral.0.command.bool.ch1"]
+name = "LED1 Toggle"
+group = "LEDs"
+format = "bool"
+
+[signals."peripheral.0.setpoint.colour_rgb.ch2"]
+name = "LED2 Colour (SW1)"
+group = "LEDs"
+format = "color_brgb"
+
+[signals."peripheral.0.setpoint.enum.ch2"]
+name = "LED2 State"
+group = "LEDs"
+format = "enum"
+[signals."peripheral.0.setpoint.enum.ch2".enum]
+0 = "Off"
+1 = "On"
+2 = "Blink"
+
+[signals."peripheral.0.config.duration.ch2"]
+name = "LED2 Blink Period"
+group = "LEDs"
+unit = "ms"
+format = "number"
+
+[signals."peripheral.0.command.bool.ch2"]
+name = "LED2 Toggle"
+group = "LEDs"
+format = "bool"
+
+[signals."peripheral.0.setpoint.colour_rgb.ch3"]
+name = "LED3 Colour (SW2)"
+group = "LEDs"
+format = "color_brgb"
+
+[signals."peripheral.0.setpoint.enum.ch3"]
+name = "LED3 State"
+group = "LEDs"
+format = "enum"
+[signals."peripheral.0.setpoint.enum.ch3".enum]
+0 = "Off"
+1 = "On"
+2 = "Blink"
+
+[signals."peripheral.0.config.duration.ch3"]
+name = "LED3 Blink Period"
+group = "LEDs"
+unit = "ms"
+format = "number"
+
+[signals."peripheral.0.command.bool.ch3"]
+name = "LED3 Toggle"
+group = "LEDs"
+format = "bool"
+
+[signals."peripheral.0.setpoint.colour_rgb.ch4"]
+name = "LED4 Colour (SW3)"
+group = "LEDs"
+format = "color_brgb"
+
+[signals."peripheral.0.setpoint.enum.ch4"]
+name = "LED4 State"
+group = "LEDs"
+format = "enum"
+[signals."peripheral.0.setpoint.enum.ch4".enum]
+0 = "Off"
+1 = "On"
+2 = "Blink"
+
+[signals."peripheral.0.config.duration.ch4"]
+name = "LED4 Blink Period"
+group = "LEDs"
+unit = "ms"
+format = "number"
+
+[signals."peripheral.0.command.bool.ch4"]
+name = "LED4 Toggle"
+group = "LEDs"
+format = "bool"
+
+[signals."peripheral.0.setpoint.colour_rgb.ch5"]
+name = "LED5 Colour (CAN0)"
+group = "LEDs"
+format = "color_brgb"
+
+[signals."peripheral.0.setpoint.enum.ch5"]
+name = "LED5 State"
+group = "LEDs"
+format = "enum"
+[signals."peripheral.0.setpoint.enum.ch5".enum]
+0 = "Off"
+1 = "On"
+2 = "Blink"
+
+[signals."peripheral.0.config.duration.ch5"]
+name = "LED5 Blink Period"
+group = "LEDs"
+unit = "ms"
+format = "number"
+
+[signals."peripheral.0.command.bool.ch5"]
+name = "LED5 Toggle"
+group = "LEDs"
+format = "bool"
+
+[signals."peripheral.0.setpoint.colour_rgb.ch6"]
+name = "LED6 Colour (CAN1)"
+group = "LEDs"
+format = "color_brgb"
+
+[signals."peripheral.0.setpoint.enum.ch6"]
+name = "LED6 State"
+group = "LEDs"
+format = "enum"
+[signals."peripheral.0.setpoint.enum.ch6".enum]
+0 = "Off"
+1 = "On"
+2 = "Blink"
+
+[signals."peripheral.0.config.duration.ch6"]
+name = "LED6 Blink Period"
+group = "LEDs"
+unit = "ms"
+format = "number"
+
+[signals."peripheral.0.command.bool.ch6"]
+name = "LED6 Toggle"
+group = "LEDs"
+format = "bool"
+
+[signals."peripheral.0.setpoint.colour_rgb.ch7"]
+name = "LED7 Colour (RS0)"
+group = "LEDs"
+format = "color_brgb"
+
+[signals."peripheral.0.setpoint.enum.ch7"]
+name = "LED7 State"
+group = "LEDs"
+format = "enum"
+[signals."peripheral.0.setpoint.enum.ch7".enum]
+0 = "Off"
+1 = "On"
+2 = "Blink"
+
+[signals."peripheral.0.config.duration.ch7"]
+name = "LED7 Blink Period"
+group = "LEDs"
+unit = "ms"
+format = "number"
+
+[signals."peripheral.0.command.bool.ch7"]
+name = "LED7 Toggle"
+group = "LEDs"
+format = "bool"
+
+[signals."peripheral.0.setpoint.colour_rgb.ch8"]
+name = "LED8 Colour (RS1)"
+group = "LEDs"
+format = "color_brgb"
+
+[signals."peripheral.0.setpoint.enum.ch8"]
+name = "LED8 State"
+group = "LEDs"
+format = "enum"
+[signals."peripheral.0.setpoint.enum.ch8".enum]
+0 = "Off"
+1 = "On"
+2 = "Blink"
+
+[signals."peripheral.0.config.duration.ch8"]
+name = "LED8 Blink Period"
+group = "LEDs"
+unit = "ms"
+format = "number"
+
+[signals."peripheral.0.command.bool.ch8"]
+name = "LED8 Toggle"
+group = "LEDs"
+format = "bool"
+
+# === VN9D Load Switch — peripheral 1, channel = switch channel ===
+
+[signals."peripheral.1.measurement.temperature"]
+name = "Load Switch Temperature"
+group = "Load Switch"
+unit = "°C"
+format = "temperature_0.1"
+
+[signals."peripheral.1.config.count"]
+name = "Load Switch PWM Divisor"
+group = "Load Switch"
+format = "number"
+
+[signals."peripheral.1.setpoint.bool.ch0"]
+name = "SW0 Enabled"
+group = "Load Switch"
+format = "bool"
+
+[signals."peripheral.1.setpoint.ratio.ch0"]
+name = "SW0 Duty"
+group = "Load Switch"
+unit = "%"
+format = "number"
+
+[signals."peripheral.1.measurement.current.ch0"]
+name = "SW0 Current"
+group = "Load Switch"
+unit = "mA"
+format = "number"
+
+[signals."peripheral.1.status.bitmask.ch0"]
+name = "SW0 Fault"
+group = "Load Switch"
+format = "number"
+
+[signals."peripheral.1.setpoint.bool.ch1"]
+name = "SW1 Enabled"
+group = "Load Switch"
+format = "bool"
+
+[signals."peripheral.1.setpoint.ratio.ch1"]
+name = "SW1 Duty"
+group = "Load Switch"
+unit = "%"
+format = "number"
+
+[signals."peripheral.1.measurement.current.ch1"]
+name = "SW1 Current"
+group = "Load Switch"
+unit = "mA"
+format = "number"
+
+[signals."peripheral.1.status.bitmask.ch1"]
+name = "SW1 Fault"
+group = "Load Switch"
+format = "number"
+
+[signals."peripheral.1.setpoint.bool.ch2"]
+name = "SW2 Enabled"
+group = "Load Switch"
+format = "bool"
+
+[signals."peripheral.1.setpoint.ratio.ch2"]
+name = "SW2 Duty"
+group = "Load Switch"
+unit = "%"
+format = "number"
+
+[signals."peripheral.1.measurement.current.ch2"]
+name = "SW2 Current"
+group = "Load Switch"
+unit = "mA"
+format = "number"
+
+[signals."peripheral.1.status.bitmask.ch2"]
+name = "SW2 Fault"
+group = "Load Switch"
+format = "number"
+
+[signals."peripheral.1.setpoint.bool.ch3"]
+name = "SW3 Enabled"
+group = "Load Switch"
+format = "bool"
+
+[signals."peripheral.1.setpoint.ratio.ch3"]
+name = "SW3 Duty"
+group = "Load Switch"
+unit = "%"
+format = "number"
+
+[signals."peripheral.1.measurement.current.ch3"]
+name = "SW3 Current"
+group = "Load Switch"
+unit = "mA"
+format = "number"
+
+[signals."peripheral.1.status.bitmask.ch3"]
+name = "SW3 Fault"
+group = "Load Switch"
+format = "number"
+
+# === SoC temperature — peripheral 2 ===
+
+[signals."peripheral.2.measurement.temperature"]
+name = "SoC Temperature"
+group = "Device"
+unit = "°C"
+format = "temperature_0.1"
+
+[frame_defs]
+
+[frame_defs.0x0001]
+name = "Frame 0x0001"
+interface_type = "can"
+
+[frame_defs.0x0001.can]
+can_id = 291
+dlc = 8
+flags = []
+
+[frame_defs.0x0001.signals]
+
+[frame_defs.0x0001.signals.0x0001]
+name = "Signal 0x0001"
+bits = "0:8"
+byte_order = "le"
+value_type = "unsigned"
+scale = 1.0
+offset = 0.0
+
+[frame_defs.0x0002]
+name = "Frame 0x0002"
+interface_type = "can"
+
+[frame_defs.0x0002.can]
+can_id = 938
+dlc = 2
+flags = ["extended"]
+
+[frame_defs.0x0002.signals]
+
+[frame_defs.0x0002.signals.0x0002]
+name = "Signal 0x0002"
+bits = "0:8"
+byte_order = "le"
+value_type = "unsigned"
+scale = 1.0
+offset = 0.0
+
+[frame_defs.0xFE06]
+name = "Frame 0xFE06"
+interface_type = "can"
+
+[frame_defs.0xFE06.can]
+can_id = 0
+dlc = 8
+flags = []
+
+[frame_defs.0xFE06.signals]
+
+[frame_defs.0xFE06.signals.0xFD06]
+name = "Signal 0xFD06"
+bits = "0:1"
+byte_order = "le"
+value_type = "unsigned"
+scale = 1.0
+offset = 0.0
+
+[frame_defs.0xFE04]
+name = "Frame 0xFE04"
+interface_type = "can"
+
+[frame_defs.0xFE04.can]
+can_id = 0
+dlc = 8
+flags = []
+
+[frame_defs.0xFE04.signals]
+
+[frame_defs.0xFE04.signals.0xFD04]
+name = "Signal 0xFD04"
+bits = "0:1"
+byte_order = "le"
+value_type = "unsigned"
+scale = 1.0
+offset = 0.0
+
+[frame_defs.0xFE05]
+name = "Frame 0xFE05"
+interface_type = "can"
+
+[frame_defs.0xFE05.can]
+can_id = 0
+dlc = 8
+flags = []
+
+[frame_defs.0xFE05.signals]
+
+[frame_defs.0xFE05.signals.0xFD05]
+name = "Signal 0xFD05"
+bits = "0:1"
+byte_order = "le"
+value_type = "unsigned"
+scale = 1.0
+offset = 0.0
+
+# -----------------------------------------------------------------------
+# Palettes — colour gradients stored as user signals
+# -----------------------------------------------------------------------
+
+[palettes.0]
+name = "Temperature"
+description = "Blue (cold) to Red (hot)"
+signal_start = "0x0200"
+entries = [
+    "FF0000FF",
+    "FF00FFFF",
+    "FF00FF00",
+    "FFFFFF00",
+    "FFFF8000",
+    "FFFF0000",
+]
+
+[palettes.1]
+name = "Signal Strength"
+description = "Red (weak) to Green (strong)"
+signal_start = "0x0210"
+entries = [
+    "FFFF0000",
+    "FFFF8000",
+    "FFFFFF00",
+    "FF00FF00",
+]
+
+[palettes.2]
+name = "Current"
+description = "Green (low) through Yellow/Orange to Red (high)"
+signal_start = "0x0220"
+entries = [
+    "FF00FF00",
+    "FF40FF00",
+    "FF80FF00",
+    "FFBFFF00",
+    "FFFFFF00",
+    "FFFFC000",
+    "FFFF8000",
+    "FFFF4000",
+    "FFFF2000",
+    "FFFF0000",
+]
+
+# -----------------------------------------------------------------------
+# Functions — transformer function descriptions
+# -----------------------------------------------------------------------
+
+[functions.0x10]
+name = "Palette Lookup"
+description = "Normalise signal value and look up color from a palette"
+params = ["palette_signal_start:u16", "signal_max:u16"]
+
+[functions.0x11]
+name = "Clamp"
+description = "Clamp value to min/max range"
+params = ["min:u32", "max:u32"]
+
+[functions.0x12]
+name = "Threshold"
+description = "Output value_above if input >= threshold, else value_below"
+params = ["threshold:u32", "value_above:u32", "value_below:u32"]
+
+[functions.0x13]
+name = "Gate"
+description = "Conditionally pass or zero output based on a guard signal"
+params = ["guard_signal_id:u16", "compare_op:u8", "compare_value:u32", "fail_value:u32"]
+

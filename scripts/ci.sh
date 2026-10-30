@@ -163,8 +163,8 @@ if grep -qx wslib-framing <<<"$selected"; then
     || die "wslib-framing depends on more than thiserror"
 fi
 
-# The FrameLink wire crate is sans-io on every target.
-for crate in wslib-framelink-protocol; do
+# The FrameLink wire and board crates are sans-io on every target.
+for crate in wslib-framelink-protocol wslib-framelink-board; do
   if grep -qx $crate <<<"$selected"; then
     step "$crate has no serial port, tokio or btleplug"
     tree=$(normal_tree $crate --target all)

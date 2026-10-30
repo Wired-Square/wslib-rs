@@ -1,0 +1,128 @@
+# Board definition: Wired Square T2CAN — ESP32-S3
+# Copyright (c) 2026, Wired Square Pty Ltd
+# SPDX-License-Identifier: MIT
+
+[board]
+name = "wiredflexlink-t2can"
+revision = "esp32s3-v1.0"
+description = "Wired Square T2CAN — ESP32-S3 (2× CAN, fixed termination)"
+
+# -----------------------------------------------------------------------
+# Interface definitions — keyed by target_index from capabilities
+# -----------------------------------------------------------------------
+
+[interfaces.0]
+name = "CAN0"
+type = "can"
+
+[interfaces.1]
+name = "CAN1"
+type = "can"
+
+# -----------------------------------------------------------------------
+# Peripheral definitions — keyed by target_index from capabilities
+# -----------------------------------------------------------------------
+
+[peripherals.0]
+name = "SoC Temperature"
+kind = "sensor"
+
+# -----------------------------------------------------------------------
+# Signal definitions — keyed by the semantic tuple
+#   <target>.<index>.<role>.<quantity>[.<aspect>][.ch<N>]
+# (aspect omitted when default, channel omitted for target-level signals)
+# -----------------------------------------------------------------------
+
+# === CAN0 interface signals (target_index 0) ===
+
+[signals."interface.0.config.datarate"]
+name = "CAN0 Bitrate"
+group = "CAN0"
+unit = "bps"
+format = "number"
+
+[signals."interface.0.config.bool"]
+name = "CAN0 Enabled"
+group = "CAN0"
+format = "bool"
+
+[signals."interface.0.status.enum"]
+name = "CAN0 Direction"
+group = "CAN0"
+format = "enum"
+[signals."interface.0.status.enum".enum]
+1 = "RX"
+2 = "TX"
+3 = "Bidirectional"
+
+[signals."interface.0.status.bool"]
+name = "CAN0 Running"
+group = "CAN0"
+format = "bool"
+
+[signals."interface.0.diagnostic.count.client"]
+name = "CAN0 Client Drops"
+group = "CAN0"
+format = "number"
+
+[signals."interface.0.diagnostic.count.forward"]
+name = "CAN0 Bridge Drops"
+group = "CAN0"
+format = "number"
+
+[signals."interface.0.diagnostic.count.ingress"]
+name = "CAN0 RX Queue Drops"
+group = "CAN0"
+format = "number"
+
+# === CAN1 interface signals (target_index 1) ===
+
+[signals."interface.1.config.datarate"]
+name = "CAN1 Bitrate"
+group = "CAN1"
+unit = "bps"
+format = "number"
+
+[signals."interface.1.config.bool"]
+name = "CAN1 Enabled"
+group = "CAN1"
+format = "bool"
+
+[signals."interface.1.status.enum"]
+name = "CAN1 Direction"
+group = "CAN1"
+format = "enum"
+[signals."interface.1.status.enum".enum]
+1 = "RX"
+2 = "TX"
+3 = "Bidirectional"
+
+[signals."interface.1.status.bool"]
+name = "CAN1 Running"
+group = "CAN1"
+format = "bool"
+
+[signals."interface.1.diagnostic.count.client"]
+name = "CAN1 Client Drops"
+group = "CAN1"
+format = "number"
+
+[signals."interface.1.diagnostic.count.forward"]
+name = "CAN1 Bridge Drops"
+group = "CAN1"
+format = "number"
+
+[signals."interface.1.diagnostic.count.ingress"]
+name = "CAN1 RX Queue Drops"
+group = "CAN1"
+format = "number"
+
+# === SoC temperature — peripheral 0 ===
+
+[signals."peripheral.0.measurement.temperature"]
+name = "SoC Temperature"
+group = "Device"
+unit = "°C"
+format = "temperature_0.1"
+
+[frame_defs]

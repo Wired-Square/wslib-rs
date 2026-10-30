@@ -58,6 +58,7 @@ appliance chassis and every app beside it.
 | `wslib-wiretap-catalogue` | Device catalogues: parse, validate, decode, edit, frame, DBC |
 | `wslib-wiretap-gateway`  | A capture gateway's HTTP API, as serde types                  |
 | `wslib-framelink-protocol` | FrameLink's wire, sans-io: frames, messages, signal identity |
+| `wslib-framelink-board`  | FrameLink board TOML: parse, edit, scaffold, display names    |
 | `wslib-appliance-types`  | An appliance's wire contract, shared by daemon and browser    |
 | `wslib-appliance-config` | An appliance's bootstrap settings: flags, env and files       |
 | `wslib-appliance-store`  | An appliance's tables, in one SQLite file its product shares  |

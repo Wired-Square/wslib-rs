@@ -26,17 +26,35 @@ const DEFAULT_RECONNECT_TIMEOUT: Duration = Duration::from_secs(60);
 
 const UDP_RECONNECT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
-#[derive(Clone, Debug)]
+/// How a firmware update runs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct OtaOptions {
     /// How long the device may take to come back after its reset.
     pub reconnect_timeout: Duration,
+    /// How the image is uploaded: its image number and chunk timeouts.
+    pub upload: UploadOptions,
 }
 
 impl Default for OtaOptions {
     fn default() -> Self {
         Self {
             reconnect_timeout: DEFAULT_RECONNECT_TIMEOUT,
+            upload: UploadOptions::default(),
         }
+    }
+}
+
+impl OtaOptions {
+    pub fn with_reconnect_timeout(self, reconnect_timeout: Duration) -> Self {
+        Self {
+            reconnect_timeout,
+            ..self
+        }
+    }
+
+    pub fn with_upload(self, upload: UploadOptions) -> Self {
+        Self { upload, ..self }
     }
 }
 
@@ -503,7 +521,7 @@ async fn ota(
     emit!(OtaEvent::SessionOpened);
 
     let mut staged_hash = None;
-    let mut upload = session.upload(image, UploadOptions::default());
+    let mut upload = session.upload(image, options.upload);
     while let Some(progress) = upload.next().await {
         let progress = progress?;
         staged_hash = progress.image_hash.clone().or(staged_hash);
@@ -576,6 +594,33 @@ mod tests {
         assert_eq!(
             OtaOptions::default().reconnect_timeout,
             Duration::from_secs(60)
+        );
+    }
+
+    #[tokio::test]
+    async fn the_image_number_in_the_options_reaches_the_device() {
+        let device = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let options = OtaOptions::default().with_upload(UploadOptions::default().with_image(2));
+        let image = mcuboot_image([0xAB; 32], &IMAGE_BODY);
+        let _update = ota_udp_addr(
+            device.local_addr().unwrap(),
+            "test-device".into(),
+            image,
+            options,
+        );
+
+        let mut first_chunk = [0u8; 2048];
+        let (len, _) =
+            tokio::time::timeout(Duration::from_secs(5), device.recv_from(&mut first_chunk))
+                .await
+                .expect("the first chunk")
+                .unwrap();
+
+        let image_2 = [&[0x65][..], b"image", &[0x02]].concat();
+        assert!(
+            first_chunk[..len]
+                .windows(image_2.len())
+                .any(|w| w == image_2)
         );
     }
 

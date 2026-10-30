@@ -15,6 +15,10 @@
 - `ota_ble` and `ota_udp` return `OtaStream`, as `ota` does, and
   `Discovery::open_smp_on` opens a seen device's session over a transport
   chosen at run time. `Discovery::ota_on` updates one the same way.
+- `OtaOptions` is `#[non_exhaustive]`, built from `default()` with
+  `with_reconnect_timeout` and `with_upload`; its `upload` field takes the
+  update's `UploadOptions`, now re-exported, for the image number and the
+  chunk timeouts.
 - Dropping an OTA stream stops its update at the next wait (the upload,
   a reply, the wait for the reset device) rather than at its next event,
   and never mid-frame. It cancels the update only before `Activating`;

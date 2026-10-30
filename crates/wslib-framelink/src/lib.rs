@@ -36,4 +36,4 @@ pub use discovery::{Discovery, DiscoveryEvent, ErrorSource};
 #[cfg(feature = "smp")]
 pub use discovery::{OtaEvent, OtaOptions, OtaStream, ota_udp_addr};
 #[cfg(feature = "smp")]
-pub use wslib_mcumgr::{self as mcumgr, ImageSlot, UploadProgress};
+pub use wslib_mcumgr::{self as mcumgr, ImageSlot, UploadOptions, UploadProgress};

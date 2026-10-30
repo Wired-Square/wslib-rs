@@ -22,7 +22,8 @@ for sample in probe.next(Instant::now() + Duration::from_secs(2))? {
   probe's name: the selection is not part of its identity.
 - `Probe::next` blocks until a reading or the deadline. A probe runs its own
   runtime on its own thread, so it may be opened, read and dropped inside a
-  tokio runtime, a current-thread one included.
+  tokio runtime, a current-thread one included. Dropping it waits for that
+  thread, so its adapter is free to reopen once the drop returns.
 - `Cluster` polls several probes, each on its own thread, and holds each
   signal's latest sample, stale once older than the probe's maximum interval.
 - `uri::narrowed` and the `/<signal>` selectors keep only the signals asked for.

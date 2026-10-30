@@ -5,7 +5,6 @@ use std::{
         Arc, Mutex, PoisonError,
         atomic::{AtomicBool, Ordering},
     },
-    thread,
     time::{Duration, Instant},
 };
 
@@ -13,6 +12,7 @@ use crate::{
     probe::{Probe, ProbeError},
     sample::Sample,
     signal::SignalKey,
+    worker::Worker,
 };
 
 const POLL_DEADLINE: Duration = Duration::from_secs(1);
@@ -55,6 +55,7 @@ struct Watched {
     name: String,
     max_interval: Duration,
     slot: Arc<Mutex<Slot>>,
+    _worker: Worker,
 }
 
 pub struct Cluster {
@@ -64,13 +65,15 @@ pub struct Cluster {
 
 impl Cluster {
     pub fn start(probes: Vec<Box<dyn Probe>>) -> io::Result<Self> {
-        let stop = Arc::new(AtomicBool::new(false));
-        let mut watched = Vec::with_capacity(probes.len());
+        let mut cluster = Self {
+            probes: Vec::with_capacity(probes.len()),
+            stop: Arc::new(AtomicBool::new(false)),
+        };
         for mut probe in probes {
             let (name, max_interval) = (probe.name(), probe.max_interval());
             let slot = Arc::new(Mutex::new(Slot::default()));
-            let (mine, stopping) = (Arc::clone(&slot), Arc::clone(&stop));
-            let spawned = thread::Builder::new().name("probe".into()).spawn(move || {
+            let (mine, stopping) = (Arc::clone(&slot), Arc::clone(&cluster.stop));
+            let worker = Worker::spawn("probe", move || {
                 while !stopping.load(Ordering::Relaxed) {
                     let polled = Instant::now();
                     let result = probe.next(polled.checked_add(POLL_DEADLINE).unwrap_or(polled));
@@ -85,21 +88,15 @@ impl Cluster {
                         Err(error) => slot.error = Some(error),
                     }
                 }
-            });
-            if let Err(e) = spawned {
-                stop.store(true, Ordering::Relaxed);
-                return Err(e);
-            }
-            watched.push(Watched {
+            })?;
+            cluster.probes.push(Watched {
                 name,
                 max_interval,
                 slot,
+                _worker: worker,
             });
         }
-        Ok(Self {
-            probes: watched,
-            stop,
-        })
+        Ok(cluster)
     }
 
     pub fn names(&self) -> Vec<String> {

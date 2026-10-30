@@ -33,8 +33,6 @@ const WINDOW: Duration = Duration::from_millis(100);
 const SETTLE: Duration = Duration::from_millis(100);
 const DEADLINE: Duration = Duration::from_secs(1);
 const WITHIN_SILENCE: Duration = Duration::from_millis(100);
-const STOP_WITHIN_POLLS: u32 = 5;
-const STOP_CHECK: Duration = Duration::from_millis(1);
 
 type Step = Result<Option<RawFrame>, BusError>;
 type Script = Arc<Mutex<VecDeque<Step>>>;
@@ -285,7 +283,7 @@ fn frames_from_another_board_never_reach_a_bound_probe() {
 }
 
 #[test]
-fn dropping_the_probe_stops_its_link_and_releases_the_bus_within_a_few_polls() {
+fn dropping_the_probe_releases_the_bus_before_it_returns() {
     let released = Arc::new(AtomicBool::new(false));
     let probe = WiredReflowProbe::with_bus(
         &can0(),
@@ -295,15 +293,7 @@ fn dropping_the_probe_stops_its_link_and_releases_the_bus_within_a_few_polls() {
     )
     .unwrap();
     drop(probe);
-    let dropped = Instant::now();
-    let within = FAST.poll * STOP_WITHIN_POLLS;
-    while !released.load(Ordering::Relaxed) && dropped.elapsed() < within {
-        thread::sleep(STOP_CHECK);
-    }
-    assert!(
-        released.load(Ordering::Relaxed),
-        "the bus is still held {within:?} after the probe was dropped"
-    );
+    assert!(released.load(Ordering::Relaxed));
 }
 
 fn started(steps: Vec<Step>, device: Option<u32>) -> (io::Result<WiredReflowProbe>, Script) {

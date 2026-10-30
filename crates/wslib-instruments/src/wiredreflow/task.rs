@@ -2,7 +2,6 @@ use std::{
     collections::VecDeque,
     io,
     sync::mpsc::{self, Receiver, RecvTimeoutError, Sender},
-    thread,
     time::Duration,
 };
 
@@ -13,6 +12,7 @@ use super::{
     bus::{Bus, BusError, CanBus, refusal},
     frame::RawFrame,
 };
+use crate::worker::Worker;
 
 #[cfg(any(feature = "can-slcan", feature = "can-gsusb", feature = "can-pcan"))]
 const BITRATE: u32 = 500_000;
@@ -22,7 +22,9 @@ type Read = Result<Vec<RawFrame>, BusError>;
 struct TaskBus {
     reads: Receiver<Read>,
     pending: VecDeque<RawFrame>,
+    // Declared before `_task`, so the task is told to end before it is waited for.
     _stop: oneshot::Sender<()>,
+    _task: Worker,
 }
 
 impl Bus for TaskBus {
@@ -178,7 +180,7 @@ pub(crate) fn open_bus(bus: &CanBus) -> io::Result<Box<dyn Bus>> {
     let (reads_tx, reads) = mpsc::channel();
     let (stop, stopping) = oneshot::channel();
     let on = bus.clone();
-    thread::Builder::new().name("can".into()).spawn(move || {
+    let task = Worker::spawn("can", move || {
         let runtime = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -211,6 +213,7 @@ pub(crate) fn open_bus(bus: &CanBus) -> io::Result<Box<dyn Bus>> {
         reads,
         pending: VecDeque::new(),
         _stop: stop,
+        _task: task,
     }))
 }
 
@@ -266,7 +269,37 @@ mod usb {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        thread,
+    };
+
     use super::*;
+
+    const CLOSING: Duration = Duration::from_millis(50);
+
+    #[test]
+    fn dropping_the_bus_waits_for_its_task_to_close_the_adapter() {
+        let (stop, stopping) = oneshot::channel::<()>();
+        let closed = Arc::new(AtomicBool::new(false));
+        let closing = Arc::clone(&closed);
+        let task = Worker::spawn("can", move || {
+            let _ = stopping.blocking_recv();
+            thread::sleep(CLOSING);
+            closing.store(true, Ordering::Relaxed);
+        })
+        .unwrap();
+        drop(TaskBus {
+            reads: mpsc::channel().1,
+            pending: VecDeque::new(),
+            _stop: stop,
+            _task: task,
+        });
+        assert!(closed.load(Ordering::Relaxed));
+    }
 
     fn adapter(
         wanted: Option<&str>,

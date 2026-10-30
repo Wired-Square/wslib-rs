@@ -114,7 +114,7 @@ fn protocol_goldens() -> Vec<(&'static str, String)> {
         header: frame_def::FrameHeader::Can {
             can_id: 0x18FF_0001,
             dlc: 15,
-            flags: 0x81,
+            flags: frame_def::CAN_FLAG_MATCH_ANY | frame_def::CAN_FLAG_EXTENDED,
         },
         signals: vec![frame_def::FrameSignalDef {
             signal_id: 0x0010,

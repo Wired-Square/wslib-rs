@@ -282,6 +282,7 @@ fn parse_metadata(meta_len: usize, meta: &[u8]) -> Result<FrameMetadata, Error> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frame_def::CAN_FLAG_EXTENDED;
 
     // -- build_stream_start tests --
 
@@ -437,7 +438,7 @@ mod tests {
     #[test]
     fn parse_can_entry_extended_id() {
         let data = [0xAA, 0xBB];
-        let payload = build_can_entry(500, 1, 0x18FF00FE, 2, 0x01, &data);
+        let payload = build_can_entry(500, 1, 0x18FF00FE, 2, CAN_FLAG_EXTENDED, &data);
 
         let (frame, _) = parse_frame_rx_entry(&payload, 0).unwrap();
         assert_eq!(frame.iface_index, 1);
@@ -446,7 +447,7 @@ mod tests {
             FrameMetadata::Can {
                 can_id: 0x18FF00FE,
                 dlc: 2,
-                flags: 0x01
+                flags: CAN_FLAG_EXTENDED
             }
         );
         assert_eq!(frame.data, data);
@@ -620,7 +621,7 @@ mod tests {
                 metadata: FrameMetadata::Can {
                     can_id: 0x18FF00FE,
                     dlc: 0,
-                    flags: 0x01,
+                    flags: CAN_FLAG_EXTENDED,
                 },
                 data: vec![],
             },
@@ -664,7 +665,7 @@ mod tests {
         let meta = FrameMetadata::Can {
             can_id: 0x7FF,
             dlc: 3,
-            flags: 0x01,
+            flags: CAN_FLAG_EXTENDED,
         };
         let data = [0xAA, 0xBB, 0xCC];
         let payload = build_frame_tx(1, &meta, &data);
@@ -717,7 +718,7 @@ mod tests {
         let meta = FrameMetadata::Can {
             can_id: 0x7FF,
             dlc: 3,
-            flags: 0x01,
+            flags: CAN_FLAG_EXTENDED,
         };
         let data = [0xAA, 0xBB, 0xCC];
         let payload = build_frame_tx(1, &meta, &data);

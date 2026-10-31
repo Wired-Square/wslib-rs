@@ -15,7 +15,8 @@
   `lines`, `duration_ms` or `timeout_ms` ends it, or a replay without
   `follow` does. A lost line is reopened after a wait doubling from
   `reopen` to `reopen_max`, keeping the ring and every subscriber.
-  `join` puts a subscriber in the shared session: each echo is attributed
+  `join` puts a subscriber in the shared session, as does its `Seat` from
+  any task, and either changes its names later: each echo is attributed
   to its writer in a colour of their own, input with no echo within 300 ms
   is a count and its control keys, never the bytes, and the roster reaches
   everyone. `pause` and `resume` let go of the port for a flash, refusing

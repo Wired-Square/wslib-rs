@@ -24,7 +24,7 @@ use wslib_backoff::Backoff;
 pub use bounds::Bounds;
 pub(crate) use link::Opener;
 use port::{Command, Port};
-pub use subscription::Subscription;
+pub use subscription::{Seat, Subscription};
 
 use crate::{EndReason, MonitorState, Participant, RefusalReason, Span};
 
@@ -289,6 +289,9 @@ pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 #[allow(dead_code)]
 fn futures_are_send(monitors: Monitors, mut subscription: Subscription, key: PortKey) {
     fn is_send<T: Send>(_: &T) {}
+    fn is_sync<T: Sync>(_: &T) {}
+    is_send(&subscription.seat());
+    is_sync(&subscription.seat());
     is_send(&monitors.pause(&key));
     is_send(&monitors.release(&key));
     is_send(&subscription.next());

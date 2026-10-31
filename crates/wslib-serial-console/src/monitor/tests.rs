@@ -257,6 +257,41 @@ async fn a_join_that_changes_nobody_still_tells_the_joiner_who_is_there() {
 }
 
 #[tokio::test]
+async fn a_seat_joins_from_another_task_and_does_nothing_once_its_subscription_is_gone() {
+    let bench = Bench::new();
+    let _device = bench.plug();
+    let mut olive = bench.console("olive").await;
+    let roster = |n: usize| move |u: &Update| matches!(u, Update::Participants(p) if p.len() == n);
+
+    let mut relayed = bench.monitors.subscribe(path(), None, Bounds::default());
+    let seat = relayed.seat();
+    let relay = tokio::spawn(async move { seat.join("relay", vec!["alex".into(), "kim".into()]) });
+    within(relay).await.unwrap();
+    until(&mut olive, roster(3)).await;
+    until(&mut relayed, roster(3)).await;
+    relayed.seat().join("relay", vec!["alex".into()]);
+    until(&mut olive, roster(2)).await;
+
+    let seat = relayed.seat();
+    drop(relayed);
+    until(&mut olive, roster(1)).await;
+    seat.join("relay", vec!["alex".into()]);
+    assert!(quiet(&mut olive, |u| matches!(u, Update::Participants(_))).await);
+}
+
+#[tokio::test]
+async fn a_seat_whose_join_changes_nobody_still_tells_its_subscriber_who_is_there() {
+    let bench = Bench::new();
+    let _device = bench.plug();
+    let _olive = bench.console("olive").await;
+
+    let mut again = bench.monitors.subscribe(path(), None, Bounds::default());
+    again.seat().join("local", vec!["olive".into()]);
+    let roster = until(&mut again, |u| matches!(u, Update::Participants(_))).await;
+    assert!(matches!(roster, Update::Participants(p) if p.len() == 1));
+}
+
+#[tokio::test]
 async fn a_flash_pauses_every_console_refuses_input_and_resumes_them_on_the_ports_new_path() {
     let ports = FakePorts::default();
     let monitors = ports.monitors(quick());

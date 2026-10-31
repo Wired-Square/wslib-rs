@@ -1,6 +1,6 @@
 use std::{
     collections::VecDeque,
-    sync::{Arc, Weak},
+    sync::{Arc, Mutex, Weak},
 };
 
 use tokio::{
@@ -15,17 +15,33 @@ use crate::EndReason;
 /// the replay its bounds ask for, then live updates until a bound ends it.
 /// Dropping it takes it out of the roster.
 pub struct Subscription {
-    id: u64,
     baud: u32,
-    /// Weak, so a released port's last strong reference goes and its
-    /// subscribers read the end.
-    port: Weak<Port>,
+    seat: Seat,
     events: broadcast::Receiver<Update>,
     queued: VecDeque<Update>,
-    session: bool,
     checker: BoundChecker,
     deadline: Option<(Instant, EndReason)>,
     ended: bool,
+}
+
+/// A subscription's place in the session, which any task can join or change.
+#[derive(Clone)]
+pub struct Seat(Arc<Place>);
+
+struct Place {
+    id: u64,
+    /// Weak, so a released port's last strong reference goes and its
+    /// subscribers read the end.
+    port: Weak<Port>,
+    /// Held across each roster change, so a join can't land after the leave.
+    state: Mutex<Joined>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Joined {
+    No,
+    Yes,
+    Left,
 }
 
 impl Port {
@@ -56,12 +72,14 @@ impl Port {
             queued.push_back(Update::End(reason));
         }
         Subscription {
-            id,
             baud: self.baud,
-            port: Arc::downgrade(self),
+            seat: Seat(Arc::new(Place {
+                id,
+                port: Arc::downgrade(self),
+                state: Mutex::new(Joined::No),
+            })),
             events,
             queued,
-            session: false,
             checker,
             deadline: bounds.deadline(now),
             ended: false,
@@ -92,14 +110,16 @@ impl Subscription {
     /// replacing any it had, and from now on tells it what only the session
     /// is told: whose echo is whose, unechoed input and the roster.
     pub fn join(&mut self, via: &str, names: Vec<String>) {
-        self.session = true;
-        let Some(port) = self.port.upgrade() else {
-            return;
-        };
-        if !port.set_participants(self.id, via, names) {
+        if let Some(port) = self.seat.take(via, names) {
             self.queued
                 .push_back(Update::Participants(port.participants()));
         }
+    }
+
+    /// This subscription's place in the session, for a task that doesn't
+    /// hold it.
+    pub fn seat(&self) -> Seat {
+        self.seat.clone()
     }
 
     async fn receive(&mut self) -> Update {
@@ -117,10 +137,14 @@ impl Subscription {
                     if let Some(reason) = self.checker.check(&bytes) {
                         self.queued.push_back(Update::End(reason));
                     }
-                    let spans = if self.session { spans } else { Vec::new() };
+                    let spans = if self.seat.joined() {
+                        spans
+                    } else {
+                        Vec::new()
+                    };
                     return Update::Output { bytes, spans };
                 }
-                Ok(Update::Unechoed { .. } | Update::Participants(_)) if !self.session => {}
+                Ok(Update::Unechoed { .. } | Update::Participants(_)) if !self.seat.joined() => {}
                 Ok(update) => return update,
                 Err(RecvError::Lagged(_)) => {}
                 Err(RecvError::Closed) => return Update::End(EndReason::Released),
@@ -129,10 +153,45 @@ impl Subscription {
     }
 }
 
+impl Seat {
+    /// As [`Subscription::join`], from any task; once the subscription is
+    /// dropped it does nothing.
+    pub fn join(&self, via: &str, names: Vec<String>) {
+        if let Some(port) = self.take(via, names) {
+            let _ = port.events.send(Update::Participants(port.participants()));
+        }
+    }
+
+    /// The port when this first join left the roster as it was, so the joiner
+    /// has yet to be told it.
+    fn take(&self, via: &str, names: Vec<String>) -> Option<Arc<Port>> {
+        let mut state = lock(&self.0.state);
+        let first = match *state {
+            Joined::Left => return None,
+            Joined::No => true,
+            Joined::Yes => false,
+        };
+        *state = Joined::Yes;
+        let port = self.0.port.upgrade()?;
+        let changed = port.set_participants(self.0.id, via, names);
+        (first && !changed).then_some(port)
+    }
+
+    fn joined(&self) -> bool {
+        *lock(&self.0.state) == Joined::Yes
+    }
+
+    fn leave(&self) {
+        let mut state = lock(&self.0.state);
+        *state = Joined::Left;
+        if let Some(port) = self.0.port.upgrade() {
+            port.set_participants(self.0.id, "", Vec::new());
+        }
+    }
+}
+
 impl Drop for Subscription {
     fn drop(&mut self) {
-        if let Some(port) = self.port.upgrade() {
-            port.set_participants(self.id, "", Vec::new());
-        }
+        self.seat.leave();
     }
 }

@@ -22,7 +22,8 @@
   is a count and its control keys, never the bytes, and the roster reaches
   everyone. `pause` and `resume` let go of the port for a flash, refusing
   input rather than queuing it; `progress` shows the flash's progress;
-  `release` closes the port for another program. `write` and `reset`
+  `release` closes the port for another program, and `is_monitored` says
+  whether a monitor holds it. `write` and `reset`
   attribute and pulse DTR. `test-support`: `FakePorts` and `StopReaders`.
 
 - `ws`: `console`, the axum `GET` for `/ws/serial`: device bytes in binary

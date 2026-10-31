@@ -562,6 +562,20 @@ async fn release_is_refused_while_a_flash_has_the_port() {
     );
 }
 
+#[tokio::test]
+async fn a_port_is_monitored_from_its_first_subscribe_until_released() {
+    let bench = Bench::new();
+    let _device = bench.plug();
+    assert!(!bench.monitors.is_monitored(&path()));
+    drop(bench.console("alex").await);
+    assert!(bench.monitors.is_monitored(&path()));
+    within(bench.monitors.pause(&path())).await;
+    assert!(bench.monitors.is_monitored(&path()));
+    bench.monitors.resume(&path());
+    within(bench.monitors.release(&path())).await.unwrap();
+    assert!(!bench.monitors.is_monitored(&path()));
+}
+
 mod bounds {
     use super::*;
 

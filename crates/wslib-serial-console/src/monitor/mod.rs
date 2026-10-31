@@ -273,6 +273,12 @@ impl Monitors {
         Ok(true)
     }
 
+    /// True from the first subscribe to `key` until it is released, paused or
+    /// not.
+    pub fn is_monitored(&self, key: &PortKey) -> bool {
+        lock(&self.0.registry).ports.contains_key(key)
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn stop_all(&self) {
         for port in lock(&self.0.registry).ports.values() {

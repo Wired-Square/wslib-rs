@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use tokio::{
@@ -40,6 +40,19 @@ pub(super) struct Port {
     commands: Mutex<Option<mpsc::UnboundedSender<Command>>>,
     paused: watch::Sender<bool>,
     task: Mutex<Option<JoinHandle<()>>>,
+    subscribers: watch::Sender<usize>,
+    close_when_idle: bool,
+    /// The path of the line while it is open.
+    pub(super) open: Mutex<Option<String>>,
+    /// A path already resolved for the next open.
+    pub(super) next_path: Mutex<Option<String>>,
+    pub(super) revoked: Arc<OnceLock<String>>,
+}
+
+enum Ended {
+    Paused,
+    Idle,
+    Lost(String),
 }
 
 /// Who is attached through each subscription, and the colour each name was
@@ -75,7 +88,13 @@ impl Roster {
 }
 
 impl Port {
-    pub(super) fn new(key: PortKey, baud: u32, options: &MonitorOptions, paused: bool) -> Self {
+    pub(super) fn new(
+        key: PortKey,
+        baud: u32,
+        options: &MonitorOptions,
+        paused: bool,
+        close_when_idle: bool,
+    ) -> Self {
         let state = match paused {
             true => MonitorState::Paused,
             false => MonitorState::Resolving,
@@ -90,6 +109,11 @@ impl Port {
             commands: Mutex::default(),
             paused: watch::Sender::new(paused),
             task: Mutex::default(),
+            subscribers: watch::Sender::new(0),
+            close_when_idle,
+            open: Mutex::default(),
+            next_path: Mutex::default(),
+            revoked: Arc::default(),
         }
     }
 
@@ -131,6 +155,13 @@ impl Port {
         let _ = self.events.send(Update::State { state, message });
     }
 
+    pub(super) fn attend(&self, joining: bool) {
+        self.subscribers.send_modify(|count| match joining {
+            true => *count += 1,
+            false => *count -= 1,
+        });
+    }
+
     pub(super) fn participants(&self) -> Vec<Participant> {
         lock(&self.roster).everyone()
     }
@@ -161,10 +192,19 @@ impl Port {
 
     async fn run(self: Arc<Self>, opener: Opener, mut backoff: Backoff) {
         let mut paused = self.paused.subscribe();
+        let mut subscribers = self.subscribers.subscribe();
         let mut echoes = EchoMatcher::default();
         while !*paused.borrow_and_update() {
+            if self.close_when_idle {
+                tokio::select! {
+                    biased;
+                    () = until_paused(&mut paused) => break,
+                    () = until(&mut subscribers, |count| *count > 0) => {}
+                }
+            }
             self.set_status(MonitorState::Resolving, None);
-            let (state, why) = match opener.resolve(&self.key) {
+            let resolved = lock(&self.next_path).take();
+            let (state, why) = match resolved.map_or_else(|| opener.resolve(&self.key), Ok) {
                 Err(Unresolved::Missing(why)) => (MonitorState::TtyMissing, why),
                 Err(Unresolved::Failed(why)) => (MonitorState::Backoff, why),
                 Ok(path) => {
@@ -173,13 +213,23 @@ impl Port {
                         Err(e) => (MonitorState::Backoff, format!("open {path}: {e}")),
                         Ok(link) => {
                             backoff.reset();
-                            let Some(lost) =
-                                self.serve(link, &path, &mut echoes, &mut paused).await
-                            else {
-                                break;
-                            };
-                            tracing::warn!(port = %self.key, error = %lost, "serial port lost");
-                            (MonitorState::Backoff, lost)
+                            *lock(&self.open) = Some(path.clone());
+                            let ended = self
+                                .serve(link, &path, &mut echoes, &mut paused, &mut subscribers)
+                                .await;
+                            *lock(&self.open) = None;
+                            match ended {
+                                Ended::Paused => break,
+                                Ended::Idle => {
+                                    tracing::info!(port = %self.key, "serial port closed while idle");
+                                    self.set_status(MonitorState::Resolving, None);
+                                    continue;
+                                }
+                                Ended::Lost(lost) => {
+                                    tracing::warn!(port = %self.key, error = %lost, "serial port lost");
+                                    (MonitorState::Backoff, lost)
+                                }
+                            }
                         }
                     }
                 }
@@ -198,21 +248,22 @@ impl Port {
         }
     }
 
-    /// Reads and writes the line until it is lost, returning why, or until
-    /// paused, returning `None`.
+    /// Reads and writes the line until it is lost, paused, or left idle.
     async fn serve(
         &self,
         mut link: Link,
         path: &str,
         echoes: &mut EchoMatcher,
         paused: &mut watch::Receiver<bool>,
-    ) -> Option<String> {
+        subscribers: &mut watch::Receiver<usize>,
+    ) -> Ended {
         let (commands, mut queued) = mpsc::unbounded_channel();
-        let lost = loop {
+        let ended = loop {
             let expiry = echoes.next_expiry();
             tokio::select! {
                 biased;
-                () = until_paused(paused) => break None,
+                () = until_paused(paused) => break Ended::Paused,
+                () = until(subscribers, |count| *count == 0), if self.close_when_idle => break Ended::Idle,
                 () = sleep_until(expiry.unwrap_or_else(Instant::now)), if expiry.is_some() => {
                     for unechoed in echoes.expire(Instant::now()) {
                         let _ = self.events.send(unechoed);
@@ -220,7 +271,7 @@ impl Port {
                 }
                 Some(command) = queued.recv() => {
                     if let Err(failed) = self.run_command(command, &link, path, echoes).await {
-                        break Some(failed);
+                        break Ended::Lost(failed);
                     }
                 }
                 event = link.next_event() => match event {
@@ -236,14 +287,14 @@ impl Port {
                         let spans = echoes.echoed(&bytes);
                         self.output(bytes, spans);
                     }
-                    Some(SerialEvent::Disconnected { error, .. }) => break Some(format!("read {path}: {error}")),
-                    None => break Some(format!("read {path}: the line closed")),
+                    Some(SerialEvent::Disconnected { error, .. }) => break Ended::Lost(format!("read {path}: {error}")),
+                    None => break Ended::Lost(format!("read {path}: the line closed")),
                 },
             }
         };
         *lock(&self.commands) = None;
         link.stop().await;
-        lost
+        ended
     }
 
     /// Why the line is lost, if the command failed.
@@ -284,5 +335,9 @@ impl Port {
 }
 
 async fn until_paused(paused: &mut watch::Receiver<bool>) {
-    let _ = paused.wait_for(|paused| *paused).await;
+    until(paused, |paused| *paused).await;
+}
+
+async fn until<T>(watched: &mut watch::Receiver<T>, wanted: impl FnMut(&T) -> bool) {
+    let _ = watched.wait_for(wanted).await;
 }

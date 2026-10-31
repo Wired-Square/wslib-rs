@@ -8605,10 +8605,12 @@ dependencies = [
 
 [[package]]
 name = "wslib-serial-console"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "futures-util",
+ "hyper",
+ "hyper-util",
  "libc",
  "serde",
  "serde_json",

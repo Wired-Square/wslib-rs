@@ -604,6 +604,139 @@ async fn a_port_is_monitored_from_its_first_subscribe_until_released() {
     assert!(!bench.monitors.is_monitored(&path()));
 }
 
+#[tokio::test]
+async fn revoke_ends_every_subscription_with_its_reason_and_closes_the_port_even_paused() {
+    let bench = Bench::new();
+    let device = bench.plug();
+    let mut console = bench.console("alex").await;
+    within(bench.monitors.pause(&path())).await;
+
+    assert!(within(bench.monitors.revoke(&path(), "handed to an app")).await);
+    until(&mut console, |u| *u == Update::End(EndReason::Released)).await;
+    assert_eq!(console.revoked(), Some("handed to an app"));
+    assert!(device.is_closed());
+    assert!(!bench.monitors.is_monitored(&path()));
+    assert!(!within(bench.monitors.revoke(&path(), "again")).await);
+}
+
+#[tokio::test]
+async fn a_released_subscription_was_not_revoked() {
+    let bench = Bench::new();
+    let _device = bench.plug();
+    let mut console = bench.console("alex").await;
+    within(bench.monitors.release(&path())).await.unwrap();
+    until(&mut console, |u| *u == Update::End(EndReason::Released)).await;
+    assert_eq!(console.revoked(), None);
+}
+
+#[tokio::test]
+async fn closing_when_idle_lets_go_of_the_line_keeps_the_ring_and_reopens_for_the_next() {
+    let ports = FakePorts::default();
+    let monitors = ports.monitors(quick()).closing_when_idle();
+    let _stop = StopReaders(monitors.clone());
+    let device = ports.plug(PATH);
+    let mut console = monitors.subscribe(path(), None, Bounds::default());
+    reaches(&mut console, MonitorState::Reading).await;
+    device.send(b"boot\n");
+    until(&mut console, |u| matches!(u, Update::Output { .. })).await;
+
+    drop(console);
+    within(async {
+        while !device.is_closed() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert_eq!(monitors.monitored()[0].open, None);
+
+    let device = ports.plug(PATH);
+    let tail = Bounds {
+        tail: Some(64),
+        ..Bounds::default()
+    };
+    let mut console = monitors.subscribe(path(), None, tail);
+    assert_eq!(
+        bytes(until(&mut console, |u| matches!(u, Update::Output { .. })).await),
+        b"boot\n"
+    );
+    reaches(&mut console, MonitorState::Reading).await;
+    device.send(b"again");
+    assert_eq!(
+        bytes(until(&mut console, |u| matches!(u, Update::Output { .. })).await),
+        b"again"
+    );
+}
+
+#[tokio::test]
+async fn a_port_stays_open_with_nobody_watching_unless_closing_when_idle() {
+    let bench = Bench::new();
+    let device = bench.plug();
+    drop(bench.console("alex").await);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!device.is_closed());
+}
+
+#[tokio::test]
+async fn monitored_lists_each_port_and_the_path_it_holds_open() {
+    let bench = Bench::new();
+    let _device = bench.ports.plug_usb("/dev/ttyUSB1", "0042");
+    let usb = PortKey::UsbSerial("0042".into());
+    let mut console = bench
+        .monitors
+        .subscribe(usb.clone(), None, Bounds::default());
+    reaches(&mut console, MonitorState::Reading).await;
+    let _missing = bench.monitors.subscribe(path(), None, Bounds::default());
+
+    let open = |key: &PortKey, open: Option<&str>| Monitored {
+        key: key.clone(),
+        open: open.map(Into::into),
+    };
+    assert_eq!(
+        bench.monitors.monitored(),
+        [open(&path(), None), open(&usb, Some("/dev/ttyUSB1"))]
+    );
+}
+
+#[tokio::test]
+async fn a_subscription_given_a_resolved_path_opens_it_without_resolving_again() {
+    let bench = Bench::new();
+    let usb = PortKey::UsbSerial("0042".into());
+    let _device = bench.ports.plug_usb("/dev/ttyUSB1", "0042");
+    let checked = bench.monitors.resolve(&usb);
+    assert_eq!(checked.as_deref(), Some("/dev/ttyUSB1"));
+
+    let _moved = bench.ports.plug_usb("/dev/ttyUSB2", "0042");
+    assert_eq!(
+        bench.monitors.resolve(&usb).as_deref(),
+        Some("/dev/ttyUSB2")
+    );
+    let mut console =
+        bench
+            .monitors
+            .subscribe_resolved(usb.clone(), checked, None, Bounds::default());
+    let opened = until(&mut console, |u| {
+        matches!(
+            u,
+            Update::State {
+                state: MonitorState::Reading,
+                ..
+            }
+        )
+    })
+    .await;
+    assert_eq!(
+        opened,
+        Update::State {
+            state: MonitorState::Reading,
+            message: Some("/dev/ttyUSB1".into())
+        }
+    );
+    assert_eq!(
+        bench.monitors.resolve(&usb).as_deref(),
+        Some("/dev/ttyUSB1")
+    );
+}
+
 mod bounds {
     use super::*;
 

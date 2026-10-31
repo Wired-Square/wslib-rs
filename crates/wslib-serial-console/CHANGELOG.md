@@ -16,6 +16,7 @@
   `lines`, `duration_ms` or `timeout_ms` ends it, or a replay without
   `follow` does. A lost line is reopened after a wait doubling from
   `reopen` to `reopen_max`, keeping the ring and every subscriber.
+  A subscriber more than `broadcast` reads behind misses those reads.
   `join` puts a subscriber in the shared session, as does its `Seat` from
   any task, and either changes its names later: each echo is attributed
   to its writer in a colour of their own, input with no echo within 300 ms

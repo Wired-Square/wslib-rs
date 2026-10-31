@@ -40,6 +40,9 @@ pub struct MonitorOptions {
     /// doubling with each failure up to `reopen_max`.
     pub reopen: Duration,
     pub reopen_max: Duration,
+    /// The reads a subscriber can fall behind by; one further behind misses
+    /// the reads it lagged over.
+    pub broadcast: usize,
 }
 
 impl Default for MonitorOptions {
@@ -49,6 +52,7 @@ impl Default for MonitorOptions {
             ring_bytes: 64 * 1024,
             reopen: Duration::from_secs(1),
             reopen_max: Duration::from_secs(30),
+            broadcast: 256,
         }
     }
 }
@@ -180,12 +184,7 @@ impl Monitors {
                 Some(port) => (port.clone(), false),
                 None => {
                     let baud = baud.unwrap_or(self.0.options.default_baud);
-                    let port = Arc::new(Port::new(
-                        key.clone(),
-                        baud,
-                        self.0.options.ring_bytes,
-                        paused,
-                    ));
+                    let port = Arc::new(Port::new(key.clone(), baud, &self.0.options, paused));
                     registry.ports.insert(key, port.clone());
                     (port, !paused)
                 }

@@ -12,7 +12,7 @@ use wslib_backoff::Backoff;
 use wslib_serial::SerialEvent;
 
 use super::{
-    Opener, PortKey, Refusal, Update,
+    MonitorOptions, Opener, PortKey, Refusal, Update,
     bounds::Ring,
     echo::EchoMatcher,
     link::{Link, Unresolved},
@@ -20,9 +20,6 @@ use super::{
 };
 use crate::{COLOURS, MonitorState, Participant, Span};
 
-/// Room for a burst of reads a slow subscriber hasn't taken; past it, that
-/// subscriber skips what it missed.
-const BROADCAST: usize = 256;
 const RESET_PULSE: Duration = Duration::from_millis(10);
 
 pub(super) enum Command {
@@ -78,7 +75,7 @@ impl Roster {
 }
 
 impl Port {
-    pub(super) fn new(key: PortKey, baud: u32, ring_bytes: usize, paused: bool) -> Self {
+    pub(super) fn new(key: PortKey, baud: u32, options: &MonitorOptions, paused: bool) -> Self {
         let state = match paused {
             true => MonitorState::Paused,
             false => MonitorState::Resolving,
@@ -86,8 +83,8 @@ impl Port {
         Self {
             key,
             baud,
-            ring: Mutex::new(Ring::new(ring_bytes)),
-            events: broadcast::channel(BROADCAST).0,
+            ring: Mutex::new(Ring::new(options.ring_bytes)),
+            events: broadcast::channel(options.broadcast.max(1)).0,
             status: Mutex::new((state, None)),
             roster: Mutex::default(),
             commands: Mutex::default(),

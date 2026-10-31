@@ -143,6 +143,12 @@ impl FakeDevice {
     pub fn is_closed(&self) -> bool {
         self.wire.is_closed()
     }
+
+    /// Fails the monitor's writes and control lines from now on, as a device
+    /// that stopped taking bytes would.
+    pub fn fail_writes(&mut self) {
+        self.wire.close();
+    }
 }
 
 impl Drop for FakeDevice {

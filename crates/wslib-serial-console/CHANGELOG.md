@@ -15,7 +15,9 @@
   ask for from the always-on ring, then live `Update`s until `wait_for`,
   `lines`, `duration_ms` or `timeout_ms` ends it, or a replay without
   `follow` does. A lost line is reopened after a wait doubling from
-  `reopen` to `reopen_max`, keeping the ring and every subscriber.
+  `reopen` to `reopen_max`, keeping the ring and every subscriber; a failed
+  write or reset loses the line as a failed read does, which
+  `FakeDevice::fail_writes` fakes.
   A subscriber more than `broadcast` reads behind misses those reads.
   `join` puts a subscriber in the shared session, as does its `Seat` from
   any task, and either changes its names later: each echo is attributed

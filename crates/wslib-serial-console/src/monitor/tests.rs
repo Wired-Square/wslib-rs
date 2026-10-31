@@ -518,6 +518,34 @@ async fn a_reset_pulses_dtr_low_then_high() {
 }
 
 #[tokio::test]
+async fn a_failed_write_or_reset_drops_the_line_and_it_is_reopened() {
+    let bench = Bench::new();
+    let mut device = bench.plug();
+    let mut console = bench.console("alex").await;
+    let lost = |why: &'static str| {
+        move |u: &Update| match u {
+            Update::State {
+                state: MonitorState::Backoff,
+                message: Some(message),
+            } => message.starts_with(why),
+            _ => false,
+        }
+    };
+
+    device.fail_writes();
+    let mut again = bench.plug();
+    bench.monitors.write(&path(), b"x".to_vec(), None).unwrap();
+    until(&mut console, lost("write ")).await;
+    reaches(&mut console, MonitorState::Reading).await;
+
+    again.fail_writes();
+    let _third = bench.plug();
+    bench.monitors.reset(&path()).unwrap();
+    until(&mut console, lost("reset ")).await;
+    reaches(&mut console, MonitorState::Reading).await;
+}
+
+#[tokio::test]
 async fn the_first_subscriber_chooses_the_rate() {
     let bench = Bench::new();
     let first = bench

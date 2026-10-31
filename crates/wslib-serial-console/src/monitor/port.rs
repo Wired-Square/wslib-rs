@@ -214,7 +214,11 @@ impl Port {
                         let _ = self.events.send(unechoed);
                     }
                 }
-                Some(command) = queued.recv() => self.run_command(command, &link, echoes).await,
+                Some(command) = queued.recv() => {
+                    if let Err(failed) = self.run_command(command, &link, path, echoes).await {
+                        break Some(failed);
+                    }
+                }
                 event = link.next_event() => match event {
                     Some(SerialEvent::Connected) => {
                         *lock(&self.commands) = Some(commands.clone());
@@ -234,21 +238,31 @@ impl Port {
         lost
     }
 
-    /// A write's failure is left to the unechoed marker the console shows.
-    async fn run_command(&self, command: Command, link: &Link, echoes: &mut EchoMatcher) {
+    /// Why the line is lost, if the command failed.
+    async fn run_command(
+        &self,
+        command: Command,
+        link: &Link,
+        path: &str,
+        echoes: &mut EchoMatcher,
+    ) -> Result<(), String> {
         match command {
             Command::Write { bytes, by } => {
                 if let Some(by) = by {
                     let colour = lock(&self.roster).colour(&by);
                     echoes.sent(&by, colour, &bytes, Instant::now());
                 }
-                let _ = link.write(bytes).await;
+                link.write(bytes)
+                    .await
+                    .map_err(|e| format!("write {path}: {e}"))
             }
             Command::Reset => {
-                if link.set_dtr(false).await.is_ok() {
+                let pulsed = async {
+                    link.set_dtr(false).await?;
                     sleep(RESET_PULSE).await;
-                    let _ = link.set_dtr(true).await;
-                }
+                    link.set_dtr(true).await
+                };
+                pulsed.await.map_err(|e| format!("reset {path}: {e}"))
             }
         }
     }

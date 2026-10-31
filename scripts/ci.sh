@@ -207,6 +207,14 @@ if grep -qx wslib-serial <<<"$todo"; then
   ! grep -E '^(serialport|libudev(-sys)?) ' <<<"$tree" || die "wslib-serial's task pulls in serialport on Linux"
 fi
 
+# A static musl build flashes in process with no C library to link.
+if grep -qx wslib-mcu-flash <<<"$todo"; then
+  step "wslib-mcu-flash's dfu and espflash link no C library on musl"
+  tree=$(normal_tree wslib-mcu-flash --no-default-features --features dfu,espflash --target aarch64-unknown-linux-musl)
+  ! grep -E '^(libudev|[^ ]+-sys) ' <<<"$tree" | grep -v '^linux-raw-sys ' \
+    || die "wslib-mcu-flash's dfu or espflash pulls in a C library on musl"
+fi
+
 # A TypeScript generator takes the console's types alone, and a relay its monitor without a web stack.
 if grep -qx wslib-serial-console <<<"$todo"; then
   step "wslib-serial-console depends on serde alone by default, and its monitor has no axum"

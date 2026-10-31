@@ -1,6 +1,4 @@
-//! `dfu-util` over USB, then a wait for the device to come back as ttys:
-//! a composite device re-enumerates one interface at a time, so the wait
-//! ends only when two consecutive snapshots agree.
+//! `dfu-util` over USB, then a wait for the device to come back as ttys.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -12,7 +10,7 @@ use super::{Flasher, run_cmd_streaming};
 use crate::artefact::MaterialisedArtefact;
 use crate::chip::KIND_APPLICATION;
 use crate::error::{FlashError, Result};
-use crate::ports::{Enumerator, SerialPort, describe_serials, ports_for_serial};
+use crate::ports::{Enumerator, SerialPort, TtySettle};
 use crate::progress::{FlashProgress, FlashStage};
 
 pub const DFU_REENUMERATE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -79,23 +77,13 @@ pub async fn wait_for_ttys(
     poll: Duration,
 ) -> Result<Vec<SerialPort>> {
     let started = Instant::now();
-    let mut previous: Vec<SerialPort> = Vec::new();
+    let mut settle = TtySettle::default();
     loop {
-        let ports = enumerate();
-        let present: Vec<SerialPort> = ports_for_serial(&ports, usb_serial)
-            .into_iter()
-            .cloned()
-            .collect();
-        if !present.is_empty() && present == previous {
-            return Ok(present);
+        if let Some(ports) = settle.observe(enumerate(), usb_serial) {
+            return Ok(ports);
         }
-        previous = present;
         if started.elapsed() >= timeout {
-            return Err(FlashError::Message(format!(
-                "USB device {usb_serial} did not re-enumerate within {}s; attached: [{}]",
-                timeout.as_secs(),
-                describe_serials(&ports)
-            )));
+            return Err(settle.timeout_error(usb_serial, timeout));
         }
         tokio::time::sleep(poll).await;
     }

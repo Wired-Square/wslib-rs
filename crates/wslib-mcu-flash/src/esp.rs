@@ -14,6 +14,7 @@ pub use espflash;
 use espflash::command::{Command, CommandType};
 use espflash::connection::{Connection, ResetAfterOperation, ResetBeforeOperation};
 use espflash::flasher::{FlashFrequency, FlashMode, FlashSize, Flasher};
+use espflash::image_format::Segment;
 use espflash::target::{Chip, ProgressCallbacks};
 use serialport::UsbPortInfo;
 
@@ -58,6 +59,79 @@ pub fn flash(
     options: &EspFlashOptions,
     progress: &mut dyn FlashProgress,
 ) -> Result<()> {
+    let mut flasher = connect_for_write(port, options, progress)?;
+    let mut buffer = read_image(image_path)?;
+    patch_bootloader(&mut buffer, address, options, flasher.chip(), progress)?;
+    check_cancel(progress)?;
+
+    let total = buffer.len() as u64;
+    progress.on_stage(
+        FlashStage::Writing,
+        &format!("Writing {total} bytes to 0x{address:x}"),
+    );
+
+    let mut callbacks = Callbacks { progress, total };
+    flasher
+        .write_bin_to_flash(address, &buffer, &mut callbacks)
+        .map_err(|e| FlashError::Message(format!("Flash write failed: {e}")))?;
+
+    progress.on_stage(FlashStage::Resetting, "Flash complete; chip will reset");
+    Ok(())
+}
+
+/// Writes several `(offset, image)` pairs in one bootloader session, with progress over their total.
+pub fn flash_images(
+    port: &str,
+    images: &[(u32, &Path)],
+    options: &EspFlashOptions,
+    progress: &mut dyn FlashProgress,
+) -> Result<()> {
+    let mut buffers = images
+        .iter()
+        .map(|&(_, path)| read_image(path))
+        .collect::<Result<Vec<_>>>()?;
+    buffers.iter_mut().for_each(pad_to_word);
+    let layout: Vec<(u32, usize)> = images
+        .iter()
+        .zip(&buffers)
+        .map(|(&(address, _), buffer)| (address, buffer.len()))
+        .collect();
+    check_layout(&layout)?;
+
+    let mut flasher = connect_for_write(port, options, progress)?;
+    for (&(address, _), buffer) in layout.iter().zip(&mut buffers) {
+        patch_bootloader(buffer, address, options, flasher.chip(), progress)?;
+    }
+    check_cancel(progress)?;
+
+    let mut callbacks =
+        SegmentCallbacks::new(progress, buffers.iter().map(|b| b.len() as u64).collect());
+    callbacks.progress.on_stage(
+        FlashStage::Writing,
+        &format!(
+            "Writing {} bytes in {} images",
+            callbacks.total,
+            images.len()
+        ),
+    );
+    let segments: Vec<Segment<'_>> = layout
+        .iter()
+        .zip(&buffers)
+        .map(|(&(address, _), buffer)| Segment::new(address, buffer))
+        .collect();
+    flasher
+        .write_bins_to_flash(&segments, &mut callbacks)
+        .map_err(|e| FlashError::Message(format!("Flash write failed: {e}")))?;
+
+    progress.on_stage(FlashStage::Resetting, "Flash complete; chip will reset");
+    Ok(())
+}
+
+fn connect_for_write(
+    port: &str,
+    options: &EspFlashOptions,
+    progress: &mut dyn FlashProgress,
+) -> Result<Flasher> {
     progress.on_stage(FlashStage::Connecting, &format!("Opening {port}"));
     let mut flasher = open_flasher(port, options)?;
 
@@ -75,31 +149,62 @@ pub fn flash(
     if let Some(size) = options.flash_size {
         flasher.set_flash_size(size);
     }
+    Ok(flasher)
+}
 
-    let mut buffer = std::fs::read(image_path).map_err(|e| {
-        FlashError::Message(format!("Failed to read {}: {e}", image_path.display()))
-    })?;
+fn read_image(path: &Path) -> Result<Vec<u8>> {
+    std::fs::read(path)
+        .map_err(|e| FlashError::Message(format!("Failed to read {}: {e}", path.display())))
+}
 
+fn patch_bootloader(
+    buffer: &mut [u8],
+    address: u32,
+    options: &EspFlashOptions,
+    chip: Chip,
+    progress: &mut dyn FlashProgress,
+) -> Result<()> {
     if address == 0x0
-        && let Some(notes) = patch_image_header(&mut buffer, options, flasher.chip())?
+        && let Some(notes) = patch_image_header(buffer, options, chip)?
     {
         progress.on_progress(&format!("Patched image header: {notes}"));
     }
+    Ok(())
+}
 
-    check_cancel(progress)?;
+/// The ROM writes whole words; `write_bin_to_flash` pads the same way.
+fn pad_to_word(buffer: &mut Vec<u8>) {
+    buffer.resize(buffer.len().next_multiple_of(4), 0xFF);
+}
 
-    let total = buffer.len() as u64;
-    progress.on_stage(
-        FlashStage::Writing,
-        &format!("Writing {total} bytes to 0x{address:x}"),
-    );
-
-    let mut callbacks = Callbacks { progress, total };
-    flasher
-        .write_bin_to_flash(address, &buffer, &mut callbacks)
-        .map_err(|e| FlashError::Message(format!("Flash write failed: {e}")))?;
-
-    progress.on_stage(FlashStage::Resetting, "Flash complete; chip will reset");
+fn check_layout(layout: &[(u32, usize)]) -> Result<()> {
+    if layout.is_empty() {
+        return Err("No images to flash".into());
+    }
+    let mut spans = Vec::with_capacity(layout.len());
+    for &(address, len) in layout {
+        if len == 0 {
+            return Err(FlashError::Message(format!(
+                "Image for 0x{address:x} is empty"
+            )));
+        }
+        let end = u64::from(address) + len as u64;
+        if end > 1 << 32 {
+            return Err(FlashError::Message(format!(
+                "Image at 0x{address:x} runs past the 4 GiB address space"
+            )));
+        }
+        spans.push((u64::from(address), end));
+    }
+    spans.sort_unstable();
+    for pair in spans.windows(2) {
+        let ((a_start, a_end), (b_start, _)) = (pair[0], pair[1]);
+        if b_start < a_end {
+            return Err(FlashError::Message(format!(
+                "Images at 0x{a_start:x}..0x{a_end:x} and 0x{b_start:x} overlap"
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -365,6 +470,57 @@ impl ProgressCallbacks for Callbacks<'_> {
     }
 }
 
+/// espflash counts each segment's progress in compressed chunks, and skips `init` for a
+/// segment it finds unchanged; this scales the chunks to image bytes and steps on `finish`.
+struct SegmentCallbacks<'a> {
+    progress: &'a mut dyn FlashProgress,
+    lengths: Vec<u64>,
+    total: u64,
+    written: u64,
+    current: usize,
+    chunks: u64,
+}
+
+impl<'a> SegmentCallbacks<'a> {
+    fn new(progress: &'a mut dyn FlashProgress, lengths: Vec<u64>) -> Self {
+        let total = lengths.iter().sum();
+        Self {
+            progress,
+            lengths,
+            total,
+            written: 0,
+            current: 0,
+            chunks: 1,
+        }
+    }
+
+    fn current_len(&self) -> u64 {
+        self.lengths.get(self.current).copied().unwrap_or(0)
+    }
+}
+
+impl ProgressCallbacks for SegmentCallbacks<'_> {
+    fn init(&mut self, _addr: u32, chunks: usize) {
+        self.chunks = chunks.max(1) as u64;
+        self.progress.on_bytes(self.written, self.total);
+    }
+
+    fn update(&mut self, current: usize) {
+        let done = self.current_len() * (current as u64).min(self.chunks) / self.chunks;
+        self.progress.on_bytes(self.written + done, self.total);
+    }
+
+    fn verifying(&mut self) {
+        self.progress.on_stage(FlashStage::Verifying, "Verifying…");
+    }
+
+    fn finish(&mut self, _skipped: bool) {
+        self.written += self.current_len();
+        self.current += 1;
+        self.progress.on_bytes(self.written, self.total);
+    }
+}
+
 fn explicit(s: Option<&str>) -> Option<&str> {
     s.map(str::trim)
         .filter(|t| !t.is_empty() && !t.eq_ignore_ascii_case("auto"))
@@ -469,6 +625,50 @@ mod tests {
         );
         assert!(parse_flash_mode(Some("spi")).is_err());
         assert!(parse_flash_freq(Some("99")).is_err());
+    }
+
+    #[test]
+    fn layout_refuses_empty_overlapping_and_overflowing_images() {
+        assert!(check_layout(&[(0x0, 0x8000), (0x10000, 0x1000), (0x8000, 0x1000)]).is_ok());
+        assert!(check_layout(&[]).is_err());
+        assert!(check_layout(&[(0x10000, 0)]).is_err());
+        let overlap = check_layout(&[(0x10000, 0x1000), (0x0, 0x10001)])
+            .unwrap_err()
+            .to_string();
+        assert!(overlap.contains("overlap"), "{overlap}");
+        assert!(check_layout(&[(0xFFFF_F000, 0x1001)]).is_err());
+        assert!(check_layout(&[(0xFFFF_F000, 0x1000)]).is_ok());
+    }
+
+    #[test]
+    fn padding_rounds_up_to_a_word_with_erased_bytes() {
+        let mut odd = vec![1, 2, 3, 4, 5];
+        pad_to_word(&mut odd);
+        assert_eq!(odd, vec![1, 2, 3, 4, 5, 0xFF, 0xFF, 0xFF]);
+        let mut even = vec![1, 2, 3, 4];
+        pad_to_word(&mut even);
+        assert_eq!(even.len(), 4);
+    }
+
+    #[test]
+    fn segment_progress_counts_bytes_over_every_image_skipped_or_not() {
+        #[derive(Default)]
+        struct Bytes(Vec<(u64, u64)>);
+        impl FlashProgress for Bytes {
+            fn on_progress(&mut self, _message: &str) {}
+            fn on_bytes(&mut self, done: u64, total: u64) {
+                self.0.push((done, total));
+            }
+        }
+        let mut sink = Bytes::default();
+        let mut callbacks = SegmentCallbacks::new(&mut sink, vec![100, 300]);
+        callbacks.init(0x0, 2);
+        callbacks.update(1);
+        callbacks.finish(false);
+        callbacks.finish(true);
+        let done: Vec<u64> = sink.0.iter().map(|&(done, _)| done).collect();
+        assert_eq!(done, vec![0, 50, 100, 400]);
+        assert!(sink.0.iter().all(|&(_, total)| total == 400));
     }
 
     #[test]

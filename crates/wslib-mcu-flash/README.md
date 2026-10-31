@@ -39,8 +39,8 @@ Behind features:
 | `ports` | `ports::discover`, `resolve_by_serial`, `usb_info_for` — the host's USB ttys | `serialport` |
 | `esptool` | `tool::EsptoolFlasher` — `esptool write-flash` / `erase-flash` as a child process | `tokio`, `async-trait` |
 | `dfu-util` | `tool::DfuUtilFlasher` — `dfu-util -S <serial> -a <alt> -D <image>`, then a wait for the ttys to return | `tokio`, `async-trait` |
-| `espflash` | `esp` — the Espressif serial bootloader in process: `detect_chip`, `flash`, `read_flash`, `erase` | `espflash`, `serialport` |
-| `dfu` | `dfu` — USB DFU 1.1 / DfuSe in process: `list_devices`, `flash` | `dfu-nusb`, `dfu-core`, `nusb` 0.1 |
+| `espflash` | `esp` — the Espressif serial bootloader in process: `detect_chip`, `flash`, `flash_images`, `read_flash`, `erase` | `espflash`, `serialport` |
+| `dfu` | `dfu` — USB DFU 1.1 / DfuSe in process: `list_devices`, `flash`, `flash_alt`, and `detach_and_flash` from a running application's DFU runtime interface | `dfu-nusb`, `dfu-core`, `nusb` 0.1 |
 | `stm32-uart` | `stm32_uart` — ST AN3155 over a USB-UART with RTS/DTR bootloader entry: `detect_chip`, `flash`, `read_flash`, `erase`; `detect` when `espflash` is on too | `serialport` |
 | `mcumgr` | `mcumgr` — an MCUboot image over SMP on a `wslib_mcumgr::Session`: `flash`, then test or confirm and reset; `wslib_mcumgr` re-exported. `mcumgr-udp` and `mcumgr-ble` add its transports | `wslib-mcumgr` |
 | `serde` | `Serialize` / `Deserialize` on the stage, family, port and chip-info types | `serde` |

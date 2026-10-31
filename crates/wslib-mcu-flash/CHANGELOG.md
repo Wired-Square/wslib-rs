@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.2
+
+- `dfu`: `flash_alt` downloads to a chosen alt setting, with a DfuSe address
+  or none for a plain DFU 1.1 target; `flash` is `flash_alt` on alt 0.
+  `detach_and_flash` takes a running application's DFU runtime interface
+  into DFU mode (DETACH, then a USB reset unless the device detaches
+  itself), downloads, and waits for its ttys to return, honouring the
+  cancel throughout. `DetachOptions` sets the alt, address and waits.
+- `esp`: `flash_images` writes several `(offset, image)` pairs in one
+  bootloader session, refusing empty or overlapping images, and reports
+  bytes over their total.
+
 ## 0.1.1
 
 - `mcumgr`: `mcumgr::flash` uploads an MCUboot image over a

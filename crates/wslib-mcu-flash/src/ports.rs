@@ -69,6 +69,45 @@ pub fn describe_serials<'a>(ports: impl IntoIterator<Item = &'a SerialPort>) -> 
         .join(", ")
 }
 
+/// A composite device re-enumerates one interface at a time, so its ttys
+/// count as back only once two consecutive snapshots agree.
+#[cfg(any(feature = "dfu", feature = "dfu-util"))]
+#[derive(Default)]
+pub(crate) struct TtySettle {
+    previous: Vec<SerialPort>,
+    attached: Vec<SerialPort>,
+}
+
+#[cfg(any(feature = "dfu", feature = "dfu-util"))]
+impl TtySettle {
+    pub(crate) fn observe(
+        &mut self,
+        ports: Vec<SerialPort>,
+        usb_serial: &str,
+    ) -> Option<Vec<SerialPort>> {
+        let present: Vec<SerialPort> = ports_for_serial(&ports, usb_serial)
+            .into_iter()
+            .cloned()
+            .collect();
+        self.attached = ports;
+        let settled = !present.is_empty() && present == self.previous;
+        self.previous = present;
+        settled.then(|| self.previous.clone())
+    }
+
+    pub(crate) fn timeout_error(
+        &self,
+        usb_serial: &str,
+        timeout: std::time::Duration,
+    ) -> crate::error::FlashError {
+        crate::error::FlashError::Message(format!(
+            "USB device {usb_serial} did not re-enumerate within {}s; attached: [{}]",
+            timeout.as_secs(),
+            describe_serials(&self.attached)
+        ))
+    }
+}
+
 #[cfg(feature = "ports")]
 mod host {
     use super::SerialPort;

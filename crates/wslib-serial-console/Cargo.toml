@@ -11,7 +11,7 @@ repository.workspace = true
 publish = ["wired-square"]
 
 [features]
-monitor = ["dep:thiserror", "dep:tokio", "dep:wslib-backoff", "dep:wslib-serial"]
+monitor = ["dep:thiserror", "dep:tokio", "dep:tracing", "dep:wslib-backoff", "dep:wslib-serial"]
 ws = ["monitor", "dep:axum", "dep:serde_json"]
 ts = ["dep:ts-rs"]
 test-support = ["monitor"]
@@ -21,6 +21,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 ts-rs = { version = "12", optional = true, features = ["no-serde-warnings"] }
 thiserror = { version = "2.0.20", optional = true }
 tokio = { version = "1.53.3", default-features = false, features = ["macros", "rt", "sync", "time"], optional = true }
+tracing = { version = "0.1.41", default-features = false, features = ["std"], optional = true }
 wslib-backoff = { path = "../wslib-backoff", version = "0.1.2", registry = "wired-square", optional = true }
 wslib-serial = { path = "../wslib-serial", version = "0.1.3", registry = "wired-square", features = ["ports", "write"], optional = true }
 axum = { version = "0.8.7", default-features = false, features = ["query", "tokio", "ws"], optional = true }

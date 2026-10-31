@@ -223,6 +223,7 @@ impl Monitors {
             port.stop().await;
             port.set_status(MonitorState::Paused, None);
         }
+        tracing::info!(port = %key, "serial port paused for a flash");
     }
 
     /// Ends one [`pause`](Self::pause); the last reopens the port, resolving
@@ -240,6 +241,7 @@ impl Monitors {
             };
             registry.ports.get(key).cloned()
         };
+        tracing::info!(port = %key, "serial port resumed");
         if let Some(port) = port {
             self.start(&port);
         }
@@ -269,6 +271,7 @@ impl Monitors {
             return Ok(false);
         };
         port.stop().await;
+        tracing::info!(port = %key, "serial port released");
         Ok(true)
     }
 

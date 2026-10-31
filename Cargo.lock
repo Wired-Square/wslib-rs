@@ -8615,6 +8615,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-tungstenite",
+ "tracing",
  "ts-rs 12.0.1",
  "wslib-backoff",
  "wslib-serial",

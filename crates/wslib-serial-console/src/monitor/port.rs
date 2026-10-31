@@ -164,16 +164,13 @@ impl Port {
         let mut echoes = EchoMatcher::default();
         while !*paused.borrow_and_update() {
             self.set_status(MonitorState::Resolving, None);
-            match opener.resolve(&self.key) {
-                Err(Unresolved::Missing(why)) => {
-                    self.set_status(MonitorState::TtyMissing, Some(why))
-                }
-                Err(Unresolved::Failed(why)) => self.set_status(MonitorState::Backoff, Some(why)),
+            let (state, why) = match opener.resolve(&self.key) {
+                Err(Unresolved::Missing(why)) => (MonitorState::TtyMissing, why),
+                Err(Unresolved::Failed(why)) => (MonitorState::Backoff, why),
                 Ok(path) => {
                     self.set_status(MonitorState::Opening, Some(path.clone()));
                     match opener.open(&path, self.baud) {
-                        Err(e) => self
-                            .set_status(MonitorState::Backoff, Some(format!("open {path}: {e}"))),
+                        Err(e) => (MonitorState::Backoff, format!("open {path}: {e}")),
                         Ok(link) => {
                             backoff.reset();
                             let Some(lost) =
@@ -181,15 +178,22 @@ impl Port {
                             else {
                                 break;
                             };
-                            self.set_status(MonitorState::Backoff, Some(lost));
+                            tracing::warn!(port = %self.key, error = %lost, "serial port lost");
+                            (MonitorState::Backoff, lost)
                         }
                     }
                 }
-            }
+            };
+            let wait = backoff.next();
+            tracing::debug!(
+                port = %self.key, reason = %why, retry_in = ?wait,
+                "serial port reopen waits"
+            );
+            self.set_status(state, Some(why));
             tokio::select! {
                 biased;
                 () = until_paused(&mut paused) => break,
-                () = sleep(backoff.next()) => {}
+                () = sleep(wait) => {}
             }
         }
     }
@@ -221,6 +225,10 @@ impl Port {
                 }
                 event = link.next_event() => match event {
                     Some(SerialEvent::Connected) => {
+                        tracing::info!(
+                            port = %self.key, path, baud = self.baud,
+                            "serial port opened"
+                        );
                         *lock(&self.commands) = Some(commands.clone());
                         self.set_status(MonitorState::Reading, Some(path.to_owned()));
                     }

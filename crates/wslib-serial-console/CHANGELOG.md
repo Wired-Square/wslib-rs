@@ -28,6 +28,8 @@
   `release` closes the port for another program, and `is_monitored` says
   whether a monitor holds it. `write` and `reset`
   attribute and pulse DTR. `test-support`: `FakePorts` and `StopReaders`.
+  A port's open, loss, reopen wait, pause, resume and release are traced,
+  never its bytes.
 
 - `ws`: `console`, the axum `GET` for `/ws/serial`: device bytes in binary
   frames both ways, `ConsoleEvent` text frames out and `ConsoleAction` in.

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.3
+
+- `SerialWriter::set_dtr` and `set_rts`, and the same on `SerialPort`: a
+  control line set between reads, in turn with writes, as a reset pulse
+  needs.
+- Closing a read-write port discards output the device never took, so Linux
+  doesn't hold the close for its `closing_wait`.
+- A write returns once its bytes are queued, not when they are sent, so a
+  device halted by flow control can't hold a close behind it.
+
 ## 0.1.2
 
 - thiserror's floor is 2.0.20.

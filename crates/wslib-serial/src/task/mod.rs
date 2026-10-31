@@ -27,7 +27,7 @@ mod writer;
 #[cfg(feature = "write")]
 pub use blocking::SerialPort;
 #[cfg(feature = "write")]
-use writer::Job;
+use writer::{Job, Op};
 #[cfg(feature = "write")]
 pub use writer::{SerialWriter, WriteRefused};
 
@@ -234,11 +234,13 @@ impl Port {
     }
 
     #[cfg(feature = "write")]
-    async fn write(&mut self, mut bytes: Vec<u8>) -> io::Result<()> {
-        match self {
+    async fn run(&mut self, op: Op) -> io::Result<()> {
+        match (self, op) {
             #[cfg(unix)]
-            Self::Termios(_) => Err(io::ErrorKind::Unsupported.into()),
-            Self::Serialport(port) => port.write(&mut bytes).await,
+            (Self::Termios(_), _) => Err(io::ErrorKind::Unsupported.into()),
+            (Self::Serialport(port), Op::Write(mut bytes)) => port.write(&mut bytes).await,
+            (Self::Serialport(port), Op::Dtr(level)) => port.set_dtr(level).await,
+            (Self::Serialport(port), Op::Rts(level)) => port.set_rts(level).await,
         }
     }
 

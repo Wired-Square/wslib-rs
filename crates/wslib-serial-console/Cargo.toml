@@ -1,0 +1,46 @@
+[package]
+name = "wslib-serial-console"
+version = "0.1.0"
+description = "A serial console shared by every browser on a port: its wire types, a per-port monitor with attribution, rosters and flash pauses, and an axum /ws/serial."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+monitor = ["dep:thiserror", "dep:tokio", "dep:tracing", "dep:wslib-backoff", "dep:wslib-serial"]
+ws = ["monitor", "dep:axum", "dep:serde_json"]
+ts = ["dep:ts-rs"]
+test-support = ["monitor"]
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+ts-rs = { version = "12", optional = true, features = ["no-serde-warnings"] }
+thiserror = { version = "2.0.20", optional = true }
+tokio = { version = "1.53.3", default-features = false, features = ["macros", "rt", "sync", "time"], optional = true }
+tracing = { version = "0.1.41", default-features = false, features = ["std"], optional = true }
+wslib-backoff = { path = "../wslib-backoff", version = "0.1.2", registry = "wired-square", optional = true }
+wslib-serial = { path = "../wslib-serial", version = "0.1.3", registry = "wired-square", features = ["ports", "write"], optional = true }
+axum = { version = "0.8.7", default-features = false, features = ["query", "tokio", "ws"], optional = true }
+serde_json = { version = "1.0.85", optional = true }
+
+[dev-dependencies]
+axum = { version = "0.8.7", default-features = false, features = ["http1", "query", "tokio", "ws"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
+serde_json = "1.0.85"
+tokio = { version = "1.53.3", features = ["macros", "net", "rt", "sync", "test-util", "time"] }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2.183"
+
+[[test]]
+name = "ws"
+required-features = ["ws", "test-support"]
+
+[[test]]
+name = "pty"
+required-features = ["monitor"]

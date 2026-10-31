@@ -48,6 +48,7 @@ appliance chassis and every app beside it.
 | `wslib-tcp`              | A TCP connect that tries each resolved address in one budget  |
 | `wslib-modbus`           | Modbus register maps, poll schedules, RTU framing, TCP poller |
 | `wslib-serial`           | Serial line settings, SLIP and delimiters, a reopening port   |
+| `wslib-serial-console`   | A shared serial console: its wire, monitor and `/ws/serial`   |
 | `wslib-framing`          | Framing codecs for byte streams: COBS, with a capped decoder  |
 | `wslib-can`              | CAN frames, length codes, logs, and the task transports share |
 | `wslib-can-socketcan`    | SocketCAN frame layouts, and a raw-socket task on Linux       |

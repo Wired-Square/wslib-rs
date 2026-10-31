@@ -1,6 +1,6 @@
 [package]
 name = "wslib-serial"
-version = "0.1.2"
+version = "0.1.3"
 description = "A serial line: its settings and wire time, SLIP and delimiter framing, and a port read by a task that reopens it, read-only unless writes are on."
 readme = "README.md"
 edition.workspace = true

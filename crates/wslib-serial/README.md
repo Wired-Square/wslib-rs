@@ -30,9 +30,9 @@ None is on by default.
   doubles from `reopen` up to `reopen_max`.
 - `ports`: `ports`, the ports the OS lists, with their USB identity, through
   serialport.
-- `write`: `Access::ReadWrite`, `SerialWriter`, whose writes the task serves
-  between reads, and `SerialPort`, a read-write port for a protocol that
-  drives the line itself. Off by default; without it no write path is
+- `write`: `Access::ReadWrite`, `SerialWriter`, whose writes and DTR and RTS
+  changes the task serves between reads, and `SerialPort`, a read-write port
+  for a protocol that drives the line itself. Off by default; without it no write path is
   compiled.
 
 serialport always builds on Windows, where the task reads every port through

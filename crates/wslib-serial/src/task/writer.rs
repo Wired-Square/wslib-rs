@@ -34,8 +34,14 @@ pub struct SerialWriter {
 
 type Reply = oneshot::Sender<Result<io::Result<()>, WriteRefused>>;
 
+pub(super) enum Op {
+    Write(Vec<u8>),
+    Dtr(bool),
+    Rts(bool),
+}
+
 pub(super) struct Job {
-    bytes: Vec<u8>,
+    op: Op,
     reply: Reply,
 }
 
@@ -44,12 +50,26 @@ impl SerialWriter {
         Self { jobs }
     }
 
-    /// `write_all` then `flush`. A failed write leaves the line up: the next
-    /// read decides.
+    /// `write_all`, answered once the bytes are queued, not sent. A failed
+    /// write leaves the line up: the next read decides.
     pub async fn write(&self, bytes: Vec<u8>) -> Result<io::Result<()>, WriteRefused> {
+        self.run(Op::Write(bytes)).await
+    }
+
+    /// Asserts DTR when `level` is true, between reads and in turn with writes.
+    pub async fn set_dtr(&self, level: bool) -> Result<io::Result<()>, WriteRefused> {
+        self.run(Op::Dtr(level)).await
+    }
+
+    /// Asserts RTS when `level` is true, as [`set_dtr`](Self::set_dtr) does DTR.
+    pub async fn set_rts(&self, level: bool) -> Result<io::Result<()>, WriteRefused> {
+        self.run(Op::Rts(level)).await
+    }
+
+    async fn run(&self, op: Op) -> Result<io::Result<()>, WriteRefused> {
         let jobs = self.jobs.as_ref().ok_or(WriteRefused::ReadOnly)?;
         let (reply, answer) = oneshot::channel();
-        jobs.try_send(Job { bytes, reply }).map_err(|e| match e {
+        jobs.try_send(Job { op, reply }).map_err(|e| match e {
             TrySendError::Full(_) => WriteRefused::QueueFull,
             TrySendError::Closed(_) => WriteRefused::Stopped,
         })?;
@@ -68,7 +88,7 @@ impl Job {
     /// With no port the line is down.
     pub(super) async fn run(self, port: Option<&mut Port>) {
         let answer = match port {
-            Some(port) => Ok(port.write(self.bytes).await),
+            Some(port) => Ok(port.run(self.op).await),
             None => Err(WriteRefused::Disconnected),
         };
         let _ = self.reply.send(answer);
@@ -82,4 +102,5 @@ fn futures_are_send(writer: SerialWriter) {
     is_send(&writer);
     is_sync(&writer);
     is_send(&writer.write(Vec::new()));
+    is_send(&writer.set_dtr(true));
 }

@@ -10,7 +10,7 @@ use std::{future::Future, sync::Arc};
 
 use axum::{
     extract::{
-        FromRequestParts, Query, Request,
+        FromRequestParts, Query, Request, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::{StatusCode, request::Parts},
@@ -34,17 +34,22 @@ pub struct Attendee {
     pub via: String,
 }
 
-/// What the host decides for its consoles.
-pub trait ConsoleHooks: Send + Sync + 'static {
+/// What the host decides for its consoles, given the router's state.
+pub trait ConsoleHooks<S>: Send + Sync + 'static {
     /// Who is asking, or the response that refuses the upgrade.
     fn attendee(
         &self,
+        state: &S,
         request: &mut Parts,
     ) -> impl Future<Output = Result<Attendee, Response>> + Send;
 
     /// Whether a console may open `key`; `Err` is the message it shows, as
     /// when an app holds the port.
-    fn may_open(&self, _key: &PortKey) -> impl Future<Output = Result<(), String>> + Send {
+    fn may_open(
+        &self,
+        _state: &S,
+        _key: &PortKey,
+    ) -> impl Future<Output = Result<(), String>> + Send {
         async { Ok(()) }
     }
 }
@@ -80,15 +85,25 @@ impl ConsoleQuery {
 }
 
 /// The `GET` that upgrades a console, for the host to route at `/ws/serial`.
-pub fn console<S, H: ConsoleHooks>(monitors: Monitors, hooks: H) -> MethodRouter<S>
+pub fn console<S, H: ConsoleHooks<S>>(monitors: Monitors, hooks: H) -> MethodRouter<S>
 where
     S: Clone + Send + Sync + 'static,
 {
     let hooks = Arc::new(hooks);
-    get(move |request: Request| upgrade(monitors.clone(), hooks.clone(), request))
+    get(move |State(state): State<S>, request: Request| {
+        upgrade(monitors.clone(), hooks.clone(), state, request)
+    })
 }
 
-async fn upgrade<H: ConsoleHooks>(monitors: Monitors, hooks: Arc<H>, request: Request) -> Response {
+async fn upgrade<S, H: ConsoleHooks<S>>(
+    monitors: Monitors,
+    hooks: Arc<H>,
+    state: S,
+    request: Request,
+) -> Response
+where
+    S: Send + Sync + 'static,
+{
     let (mut parts, _) = request.into_parts();
     let ws = match WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
         Ok(ws) => ws,
@@ -101,12 +116,12 @@ async fn upgrade<H: ConsoleHooks>(monitors: Monitors, hooks: Arc<H>, request: Re
     let Some(key) = PortKey::new(query.address.as_deref(), query.usb_serial.as_deref()) else {
         return (StatusCode::BAD_REQUEST, "missing address and usb_serial").into_response();
     };
-    let who = match hooks.attendee(&mut parts).await {
+    let who = match hooks.attendee(&state, &mut parts).await {
         Ok(who) => who,
         Err(refused) => return refused,
     };
     ws.on_upgrade(move |mut socket| async move {
-        match hooks.may_open(&key).await {
+        match hooks.may_open(&state, &key).await {
             Ok(()) => serve(&mut socket, monitors, key, query, who).await,
             Err(message) => {
                 let _ = socket.send(text(&ConsoleEvent::Error { message })).await;

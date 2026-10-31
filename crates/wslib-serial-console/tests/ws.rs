@@ -1,6 +1,10 @@
 use std::{future::Future, net::SocketAddr, time::Duration};
 
-use axum::{http::request::Parts, response::Response};
+use axum::{
+    extract::{FromRef, FromRequestParts, State},
+    http::request::Parts,
+    response::Response,
+};
 use futures_util::{SinkExt, StreamExt};
 use tokio::{net::TcpStream, time::timeout};
 use tokio_tungstenite::{
@@ -20,22 +24,39 @@ const WAIT: Duration = Duration::from_secs(5);
 
 type Browser = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
+#[derive(Clone)]
+struct Desk {
+    via: Via,
+    held: &'static str,
+}
+
+/// Where the router's consoles are attached from, taken by an extractor.
+#[derive(Clone)]
+struct Via(&'static str);
+
+impl FromRef<Desk> for Via {
+    fn from_ref(desk: &Desk) -> Self {
+        desk.via.clone()
+    }
+}
+
 /// The attendee is named by `x-name`, and writes unless `x-watch` is sent.
 struct Hooks;
 
-impl ConsoleHooks for Hooks {
-    async fn attendee(&self, request: &mut Parts) -> Result<Attendee, Response> {
+impl ConsoleHooks<Desk> for Hooks {
+    async fn attendee(&self, desk: &Desk, request: &mut Parts) -> Result<Attendee, Response> {
+        let Ok(State(Via(via))) = State::<Via>::from_request_parts(request, desk).await;
         let header = |name| request.headers.get(name).and_then(|v| v.to_str().ok());
         Ok(Attendee {
             name: header("x-name").unwrap_or("anonymous").to_owned(),
             writes: header("x-watch").is_none(),
-            via: "local".into(),
+            via: via.into(),
         })
     }
 
-    async fn may_open(&self, key: &PortKey) -> Result<(), String> {
+    async fn may_open(&self, desk: &Desk, key: &PortKey) -> Result<(), String> {
         match key {
-            PortKey::Path(path) if path == HELD => Err("an app holds the port".into()),
+            PortKey::Path(path) if path == desk.held => Err("an app holds the port".into()),
             _ => Ok(()),
         }
     }
@@ -55,7 +76,13 @@ impl Bench {
             reopen: Duration::from_millis(10),
             ..MonitorOptions::default()
         });
-        let app = axum::Router::new().route("/ws/serial", console(monitors.clone(), Hooks));
+        let desk = Desk {
+            via: Via("local"),
+            held: HELD,
+        };
+        let app = axum::Router::new()
+            .route("/ws/serial", console(monitors.clone(), Hooks))
+            .with_state(desk);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let at = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });

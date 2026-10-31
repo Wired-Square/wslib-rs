@@ -25,7 +25,8 @@
 
 - `ws`: `console`, the axum `GET` for `/ws/serial`: device bytes in binary
   frames both ways, `ConsoleEvent` text frames out and `ConsoleAction` in.
-  `ConsoleHooks` names the attendee, and whether they write, and may refuse
-  a port. A console with bounds in its `ConsoleQuery` is a read-only stream
+  `ConsoleHooks<S>` names the attendee, and whether they write, and may
+  refuse a port, each given the router's state for extractors that need
+  it. A console with bounds in its `ConsoleQuery` is a read-only stream
   ending with `Finished`. A refused write or reset reaches only the console
   that sent it.

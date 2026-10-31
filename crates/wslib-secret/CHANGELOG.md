@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.4
+
+- `keychain` feature, off by default: a `SecretStore` trait that loads, saves
+  and deletes a secret by service and account. `Keychain` keeps each as a
+  generic-password item in the macOS keychain, and `MemoryStore` is a double
+  for tests on every platform. A missing item loads as `None`, and deleting
+  one is not an error.
+
 ## 0.1.3
 
 - `Secret` zeroes its buffer on drop and implements `zeroize::ZeroizeOnDrop`.

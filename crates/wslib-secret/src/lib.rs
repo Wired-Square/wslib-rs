@@ -20,6 +20,12 @@ use std::{fmt, fs, io, mem};
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
+#[cfg(feature = "keychain")]
+mod store;
+#[cfg(all(feature = "keychain", target_os = "macos"))]
+pub use store::Keychain;
+#[cfg(feature = "keychain")]
+pub use store::{MemoryStore, SecretStore, StoreError};
 #[cfg(feature = "token")]
 mod token;
 #[cfg(feature = "token")]

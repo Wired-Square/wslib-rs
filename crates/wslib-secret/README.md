@@ -30,3 +30,17 @@ if presented.hash() == TokenHash::from_stored(stored) { /* admitted */ }
   `Secret::hash()` or `TokenHash::of(text)`, for text normalised first;
   `from_stored` reads one back, and `==` compares in constant time. It is
   `wslib-auth`'s session token hash, byte for byte.
+
+## Stores
+
+The `store` feature, off by default, is for a secret kept between launches,
+such as a bearer token. `SecretStore` loads, saves and deletes one by service
+and account; `save` replaces what is there, a missing item loads as `None`,
+and a refused or cancelled prompt is `StoreError::Denied`. On a platform with
+no store here, implement the trait over the app's own backend.
+
+- **`Keychain`**, with the `keychain` feature: a generic-password item in the
+  keychain, on macOS and iOS (`security-framework`). Its calls block and can
+  wait on a prompt, so hold no lock across them.
+- **`MemoryStore`**: in memory, on every platform, for tests that must not
+  touch the OS.

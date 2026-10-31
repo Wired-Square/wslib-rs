@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.4
+
+- `store` feature, off by default: a `SecretStore` trait that loads, saves
+  and deletes a secret by service and account, and `MemoryStore`, a double for
+  tests, on every platform. A missing item loads as `None`, deleting one is not
+  an error, and a refused or cancelled prompt is `StoreError::Denied`.
+- `keychain` feature, which implies `store`: `Keychain` keeps each secret as a
+  generic-password item in the keychain on macOS and iOS.
+
 ## 0.1.3
 
 - `Secret` zeroes its buffer on drop and implements `zeroize::ZeroizeOnDrop`.

@@ -12,6 +12,15 @@ cd "$(dirname "$0")/.."
 die() { printf 'ci: %s\n' "$*" >&2; exit 1; }
 step() { printf '\n== %s\n' "$*"; }
 normal_tree() { cargo tree -e normal --prefix none --locked -p "$@"; }
+ios=aarch64-apple-ios
+check_ios() {
+  if [[ -d $(rustc --print target-libdir --target $ios 2>/dev/null) ]]; then
+    step "$1 with $2 for $ios"
+    cargo check -p "$1" --features "$2" --target $ios --locked
+  else
+    step "$1 for $ios skipped: its std is missing (rustup target add $ios)"
+  fi
+}
 
 all=false
 cache=true
@@ -255,13 +264,11 @@ if grep -qx wslib-framelink <<<"$todo"; then
   step "wslib-framelink's smp has no btleplug without ble"
   tree=$(normal_tree wslib-framelink --features smp --target all)
   ! grep -E '^btleplug ' <<<"$tree" || die "wslib-framelink's smp pulls in btleplug"
-  ios=aarch64-apple-ios
-  if [[ -d $(rustc --print target-libdir --target $ios 2>/dev/null) ]]; then
-    step "wslib-framelink's BLE for $ios"
-    cargo check -p wslib-framelink --features ble,wifi-prov,smp --target $ios --locked
-  else
-    step "wslib-framelink's BLE for $ios skipped: its std is missing (rustup target add $ios)"
-  fi
+  check_ios wslib-framelink ble,wifi-prov,smp
+fi
+
+if grep -qx wslib-secret <<<"$todo"; then
+  check_ios wslib-secret keychain
 fi
 
 # A default build of the instrument readers has no backend.

@@ -20,6 +20,10 @@ use std::{fmt, fs, io, mem};
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
+#[cfg(feature = "store")]
+mod store;
+#[cfg(feature = "store")]
+pub use store::*;
 #[cfg(feature = "token")]
 mod token;
 #[cfg(feature = "token")]

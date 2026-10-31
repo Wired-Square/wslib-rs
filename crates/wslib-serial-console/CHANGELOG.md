@@ -22,3 +22,10 @@
   input rather than queuing it; `progress` shows the flash's progress;
   `release` closes the port for another program. `write` and `reset`
   attribute and pulse DTR. `test-support`: `FakePorts` and `StopReaders`.
+
+- `ws`: `console`, the axum `GET` for `/ws/serial`: device bytes in binary
+  frames both ways, `ConsoleEvent` text frames out and `ConsoleAction` in.
+  `ConsoleHooks` names the attendee, and whether they write, and may refuse
+  a port. A console with bounds in its `ConsoleQuery` is a read-only stream
+  ending with `Finished`. A refused write or reset reaches only the console
+  that sent it.

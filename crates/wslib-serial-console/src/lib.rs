@@ -15,3 +15,6 @@ pub use monitor::{Bounds, MonitorOptions, Monitors, PortKey, Refusal, Subscripti
 
 #[cfg(all(feature = "monitor", any(test, feature = "test-support")))]
 pub mod test_support;
+
+#[cfg(feature = "ws")]
+pub mod ws;

@@ -207,6 +207,16 @@ if grep -qx wslib-serial <<<"$todo"; then
   ! grep -E '^(serialport|libudev(-sys)?) ' <<<"$tree" || die "wslib-serial's task pulls in serialport on Linux"
 fi
 
+# A TypeScript generator takes the console's types alone, and a relay its monitor without a web stack.
+if grep -qx wslib-serial-console <<<"$todo"; then
+  step "wslib-serial-console depends on serde alone by default, and its monitor has no axum"
+  tree=$(normal_tree wslib-serial-console --target all)
+  ! grep -vE '^(wslib-serial-console|serde|serde_core|serde_derive|proc-macro2|quote|syn|unicode-ident) ' <<<"$tree" \
+    || die "wslib-serial-console's default build depends on more than serde"
+  tree=$(normal_tree wslib-serial-console --features monitor --target all)
+  ! grep -E '^(axum|hyper|ts-rs) ' <<<"$tree" || die "wslib-serial-console's monitor pulls in axum or ts-rs"
+fi
+
 if grep -qx wslib-framing <<<"$todo"; then
   step "wslib-framing depends on thiserror alone"
   tree=$(normal_tree wslib-framing --target all)

@@ -215,6 +215,10 @@ if grep -qx wslib-serial-console <<<"$todo"; then
     || die "wslib-serial-console's default build depends on more than serde"
   tree=$(normal_tree wslib-serial-console --features monitor --target all)
   ! grep -E '^(axum|hyper|ts-rs) ' <<<"$tree" || die "wslib-serial-console's monitor pulls in axum or ts-rs"
+  step "wslib-serial-console's json frames need no monitor"
+  tree=$(normal_tree wslib-serial-console --features json --target all)
+  ! grep -E '^(axum|tokio|serialport|wslib-serial) ' <<<"$tree" \
+    || die "wslib-serial-console's json pulls in axum, tokio or a serial port"
 fi
 
 if grep -qx wslib-framing <<<"$todo"; then

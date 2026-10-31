@@ -9,7 +9,7 @@ pub const COLOURS: u8 = 6;
 
 /// Where a port's monitor is, so a console can say why no bytes are flowing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "snake_case")]
 pub enum MonitorState {
     /// Finding the port's path from its USB serial.
@@ -41,7 +41,7 @@ impl MonitorState {
 /// Bytes `start..start + len` of the binary frame after it are `by`'s echoed
 /// input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct Span {
     pub start: u32,
     pub len: u32,
@@ -52,7 +52,7 @@ pub struct Span {
 /// Someone attached to the port. `via` is where the host says they are
 /// attached from; `colour` is below [`COLOURS`].
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 pub struct Participant {
     pub name: String,
     pub via: String,
@@ -61,7 +61,7 @@ pub struct Participant {
 
 /// Why a console's input was not sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 #[serde(rename_all = "snake_case")]
 pub enum RefusalReason {
     /// The port is let go for a flash.
@@ -74,7 +74,7 @@ pub enum RefusalReason {
 
 /// A text frame to the browser.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ConsoleEvent {
     /// The first frame: who this browser is in the session, whether it may
@@ -171,6 +171,32 @@ pub enum EndReason {
     Closed,
     /// The port was let go for another program.
     Released,
+}
+
+/// A frame a console is sent: a JSON text frame, or device bytes.
+#[cfg(feature = "json")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Frame<'a> {
+    Text(String),
+    Binary(&'a [u8]),
+}
+
+/// The frames a console is sent for `event` and the device bytes it
+/// describes, in that order; either may be absent.
+#[cfg(feature = "json")]
+pub fn frames<'a>(
+    event: Option<&ConsoleEvent>,
+    bytes: &'a [u8],
+) -> impl Iterator<Item = Frame<'a>> + use<'a> {
+    let text = event.map(|event| Frame::Text(text(event)));
+    let binary = (!bytes.is_empty()).then_some(Frame::Binary(bytes));
+    text.into_iter().chain(binary)
+}
+
+/// A wire type as the JSON a console's text frame carries.
+#[cfg(feature = "json")]
+pub fn text(value: &impl Serialize) -> String {
+    serde_json::to_string(value).expect("a console frame serialises")
 }
 
 #[cfg(test)]
@@ -336,5 +362,32 @@ mod tests {
         for (reason, name) in reasons {
             golden(Finished { reason }, &format!(r#"{{"reason":"{name}"}}"#));
         }
+    }
+
+    #[cfg(feature = "json")]
+    #[test]
+    fn a_payload_is_its_event_then_its_bytes() {
+        let spans = ConsoleEvent::Spans {
+            spans: vec![alex(0)],
+        };
+        let spans_json = r#"{"type":"spans","spans":[{"start":0,"len":2,"by":"alex","colour":0}]}"#;
+        assert_eq!(
+            frames(Some(&spans), b"ls").collect::<Vec<_>>(),
+            [Frame::Text(spans_json.into()), Frame::Binary(b"ls")]
+        );
+        assert_eq!(
+            frames(None, b"ls").collect::<Vec<_>>(),
+            [Frame::Binary(b"ls")]
+        );
+        assert_eq!(
+            frames(Some(&spans), b"").collect::<Vec<_>>(),
+            [Frame::Text(spans_json.into())]
+        );
+        assert_eq!(
+            text(&Finished {
+                reason: EndReason::Lines
+            }),
+            r#"{"reason":"lines"}"#
+        );
     }
 }

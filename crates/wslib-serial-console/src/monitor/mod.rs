@@ -16,7 +16,7 @@ use std::{
     str::FromStr,
     sync::{
         Arc, Mutex, MutexGuard, PoisonError,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
@@ -141,6 +141,14 @@ pub enum Update {
     End(EndReason),
 }
 
+/// A port a monitor holds, and the path of its line while it is open.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Monitored {
+    pub key: PortKey,
+    pub open: Option<String>,
+}
+
 /// Every port's monitor, created on its first subscriber and kept until it
 /// is released, so a replug or a flash keeps its ring and its consoles.
 #[derive(Clone)]
@@ -151,6 +159,7 @@ struct Shared {
     opener: Opener,
     registry: Mutex<Registry>,
     next_subscriber: AtomicU64,
+    close_when_idle: AtomicBool,
 }
 
 #[derive(Default)]
@@ -171,30 +180,68 @@ impl Monitors {
             opener,
             registry: Mutex::default(),
             next_subscriber: AtomicU64::new(0),
+            close_when_idle: AtomicBool::new(false),
         }))
+    }
+
+    /// Closes a port's line when its last subscriber leaves, keeping its ring,
+    /// and reopens it for the next. Applies to ports first subscribed after.
+    pub fn closing_when_idle(self) -> Self {
+        self.0.close_when_idle.store(true, Ordering::Relaxed);
+        self
+    }
+
+    /// The path `key` names: the line its monitor has open, or else resolved
+    /// now. `None` when no attached device has its USB serial.
+    pub fn resolve(&self, key: &PortKey) -> Option<String> {
+        let open = self
+            .port(key)
+            .ok()
+            .and_then(|port| lock(&port.open).clone());
+        open.or_else(|| self.0.opener.resolve(key).ok())
     }
 
     /// `baud` opens the port when this is its first subscriber, and is
     /// ignored after that. Panics outside a tokio runtime.
     pub fn subscribe(&self, key: PortKey, baud: Option<u32>, bounds: Bounds) -> Subscription {
+        self.subscribe_resolved(key, None, baud, bounds)
+    }
+
+    /// As [`subscribe`](Self::subscribe), with `path` from
+    /// [`resolve`](Self::resolve): if the line is not open, its next open is
+    /// of `path` rather than resolved again, so a check made on `path` holds.
+    pub fn subscribe_resolved(
+        &self,
+        key: PortKey,
+        path: Option<String>,
+        baud: Option<u32>,
+        bounds: Bounds,
+    ) -> Subscription {
         let (port, start) = {
             let mut registry = lock(&self.0.registry);
             let paused = registry.flashing.contains_key(&key);
-            match registry.ports.get(&key) {
+            let (port, start) = match registry.ports.get(&key) {
                 Some(port) => (port.clone(), false),
                 None => {
                     let baud = baud.unwrap_or(self.0.options.default_baud);
-                    let port = Arc::new(Port::new(key.clone(), baud, &self.0.options, paused));
+                    let idle = self.0.close_when_idle.load(Ordering::Relaxed);
+                    let port = Port::new(key.clone(), baud, &self.0.options, paused, idle);
+                    let port = Arc::new(port);
                     registry.ports.insert(key, port.clone());
                     (port, !paused)
                 }
+            };
+            if path.is_some() && lock(&port.open).is_none() {
+                *lock(&port.next_path) = path;
             }
+            (port, start)
         };
+        let id = self.0.next_subscriber.fetch_add(1, Ordering::Relaxed);
+        let subscription = port.subscribe(id, bounds);
         if start {
             self.start(&port);
         }
-        let id = self.0.next_subscriber.fetch_add(1, Ordering::Relaxed);
-        port.subscribe(id, bounds)
+        subscription
     }
 
     /// Sends `bytes` to the port, its echo attributed to `by`. Refused, never
@@ -243,6 +290,7 @@ impl Monitors {
         };
         tracing::info!(port = %key, "serial port resumed");
         if let Some(port) = port {
+            lock(&port.next_path).take();
             self.start(&port);
         }
     }
@@ -273,6 +321,33 @@ impl Monitors {
         port.stop().await;
         tracing::info!(port = %key, "serial port released");
         Ok(true)
+    }
+
+    /// Ends every subscription to `key` and closes its line, as
+    /// [`release`](Self::release) does but paused or not, each subscription
+    /// told `reason` by [`Subscription::revoked`]; false when no monitor had it.
+    pub async fn revoke(&self, key: &PortKey, reason: &str) -> bool {
+        let Some(port) = lock(&self.0.registry).ports.remove(key) else {
+            return false;
+        };
+        let _ = port.revoked.set(reason.to_owned());
+        port.stop().await;
+        tracing::info!(port = %key, reason, "serial port revoked");
+        true
+    }
+
+    /// Every port a monitor holds, by key.
+    pub fn monitored(&self) -> Vec<Monitored> {
+        let mut all: Vec<Monitored> = lock(&self.0.registry)
+            .ports
+            .iter()
+            .map(|(key, port)| Monitored {
+                key: key.clone(),
+                open: lock(&port.open).clone(),
+            })
+            .collect();
+        all.sort_by(|a, b| a.key.cmp(&b.key));
+        all
     }
 
     /// True from the first subscribe to `key` until it is released, paused or
@@ -315,5 +390,6 @@ fn futures_are_send(monitors: Monitors, mut subscription: Subscription, key: Por
     is_sync(&subscription.seat());
     is_send(&monitors.pause(&key));
     is_send(&monitors.release(&key));
+    is_send(&monitors.revoke(&key, ""));
     is_send(&subscription.next());
 }

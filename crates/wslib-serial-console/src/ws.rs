@@ -15,13 +15,13 @@ use axum::{
     },
     http::request::Parts,
     response::{IntoResponse, Response},
-    routing::{MethodRouter, get},
+    routing::{MethodFilter, MethodRouter, on},
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Bounds, ConsoleAction, ConsoleEvent, Finished, Monitors, PortKey, Refusal, RefusalReason,
-    Update,
+    Bounds, ConsoleAction, ConsoleEvent, Finished, Frame, Monitors, PortKey, Refusal,
+    RefusalReason, Update, text,
 };
 
 /// Who is at a console.
@@ -32,6 +32,18 @@ pub struct Attendee {
     pub writes: bool,
     /// Where they are attached from, as the roster shows it.
     pub via: String,
+}
+
+/// What a console did, for the host's audit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Audit<'a> {
+    Attached,
+    Detached,
+    /// Bytes sent to the port.
+    Wrote(&'a [u8]),
+    /// DTR pulsed to reset the board.
+    Reset,
 }
 
 /// What the host decides for its consoles, given the router's state.
@@ -52,6 +64,23 @@ pub trait ConsoleHooks<S>: Send + Sync + 'static {
     ) -> impl Future<Output = Result<(), String>> + Send {
         async { Ok(()) }
     }
+
+    /// As [`may_open`](Self::may_open), told the path the console will open:
+    /// the line its monitor has open, or else `key` resolved, which the
+    /// monitor then opens without resolving again. `None` when no attached
+    /// device has the USB serial. Calls `may_open` unless overridden.
+    fn may_open_path(
+        &self,
+        state: &S,
+        key: &PortKey,
+        _path: Option<&str>,
+    ) -> impl Future<Output = Result<(), String>> + Send {
+        self.may_open(state, key)
+    }
+
+    /// Called as a console attaches and detaches, and for each write or reset
+    /// it sends to the port.
+    fn audit(&self, _state: &S, _key: &PortKey, _who: &Attendee, _what: Audit<'_>) {}
 }
 
 /// The query a console connects with. `follow` defaults to true.
@@ -84,17 +113,21 @@ impl ConsoleQuery {
     }
 }
 
-/// The `GET` that upgrades a console, for the host to route at `/ws/serial`.
+/// The `GET`, or HTTP/2 extended `CONNECT`, that upgrades a console, for the
+/// host to route at `/ws/serial`.
 pub fn console<S, H: ConsoleHooks<S>>(monitors: Monitors, hooks: H) -> MethodRouter<S>
 where
     S: Clone + Send + Sync + 'static,
 {
     let hooks = Arc::new(hooks);
-    get(move |State(state): State<S>, request: Request| {
+    let methods = MethodFilter::GET.or(MethodFilter::CONNECT);
+    on(methods, move |State(state): State<S>, request: Request| {
         upgrade(monitors.clone(), hooks.clone(), state, request)
     })
 }
 
+/// The hooks run before the upgrade is checked, so a request they refuse gets
+/// their answer whether or not it asked to upgrade.
 async fn upgrade<S, H: ConsoleHooks<S>>(
     monitors: Monitors,
     hooks: Arc<H>,
@@ -105,26 +138,39 @@ where
     S: Send + Sync + 'static,
 {
     let (mut parts, _) = request.into_parts();
-    let ws = match WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
-        Ok(ws) => ws,
-        Err(rejection) => return rejection.into_response(),
+    let who = match hooks.attendee(&state, &mut parts).await {
+        Ok(who) => who,
+        Err(refused) => return refused,
     };
     let query = match Query::<ConsoleQuery>::from_request_parts(&mut parts, &()).await {
         Ok(Query(query)) => query,
         Err(rejection) => return rejection.into_response(),
     };
-    let who = match hooks.attendee(&state, &mut parts).await {
-        Ok(who) => who,
-        Err(refused) => return refused,
+    let opened = match PortKey::new(query.address.as_deref(), query.usb_serial.as_deref()) {
+        Some(key) => {
+            let path = monitors.resolve(&key);
+            let allowed = hooks.may_open_path(&state, &key, path.as_deref()).await;
+            allowed.map(|()| (key, path))
+        }
+        None => Err("missing address and usb_serial".to_owned()),
+    };
+    let ws = match WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
+        Ok(ws) => ws,
+        Err(rejection) => return rejection.into_response(),
     };
     ws.on_upgrade(move |mut socket| async move {
-        let key = PortKey::new(query.address.as_deref(), query.usb_serial.as_deref());
-        let opened = match key {
-            Some(key) => hooks.may_open(&state, &key).await.map(|()| key),
-            None => Err("missing address and usb_serial".to_owned()),
-        };
         match opened {
-            Ok(key) => serve(&mut socket, monitors, key, query, who).await,
+            Ok((key, path)) => {
+                let console = Console {
+                    hooks: &*hooks,
+                    state: &state,
+                    key: &key,
+                    who: &who,
+                };
+                console.audit(Audit::Attached);
+                console.serve(&mut socket, monitors, path, query).await;
+                console.audit(Audit::Detached);
+            }
             Err(message) => {
                 let error = ConsoleEvent::Error { message };
                 let _ = socket.send(text_frame(&error)).await;
@@ -134,88 +180,115 @@ where
     })
 }
 
-async fn serve(
-    socket: &mut WebSocket,
-    monitors: Monitors,
-    key: PortKey,
-    query: ConsoleQuery,
-    who: Attendee,
-) {
-    let bounds = query.bounds();
-    let session = bounds.is_open_ended();
-    let mut subscription = monitors.subscribe(key.clone(), query.baud, bounds);
-    if session {
-        subscription.join(&who.via, vec![who.name.clone()]);
-        let attached = ConsoleEvent::Attached {
-            name: who.name.clone(),
-            writes: who.writes,
-            baud: Some(subscription.baud()),
-        };
-        if socket.send(text_frame(&attached)).await.is_err() {
-            return;
-        }
+struct Console<'a, S, H> {
+    hooks: &'a H,
+    state: &'a S,
+    key: &'a PortKey,
+    who: &'a Attendee,
+}
+
+impl<S, H: ConsoleHooks<S>> Console<'_, S, H> {
+    fn audit(&self, what: Audit<'_>) {
+        self.hooks.audit(self.state, self.key, self.who, what);
     }
-    loop {
-        tokio::select! {
-            update = subscription.next() => {
-                let Some(update) = update else { return };
-                let last = matches!(update, Update::End(_));
-                for frame in frames(update) {
-                    if socket.send(frame).await.is_err() {
+
+    async fn serve(
+        &self,
+        socket: &mut WebSocket,
+        monitors: Monitors,
+        path: Option<String>,
+        query: ConsoleQuery,
+    ) {
+        let (key, who) = (self.key, self.who);
+        let bounds = query.bounds();
+        let session = bounds.is_open_ended();
+        let mut subscription = monitors.subscribe_resolved(key.clone(), path, query.baud, bounds);
+        if session {
+            subscription.join(&who.via, vec![who.name.clone()]);
+            let attached = ConsoleEvent::Attached {
+                name: who.name.clone(),
+                writes: who.writes,
+                baud: Some(subscription.baud()),
+            };
+            if socket.send(text_frame(&attached)).await.is_err() {
+                return;
+            }
+        }
+        loop {
+            tokio::select! {
+                update = subscription.next() => {
+                    let Some(update) = update else { return };
+                    let last = matches!(update, Update::End(_));
+                    let sent = match subscription.revoked().filter(|_| last) {
+                        Some(reason) => vec![text_frame(&ConsoleEvent::Error { message: reason.to_owned() })],
+                        None => frames(update),
+                    };
+                    for frame in sent {
+                        if socket.send(frame).await.is_err() {
+                            return;
+                        }
+                    }
+                    if last {
                         return;
                     }
                 }
-                if last {
-                    return;
-                }
-            }
-            received = socket.recv() => {
-                let refused = match received {
-                    None | Some(Err(_) | Ok(Message::Close(_))) => return,
-                    Some(Ok(Message::Binary(bytes))) if session => {
-                        input(&who, || monitors.write(&key, bytes.to_vec(), Some(&who.name)))
-                    }
-                    Some(Ok(Message::Text(action))) if session => {
-                        match serde_json::from_str::<ConsoleAction>(&action) {
-                            Ok(ConsoleAction::Reset) => input(&who, || monitors.reset(&key)),
-                            Err(_) => None,
+                received = socket.recv() => {
+                    let refused = match received {
+                        None | Some(Err(_) | Ok(Message::Close(_))) => return,
+                        Some(Ok(Message::Binary(bytes))) if session => self.input(Audit::Wrote(&bytes), || {
+                            monitors.write(key, bytes.to_vec(), Some(&who.name))
+                        }),
+                        Some(Ok(Message::Text(action))) if session => {
+                            match serde_json::from_str::<ConsoleAction>(&action) {
+                                Ok(ConsoleAction::Reset) => self.input(Audit::Reset, || monitors.reset(key)),
+                                Err(_) => None,
+                            }
                         }
+                        Some(Ok(_)) => None,
+                    };
+                    if let Some(refused) = refused
+                        && socket.send(text_frame(&refused)).await.is_err()
+                    {
+                        return;
                     }
-                    Some(Ok(_)) => None,
-                };
-                if let Some(refused) = refused
-                    && socket.send(text_frame(&refused)).await.is_err()
-                {
-                    return;
                 }
             }
         }
     }
-}
 
-/// The refusal for this console alone, if its input was not sent.
-fn input(who: &Attendee, send: impl FnOnce() -> Result<(), Refusal>) -> Option<ConsoleEvent> {
-    if !who.writes {
-        return Some(ConsoleEvent::Refused {
-            reason: RefusalReason::NotPermitted,
-            detail: None,
-        });
+    /// The refusal for this console alone, if its input was not sent.
+    fn input(
+        &self,
+        what: Audit<'_>,
+        send: impl FnOnce() -> Result<(), Refusal>,
+    ) -> Option<ConsoleEvent> {
+        if !self.who.writes {
+            return Some(ConsoleEvent::Refused {
+                reason: RefusalReason::NotPermitted,
+                detail: None,
+            });
+        }
+        match send() {
+            Ok(()) => {
+                self.audit(what);
+                None
+            }
+            Err(refusal) => Some(ConsoleEvent::Refused {
+                reason: refusal.reason(),
+                detail: Some(refusal.to_string()),
+            }),
+        }
     }
-    send().err().map(|refusal| ConsoleEvent::Refused {
-        reason: refusal.reason(),
-        detail: Some(refusal.to_string()),
-    })
 }
 
 /// The frames a console is sent for `update`, as `/ws/serial` sends them.
 pub fn frames(update: Update) -> Vec<Message> {
     let event = match update {
         Update::Output { bytes, spans } => {
-            let output = Message::Binary(bytes.to_vec().into());
-            return match spans.is_empty() {
-                true => vec![output],
-                false => vec![text_frame(&ConsoleEvent::Spans { spans }), output],
-            };
+            let spans = (!spans.is_empty()).then_some(ConsoleEvent::Spans { spans });
+            return crate::frames(spans.as_ref(), &bytes)
+                .map(Message::from)
+                .collect();
         }
         Update::State { state, message } => ConsoleEvent::state(state, message),
         Update::Unechoed {
@@ -232,9 +305,14 @@ pub fn frames(update: Update) -> Vec<Message> {
 
 /// A wire type as the JSON text frame a console reads.
 pub fn text_frame(value: &impl Serialize) -> Message {
-    Message::Text(
-        serde_json::to_string(value)
-            .expect("a console frame serialises")
-            .into(),
-    )
+    Message::Text(text(value).into())
+}
+
+impl From<Frame<'_>> for Message {
+    fn from(frame: Frame<'_>) -> Self {
+        match frame {
+            Frame::Text(text) => Self::Text(text.into()),
+            Frame::Binary(bytes) => Self::Binary(bytes.to_vec().into()),
+        }
+    }
 }

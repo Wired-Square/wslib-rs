@@ -1,6 +1,6 @@
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex, Weak},
+    sync::{Arc, Mutex, OnceLock, Weak},
 };
 
 use tokio::{
@@ -22,6 +22,7 @@ pub struct Subscription {
     checker: BoundChecker,
     deadline: Option<(Instant, EndReason)>,
     ended: bool,
+    revoked: Arc<OnceLock<String>>,
 }
 
 /// A subscription's place in the session, which any task can join or change.
@@ -58,6 +59,7 @@ impl Port {
             };
             (self.events.subscribe(), history, lock(&self.status).clone())
         };
+        self.attend(true);
         let mut checker = BoundChecker::new(&bounds);
         let mut queued = VecDeque::from([Update::State { state, message }]);
         let mut end = None;
@@ -83,6 +85,7 @@ impl Port {
             checker,
             deadline: bounds.deadline(now),
             ended: false,
+            revoked: self.revoked.clone(),
         }
     }
 }
@@ -114,6 +117,12 @@ impl Subscription {
             self.queued
                 .push_back(Update::Participants(port.participants()));
         }
+    }
+
+    /// Why the port was revoked, once it ends [`EndReason::Released`] by
+    /// [`Monitors::revoke`](super::Monitors::revoke).
+    pub fn revoked(&self) -> Option<&str> {
+        self.revoked.get().map(String::as_str)
     }
 
     /// This subscription's place in the session, for a task that doesn't
@@ -186,6 +195,7 @@ impl Seat {
         *state = Joined::Left;
         if let Some(port) = self.0.port.upgrade() {
             port.set_participants(self.0.id, "", Vec::new());
+            port.attend(false);
         }
     }
 }

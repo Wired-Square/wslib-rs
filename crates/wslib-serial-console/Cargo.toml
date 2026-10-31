@@ -1,6 +1,6 @@
 [package]
 name = "wslib-serial-console"
-version = "0.1.0"
+version = "0.1.1"
 description = "A serial console shared by every browser on a port: its wire types, a per-port monitor with attribution, rosters and flash pauses, and an axum /ws/serial."
 readme = "README.md"
 edition.workspace = true
@@ -12,7 +12,8 @@ publish = ["wired-square"]
 
 [features]
 monitor = ["dep:thiserror", "dep:tokio", "dep:tracing", "dep:wslib-backoff", "dep:wslib-serial"]
-ws = ["monitor", "dep:axum", "dep:serde_json"]
+json = ["dep:serde_json"]
+ws = ["monitor", "json", "dep:axum"]
 ts = ["dep:ts-rs"]
 test-support = ["monitor"]
 
@@ -28,8 +29,10 @@ axum = { version = "0.8.7", default-features = false, features = ["query", "toki
 serde_json = { version = "1.0.85", optional = true }
 
 [dev-dependencies]
-axum = { version = "0.8.7", default-features = false, features = ["http1", "query", "tokio", "ws"] }
+axum = { version = "0.8.7", default-features = false, features = ["http1", "http2", "query", "tokio", "ws"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
+hyper = { version = "1.8", default-features = false, features = ["client", "http2"] }
+hyper-util = { version = "0.1.18", default-features = false, features = ["tokio"] }
 serde_json = "1.0.85"
 tokio = { version = "1.53.3", features = ["macros", "net", "rt", "sync", "test-util", "time"] }
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake"] }

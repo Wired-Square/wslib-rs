@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use crate::error::{FlashError, Result};
 use crate::image;
-use crate::ports::{Enumerator, SerialPort, TtySettle};
+use crate::ports::{SerialPort, TtySettle};
 use crate::progress::{FlashProgress, FlashStage, check_cancel};
 
 const DFU_INTERFACE_CLASS: u8 = 0xFE;
@@ -112,7 +112,7 @@ pub fn detach_and_flash(
     usb_serial: &str,
     image_path: &Path,
     options: &DetachOptions,
-    enumerate_ttys: &Enumerator,
+    enumerate_ttys: &dyn Fn() -> Vec<SerialPort>,
     progress: &mut dyn FlashProgress,
 ) -> Result<Vec<SerialPort>> {
     progress.on_stage(
@@ -296,7 +296,7 @@ fn open_interface(
 }
 
 fn wait_for_ttys(
-    enumerate: &Enumerator,
+    enumerate: &dyn Fn() -> Vec<SerialPort>,
     usb_serial: &str,
     timeout: Duration,
     poll: Duration,
@@ -421,8 +421,8 @@ fn friendly_name(info: &nusb::DeviceInfo) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
 
     use super::*;
     use crate::progress::LogProgress;
@@ -441,16 +441,16 @@ mod tests {
         }
     }
 
-    fn sequence(snapshots: Vec<Vec<SerialPort>>) -> Enumerator {
+    fn sequence(snapshots: Vec<Vec<SerialPort>>) -> impl Fn() -> Vec<SerialPort> {
         let remaining = Mutex::new(snapshots);
-        Arc::new(move || {
+        move || {
             let mut r = remaining.lock().unwrap();
             if r.len() > 1 {
                 r.remove(0)
             } else {
                 r.first().cloned().unwrap_or_default()
             }
-        })
+        }
     }
 
     fn port(path: &str) -> SerialPort {

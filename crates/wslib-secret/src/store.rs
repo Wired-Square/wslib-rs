@@ -22,6 +22,8 @@ pub trait SecretStore: Send + Sync {
 pub enum StoreError {
     /// The store behind the trait failed.
     Backend(Box<dyn error::Error + Send + Sync>),
+    /// The user refused or cancelled the store's prompt, or access was not allowed.
+    Denied,
     /// The saved item is not valid UTF-8.
     NotUnicode,
 }
@@ -30,6 +32,7 @@ impl fmt::Display for StoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Backend(source) => write!(f, "secret store failed: {source}"),
+            Self::Denied => f.write_str("access to the secret store was denied"),
             Self::NotUnicode => f.write_str("the saved secret is not valid UTF-8"),
         }
     }
@@ -39,7 +42,7 @@ impl error::Error for StoreError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
             Self::Backend(source) => Some(source.as_ref()),
-            Self::NotUnicode => None,
+            Self::Denied | Self::NotUnicode => None,
         }
     }
 }
@@ -75,10 +78,10 @@ impl SecretStore for MemoryStore {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(feature = "keychain", any(target_os = "macos", target_os = "ios")))]
 pub use keychain::Keychain;
 
-#[cfg(target_os = "macos")]
+#[cfg(all(feature = "keychain", any(target_os = "macos", target_os = "ios")))]
 mod keychain {
     use security_framework::base::Error;
     use security_framework::passwords;
@@ -87,15 +90,23 @@ mod keychain {
     use super::{SecretStore, StoreError};
     use crate::Secret;
 
-    // `errSecItemNotFound`, from `Security/SecBase.h`.
+    // `errSecItemNotFound`, `errSecUserCanceled`, `errSecAuthFailed` and
+    // `errSecInteractionNotAllowed`, from `Security/SecBase.h`.
     const ITEM_NOT_FOUND: i32 = -25300;
+    const USER_CANCELED: i32 = -128;
+    const AUTH_FAILED: i32 = -25293;
+    const INTERACTION_NOT_ALLOWED: i32 = -25308;
 
-    /// The user's default keychain, one generic-password item per service and account.
+    /// The user's default keychain, one generic-password item per service and account;
+    /// its calls block and can wait on a user prompt, so hold no lock across them.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct Keychain;
 
-    fn backend(error: Error) -> StoreError {
-        StoreError::Backend(Box::new(error))
+    pub(super) fn backend(error: Error) -> StoreError {
+        match error.code() {
+            USER_CANCELED | AUTH_FAILED | INTERACTION_NOT_ALLOWED => StoreError::Denied,
+            _ => StoreError::Backend(Box::new(error)),
+        }
     }
 
     impl SecretStore for Keychain {
@@ -180,6 +191,7 @@ mod tests {
     #[test]
     fn a_store_error_never_carries_the_value() {
         for err in [
+            StoreError::Denied,
             StoreError::NotUnicode,
             StoreError::Backend("access denied".into()),
         ] {
@@ -188,7 +200,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(all(feature = "keychain", any(target_os = "macos", target_os = "ios")))]
     mod keychain {
         use super::*;
 
@@ -208,6 +220,20 @@ mod tests {
             fn drop(&mut self) {
                 let _ = Keychain.delete(&self.0, "acct");
             }
+        }
+
+        #[test]
+        fn a_refused_or_cancelled_prompt_is_denied() {
+            use security_framework::base::Error;
+
+            use crate::store::keychain::backend;
+
+            for code in [-128, -25293, -25308] {
+                let err = backend(Error::from_code(code));
+                assert!(matches!(err, StoreError::Denied), "{code}: {err:?}");
+            }
+            let err = backend(Error::from_code(-25299));
+            assert!(matches!(err, StoreError::Backend(_)), "{err:?}");
         }
 
         #[test]

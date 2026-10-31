@@ -376,8 +376,14 @@ async fn a_bounded_console_streams_until_its_bound_and_says_why_it_ended() {
 }
 
 #[tokio::test]
-async fn a_console_naming_no_port_is_refused_the_upgrade() {
+async fn a_console_naming_no_port_is_upgraded_then_told_why_and_closed() {
     let bench = Bench::new().await;
-    let refused = connect_async(format!("ws://{}/ws/serial?baud=9600", bench.at)).await;
-    assert!(refused.is_err(), "{refused:?}");
+    let mut browser = bench.open("baud=9600", &[]).await;
+    assert_eq!(
+        event(&mut browser).await,
+        ConsoleEvent::Error {
+            message: "missing address and usb_serial".into()
+        }
+    );
+    assert!(matches!(frame(&mut browser).await, Message::Close(_)));
 }

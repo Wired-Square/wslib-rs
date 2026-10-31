@@ -13,7 +13,7 @@ use axum::{
         FromRequestParts, Query, Request, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::{StatusCode, request::Parts},
+    http::request::Parts,
     response::{IntoResponse, Response},
     routing::{MethodRouter, get},
 };
@@ -113,16 +113,18 @@ where
         Ok(Query(query)) => query,
         Err(rejection) => return rejection.into_response(),
     };
-    let Some(key) = PortKey::new(query.address.as_deref(), query.usb_serial.as_deref()) else {
-        return (StatusCode::BAD_REQUEST, "missing address and usb_serial").into_response();
-    };
     let who = match hooks.attendee(&state, &mut parts).await {
         Ok(who) => who,
         Err(refused) => return refused,
     };
     ws.on_upgrade(move |mut socket| async move {
-        match hooks.may_open(&state, &key).await {
-            Ok(()) => serve(&mut socket, monitors, key, query, who).await,
+        let key = PortKey::new(query.address.as_deref(), query.usb_serial.as_deref());
+        let opened = match key {
+            Some(key) => hooks.may_open(&state, &key).await.map(|()| key),
+            None => Err("missing address and usb_serial".to_owned()),
+        };
+        match opened {
+            Ok(key) => serve(&mut socket, monitors, key, query, who).await,
             Err(message) => {
                 let _ = socket.send(text(&ConsoleEvent::Error { message })).await;
             }

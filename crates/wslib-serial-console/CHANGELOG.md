@@ -29,4 +29,5 @@
   refuse a port, each given the router's state for extractors that need
   it. A console with bounds in its `ConsoleQuery` is a read-only stream
   ending with `Finished`. A refused write or reset reaches only the console
-  that sent it.
+  that sent it. A console naming no port is upgraded, sent an `error` frame
+  saying so, and closed.

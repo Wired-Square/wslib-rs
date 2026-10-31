@@ -7,6 +7,8 @@
   needs.
 - Closing a read-write port discards output the device never took, so Linux
   doesn't hold the close for its `closing_wait`.
+- A write returns once its bytes are queued, not when they are sent, so a
+  device halted by flow control can't hold a close behind it.
 
 ## 0.1.2
 

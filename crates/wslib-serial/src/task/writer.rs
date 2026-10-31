@@ -50,8 +50,8 @@ impl SerialWriter {
         Self { jobs }
     }
 
-    /// `write_all` then `flush`. A failed write leaves the line up: the next
-    /// read decides.
+    /// `write_all`, answered once the bytes are queued, not sent. A failed
+    /// write leaves the line up: the next read decides.
     pub async fn write(&self, bytes: Vec<u8>) -> Result<io::Result<()>, WriteRefused> {
         self.run(Op::Write(bytes)).await
     }

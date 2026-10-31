@@ -86,14 +86,15 @@ impl SerialPort {
         }
     }
 
-    /// `write_all` then `flush`, once any read or write in flight has returned.
-    /// Cancel-safe: `bytes` is taken only when the write starts.
+    /// `write_all`, once any read or write in flight has returned; it returns
+    /// once the bytes are queued, not sent. Cancel-safe: `bytes` is taken only
+    /// when the write starts.
     #[cfg(feature = "write")]
     pub async fn write(&mut self, bytes: &mut Vec<u8>) -> io::Result<()> {
         let mut port = self.idle().await?;
         let bytes = mem::take(bytes);
         self.state = State::Writing(spawn_blocking(move || {
-            let written = port.write_all(&bytes).and_then(|()| port.flush());
+            let written = port.write_all(&bytes);
             (port, written)
         }));
         self.written().await

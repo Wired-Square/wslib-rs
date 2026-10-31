@@ -32,4 +32,5 @@
   it. A console with bounds in its `ConsoleQuery` is a read-only stream
   ending with `Finished`. A refused write or reset reaches only the console
   that sent it. A console naming no port is upgraded, sent an `error` frame
-  saying so, and closed.
+  saying so, and closed. `frames` and `text_frame` turn an `Update` or a
+  wire type into the frames a console is sent, for a host relaying them.

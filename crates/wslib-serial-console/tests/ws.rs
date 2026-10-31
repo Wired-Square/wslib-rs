@@ -13,9 +13,9 @@ use tokio_tungstenite::{
 };
 use wslib_serial_console::{
     ConsoleEvent, EndReason, Finished, MonitorOptions, MonitorState, Monitors, Participant,
-    PortKey, RefusalReason, Span,
+    PortKey, RefusalReason, Span, Update,
     test_support::{FakeDevice, FakePorts, StopReaders, Wired},
-    ws::{Attendee, ConsoleHooks, console},
+    ws::{Attendee, ConsoleHooks, console, frames, text_frame},
 };
 
 const PATH: &str = "/dev/ttyACM0";
@@ -386,4 +386,31 @@ async fn a_console_naming_no_port_is_upgraded_then_told_why_and_closed() {
         }
     );
     assert!(matches!(frame(&mut browser).await, Message::Close(_)));
+}
+
+#[test]
+fn an_update_relayed_elsewhere_is_the_frames_a_console_gets() {
+    use axum::extract::ws::Message;
+
+    let span = Span {
+        start: 0,
+        len: 2,
+        by: "alex".into(),
+        colour: 0,
+    };
+    let output = Update::Output {
+        bytes: b"ls".as_slice().into(),
+        spans: vec![span.clone()],
+    };
+    assert_eq!(
+        frames(output),
+        [
+            text_frame(&ConsoleEvent::Spans { spans: vec![span] }),
+            Message::Binary(b"ls".to_vec().into())
+        ]
+    );
+    assert_eq!(
+        frames(Update::End(EndReason::Lines)),
+        [Message::Text(r#"{"reason":"lines"}"#.into())]
+    );
 }

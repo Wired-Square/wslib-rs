@@ -126,7 +126,8 @@ where
         match opened {
             Ok(key) => serve(&mut socket, monitors, key, query, who).await,
             Err(message) => {
-                let _ = socket.send(text(&ConsoleEvent::Error { message })).await;
+                let error = ConsoleEvent::Error { message };
+                let _ = socket.send(text_frame(&error)).await;
             }
         }
         let _ = socket.send(Message::Close(None)).await;
@@ -150,7 +151,7 @@ async fn serve(
             writes: who.writes,
             baud: Some(subscription.baud()),
         };
-        if socket.send(text(&attached)).await.is_err() {
+        if socket.send(text_frame(&attached)).await.is_err() {
             return;
         }
     }
@@ -158,14 +159,14 @@ async fn serve(
         tokio::select! {
             update = subscription.next() => {
                 let Some(update) = update else { return };
-                if let Update::End(reason) = update {
-                    let _ = socket.send(text(&Finished { reason })).await;
-                    return;
-                }
-                for message in messages(update) {
-                    if socket.send(message).await.is_err() {
+                let last = matches!(update, Update::End(_));
+                for frame in frames(update) {
+                    if socket.send(frame).await.is_err() {
                         return;
                     }
+                }
+                if last {
+                    return;
                 }
             }
             received = socket.recv() => {
@@ -183,7 +184,7 @@ async fn serve(
                     Some(Ok(_)) => None,
                 };
                 if let Some(refused) = refused
-                    && socket.send(text(&refused)).await.is_err()
+                    && socket.send(text_frame(&refused)).await.is_err()
                 {
                     return;
                 }
@@ -206,13 +207,14 @@ fn input(who: &Attendee, send: impl FnOnce() -> Result<(), Refusal>) -> Option<C
     })
 }
 
-fn messages(update: Update) -> Vec<Message> {
+/// The frames a console is sent for `update`, as `/ws/serial` sends them.
+pub fn frames(update: Update) -> Vec<Message> {
     let event = match update {
         Update::Output { bytes, spans } => {
             let output = Message::Binary(bytes.to_vec().into());
             return match spans.is_empty() {
                 true => vec![output],
-                false => vec![text(&ConsoleEvent::Spans { spans }), output],
+                false => vec![text_frame(&ConsoleEvent::Spans { spans }), output],
             };
         }
         Update::State { state, message } => ConsoleEvent::state(state, message),
@@ -223,12 +225,13 @@ fn messages(update: Update) -> Vec<Message> {
             controls,
         } => ConsoleEvent::input(by, colour, count, &controls),
         Update::Participants(participants) => ConsoleEvent::Participants { participants },
-        Update::End(_) => return Vec::new(),
+        Update::End(reason) => return vec![text_frame(&Finished { reason })],
     };
-    vec![text(&event)]
+    vec![text_frame(&event)]
 }
 
-fn text(value: &impl Serialize) -> Message {
+/// A wire type as the JSON text frame a console reads.
+pub fn text_frame(value: &impl Serialize) -> Message {
     Message::Text(
         serde_json::to_string(value)
             .expect("a console frame serialises")

@@ -90,19 +90,54 @@ impl SerialPort {
     /// Cancel-safe: `bytes` is taken only when the write starts.
     #[cfg(feature = "write")]
     pub async fn write(&mut self, bytes: &mut Vec<u8>) -> io::Result<()> {
-        if let State::Reading(_) = self.state {
-            self.unread = Some(self.next_read().await.map_err(io::Error::other)?);
-        }
-        let _ = self.written().await;
-        let State::Idle(mut port) = mem::replace(&mut self.state, State::Gone) else {
-            return Err(io::ErrorKind::NotConnected.into());
-        };
+        let mut port = self.idle().await?;
         let bytes = mem::take(bytes);
         self.state = State::Writing(spawn_blocking(move || {
             let written = port.write_all(&bytes).and_then(|()| port.flush());
             (port, written)
         }));
         self.written().await
+    }
+
+    /// Asserts DTR when `level` is true, once any read or write in flight has
+    /// returned.
+    #[cfg(feature = "write")]
+    pub async fn set_dtr(&mut self, level: bool) -> io::Result<()> {
+        self.control(move |port| port.write_data_terminal_ready(level))
+            .await
+    }
+
+    /// Asserts RTS when `level` is true, as [`set_dtr`](Self::set_dtr) does DTR.
+    #[cfg(feature = "write")]
+    pub async fn set_rts(&mut self, level: bool) -> io::Result<()> {
+        self.control(move |port| port.write_request_to_send(level))
+            .await
+    }
+
+    #[cfg(feature = "write")]
+    async fn control(
+        &mut self,
+        set: impl FnOnce(&mut Boxed) -> serialport::Result<()> + Send + 'static,
+    ) -> io::Result<()> {
+        let mut port = self.idle().await?;
+        self.state = State::Writing(spawn_blocking(move || {
+            let set = set(&mut port).map_err(io::Error::from);
+            (port, set)
+        }));
+        self.written().await
+    }
+
+    /// The port, taken once any read or write in flight has returned.
+    #[cfg(feature = "write")]
+    async fn idle(&mut self) -> io::Result<Boxed> {
+        if let State::Reading(_) = self.state {
+            self.unread = Some(self.next_read().await.map_err(io::Error::other)?);
+        }
+        let _ = self.written().await;
+        match mem::replace(&mut self.state, State::Gone) {
+            State::Idle(port) => Ok(port),
+            _ => Err(io::ErrorKind::NotConnected.into()),
+        }
     }
 
     /// A second handle on the idle port, for a write that can't wait for a read.
@@ -115,16 +150,19 @@ impl SerialPort {
         Ok(port.try_clone()?)
     }
 
-    /// Waits for a read or write in flight, then closes the port.
+    /// Waits for a read or write in flight, then discards unsent output and
+    /// closes the port.
     pub async fn close(self) {
-        match self.state {
-            State::Reading(handle) => {
-                let _ = handle.await;
-            }
-            State::Writing(handle) => {
-                let _ = handle.await;
-            }
-            State::Idle(_) | State::Gone => {}
+        let port = match self.state {
+            State::Idle(port) => Some(port),
+            State::Reading(handle) => handle.await.ok().map(|(port, _)| port),
+            State::Writing(handle) => handle.await.ok().map(|(port, _)| port),
+            State::Gone => None,
+        };
+        // Linux waits out `closing_wait`, 30 s by default, to close a port
+        // holding output that a halted device never took.
+        if let Some(port) = port {
+            let _ = port.clear(serialport::ClearBuffer::Output);
         }
     }
 

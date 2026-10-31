@@ -532,17 +532,22 @@ async fn a_full_event_queue_waits_and_drops_nothing() {
 
 #[cfg(feature = "write")]
 #[tokio::test]
-async fn a_read_only_port_refuses_writes() {
+async fn a_read_only_port_refuses_writes_and_control_lines() {
     let pty = Pty::new();
     let mut task = open(path(&pty.slave), LINE, quick()).expect("open");
     connected(&mut task).await;
 
     let writer = task.writer();
-    let refused = within(writer.write(b"x".to_vec())).await;
-    assert!(
-        matches!(refused, Err(wslib_serial::WriteRefused::ReadOnly)),
-        "{refused:?}"
-    );
+    for refused in [
+        within(writer.write(b"x".to_vec())).await,
+        within(writer.set_dtr(false)).await,
+        within(writer.set_rts(false)).await,
+    ] {
+        assert!(
+            matches!(refused, Err(wslib_serial::WriteRefused::ReadOnly)),
+            "{refused:?}"
+        );
+    }
     assert_eq!(writer.queued(), 0);
     within(task.stop()).await;
 }
@@ -628,6 +633,21 @@ mod writes {
         within(task.stop()).await;
         assert!(started.elapsed() < Duration::from_millis(500));
         assert!(pty.slave_closed());
+    }
+
+    /// A pty has no modem lines, so only that each is answered can be shown.
+    #[tokio::test]
+    async fn a_control_line_is_answered_between_reads() {
+        let mut pty = Pty::new();
+        let mut task = open(path(&pty.slave), LINE, read_write()).expect("open");
+        connected(&mut task).await;
+        let writer = task.writer();
+
+        assert!(within(writer.set_dtr(false)).await.is_ok());
+        assert!(within(writer.set_rts(true)).await.is_ok());
+        pty.send(b"up");
+        assert_eq!(read_exactly(&mut task, 2).await, b"up");
+        within(task.stop()).await;
     }
 
     #[tokio::test]

@@ -115,6 +115,18 @@ async fn echoed_by(console: &mut Subscription, len: usize) -> Vec<(String, u8)> 
     by
 }
 
+#[test]
+fn a_port_key_reads_back_from_its_display() {
+    for key in [
+        PortKey::Path(PATH.into()),
+        PortKey::Path("COM3".into()),
+        PortKey::UsbSerial("0042".into()),
+    ] {
+        assert_eq!(key.to_string().parse(), Ok(key));
+    }
+    assert_eq!("usb:0042".parse(), Ok(PortKey::UsbSerial("0042".into())));
+}
+
 #[tokio::test]
 async fn a_subscriber_is_told_the_monitors_state_before_anything_else() {
     let bench = Bench::new();

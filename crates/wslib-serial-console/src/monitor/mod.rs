@@ -11,7 +11,9 @@ mod tests;
 
 use std::{
     collections::HashMap,
+    convert::Infallible,
     fmt,
+    str::FromStr,
     sync::{
         Arc, Mutex, MutexGuard, PoisonError,
         atomic::{AtomicU64, Ordering},
@@ -77,6 +79,17 @@ impl fmt::Display for PortKey {
             Self::Path(path) => f.write_str(path),
             Self::UsbSerial(serial) => write!(f, "usb:{serial}"),
         }
+    }
+}
+
+impl FromStr for PortKey {
+    type Err = Infallible;
+
+    fn from_str(key: &str) -> Result<Self, Infallible> {
+        Ok(match key.strip_prefix("usb:") {
+            Some(serial) => Self::UsbSerial(serial.to_owned()),
+            None => Self::Path(key.to_owned()),
+        })
     }
 }
 

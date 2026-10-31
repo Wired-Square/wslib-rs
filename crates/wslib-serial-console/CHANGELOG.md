@@ -9,7 +9,8 @@
   optional `detail`. `ts` derives `ts_rs::TS` (ts-rs 12) on each.
 
 - `monitor`: `Monitors`, one monitor per `PortKey` (a path or a USB serial,
-  resolved afresh at every open), over wslib-serial's port task. A
+  resolved afresh at every open, parsed from its `Display`), over
+  wslib-serial's port task. A
   `Subscription` is told the monitor's state, then the replay its `Bounds`
   ask for from the always-on ring, then live `Update`s until `wait_for`,
   `lines`, `duration_ms` or `timeout_ms` ends it, or a replay without

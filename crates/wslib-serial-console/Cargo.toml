@@ -11,11 +11,28 @@ repository.workspace = true
 publish = ["wired-square"]
 
 [features]
+monitor = ["dep:thiserror", "dep:tokio", "dep:wslib-backoff", "dep:wslib-serial"]
 ts = ["dep:ts-rs"]
+test-support = ["monitor"]
 
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
 ts-rs = { version = "12", optional = true, features = ["no-serde-warnings"] }
+thiserror = { version = "2.0.20", optional = true }
+tokio = { version = "1.53.3", default-features = false, features = ["macros", "rt", "sync", "time"], optional = true }
+wslib-backoff = { path = "../wslib-backoff", version = "0.1.2", registry = "wired-square", optional = true }
+wslib-serial = { path = "../wslib-serial", version = "0.1.3", registry = "wired-square", features = ["ports", "write"], optional = true }
 
 [dev-dependencies]
+axum = { version = "0.8.7", default-features = false, features = ["http1", "query", "tokio", "ws"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
 serde_json = "1.0.85"
+tokio = { version = "1.53.3", features = ["macros", "net", "rt", "sync", "test-util", "time"] }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2.183"
+
+[[test]]
+name = "pty"
+required-features = ["monitor"]

@@ -7,3 +7,18 @@
   `EndReason`. `Attached` carries the port's actual `baud`, and `Refused` a
   `RefusalReason` (`paused`, `no_active_reader`, `not_permitted`) with an
   optional `detail`. `ts` derives `ts_rs::TS` (ts-rs 12) on each.
+
+- `monitor`: `Monitors`, one monitor per `PortKey` (a path or a USB serial,
+  resolved afresh at every open), over wslib-serial's port task. A
+  `Subscription` is told the monitor's state, then the replay its `Bounds`
+  ask for from the always-on ring, then live `Update`s until `wait_for`,
+  `lines`, `duration_ms` or `timeout_ms` ends it, or a replay without
+  `follow` does. A lost line is reopened after a wait doubling from
+  `reopen` to `reopen_max`, keeping the ring and every subscriber.
+  `join` puts a subscriber in the shared session: each echo is attributed
+  to its writer in a colour of their own, input with no echo within 300 ms
+  is a count and its control keys, never the bytes, and the roster reaches
+  everyone. `pause` and `resume` let go of the port for a flash, refusing
+  input rather than queuing it; `progress` shows the flash's progress;
+  `release` closes the port for another program. `write` and `reset`
+  attribute and pulse DTR. `test-support`: `FakePorts` and `StopReaders`.

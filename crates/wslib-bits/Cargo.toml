@@ -1,6 +1,6 @@
 [package]
 name = "wslib-bits"
-version = "0.1.1"
+version = "0.1.2"
 description = "Bits and bytes of a payload: fields by bit position and order, word swaps, hex, register readings, exact decimal scaling and value formatting."
 readme = "README.md"
 edition.workspace = true

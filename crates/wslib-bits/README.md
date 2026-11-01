@@ -17,9 +17,10 @@ A coil bank has one order, eight to a byte and least significant bit first;
 
 ## Features
 
-- `decimal`: `scale` and `format_decimal`, which scale in `rust_decimal` so
-  that `3374 × 0.1` is `337.4` and not `337.40000000000003`; and
-  `ScaledField::decode`.
+- `decimal`: `scale`, which scales in `rust_decimal` so that `3374 × 0.1` is
+  `337.4` and not `337.40000000000003`, and `ScaledField::decode`.
+  `format_decimal` is deprecated: wslib-quantity's
+  `format_decimal(value, Precision::Exact)` replaces it.
 - `display`: `DisplayHint`, a signal's `display` value, which needs
   `serde_json`.
 - `ts`: `ts_rs::TS` (ts-rs 12) on every serde type. `groups::Group` exports as

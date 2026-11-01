@@ -134,8 +134,8 @@ fn the_resolved_model_is_served_camel_case() {
         "type Signal = { name?: string | null, startBit?: number | null, \
          bitLength?: number | null, signed?: boolean | null, endianness?: Endianness | null, \
          wordOrder?: Endianness | null, factor?: number | null, offset?: number | null, \
-         unit?: string | null, min?: number | null, max?: number | null, \
-         format?: SignalFormat | null, enum?: { [key in string]: string } | null, \
+         unit?: string | null, precision?: number | null, min?: number | null, \
+         max?: number | null, format?: SignalFormat | null, enum?: { [key in string]: string } | null, \
          confidence?: Confidence | null, display?: DisplayHint | null, \
          notes?: Array<string>, inherited?: boolean, modbusRegister?: number | null, \
          modbusRegisterCount?: number | null, };"

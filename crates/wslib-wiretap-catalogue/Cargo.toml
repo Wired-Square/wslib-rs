@@ -1,6 +1,6 @@
 [package]
 name = "wslib-wiretap-catalogue"
-version = "0.1.1"
+version = "0.2.0"
 description = "WireTAP-format device catalogues (TOML) across CAN, Serial and Modbus: parse, validate, decode, edit and migrate, mirrors, serial framing and its detection, summaries, and DBC import and export."
 readme = "README.md"
 edition.workspace = true
@@ -25,6 +25,7 @@ ts-rs = { version = "12", optional = true, features = ["no-serde-warnings"] }
 wslib-bits = { path = "../wslib-bits", version = "0.1", registry = "wired-square", features = ["decimal", "display"] }
 wslib-checksum = { path = "../wslib-checksum", version = "0.1", registry = "wired-square" }
 wslib-modbus = { path = "../wslib-modbus", version = "0.2.1", registry = "wired-square", default-features = false }
+wslib-quantity = { path = "../wslib-quantity", version = "0.1.0", registry = "wired-square" }
 wslib-serial = { path = "../wslib-serial", version = "0.1", registry = "wired-square", default-features = false }
 wslib-wiretap-protocol = { path = "../wslib-wiretap-protocol", version = "0.2", registry = "wired-square" }
 

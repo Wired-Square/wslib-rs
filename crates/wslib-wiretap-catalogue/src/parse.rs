@@ -101,6 +101,13 @@ fn as_u8(v: &Value, key: &str) -> Option<u8> {
     as_i64(v, key).and_then(|i| u8::try_from(i).ok())
 }
 
+/// 28 places is all a `Decimal` carries.
+pub(crate) const MAX_PRECISION: u8 = 28;
+
+fn as_precision(v: &Value) -> Option<u8> {
+    as_u8(v, "precision").filter(|p| *p <= MAX_PRECISION)
+}
+
 fn as_u16(v: &Value, key: &str) -> Option<u16> {
     as_i64(v, key).and_then(|i| u16::try_from(i).ok())
 }
@@ -213,6 +220,7 @@ fn normalise_signal(raw: &Value, inherited: bool) -> Signal {
         factor: as_f64(raw, "factor"),
         offset: as_f64(raw, "offset"),
         unit: as_str(raw, "unit").map(str::to_string),
+        precision: as_precision(raw),
         min: as_f64(raw, "min"),
         max: as_f64(raw, "max"),
         format: as_str(raw, "format").and_then(parse_format),
@@ -972,6 +980,7 @@ impl Catalogue {
                 for (signal, raw) in frame.signals.iter_mut().zip(raw) {
                     signal.confidence = as_str(raw, "confidence").and_then(parse_confidence);
                     signal.notes = parse_notes(raw);
+                    signal.precision = as_precision(raw);
                 }
             }
             let mut inherited = Vec::new();

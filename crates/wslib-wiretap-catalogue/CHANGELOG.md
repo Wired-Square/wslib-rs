@@ -8,7 +8,7 @@
   `Signal` gains `precision?: number | null`.
 - The numeric display goes through wslib-quantity's `format_decimal`.
 - `validate` reports a `precision` that is not a whole number from 0 to 28, in
-  every section, Modbus included.
+  every section, Modbus included; the parser reads one as no precision.
 
 ## 0.1.1
 

@@ -521,6 +521,46 @@ precision = 1
     }
 
     #[test]
+    fn a_precision_past_28_places_reads_as_none() {
+        let c = parse(
+            r#"
+[meta]
+name = "x"
+[meta.can]
+default_byte_order = "big"
+[meta.modbus]
+register_base = 0
+default_byte_order = "big"
+[frame.can.0x101]
+length = 8
+[[ frame.can.0x101.signals ]]
+name = "TooMany"
+start_bit = 0
+bit_length = 8
+factor = 0.5
+precision = 29
+[frame.modbus.100]
+register_type = "input"
+length = 1
+[[ frame.modbus.100.signals ]]
+name = "Volts"
+start_bit = 0
+bit_length = 16
+factor = 0.01
+precision = 29
+"#,
+        );
+        let d = decode_frame(&c, c.frame(0x101).unwrap(), &[5, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(decoded(&d, "TooMany").display, "2.5");
+        let d = decode_frame(
+            &c,
+            c.protocol_frame(Protocol::Modbus, 100).unwrap(),
+            &[0x04, 0xE7],
+        );
+        assert_eq!(decoded(&d, "Volts").display, "12.55");
+    }
+
+    #[test]
     fn enum_hex_text_formats() {
         let c = parse(
             r#"

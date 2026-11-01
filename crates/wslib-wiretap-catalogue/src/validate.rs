@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use toml::Value;
 
 use crate::model::{Endianness, FrameChecksum, ValidationError};
-use crate::parse::{header_position, parse_id};
+use crate::parse::{MAX_PRECISION, header_position, parse_id};
 use crate::serial_framing::FramingMode;
 
 fn err(field: impl Into<String>, message: impl Into<String>) -> ValidationError {
@@ -76,7 +76,7 @@ pub fn validate(content: &str) -> Vec<ValidationError> {
 
 /// The parser reads a malformed `display` as no hint and a `precision` that
 /// isn't a small whole number as none, and decodes a non-finite scale as out of
-/// range, so this is where each shows; 28 places is all a `Decimal` carries. An
+/// range, so this is where each shows. An
 /// unknown widget is the consumer's to handle, not a finding.
 fn validate_signals_in_every_section(
     prefix: &str,
@@ -114,7 +114,10 @@ fn validate_signals_in_every_section(
 fn precision_finding(prefix: &str, signal: &Value) -> Option<ValidationError> {
     signal
         .get("precision")
-        .filter(|p| !p.as_integer().is_some_and(|p| (0..=28).contains(&p)))
+        .filter(|p| {
+            !p.as_integer()
+                .is_some_and(|p| (0..=i64::from(MAX_PRECISION)).contains(&p))
+        })
         .map(|_| {
             err(
                 format!("{prefix}.precision"),

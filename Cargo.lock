@@ -8837,6 +8837,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-quantity"
+version = "0.1.0"
+dependencies = [
+ "rust_decimal",
+ "rust_decimal_macros",
+ "serde_json",
+]
+
+[[package]]
 name = "wslib-secret"
 version = "0.1.5"
 dependencies = [

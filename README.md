@@ -44,6 +44,7 @@ appliance chassis and every app beside it.
 | `wslib-pairing`          | A one-time pairing code and the URI carrying the key pin      |
 | `wslib-wiretap-protocol` | Capture vocabulary; the ingest, import and link-test wires    |
 | `wslib-bits`             | Payload fields by bit and order, word swaps, hex and readings |
+| `wslib-quantity`         | A value and its unit: parse, convert, auto-scale, precision   |
 | `wslib-checksum`         | Checksum algorithms, and finding or solving a link's checksum |
 | `wslib-tcp`              | A TCP connect that tries each resolved address in one budget  |
 | `wslib-modbus`           | Modbus register maps, poll schedules, RTU framing, TCP poller |

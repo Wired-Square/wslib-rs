@@ -184,6 +184,10 @@ fn to_decimal(x: f64) -> Option<Decimal> {
 
 /// A `Decimal` without trailing zeros: `55.50` as `"55.5"`.
 #[cfg(feature = "decimal")]
+#[deprecated(
+    since = "0.1.2",
+    note = "use `wslib_quantity::format_decimal(value, Precision::Exact)` from the wslib-quantity crate"
+)]
 pub fn format_decimal(value: Decimal) -> String {
     value.normalize().to_string()
 }
@@ -341,6 +345,7 @@ mod tests {
 
     #[cfg(feature = "decimal")]
     #[test]
+    #[allow(deprecated)]
     fn scale_is_exact_not_float_noisy() {
         assert_eq!(
             scale(555.0, Some(0.1), None).map(format_decimal).as_deref(),
@@ -360,6 +365,7 @@ mod tests {
 
     #[cfg(feature = "decimal")]
     #[test]
+    #[allow(deprecated)]
     fn scale_defaults_and_offset() {
         assert_eq!(
             scale(100.0, None, None),

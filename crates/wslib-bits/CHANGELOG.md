@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- `format_decimal` is deprecated for wslib-quantity's
+  `format_decimal(value, Precision::Exact)`, which prints the same string.
+
 ## 0.1.1
 
 - serde's floor is 1.0.228.

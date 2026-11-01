@@ -9014,7 +9014,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-wiretap-catalogue"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "can-dbc",
  "rust_decimal",
@@ -9028,6 +9028,7 @@ dependencies = [
  "wslib-bits",
  "wslib-checksum",
  "wslib-modbus",
+ "wslib-quantity",
  "wslib-serial",
  "wslib-wiretap-gateway",
  "wslib-wiretap-protocol",

@@ -213,6 +213,7 @@ fn normalise_signal(raw: &Value, inherited: bool) -> Signal {
         factor: as_f64(raw, "factor"),
         offset: as_f64(raw, "offset"),
         unit: as_str(raw, "unit").map(str::to_string),
+        precision: as_u8(raw, "precision"),
         min: as_f64(raw, "min"),
         max: as_f64(raw, "max"),
         format: as_str(raw, "format").and_then(parse_format),
@@ -972,6 +973,7 @@ impl Catalogue {
                 for (signal, raw) in frame.signals.iter_mut().zip(raw) {
                     signal.confidence = as_str(raw, "confidence").and_then(parse_confidence);
                     signal.notes = parse_notes(raw);
+                    signal.precision = as_u8(raw, "precision");
                 }
             }
             let mut inherited = Vec::new();

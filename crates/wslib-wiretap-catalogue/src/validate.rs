@@ -56,12 +56,28 @@ pub fn validate(content: &str) -> Vec<ValidationError> {
         }
     }
     errors.extend(modbus_frames);
+    let modbus = table
+        .get("frame")
+        .and_then(|f| f.get("modbus"))
+        .and_then(Value::as_table);
+    for (key, frame) in modbus.into_iter().flatten() {
+        let signals = (frame.get("signal"))
+            .or_else(|| frame.get("signals"))
+            .and_then(Value::as_array);
+        for (idx, signal) in signals.into_iter().flatten().enumerate() {
+            errors.extend(precision_finding(
+                &format!("frame.modbus.{key}.signal[{idx}]"),
+                signal,
+            ));
+        }
+    }
     errors
 }
 
-/// The parser reads a malformed `display` as no hint and decodes a non-finite
-/// scale as out of range, so this is where either shows. An unknown widget is
-/// the consumer's to handle, not a finding.
+/// The parser reads a malformed `display` as no hint and a `precision` that
+/// isn't a small whole number as none, and decodes a non-finite scale as out of
+/// range, so this is where each shows; 28 places is all a `Decimal` carries. An
+/// unknown widget is the consumer's to handle, not a finding.
 fn validate_signals_in_every_section(
     prefix: &str,
     frame: &Value,
@@ -82,6 +98,7 @@ fn validate_signals_in_every_section(
                 "display must be a widget name, or a table with one as `widget`",
             ));
         }
+        errors.extend(precision_finding(&signal_prefix, signal));
         require_finite_scale(&signal_prefix, signal, errors);
     }
     for (key, case) in frame
@@ -92,6 +109,18 @@ fn validate_signals_in_every_section(
     {
         validate_signals_in_every_section(&format!("{prefix}.mux.{key}"), case, errors);
     }
+}
+
+fn precision_finding(prefix: &str, signal: &Value) -> Option<ValidationError> {
+    signal
+        .get("precision")
+        .filter(|p| !p.as_integer().is_some_and(|p| (0..=28).contains(&p)))
+        .map(|_| {
+            err(
+                format!("{prefix}.precision"),
+                "precision must be a whole number of decimal places, 0 to 28",
+            )
+        })
 }
 
 fn require_finite_scale(prefix: &str, table: &Value, errors: &mut Vec<ValidationError>) {
@@ -1651,6 +1680,60 @@ display = { widget = 3 }
                 "frame.can.0x100.mux.1.signal[0].display",
                 "frame.serial.0x01.signal[0].display",
                 "frame.modbus.battery.signal[0].display",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_precision_outside_0_to_28_places_is_a_finding_in_every_section() {
+        let toml = r#"
+[meta]
+name = "x"
+[meta.serial]
+encoding = "slip"
+[frame.can.0x100]
+length = 8
+[[ frame.can.0x100.signals ]]
+name = "Fine"
+start_bit = 0
+bit_length = 8
+precision = 28
+[[ frame.can.0x100.signals ]]
+name = "TooMany"
+start_bit = 8
+bit_length = 8
+precision = 29
+[frame.can.0x100.mux]
+name = "Sel"
+start_bit = 24
+bit_length = 8
+[[ frame.can.0x100.mux.1.signals ]]
+name = "Negative"
+start_bit = 32
+bit_length = 8
+precision = -1
+[frame.serial.0x01]
+length = 4
+[[ frame.serial.0x01.signals ]]
+name = "Fraction"
+start_bit = 0
+bit_length = 8
+precision = 1.5
+[frame.modbus.battery]
+register_number = 13019
+[[ frame.modbus.battery.signals ]]
+name = "SoC"
+start_bit = 0
+bit_length = 16
+precision = "2"
+"#;
+        assert_eq!(
+            fields(&validate(toml)),
+            vec![
+                "frame.can.0x100.signal[1].precision",
+                "frame.can.0x100.mux.1.signal[0].precision",
+                "frame.serial.0x01.signal[0].precision",
+                "frame.modbus.battery.signal[0].precision",
             ]
         );
     }

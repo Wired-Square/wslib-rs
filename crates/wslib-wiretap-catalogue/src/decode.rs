@@ -10,10 +10,9 @@
 
 use crate::model::{Catalogue, Endianness, Frame, Mux, Protocol, Signal, SignalFormat};
 use rust_decimal::prelude::ToPrimitive;
-use wslib_bits::{
-    BitOrder, decode_text, extract_field, format_decimal, format_hex, format_unix_time, scale,
-};
+use wslib_bits::{BitOrder, decode_text, extract_field, format_hex, format_unix_time, scale};
 use wslib_checksum::resolve_byte_index;
+use wslib_quantity::{Precision, format_decimal};
 
 /// A decoded signal value. Mirrors the TS `DecodedValue`.
 #[derive(Debug, Clone, PartialEq)]
@@ -118,7 +117,9 @@ pub fn decode_signal(bytes: &[u8], sig: &Signal, fallback_name: &str, order: Bit
             None,
         ),
         Some(SignalFormat::Other) | None => (
-            scaled_dec.map_or_else(out_of_range, format_decimal),
+            scaled_dec.map_or_else(out_of_range, |d| {
+                format_decimal(d, sig.precision.map_or(Precision::Exact, Precision::Fixed))
+            }),
             scaled,
             unit,
         ),
@@ -458,6 +459,65 @@ unit = "%"
         // 555 ×0.1 = 55.5 — must not render 55.50000000000001.
         let d = decode_frame(&c, f, &[0x02, 0x2B, 0, 0, 0, 0, 0, 0]);
         assert_eq!(decoded(&d, "SoC").display, "55.5");
+    }
+
+    #[test]
+    fn a_signal_precision_fixes_its_display_places_in_every_section() {
+        let c = parse(
+            r#"
+[meta]
+name = "x"
+[meta.can]
+default_byte_order = "big"
+[meta.modbus]
+register_base = 0
+default_byte_order = "big"
+[frame.can.0x101]
+length = 8
+[[ frame.can.0x101.signals ]]
+name = "Rounded"
+start_bit = 0
+bit_length = 16
+factor = 0.125
+precision = 2
+[[ frame.can.0x101.signals ]]
+name = "Padded"
+start_bit = 16
+bit_length = 8
+precision = 1
+[frame.can.0x101.mux]
+name = "Sel"
+start_bit = 24
+bit_length = 8
+[[ frame.can.0x101.mux.1.signals ]]
+name = "Whole"
+start_bit = 32
+bit_length = 16
+factor = 0.1
+precision = 0
+[frame.modbus.100]
+register_type = "input"
+length = 1
+[[ frame.modbus.100.signals ]]
+name = "Volts"
+start_bit = 0
+bit_length = 16
+factor = 0.01
+precision = 1
+"#,
+        );
+        // 1 × 0.125 = 0.125 → 0.13, half away from zero.
+        let d = decode_frame(&c, c.frame(0x101).unwrap(), &[0, 1, 5, 1, 0x02, 0x2B, 0, 0]);
+        assert_eq!(decoded(&d, "Rounded").display, "0.13");
+        assert_eq!(decoded(&d, "Padded").display, "5.0");
+        assert_eq!(decoded(&d, "Whole").display, "56");
+        // 1255 × 0.01 = 12.55 → 12.6.
+        let d = decode_frame(
+            &c,
+            c.protocol_frame(Protocol::Modbus, 100).unwrap(),
+            &[0x04, 0xE7],
+        );
+        assert_eq!(decoded(&d, "Volts").display, "12.6");
     }
 
     #[test]

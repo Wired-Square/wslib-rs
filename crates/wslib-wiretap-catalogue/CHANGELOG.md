@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0
+
+- `Signal::precision`, from a signal's `precision` key beside `unit` and
+  `display`: the decimal places its numeric display is fixed to, rounded half
+  away from zero. Without it the display keeps every digit, as before. The TS
+  `Signal` gains `precision?: number | null`.
+- The numeric display goes through wslib-quantity's `format_decimal`.
+- `validate` reports a `precision` that is not a whole number from 0 to 28, in
+  every section, Modbus included.
+
 ## 0.1.1
 
 - serde's floor is 1.0.228.

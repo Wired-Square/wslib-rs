@@ -47,4 +47,4 @@ test against.
 | c/kWh, $/kWh             | $/kWh when \|$\| > 1, else c/kWh                 |
 | temperature, %, Hz, other | unchanged                                       |
 
-A zero stays in its unit.
+A zero power, energy, current, voltage or charge stays in its unit; a zero price is c/kWh.

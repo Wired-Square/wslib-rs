@@ -88,8 +88,8 @@ impl Unit {
             "kva" => Unit::KiloVA,
             "var" => Unit::Var,
             "kvar" => Unit::KiloVar,
-            "c/kwh" | "¢/kwh" => Unit::CentsPerKWh,
-            "$/kwh" => Unit::DollarsPerKWh,
+            "c/kwh" | "¢/kwh" | "cents/kwh" => Unit::CentsPerKWh,
+            "$/kwh" | "aud/kwh" => Unit::DollarsPerKWh,
             _ => return None,
         })
     }

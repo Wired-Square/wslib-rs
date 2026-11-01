@@ -122,7 +122,9 @@ fn units_parse_from_canonical_and_unambiguous_tolerant_spellings() {
         ("kVAr", Unit::KiloVar),
         ("c/kWh", Unit::CentsPerKWh),
         ("¢/kWh", Unit::CentsPerKWh),
+        ("cents/kWh", Unit::CentsPerKWh),
         ("$/kWh", Unit::DollarsPerKWh),
+        ("AUD/kWh", Unit::DollarsPerKWh),
         (" kW ", Unit::KiloW),
     ];
     for (text, unit) in table {
@@ -306,6 +308,8 @@ fn auto_scale_shows_dollars_only_above_one() {
     assert_eq!((cents.value, cents.unit), (dec!(100), Unit::CentsPerKWh));
     let cents = q(dec!(28), Unit::CentsPerKWh).auto_scaled();
     assert_eq!((cents.value, cents.unit), (dec!(28), Unit::CentsPerKWh));
+    let free = q(dec!(0), Unit::DollarsPerKWh).auto_scaled();
+    assert_eq!(free.display(Precision::Fixed(1)), "0.0 c/kWh");
 }
 
 #[test]
@@ -317,7 +321,6 @@ fn auto_scale_leaves_temperature_ratio_frequency_other_and_zero_alone() {
         q(dec!(1500), Unit::Hz),
         q(dec!(1500), Unit::Other("rpm".into())),
         q(dec!(0), Unit::KiloW),
-        q(dec!(0), Unit::CentsPerKWh),
     ] {
         assert_eq!(unchanged.auto_scaled(), unchanged);
     }

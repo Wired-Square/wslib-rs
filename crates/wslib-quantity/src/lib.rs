@@ -81,14 +81,14 @@ impl Quantity {
     /// The quantity in the largest unit of its kind that keeps it at or above
     /// 1, or unchanged when its unit doesn't scale or it is zero.
     pub fn auto_scaled(&self) -> Quantity {
-        if self.value.is_zero() {
-            return self.clone();
-        }
         if self.unit.dimension() == Some(Dimension::PricePerEnergy) {
             return match self.to(Unit::DollarsPerKWh) {
                 Ok(dollars) if dollars.value.abs() > Decimal::ONE => dollars,
                 _ => self.to(Unit::CentsPerKWh).unwrap_or_else(|_| self.clone()),
             };
+        }
+        if self.value.is_zero() {
+            return self.clone();
         }
         let scaled: Vec<Quantity> = (self.unit.ladder().iter())
             .filter_map(|unit| self.to(unit.clone()).ok())

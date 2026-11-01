@@ -12,13 +12,12 @@ cd "$(dirname "$0")/.."
 die() { printf 'ci: %s\n' "$*" >&2; exit 1; }
 step() { printf '\n== %s\n' "$*"; }
 normal_tree() { cargo tree -e normal --prefix none --locked -p "$@"; }
-ios=aarch64-apple-ios
-check_ios() {
-  if [[ -d $(rustc --print target-libdir --target $ios 2>/dev/null) ]]; then
-    step "$1 with $2 for $ios"
-    cargo check -p "$1" --features "$2" --target $ios --locked
+check_on() {
+  if [[ -d $(rustc --print target-libdir --target "$1" 2>/dev/null) ]]; then
+    step "$2 with $3 for $1"
+    cargo check -p "$2" --features "$3" --target "$1" --locked
   else
-    step "$1 for $ios skipped: its std is missing (rustup target add $ios)"
+    step "$2 for $1 skipped: its std is missing (rustup target add $1)"
   fi
 }
 
@@ -264,11 +263,17 @@ if grep -qx wslib-framelink <<<"$todo"; then
   step "wslib-framelink's smp has no btleplug without ble"
   tree=$(normal_tree wslib-framelink --features smp --target all)
   ! grep -E '^btleplug ' <<<"$tree" || die "wslib-framelink's smp pulls in btleplug"
-  check_ios wslib-framelink ble,wifi-prov,smp
+  check_on aarch64-apple-ios wslib-framelink ble,wifi-prov,smp
 fi
 
 if grep -qx wslib-secret <<<"$todo"; then
-  check_ios wslib-secret keychain
+  check_on aarch64-apple-ios wslib-secret keychain
+  # A static musl build reaches the Secret Service with no C library to link.
+  check_on x86_64-unknown-linux-musl wslib-secret secret-service
+  step "wslib-secret's secret-service links no C library on musl"
+  tree=$(normal_tree wslib-secret --features secret-service --target x86_64-unknown-linux-musl)
+  ! grep -E '^(openssl|[^ ]+-sys) ' <<<"$tree" | grep -v '^linux-raw-sys ' \
+    || die "wslib-secret's secret-service pulls in a C library on musl"
 fi
 
 # A default build of the instrument readers has no backend.

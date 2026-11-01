@@ -1,6 +1,6 @@
 [package]
 name = "wslib-secret"
-version = "0.1.4"
+version = "0.1.5"
 description = "A credential that never prints itself, loaded from the environment or a file."
 readme = "README.md"
 edition.workspace = true
@@ -19,6 +19,9 @@ ts = ["dep:ts-rs"]
 token = ["dep:getrandom", "dep:sha2"]
 store = []
 keychain = ["store", "dep:security-framework"]
+credential-manager = ["store", "dep:windows-sys"]
+secret-service = ["store", "dep:secret-service"]
+os = ["keychain", "credential-manager", "secret-service"]
 
 [dependencies]
 getrandom = { version = "0.3", features = ["std"], optional = true }
@@ -30,6 +33,12 @@ zeroize = { version = "1.8.1", default-features = false, features = ["alloc"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 security-framework = { version = "3.0.1", default-features = false, optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security_Credentials"], optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+secret-service = { version = "5", default-features = false, features = ["rt-async-io-crypto-rust"], optional = true }
 
 [dev-dependencies]
 serde_json = "1.0.85"

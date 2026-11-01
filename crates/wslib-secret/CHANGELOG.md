@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.5
+
+- `credential-manager` feature: `CredentialManager` keeps each secret as a
+  generic credential in the Windows Credential Manager, named
+  `account.service` with the value as UTF-16, which is keyring 3's
+  `windows-native` layout. Access denied is `StoreError::Denied`.
+- `secret-service` feature: `SecretService` keeps each secret as an item in
+  the desktop's Secret Service on Linux, found by its `service` and `username`
+  attributes, so it reads and overwrites keyring 3's `sync-secret-service`
+  items in place. A locked item or collection is unlocked through the
+  service's prompt; a dismissed prompt is `StoreError::Denied`. Pure Rust
+  (`secret-service` over zbus), with an encrypted session.
+- `os` feature: all three platform stores, and `OsStore`, which is `Keychain`,
+  `CredentialManager` or `SecretService` for the target and does not exist on
+  any other.
+
 ## 0.1.4
 
 - `store` feature, off by default: a `SecretStore` trait that loads, saves

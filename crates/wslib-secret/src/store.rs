@@ -81,6 +81,28 @@ impl SecretStore for MemoryStore {
 #[cfg(all(feature = "keychain", any(target_os = "macos", target_os = "ios")))]
 pub use keychain::Keychain;
 
+#[cfg(all(feature = "credential-manager", any(windows, test)))]
+mod credential_manager;
+#[cfg(all(feature = "credential-manager", windows))]
+pub use credential_manager::CredentialManager;
+
+#[cfg(all(feature = "secret-service", any(target_os = "linux", test)))]
+mod secret_service;
+#[cfg(all(feature = "secret-service", target_os = "linux"))]
+pub use secret_service::SecretService;
+
+/// The platform's own store, so an app names one type on every desktop.
+#[cfg(all(feature = "keychain", any(target_os = "macos", target_os = "ios")))]
+pub use keychain::Keychain as OsStore;
+
+/// The platform's own store, so an app names one type on every desktop.
+#[cfg(all(feature = "credential-manager", windows))]
+pub use credential_manager::CredentialManager as OsStore;
+
+/// The platform's own store, so an app names one type on every desktop.
+#[cfg(all(feature = "secret-service", target_os = "linux"))]
+pub use secret_service::SecretService as OsStore;
+
 #[cfg(all(feature = "keychain", any(target_os = "macos", target_os = "ios")))]
 mod keychain {
     use security_framework::base::Error;
@@ -140,7 +162,7 @@ mod tests {
 
     use super::*;
 
-    fn loaded(store: &dyn SecretStore, service: &str) -> Option<String> {
+    pub(super) fn loaded(store: &dyn SecretStore, service: &str) -> Option<String> {
         let secret = store.load(service, "acct").unwrap();
         secret.map(|secret| secret.expose().to_owned())
     }
@@ -204,24 +226,6 @@ mod tests {
     mod keychain {
         use super::*;
 
-        struct Scratch(String);
-
-        impl Scratch {
-            fn new(name: &str) -> Self {
-                let nanos = std::time::UNIX_EPOCH.elapsed().unwrap().as_nanos();
-                Self(format!(
-                    "wslib-secret-test-{name}-{}-{nanos}",
-                    std::process::id()
-                ))
-            }
-        }
-
-        impl Drop for Scratch {
-            fn drop(&mut self) {
-                let _ = Keychain.delete(&self.0, "acct");
-            }
-        }
-
         #[test]
         fn a_refused_or_cancelled_prompt_is_denied() {
             use security_framework::base::Error;
@@ -235,20 +239,52 @@ mod tests {
             let err = backend(Error::from_code(-25299));
             assert!(matches!(err, StoreError::Backend(_)), "{err:?}");
         }
+    }
+
+    #[cfg(any(
+        all(feature = "keychain", any(target_os = "macos", target_os = "ios")),
+        all(feature = "credential-manager", windows),
+        all(feature = "secret-service", target_os = "linux"),
+    ))]
+    pub(super) mod os_store {
+        use super::*;
+
+        /// A service name no other run uses, whose item is deleted on drop.
+        pub(crate) struct Scratch(String);
+
+        impl Scratch {
+            pub(crate) fn new(name: &str) -> Self {
+                let nanos = std::time::UNIX_EPOCH.elapsed().unwrap().as_nanos();
+                Self(format!(
+                    "wslib-secret-test-{name}-{}-{nanos}",
+                    std::process::id()
+                ))
+            }
+
+            pub(crate) fn service(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                let _ = OsStore.delete(&self.0, "acct");
+            }
+        }
 
         #[test]
-        #[ignore = "touches the login keychain, which can prompt"]
-        fn the_keychain_saves_replaces_loads_and_deletes() {
-            let service = Scratch::new("round-trip");
-            let service = &service.0;
-            assert_eq!(loaded(&Keychain, service), None);
+        #[ignore = "touches the platform's store, which can prompt"]
+        fn the_os_store_saves_replaces_loads_and_deletes() {
+            let scratch = Scratch::new("round-trip");
+            let service = scratch.service();
+            assert_eq!(loaded(&OsStore, service), None);
             for value in ["first", "second"] {
-                Keychain.save(service, "acct", &Secret::new(value)).unwrap();
+                OsStore.save(service, "acct", &Secret::new(value)).unwrap();
             }
-            assert_eq!(loaded(&Keychain, service).as_deref(), Some("second"));
-            Keychain.delete(service, "acct").unwrap();
-            assert_eq!(loaded(&Keychain, service), None);
-            Keychain.delete(service, "acct").unwrap();
+            assert_eq!(loaded(&OsStore, service).as_deref(), Some("second"));
+            OsStore.delete(service, "acct").unwrap();
+            assert_eq!(loaded(&OsStore, service), None);
+            OsStore.delete(service, "acct").unwrap();
         }
     }
 }

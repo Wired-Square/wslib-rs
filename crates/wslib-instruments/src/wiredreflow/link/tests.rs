@@ -17,6 +17,7 @@ use crate::{
         frame::{CJ1, CJ2, RawFrame, TC1, TC1_FAULT, TC2, TC2_FAULT},
         link::{Opener, Timing, WiredReflowProbe, discover},
     },
+    worker,
 };
 
 const BENCH_DEVICE: u32 = 0x02_8F08;
@@ -191,6 +192,15 @@ fn the_probe_is_named_by_its_canonical_uri_which_parses_back() {
     let (probe, _) = probe(vec![]);
     assert_eq!(probe.name(), "wiredreflow:can0@028F08");
     assert_eq!(probe.display_name(&TC1), Some("TC1"));
+}
+
+#[test]
+fn the_probe_releases_within_its_can_task_bound_and_its_own_poll() {
+    let (probe, _) = probe(vec![]);
+    assert_eq!(
+        probe.release_within(),
+        worker::RELEASE_WITHIN.saturating_add(FAST.poll)
+    );
 }
 
 #[test]

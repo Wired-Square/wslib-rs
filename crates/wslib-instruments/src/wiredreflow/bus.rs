@@ -2,7 +2,10 @@ use std::{fmt, io, net::Ipv6Addr, str::FromStr, time::Duration};
 
 use super::frame::RawFrame;
 pub(crate) use super::task::open_bus;
-use crate::{probe::ProbeError, uri::without_controls};
+use crate::{
+    probe::ProbeError,
+    uri::{BUS_FORMS, without_controls},
+};
 
 pub(crate) const SLCAN_PREFIX: &str = "slcan=";
 pub(crate) const GVRET_PREFIX: &str = "gvret=";
@@ -28,6 +31,8 @@ const EXAMPLE_PORT: &str = "COM3";
 const EXAMPLE_PORT: &str = "cu.usbmodem2101";
 const NAME_PLACEHOLDER: &str = "<name>";
 const FORM_SEPARATOR: &str = ", or ";
+const NO_BUS: &str =
+    "this build opens no CAN bus on this platform; enable a `can-*` feature it supports";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PortDirectory {
@@ -100,30 +105,11 @@ pub(crate) fn port_forms() -> String {
     forms.join(FORM_SEPARATOR)
 }
 
-/// The bus forms that name an adapter on this platform.
-fn bus_hints() -> String {
-    let mut hints = Vec::new();
-    if cfg!(target_os = "linux") {
-        hints.push("a SocketCAN interface such as can0".to_owned());
+pub(crate) fn name_the_bus(what: &str) -> String {
+    if BUS_FORMS.is_empty() {
+        return NO_BUS.into();
     }
-    hints.push(port_forms());
-    if cfg!(any(target_os = "macos", target_os = "windows")) {
-        hints.push(usb_forms());
-    }
-    hints.push(gvret_form());
-    hints.join(FORM_SEPARATOR)
-}
-
-pub(crate) fn example_bus() -> String {
-    if cfg!(target_os = "linux") {
-        "can0".into()
-    } else {
-        format!("{SLCAN_PREFIX}{EXAMPLE_PORT}")
-    }
-}
-
-fn usb_forms() -> String {
-    format!("{GSUSB}[{SERIAL_SEPARATOR}<serial>] or {PCAN}[{SERIAL_SEPARATOR}<serial>]")
+    format!("name {what} as {}", BUS_FORMS.join(FORM_SEPARATOR))
 }
 
 fn gvret_form() -> String {
@@ -289,11 +275,11 @@ pub(crate) fn refusal(bus: &CanBus) -> io::Error {
     let why = match bus {
         CanBus::GsUsb { .. } | CanBus::Pcan { .. } => format!(
             "{bus}: gs_usb and PEAK adapters open over USB on macOS and Windows; on Linux, their kernel \
-             driver makes each a SocketCAN interface, so name that, e.g. can0"
+             driver makes each a SocketCAN interface, so name that with `can-socketcan`, e.g. can0"
         ),
         _ => format!(
-            "{bus}: SocketCAN needs Linux; here, name the adapter as {}",
-            bus_hints()
+            "{bus}: SocketCAN needs Linux; {}",
+            name_the_bus("the adapter")
         ),
     };
     io::Error::new(io::ErrorKind::Unsupported, why)
@@ -318,7 +304,7 @@ impl FromStr for CanBus {
                 .parse()
                 .map(|port| CanBus::Slcan { port })
                 .map_err(|why| format!("{s}: {why}")),
-            None if s.is_empty() => Err(format!("name the CAN bus as {}", bus_hints())),
+            None if s.is_empty() => Err(name_the_bus("the CAN bus")),
             None => Ok(CanBus::SocketCan {
                 interface: s.to_owned(),
             }),

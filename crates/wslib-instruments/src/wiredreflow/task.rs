@@ -12,7 +12,7 @@ use super::{
     bus::{Bus, BusError, CanBus, refusal},
     frame::RawFrame,
 };
-use crate::worker::Worker;
+use crate::worker::{RELEASE_WITHIN, Worker};
 
 #[cfg(any(feature = "can-slcan", feature = "can-gsusb", feature = "can-pcan"))]
 const BITRATE: u32 = 500_000;
@@ -180,7 +180,7 @@ pub(crate) fn open_bus(bus: &CanBus) -> io::Result<Box<dyn Bus>> {
     let (reads_tx, reads) = mpsc::channel();
     let (stop, stopping) = oneshot::channel();
     let on = bus.clone();
-    let task = Worker::spawn("can", move || {
+    let task = Worker::spawn("can", RELEASE_WITHIN, move || {
         let runtime = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -286,7 +286,7 @@ mod tests {
         let (stop, stopping) = oneshot::channel::<()>();
         let closed = Arc::new(AtomicBool::new(false));
         let closing = Arc::clone(&closed);
-        let task = Worker::spawn("can", move || {
+        let task = Worker::spawn("can", RELEASE_WITHIN, move || {
             let _ = stopping.blocking_recv();
             thread::sleep(CLOSING);
             closing.store(true, Ordering::Relaxed);

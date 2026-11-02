@@ -41,4 +41,8 @@ impl Probe for Selected {
     fn max_interval(&self) -> Duration {
         self.inner.max_interval()
     }
+
+    fn release_within(&self) -> Duration {
+        self.inner.release_within()
+    }
 }

@@ -19,7 +19,7 @@ use crate::{
     sample::{Sample, Stamp},
     signal::SignalKey,
     uri::ProbeUri,
-    worker::Worker,
+    worker::{self, Worker},
 };
 
 pub(crate) const DISCOVERY_WINDOW: Duration = Duration::from_secs(2);
@@ -35,6 +35,10 @@ pub(crate) const TIMING: Timing = Timing {
     poll: Duration::from_millis(100),
     silence: Duration::from_secs(5),
 };
+
+const fn release_within(timing: Timing) -> Duration {
+    worker::RELEASE_WITHIN.saturating_add(timing.poll)
+}
 
 type Delivery = Result<Vec<Sample>, ProbeError>;
 
@@ -143,7 +147,7 @@ pub struct WiredReflowProbe {
     readings: Receiver<Delivery>,
     held: Option<ProbeError>,
     stop: Arc<AtomicBool>,
-    _link: Worker,
+    link: Worker,
 }
 
 pub(crate) type Opener = Box<dyn FnOnce() -> io::Result<Box<dyn Bus>> + Send>;
@@ -199,14 +203,16 @@ impl WiredReflowProbe {
         let (tx, readings) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = Arc::clone(&stop);
-        let worker = Worker::spawn("wiredreflow", move || match open() {
-            Ok((bus, device)) => {
-                if outcome_tx.send(Ok(device)).is_ok() {
-                    link(bus, device, timing, tx, stopping);
+        let worker = Worker::spawn("wiredreflow", release_within(timing), move || {
+            match open() {
+                Ok((bus, device)) => {
+                    if outcome_tx.send(Ok(device)).is_ok() {
+                        link(bus, device, timing, tx, stopping);
+                    }
                 }
-            }
-            Err(error) => {
-                let _ = outcome_tx.send(Err(error));
+                Err(error) => {
+                    let _ = outcome_tx.send(Err(error));
+                }
             }
         })?;
         let device = outcome.recv().map_err(|_| {
@@ -218,7 +224,7 @@ impl WiredReflowProbe {
             readings,
             held: None,
             stop,
-            _link: worker,
+            link: worker,
         })
     }
 }
@@ -280,6 +286,10 @@ impl Probe for WiredReflowProbe {
 
     fn max_interval(&self) -> Duration {
         MAX_INTERVAL
+    }
+
+    fn release_within(&self) -> Duration {
+        self.link.release_within()
     }
 }
 

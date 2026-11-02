@@ -13,6 +13,7 @@ use wslib_instruments::{
     probe::{Probe, ProbeError},
     sample::{Sample, Stamp},
     signal::{self, ASPECT_DC, ASPECT_DEFAULT, QTY_TEMPERATURE, QTY_VOLTAGE, SignalKey},
+    uri,
     value::Value,
 };
 
@@ -35,6 +36,10 @@ const FIRST_PROBE: usize = 0;
 const SECOND_PROBE: usize = 1;
 const CHANNEL_0: u8 = 0;
 const TEMPERATURE: SignalKey = signal::measurement(QTY_TEMPERATURE, ASPECT_DEFAULT, CHANNEL_0);
+const SHORT_RELEASE: Duration = Duration::from_millis(100);
+const FOREVER: Duration = Duration::from_secs(3_600);
+const POLL_ALLOWANCE: Duration = Duration::from_secs(1);
+const SCHEDULING_MARGIN: Duration = Duration::from_millis(500);
 const DC_VOLTAGE: SignalKey = signal::measurement(QTY_VOLTAGE, ASPECT_DC, CHANNEL_0);
 
 fn sample_at(key: SignalKey, value: Value, at: Instant) -> Sample {
@@ -383,4 +388,46 @@ fn dropping_the_cluster_drops_its_probes_before_it_returns() {
     thread::sleep(STEADY_PERIOD);
     drop(cluster);
     assert!(released.load(Ordering::Relaxed));
+}
+
+struct NeverLetsGo;
+
+impl Probe for NeverLetsGo {
+    fn name(&self) -> String {
+        "never lets go".into()
+    }
+
+    fn signals(&self) -> Vec<SignalKey> {
+        vec![TEMPERATURE]
+    }
+
+    fn next(&mut self, _: Instant) -> Result<Vec<Sample>, ProbeError> {
+        thread::sleep(STEADY_PERIOD);
+        Err(ProbeError::Timeout)
+    }
+
+    fn max_interval(&self) -> Duration {
+        TEST_MAX_INTERVAL
+    }
+
+    fn release_within(&self) -> Duration {
+        SHORT_RELEASE
+    }
+}
+
+impl Drop for NeverLetsGo {
+    fn drop(&mut self) {
+        thread::sleep(FOREVER);
+    }
+}
+
+#[test]
+fn dropping_the_cluster_gives_up_on_a_narrowed_probe_after_its_own_release_bound() {
+    let narrowed = uri::narrowed(Box::new(NeverLetsGo), &[TEMPERATURE]);
+    assert_eq!(narrowed.release_within(), SHORT_RELEASE);
+    let cluster = Cluster::start(vec![narrowed]).unwrap();
+    let dropped = Instant::now();
+    drop(cluster);
+    let bound = SHORT_RELEASE + POLL_ALLOWANCE + SCHEDULING_MARGIN;
+    assert!(dropped.elapsed() < bound, "{:?}", dropped.elapsed());
 }

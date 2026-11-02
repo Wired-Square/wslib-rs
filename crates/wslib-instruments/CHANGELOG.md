@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.2
+
+- `Cluster` is `Sync` again, so it can be shared across threads.
+- `Probe::release_within` declares the longest dropping a probe waits for
+  what it holds, 15 s unless a probe says otherwise. A narrowed probe passes
+  on its inner probe's.
+- Dropping a `Cluster` waits as long as dropping all its probes at once would,
+  plus up to 1 s while each finishes its poll, not for each probe in turn.
+- Dropping a WiredReflow probe waits for its CAN task too, rather than giving
+  up on it first.
+- The `wiredreflow` scheme matches in any case, like `121gw`.
+- An error that lists bus forms names only the `BUS_FORMS` this build opens.
+
 ## 0.1.1
 
 - `gw121::notify` reads and writes the `.notify` capture format, one chunk per

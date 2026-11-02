@@ -55,9 +55,12 @@ struct Watched {
     name: String,
     max_interval: Duration,
     slot: Arc<Mutex<Slot>>,
-    _worker: Worker,
+    worker: Worker,
 }
 
+/// Polls several probes, each on its own thread, and holds each signal's
+/// latest sample. Dropping it stops every probe and waits as long as dropping
+/// them all at once would, plus up to 1 s while each finishes its poll.
 pub struct Cluster {
     probes: Vec<Watched>,
     stop: Arc<AtomicBool>,
@@ -73,27 +76,32 @@ impl Cluster {
             let (name, max_interval) = (probe.name(), probe.max_interval());
             let slot = Arc::new(Mutex::new(Slot::default()));
             let (mine, stopping) = (Arc::clone(&slot), Arc::clone(&cluster.stop));
-            let worker = Worker::spawn("probe", move || {
-                while !stopping.load(Ordering::Relaxed) {
-                    let polled = Instant::now();
-                    let result = probe.next(polled.checked_add(POLL_DEADLINE).unwrap_or(polled));
-                    let mut slot = mine.lock().unwrap_or_else(PoisonError::into_inner);
-                    match result {
-                        Ok(samples) => {
-                            slot.samples
-                                .extend(samples.into_iter().map(|sample| (sample.key, sample)));
-                            slot.error = None;
+            let worker = Worker::spawn(
+                "probe",
+                POLL_DEADLINE.saturating_add(probe.release_within()),
+                move || {
+                    while !stopping.load(Ordering::Relaxed) {
+                        let polled = Instant::now();
+                        let result =
+                            probe.next(polled.checked_add(POLL_DEADLINE).unwrap_or(polled));
+                        let mut slot = mine.lock().unwrap_or_else(PoisonError::into_inner);
+                        match result {
+                            Ok(samples) => {
+                                slot.samples
+                                    .extend(samples.into_iter().map(|sample| (sample.key, sample)));
+                                slot.error = None;
+                            }
+                            Err(ProbeError::Timeout) => {}
+                            Err(error) => slot.error = Some(error),
                         }
-                        Err(ProbeError::Timeout) => {}
-                        Err(error) => slot.error = Some(error),
                     }
-                }
-            })?;
+                },
+            )?;
             cluster.probes.push(Watched {
                 name,
                 max_interval,
                 slot,
-                _worker: worker,
+                worker,
             });
         }
         Ok(cluster)
@@ -120,5 +128,18 @@ impl Cluster {
 impl Drop for Cluster {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+        let stopped = Instant::now();
+        for watched in &mut self.probes {
+            watched.worker.finish(stopped);
+        }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const fn shared_across_threads<T: Send + Sync>() {}
+
+    const _: () = shared_across_threads::<Cluster>();
 }

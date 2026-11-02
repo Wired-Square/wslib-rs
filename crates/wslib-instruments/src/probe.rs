@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{sample::Sample, signal::SignalKey};
+use crate::{sample::Sample, signal::SignalKey, worker};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -51,4 +51,9 @@ pub trait Probe: Send + 'static {
     /// reading; a WiredReflow returns every one queued since the last call.
     fn next(&mut self, deadline: Instant) -> Result<Vec<Sample>, ProbeError>;
     fn max_interval(&self) -> Duration;
+
+    /// The longest dropping it waits for what it holds to be released.
+    fn release_within(&self) -> Duration {
+        worker::RELEASE_WITHIN
+    }
 }

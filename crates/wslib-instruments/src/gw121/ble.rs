@@ -27,7 +27,7 @@ use crate::{
     sample::{Sample, Stamp},
     signal::SignalKey,
     uri::ProbeUri,
-    worker::Worker,
+    worker::{RELEASE_WITHIN, Worker},
 };
 
 pub(crate) const DATA_CHARACTERISTIC: Uuid =
@@ -586,7 +586,7 @@ async fn link(target: &Target, tx: &Sender<Delivery>, tap: &Tap, stop: &StopRx) 
 
 fn spawn_link(target: Target, stop: StopRx, tap: Tap) -> io::Result<Link> {
     let (tx, readings) = mpsc::channel();
-    let worker = Worker::spawn("121gw", move || {
+    let worker = Worker::spawn("121gw", RELEASE_WITHIN, move || {
         let runtime = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -691,6 +691,10 @@ impl Probe for Gw121Probe {
     fn max_interval(&self) -> Duration {
         MAX_INTERVAL
     }
+
+    fn release_within(&self) -> Duration {
+        self.link.release_within()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -781,7 +785,10 @@ mod tests {
     static RESPAWNED_STOP: Mutex<Option<StopRx>> = Mutex::new(None);
 
     fn finished_link() -> Link {
-        (mpsc::channel().1, Worker::spawn("121gw", || {}).unwrap())
+        (
+            mpsc::channel().1,
+            Worker::spawn("121gw", RELEASE_WITHIN, || {}).unwrap(),
+        )
     }
 
     fn dead_link(_: Target, _: StopRx, _: Tap) -> io::Result<Link> {
@@ -1400,7 +1407,7 @@ mod tests {
         let releasing = Arc::clone(&released);
         let mut probe = probe_on(mpsc::channel().1, unexpected_link);
         probe.stop = stop;
-        probe.link = Worker::spawn("121gw", move || {
+        probe.link = Worker::spawn("121gw", RELEASE_WITHIN, move || {
             while !*stopping.borrow() {
                 thread::sleep(STOP_DELAY);
             }

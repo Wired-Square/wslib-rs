@@ -152,11 +152,19 @@ fn opening_a_wiredreflow_from_inside_a_tokio_runtime_returns_the_error_rather_th
 
 #[cfg(all(feature = "can-socketcan", not(target_os = "linux")))]
 #[test]
-fn a_socketcan_bus_off_linux_says_to_use_another_adapter() {
+fn a_socketcan_bus_off_linux_names_only_the_buses_this_build_opens() {
     let error = open_error("wiredreflow:can0@028F08");
     assert_eq!(error.kind(), io::ErrorKind::Unsupported);
-    assert!(error.to_string().contains("slcan="), "{error}");
-    assert!(!error.to_string().contains("by-id"), "{error}");
+    let error = error.to_string();
+    for form in BUS_FORMS {
+        assert!(error.contains(form), "{form}: {error}");
+    }
+    assert_eq!(
+        BUS_FORMS.is_empty(),
+        error.contains("opens no CAN bus"),
+        "{error}"
+    );
+    assert!(!error.contains("by-id"), "{error}");
 }
 
 #[cfg(all(feature = "can-gsusb", target_os = "linux"))]

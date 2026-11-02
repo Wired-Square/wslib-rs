@@ -24,8 +24,11 @@ for sample in probe.next(Instant::now() + Duration::from_secs(2))? {
   runtime on its own thread, so it may be opened, read and dropped inside a
   tokio runtime, a current-thread one included. Dropping it waits for that
   thread, so its adapter is free to reopen once the drop returns.
+  `Probe::release_within` is the longest that wait can take.
 - `Cluster` polls several probes, each on its own thread, and holds each
   signal's latest sample, stale once older than the probe's maximum interval.
+  It is `Send + Sync`. Dropping it stops every probe and waits as long as
+  dropping them all at once would, plus up to 1 s while each finishes its poll.
 - `uri::narrowed` and the `/<signal>` selectors keep only the signals asked for.
 
 ## Probes

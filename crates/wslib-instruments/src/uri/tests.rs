@@ -4,7 +4,7 @@ use crate::{
         decode::{STATUS, STATUS_AUTO_POWER_OFF, STATUS_OVERLOAD, THERMOCOUPLE},
     },
     sample::{Sample, Stamp},
-    uri::{ProbeUri, ProbeUriError, value_text},
+    uri::{BUS_FORMS, ProbeUri, ProbeUriError, value_text},
     value::Value,
     wiredreflow::{
         bus::{CanBus, PortDirectory, SerialPort},
@@ -116,6 +116,18 @@ fn can0() -> CanBus {
     CanBus::SocketCan {
         interface: "can0".into(),
     }
+}
+
+#[test]
+fn every_scheme_matches_in_any_case_and_writes_lower_case() {
+    assert_eq!(parsed("121GW"), parsed("121gw"));
+    assert_eq!(parsed("121Gw:121GW"), parsed("121gw:121GW"));
+    assert_eq!(parsed("WiredReflow:can0"), parsed("wiredreflow:can0"));
+    assert_eq!(parsed("WIREDREFLOW:can0").to_string(), "wiredreflow:can0");
+    assert!(matches!(
+        "WiredReflow".parse::<ProbeUri>(),
+        Err(ProbeUriError::Target(_))
+    ));
 }
 
 #[test]
@@ -263,16 +275,18 @@ fn only_an_unknown_scheme_is_unrecognised_so_a_consumer_can_try_its_own() {
 }
 
 #[test]
-fn bare_wiredreflow_is_refused_for_want_of_a_bus_with_an_example_for_this_platform() {
+fn bare_wiredreflow_is_refused_naming_the_buses_this_build_opens() {
     let error = "wiredreflow".parse::<ProbeUri>().unwrap_err();
-    let example = if cfg!(target_os = "linux") {
-        "wiredreflow:can0"
-    } else {
-        "wiredreflow:slcan="
+    let ProbeUriError::Target(why) = &error else {
+        panic!("{error}");
     };
-    assert!(
-        matches!(&error, ProbeUriError::Target(why) if why.contains(example)),
-        "{error}"
+    for form in BUS_FORMS {
+        assert!(why.contains(form), "{form}: {why}");
+    }
+    assert_eq!(
+        BUS_FORMS.is_empty(),
+        why.contains("opens no CAN bus"),
+        "{why}"
     );
 }
 

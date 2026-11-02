@@ -14,7 +14,7 @@ use crate::{
     wiredreflow::{
         self,
         bus::{
-            CanBus, DEVICE_SEPARATOR, PATH_SEPARATOR, SLCAN_PREFIX, SerialPort, example_bus,
+            CanBus, DEVICE_SEPARATOR, PATH_SEPARATOR, SLCAN_PREFIX, SerialPort, name_the_bus,
             port_forms,
         },
         frame::{DEVICE_ID_MAX, device_text},
@@ -235,6 +235,12 @@ fn slcan_path_refusal(s: &str, parts: &[&str]) -> ProbeUriError {
     ProbeUriError::Target(format!("{s}: {why}"))
 }
 
+fn after_scheme<'a>(s: &'a str, scheme: &str) -> Option<&'a str> {
+    s.split_at_checked(scheme.len())
+        .filter(|(head, _)| head.eq_ignore_ascii_case(scheme))
+        .and_then(|(_, rest)| rest.strip_prefix(SCHEME_SEPARATOR))
+}
+
 impl FromStr for ProbeUri {
     type Err = ProbeUriError;
 
@@ -245,11 +251,7 @@ impl FromStr for ProbeUri {
                 selected: vec![],
             });
         }
-        if let Some(rest) = s
-            .split_at_checked(GW121.len())
-            .filter(|(scheme, _)| scheme.eq_ignore_ascii_case(GW121))
-            .and_then(|(_, rest)| rest.strip_prefix(SCHEME_SEPARATOR))
-        {
+        if let Some(rest) = after_scheme(s, GW121) {
             let mut parts = rest.split(SELECTOR_SEPARATOR);
             let target_text = parts.next().unwrap_or_default();
             if target_text.is_empty() {
@@ -264,16 +266,13 @@ impl FromStr for ProbeUri {
                 target,
             });
         }
-        if s == WIREDREFLOW {
+        if s.eq_ignore_ascii_case(WIREDREFLOW) {
             return Err(ProbeUriError::Target(format!(
-                "{WIREDREFLOW} needs a bus after a colon, e.g. {WIREDREFLOW}{SCHEME_SEPARATOR}{}",
-                example_bus()
+                "{WIREDREFLOW} needs a bus after a colon; {}",
+                name_the_bus("it")
             )));
         }
-        if let Some(rest) = s
-            .strip_prefix(WIREDREFLOW)
-            .and_then(|rest| rest.strip_prefix(SCHEME_SEPARATOR))
-        {
+        if let Some(rest) = after_scheme(s, WIREDREFLOW) {
             let mut parts = rest.split(SELECTOR_SEPARATOR).peekable();
             let target = parts.next().unwrap_or_default();
             if target == SLCAN_PREFIX && parts.peek().is_some() {

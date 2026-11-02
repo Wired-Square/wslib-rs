@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0
+
+- `PortKey` is wslib-mcu-flash's `PortIdentity`: `Path` is now `Tty`, a
+  `UsbPath` names a port by its `/dev/serial/by-path` entry and resolves at
+  every open, and parsing refuses an identity that names no port.
+  `PortKey::new` is gone; `ws::ConsoleQuery::key` picks `usb_serial`, then
+  the new `usb_path`, then `address`, skipping one that is empty.
+- `Monitors::monitored` lists USB-serial keys, then topology keys, then ttys.
+- An unresolved key's message names it as `USB device "usb:X" not attached`.
+- `test_support::FakePorts::plug_as` plugs a device under any key.
+
 ## 0.1.1
 
 - `ws::console` runs `attendee` and `may_open` before it checks for an

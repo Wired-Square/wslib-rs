@@ -17,7 +17,7 @@ fn quick() -> MonitorOptions {
 }
 
 fn path() -> PortKey {
-    PortKey::Path(PATH.into())
+    PortKey::Tty(PATH.into())
 }
 
 async fn within<F: Future>(test: F) -> F::Output {
@@ -118,13 +118,15 @@ async fn echoed_by(console: &mut Subscription, len: usize) -> Vec<(String, u8)> 
 #[test]
 fn a_port_key_reads_back_from_its_display() {
     for key in [
-        PortKey::Path(PATH.into()),
-        PortKey::Path("COM3".into()),
+        PortKey::Tty(PATH.into()),
+        PortKey::Tty("COM3".into()),
         PortKey::UsbSerial("0042".into()),
+        PortKey::UsbPath("platform-x-usb-0:1.4:1.0-port0".into()),
     ] {
         assert_eq!(key.to_string().parse(), Ok(key));
     }
     assert_eq!("usb:0042".parse(), Ok(PortKey::UsbSerial("0042".into())));
+    assert_eq!("usb-path:X".parse(), Ok(PortKey::UsbPath("X".into())));
 }
 
 #[tokio::test]
@@ -474,6 +476,19 @@ async fn a_usb_serial_not_attached_is_shown_missing_until_it_is() {
 }
 
 #[tokio::test]
+async fn a_topology_path_opens_the_tty_plugged_at_it() {
+    let ports = FakePorts::default();
+    let monitors = ports.monitors(quick());
+    let _stop = StopReaders(monitors.clone());
+    let key = PortKey::UsbPath("platform-x-usb-0:1.4:1.0-port0".into());
+    let mut console = monitors.subscribe(key.clone(), None, Bounds::default());
+    reaches(&mut console, MonitorState::TtyMissing).await;
+
+    let _device = ports.plug_as("/dev/ttyUSB1", key);
+    reaches(&mut console, MonitorState::Reading).await;
+}
+
+#[tokio::test]
 async fn input_queued_before_a_loss_never_reaches_the_reopened_line() {
     let bench = Bench::new();
     let first = bench.plug();
@@ -502,7 +517,7 @@ async fn input_with_nobody_watching_is_refused() {
         bench.monitors.write(&path(), b"x".to_vec(), None),
         Err(Refusal::NotOpen(path()))
     );
-    let other = PortKey::Path("/dev/none".into());
+    let other = PortKey::Tty("/dev/none".into());
     assert_eq!(bench.monitors.reset(&other), Err(Refusal::NotOpen(other)));
 }
 
@@ -558,7 +573,7 @@ async fn the_first_subscriber_chooses_the_rate() {
     let other =
         bench
             .monitors
-            .subscribe(PortKey::Path("/dev/other".into()), None, Bounds::default());
+            .subscribe(PortKey::Tty("/dev/other".into()), None, Bounds::default());
     assert_eq!(other.baud(), 115200);
 }
 
@@ -693,7 +708,7 @@ async fn monitored_lists_each_port_and_the_path_it_holds_open() {
     };
     assert_eq!(
         bench.monitors.monitored(),
-        [open(&path(), None), open(&usb, Some("/dev/ttyUSB1"))]
+        [open(&usb, Some("/dev/ttyUSB1")), open(&path(), None)]
     );
 }
 

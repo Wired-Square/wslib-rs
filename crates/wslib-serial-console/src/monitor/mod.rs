@@ -11,9 +11,6 @@ mod tests;
 
 use std::{
     collections::HashMap,
-    convert::Infallible,
-    fmt,
-    str::FromStr,
     sync::{
         Arc, Mutex, MutexGuard, PoisonError,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -57,45 +54,9 @@ impl Default for MonitorOptions {
     }
 }
 
-/// The port a monitor holds. A USB serial is resolved to its path at every
-/// open, since a replug can move it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum PortKey {
-    Path(String),
-    UsbSerial(String),
-}
-
-impl PortKey {
-    /// The USB serial when there is one, so consoles that name it share the
-    /// device's monitor whichever path they were given.
-    pub fn new(path: Option<&str>, usb_serial: Option<&str>) -> Option<Self> {
-        match (usb_serial, path) {
-            (Some(serial), _) => Some(Self::UsbSerial(serial.to_owned())),
-            (None, Some(path)) => Some(Self::Path(path.to_owned())),
-            (None, None) => None,
-        }
-    }
-}
-
-impl fmt::Display for PortKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Path(path) => f.write_str(path),
-            Self::UsbSerial(serial) => write!(f, "usb:{serial}"),
-        }
-    }
-}
-
-impl FromStr for PortKey {
-    type Err = Infallible;
-
-    fn from_str(key: &str) -> Result<Self, Infallible> {
-        Ok(match key.strip_prefix("usb:") {
-            Some(serial) => Self::UsbSerial(serial.to_owned()),
-            None => Self::Path(key.to_owned()),
-        })
-    }
-}
+/// The port a monitor holds. A USB serial or topology path is resolved to its
+/// tty at every open, since a replug can move it.
+pub type PortKey = wslib_mcu_flash::identity::PortIdentity;
 
 /// Why the monitor turned a request away.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

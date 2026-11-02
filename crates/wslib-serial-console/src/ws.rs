@@ -18,11 +18,14 @@ use axum::{
     routing::{MethodFilter, MethodRouter, on},
 };
 use serde::{Deserialize, Serialize};
+use wslib_mcu_flash::identity::{USB_PATH_PREFIX, USB_SERIAL_PREFIX};
 
 use crate::{
     Bounds, ConsoleAction, ConsoleEvent, Finished, Frame, Monitors, PortKey, Refusal,
     RefusalReason, Update, text,
 };
+
+pub const MISSING_PORT: &str = "missing address, usb_serial and usb_path";
 
 /// Who is at a console.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,6 +91,7 @@ pub trait ConsoleHooks<S>: Send + Sync + 'static {
 pub struct ConsoleQuery {
     pub address: Option<String>,
     pub usb_serial: Option<String>,
+    pub usb_path: Option<String>,
     /// Opens the port when this console is its first; ignored after.
     pub baud: Option<u32>,
     pub tail: Option<u32>,
@@ -100,6 +104,19 @@ pub struct ConsoleQuery {
 }
 
 impl ConsoleQuery {
+    pub fn key(&self) -> Option<PortKey> {
+        let prefixed = [
+            (USB_SERIAL_PREFIX, &self.usb_serial),
+            (USB_PATH_PREFIX, &self.usb_path),
+        ];
+        let parsed = prefixed.into_iter().find_map(|(prefix, value)| {
+            let value = value.as_ref()?;
+            format!("{prefix}{value}").parse().ok()
+        });
+        let address = self.address.clone().filter(|a| !a.is_empty());
+        parsed.or_else(|| address.map(PortKey::Tty))
+    }
+
     pub fn bounds(&self) -> Bounds {
         Bounds {
             tail: self.tail,
@@ -146,13 +163,13 @@ where
         Ok(Query(query)) => query,
         Err(rejection) => return rejection.into_response(),
     };
-    let opened = match PortKey::new(query.address.as_deref(), query.usb_serial.as_deref()) {
+    let opened = match query.key() {
         Some(key) => {
             let path = monitors.resolve(&key);
             let allowed = hooks.may_open_path(&state, &key, path.as_deref()).await;
             allowed.map(|()| (key, path))
         }
-        None => Err("missing address and usb_serial".to_owned()),
+        None => Err(MISSING_PORT.to_owned()),
     };
     let ws = match WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
         Ok(ws) => ws,

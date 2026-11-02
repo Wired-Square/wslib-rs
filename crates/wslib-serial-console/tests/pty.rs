@@ -78,7 +78,7 @@ async fn receive(master: &mut File, len: usize) -> Vec<u8> {
 async fn a_console_reads_the_line_and_its_input_reaches_the_device_marked_theirs() {
     let (mut master, slave) = pty();
     let monitors = Monitors::new(MonitorOptions::default());
-    let key = PortKey::Path(slave);
+    let key = PortKey::Tty(slave);
     let mut console = monitors.subscribe(key.clone(), None, Bounds::default());
     console.join("local", vec!["alex".into()]);
     within(async {

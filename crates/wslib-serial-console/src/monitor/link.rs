@@ -1,5 +1,7 @@
 use std::io;
+use std::path::Path;
 
+use wslib_mcu_flash::ports::{SERIAL_BY_PATH_DIR, by_path_index, not_attached};
 use wslib_serial::{
     Access, LineSettings, Parity, PortKind, SerialError, SerialEvent, SerialOptions, SerialTask,
     SerialWriter,
@@ -18,30 +20,37 @@ pub(crate) enum Opener {
 }
 
 pub(super) enum Unresolved {
-    /// No attached device has the USB serial.
+    /// No attached device answers to the key.
     Missing(String),
     Failed(String),
 }
 
+fn usb_serial_tty(serial: &str) -> Result<Option<String>, Unresolved> {
+    Ok(wslib_serial::ports()
+        .map_err(|e| Unresolved::Failed(format!("listing ports: {e}")))?
+        .into_iter()
+        .filter(|port| matches!(&port.kind, PortKind::Usb(usb) if usb.serial.as_deref() == Some(serial)))
+        .map(|port| port.path)
+        .min_by_key(|path| (!path.starts_with("/dev/cu."), path.clone())))
+}
+
+fn topology_tty(name: &str) -> Option<String> {
+    by_path_index(Path::new(SERIAL_BY_PATH_DIR))
+        .into_iter()
+        .find(|(_, names)| names.iter().any(|n| n == name))
+        .map(|(tty, _)| tty)
+}
+
 impl Opener {
     pub(super) fn resolve(&self, key: &PortKey) -> Result<String, Unresolved> {
-        let serial = match key {
-            PortKey::Path(path) => return Ok(path.clone()),
-            PortKey::UsbSerial(serial) => serial,
-        };
-        let missing =
-            || Unresolved::Missing(format!("USB device with serial {serial:?} not attached"));
-        match self {
-            Self::Serial => wslib_serial::ports()
-                .map_err(|e| Unresolved::Failed(format!("listing ports: {e}")))?
-                .into_iter()
-                .filter(|port| matches!(&port.kind, PortKind::Usb(usb) if usb.serial.as_ref() == Some(serial)))
-                .map(|port| port.path)
-                .min_by_key(|path| (!path.starts_with("/dev/cu."), path.clone()))
-                .ok_or_else(missing),
+        let found = match (self, key) {
+            (_, PortKey::Tty(path)) => return Ok(path.clone()),
+            (Self::Serial, PortKey::UsbSerial(serial)) => usb_serial_tty(serial)?,
+            (Self::Serial, PortKey::UsbPath(name)) => topology_tty(name),
             #[cfg(any(test, feature = "test-support"))]
-            Self::Fake(ports) => ports.resolve(serial).ok_or_else(missing),
-        }
+            (Self::Fake(ports), _) => ports.resolve(key),
+        };
+        found.ok_or_else(|| Unresolved::Missing(not_attached(key).to_string()))
     }
 
     pub(super) fn open(&self, path: &str, baud: u32) -> Result<Link, SerialError> {

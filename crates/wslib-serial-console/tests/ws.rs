@@ -26,7 +26,7 @@ use wslib_serial_console::{
     ConsoleEvent, EndReason, Finished, MonitorOptions, MonitorState, Monitors, Participant,
     PortKey, RefusalReason, Span, Update,
     test_support::{FakeDevice, FakePorts, StopReaders, Wired},
-    ws::{Attendee, Audit, ConsoleHooks, console, frames, text_frame},
+    ws::{Attendee, Audit, ConsoleHooks, ConsoleQuery, MISSING_PORT, console, frames, text_frame},
 };
 
 const PATH: &str = "/dev/ttyACM0";
@@ -34,6 +34,7 @@ const HELD: &str = "/dev/held";
 /// Where the USB serial [`HELD_SERIAL`] resolves, a path the host holds.
 const HELD_USB: &str = "/dev/ttyUSB-held";
 const HELD_SERIAL: &str = "0042";
+const HELD_TOPOLOGY: &str = "platform-x-usb-0:1.4:1.0-port0";
 const WAIT: Duration = Duration::from_secs(5);
 
 type Browser = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -81,7 +82,7 @@ impl ConsoleHooks<Desk> for Hooks {
 
     async fn may_open(&self, desk: &Desk, key: &PortKey) -> Result<(), String> {
         match key {
-            PortKey::Path(path) if path == desk.held => Err("an app holds the port".into()),
+            PortKey::Tty(path) if path == desk.held => Err("an app holds the port".into()),
             _ => Ok(()),
         }
     }
@@ -369,7 +370,7 @@ async fn a_reset_refused_during_a_flash_reaches_only_the_console_that_sent_it() 
     let _device = bench.plug();
     let mut alex = bench.console("alex").await;
     let mut olive = bench.console("olive").await;
-    let key = PortKey::Path(PATH.into());
+    let key = PortKey::Tty(PATH.into());
 
     within(bench.monitors.pause(&key)).await;
     paused(&mut alex).await;
@@ -446,7 +447,7 @@ async fn a_console_naming_no_port_is_upgraded_then_told_why_and_closed() {
     assert_eq!(
         event(&mut browser).await,
         ConsoleEvent::Error {
-            message: "missing address and usb_serial".into()
+            message: MISSING_PORT.into()
         }
     );
     assert!(matches!(frame(&mut browser).await, Message::Close(_)));
@@ -531,6 +532,35 @@ async fn a_console_opens_over_http2_extended_connect() {
 }
 
 #[tokio::test]
+async fn may_open_is_told_the_path_a_topology_path_resolves_to() {
+    let bench = Bench::new().await;
+    let key = PortKey::UsbPath(HELD_TOPOLOGY.into());
+    let _device = bench.ports.plug_as(HELD_USB, key.clone());
+    let query = format!("usb_serial=&usb_path={HELD_TOPOLOGY}&address=/dev/other");
+    let mut browser = bench.open(&query, &[("x-name", "alex")]).await;
+    assert_eq!(
+        event(&mut browser).await,
+        ConsoleEvent::Error {
+            message: format!("usb-path:{HELD_TOPOLOGY} is {HELD_USB}, which an app holds")
+        }
+    );
+    assert!(matches!(frame(&mut browser).await, Message::Close(_)));
+    assert!(!bench.monitors.is_monitored(&key));
+}
+
+#[test]
+fn a_console_query_keys_by_serial_then_topology_then_address() {
+    let query = |s: &str| -> ConsoleQuery { serde_json::from_str(s).unwrap() };
+    let all = query(r#"{"usb_serial":"S","usb_path":"P","address":"/dev/a"}"#);
+    assert_eq!(all.key(), Some(PortKey::UsbSerial("S".into())));
+    let no_serial = query(r#"{"usb_serial":"","usb_path":"P","address":"/dev/a"}"#);
+    assert_eq!(no_serial.key(), Some(PortKey::UsbPath("P".into())));
+    let only_address = query(r#"{"usb_path":"","address":"/dev/a"}"#);
+    assert_eq!(only_address.key(), Some(PortKey::Tty("/dev/a".into())));
+    assert_eq!(query(r#"{"usb_serial":"","address":""}"#).key(), None);
+}
+
+#[tokio::test]
 async fn may_open_is_told_the_path_a_usb_serial_resolves_to() {
     let bench = Bench::new().await;
     let _device = bench.ports.plug_usb(HELD_USB, HELD_SERIAL);
@@ -559,7 +589,7 @@ async fn a_revoked_port_tells_each_console_why_then_closes_it() {
     let mut logs = bench.open(&format!("address={PATH}&lines=5"), &[]).await;
     reading(&mut logs).await;
 
-    let key = PortKey::Path(PATH.into());
+    let key = PortKey::Tty(PATH.into());
     assert!(within(bench.monitors.revoke(&key, "handed to the flasher")).await);
     let revoked = ConsoleEvent::Error {
         message: "handed to the flasher".into(),

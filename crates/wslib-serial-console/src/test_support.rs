@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use wslib_serial::{SerialError, SerialEvent};
 
 use crate::{
-    MonitorOptions, Monitors,
+    MonitorOptions, Monitors, PortKey,
     monitor::{Opener, lock},
 };
 
@@ -32,8 +32,8 @@ pub struct FakePorts(Arc<Mutex<Plugged>>);
 #[derive(Default)]
 struct Plugged {
     waiting: HashMap<String, VecDeque<FakeLink>>,
-    /// USB serial to path, while the device is plugged in.
-    usb: HashMap<String, String>,
+    /// What each plugged-in device answers to, and its path.
+    usb: HashMap<PortKey, String>,
 }
 
 /// What the monitor put on a fake device's line.
@@ -47,7 +47,7 @@ pub enum Wired {
 pub struct FakeDevice {
     reads: mpsc::UnboundedSender<SerialEvent>,
     wire: mpsc::UnboundedReceiver<Wired>,
-    unplug: Option<(FakePorts, String)>,
+    unplug: Option<(FakePorts, PortKey)>,
 }
 
 pub(crate) struct FakeLink {
@@ -68,13 +68,15 @@ impl FakePorts {
     /// A device for the next open of `path`, which `usb_serial` resolves to
     /// until the device is dropped.
     pub fn plug_usb(&self, path: &str, usb_serial: &str) -> FakeDevice {
-        self.lock()
-            .usb
-            .insert(usb_serial.to_owned(), path.to_owned());
-        self.plug_with(path, Some(usb_serial.to_owned()))
+        self.plug_as(path, PortKey::UsbSerial(usb_serial.to_owned()))
     }
 
-    fn plug_with(&self, path: &str, usb_serial: Option<String>) -> FakeDevice {
+    pub fn plug_as(&self, path: &str, key: PortKey) -> FakeDevice {
+        self.lock().usb.insert(key.clone(), path.to_owned());
+        self.plug_with(path, Some(key))
+    }
+
+    fn plug_with(&self, path: &str, key: Option<PortKey>) -> FakeDevice {
         let (reads, events) = mpsc::unbounded_channel();
         let (wire, wired) = mpsc::unbounded_channel();
         let _ = reads.send(SerialEvent::Connected);
@@ -87,12 +89,12 @@ impl FakePorts {
         FakeDevice {
             reads,
             wire: wired,
-            unplug: usb_serial.map(|serial| (self.clone(), serial)),
+            unplug: key.map(|key| (self.clone(), key)),
         }
     }
 
-    pub(crate) fn resolve(&self, usb_serial: &str) -> Option<String> {
-        self.lock().usb.get(usb_serial).cloned()
+    pub(crate) fn resolve(&self, key: &PortKey) -> Option<String> {
+        self.lock().usb.get(key).cloned()
     }
 
     pub(crate) fn open(&self, path: &str) -> Result<FakeLink, SerialError> {
@@ -153,8 +155,8 @@ impl FakeDevice {
 
 impl Drop for FakeDevice {
     fn drop(&mut self) {
-        if let Some((ports, usb_serial)) = self.unplug.take() {
-            ports.lock().usb.remove(&usb_serial);
+        if let Some((ports, key)) = self.unplug.take() {
+            ports.lock().usb.remove(&key);
         }
     }
 }

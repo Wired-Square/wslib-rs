@@ -87,11 +87,17 @@ Crates are published to the private Cargo registry on Forgejo, never to
 crates.io. Name it once, machine-wide, in `~/.cargo/config.toml`:
 
 ```toml
+[registry]
+global-credential-providers = ["cargo:token"]
+
 [registries.wired-square]
 index = "sparse+https://forge.wiredsquare.com/api/packages/wired-square/cargo/"
 ```
 
-and store a `read:package` Forgejo token for it in `~/.cargo/credentials.toml`:
+Without `global-credential-providers`, Cargo refuses the registry with
+"authenticated registries require a credential-provider to be configured",
+even when a token is stored. Then store a `read:package` Forgejo token for it
+in `~/.cargo/credentials.toml`:
 
 ```sh
 cargo login --registry wired-square
@@ -99,10 +105,11 @@ cargo login --registry wired-square
 
 given as `Bearer <token>`.
 
-Set no `credential-provider`, in a repo or your own config: Cargo refuses to
-merge a string provider with an array one, so setting one breaks every
-checkout that sets the other. The host must trust the CA that signs
-`forge.wiredsquare.com`. Then:
+Set no per-registry or `[registry]` `credential-provider`, in a repo or your
+own config: Cargo refuses to merge a string provider with an array one, so
+setting one breaks every checkout that sets the other.
+`global-credential-providers` is a different key and doesn't clash. The host
+must trust the CA that signs `forge.wiredsquare.com`. Then:
 
 ```toml
 [dependencies]
@@ -116,6 +123,9 @@ GitHub Actions can't reach Forgejo, so it reads the read-only mirror at
 machine off the network. In that machine's `~/.cargo/config.toml`:
 
 ```toml
+[registry]
+global-credential-providers = ["cargo:token"]
+
 [source.wired-square-forge]
 registry = "sparse+https://forge.wiredsquare.com/api/packages/wired-square/cargo/"
 replace-with = "wired-square-mirror"
@@ -127,7 +137,9 @@ index = "sparse+https://mirror.wiredsquare.com/cargo/"
 with its read token stored by `cargo login --registry wired-square-mirror`.
 `Cargo.lock` still records Forgejo, so the same lockfile builds either way.
 In Actions, supply the token from a repository secret as
-`CARGO_REGISTRIES_WIRED_SQUARE_MIRROR_TOKEN`.
+`CARGO_REGISTRIES_WIRED_SQUARE_MIRROR_TOKEN`, with
+`CARGO_REGISTRY_GLOBAL_CREDENTIAL_PROVIDERS=cargo:token` in place of the
+`[registry]` table.
 
 ## Working here
 

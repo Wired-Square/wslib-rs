@@ -8603,7 +8603,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-framelink-board"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "flate2",
  "serde",
@@ -8753,7 +8753,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-mcu-flash"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "ciborium",
@@ -8764,6 +8764,7 @@ dependencies = [
  "nusb 0.1.14",
  "serde",
  "serialport",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "wslib-file-atomic",

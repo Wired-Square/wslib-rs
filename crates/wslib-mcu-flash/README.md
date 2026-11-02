@@ -1,7 +1,7 @@
 # wslib-mcu-flash
 
 What Wired Square's tools share when they **flash a microcontroller**: which
-family a chip is in and where its images go, which host tty a USB serial
+family a chip is in and where its images go, which host tty a port identity
 resolves to, how a firmware file becomes bytes, one progress/cancel seam, and
 the backends themselves. An application supplies the artefacts, the port list
 and a progress sink; nothing here knows about a fixture, a Tauri window or a
@@ -15,12 +15,17 @@ Always on, no optional dependencies:
   name's prefix, the ESP32 bootloader / application offsets and
   `default_offset` per artefact kind, `pretty_esp_chip` (`esp32s3` →
   `ESP32-S3`), and `lookup_stm32_pid` for the AN3155 product ids.
+- **`identity`** — `PortIdentity`: a port named by USB serial (`usb:<serial>`),
+  by USB topology path (`usb-path:<name in /dev/serial/by-path>`) or by tty,
+  parsed strictly from and printed as that string.
 - **`ports`** — `SerialPort` (path, label, USB serial, interface number, vid/pid,
-  strings), `ports_for_serial` (a composite device's ttys, interface order),
-  `describe_ports`, and the `Enumerator` closure type the DFU wait polls.
+  strings, topology names), `ports_for_identity` (a device's ttys, interface
+  order), `identities_for` (every name of the ports an identity matches),
+  `by_path_index`, `describe_ports`, and the `Enumerator` closure type the DFU
+  wait polls.
 - **`endpoint`** — `UsbAccess`, `Transport`, `FlashEndpoint`, `pairing_error`
   (which (family, access, transport) triples have a backend at all) and
-  `resolve_endpoint`, which turns a pinned USB serial or an auto-detected
+  `resolve_endpoint`, which turns a pinned port identity or an auto-detected
   Espressif port into the tty or DFU serial to flash through. Pure over a
   `&[SerialPort]` slice, so every branch is unit-tested without hardware.
 - **`image`** — Intel HEX as `WriteSpan`s (gaps preserved) or its first span,
@@ -36,21 +41,21 @@ Behind features:
 
 | Feature | Adds | Pulls in |
 | --- | --- | --- |
-| `ports` | `ports::discover`, `resolve_by_serial`, `usb_info_for` — the host's USB ttys | `serialport` |
+| `ports` | `ports::discover`, `resolve_identity`, `usb_info_for` — the host's USB ttys, with their `/dev/serial/by-path` names on Linux | `serialport` |
 | `esptool` | `tool::EsptoolFlasher` — `esptool write-flash` / `erase-flash` as a child process | `tokio`, `async-trait` |
 | `dfu-util` | `tool::DfuUtilFlasher` — `dfu-util -S <serial> -a <alt> -D <image>`, then a wait for the ttys to return | `tokio`, `async-trait` |
 | `espflash` | `esp` — the Espressif serial bootloader in process: `detect_chip`, `flash`, `flash_images`, `read_flash`, `erase` | `espflash`, `serialport` |
 | `dfu` | `dfu` — USB DFU 1.1 / DfuSe in process: `list_devices`, `flash`, `flash_alt`, and `detach_and_flash` from a running application's DFU runtime interface | `dfu-nusb`, `dfu-core`, `nusb` 0.1 |
 | `stm32-uart` | `stm32_uart` — ST AN3155 over a USB-UART with RTS/DTR bootloader entry: `detect_chip`, `flash`, `read_flash`, `erase`; `detect` when `espflash` is on too | `serialport` |
 | `mcumgr` | `mcumgr` — an MCUboot image over SMP on a `wslib_mcumgr::Session`: `flash`, then test or confirm and reset; `wslib_mcumgr` re-exported. `mcumgr-udp` and `mcumgr-ble` add its transports | `wslib-mcumgr` |
-| `serde` | `Serialize` / `Deserialize` on the stage, family, port and chip-info types | `serde` |
+| `serde` | `Serialize` / `Deserialize` on the stage, family, port, identity and chip-info types | `serde` |
 
 ## Using it
 
 From the `wired-square` registry (see the workspace README for its setup):
 
 ```toml
-wslib-mcu-flash = { version = "0.1", registry = "wired-square", features = ["ports", "esptool"] }
+wslib-mcu-flash = { version = "0.2", registry = "wired-square", features = ["ports", "esptool"] }
 ```
 
 On Linux, `ports`, and so `espflash` and `stm32-uart`, needs `libudev-dev`
@@ -61,11 +66,13 @@ The tool backends are `async` and expect a tokio runtime:
 ```rust
 use wslib_mcu_flash::{ChipFamily, MaterialisedArtefact, Transport, UsbAccess};
 use wslib_mcu_flash::endpoint::{resolve_endpoint, FlashEndpoint};
+use wslib_mcu_flash::identity::PortIdentity;
 use wslib_mcu_flash::progress::LogProgress;
 use wslib_mcu_flash::tool::{EsptoolFlasher, Flasher};
 
 let ports = wslib_mcu_flash::ports::discover();
-let endpoint = resolve_endpoint(ChipFamily::Esp32, UsbAccess::Native, Transport::Direct, Some("58:8C"), &ports)?;
+let board: PortIdentity = "usb:58:8C".parse()?;
+let endpoint = resolve_endpoint(ChipFamily::Esp32, UsbAccess::Native, Transport::Direct, Some(&board), &ports)?;
 let FlashEndpoint::Tty { path, .. } = endpoint else { unreachable!() };
 
 let artefacts = vec![MaterialisedArtefact { kind: "application".into(), offset: Some(0x20000), path: "app.bin".into() }];
@@ -116,4 +123,12 @@ mcumgr::flash(&session, "zephyr.signed.bin".as_ref(), &options, &mut sink).await
   flags (`--before default-reset`, `write-flash`). `EsptoolFlasher::with_binary`
   only renames the program (`esptool.py` on a PlatformIO install, say); an
   esptool 4 install wants underscored flags and is not supported.
+- **Topology identities are Linux-only.** `usb-path:` names come from
+  udev's `/dev/serial/by-path`; elsewhere they resolve to an error saying so,
+  never to "not attached". A by-path name is the USB port, not the board:
+  swap boards on that port and the name follows the port.
+- **Only `esp` checks the chip.** `EspFlashOptions.expected_mac` makes the
+  in-process ESP backend refuse a chip whose MAC differs; `tool`, `dfu` and
+  `stm32_uart` take no expected identity and flash whatever answers on the
+  port.
 - **`--all-features` to test.** The crate defaults to no backends.

@@ -20,6 +20,7 @@ use serialport::UsbPortInfo;
 
 use crate::chip::ESPTOOL_DEFAULT_BAUD;
 use crate::error::{FlashError, Result};
+use crate::identity::mac_matches;
 use crate::output;
 use crate::ports;
 use crate::progress::{FlashProgress, FlashStage, check_cancel};
@@ -28,6 +29,7 @@ const READ_CHUNK_SIZE: u32 = 64 * 1024;
 const READ_BLOCK_SIZE: u32 = 1024;
 const READ_MAX_IN_FLIGHT: u32 = 64;
 const ESP_IMAGE_MAGIC: u8 = 0xE9;
+const UNKNOWN_MAC: &str = "(unknown)";
 
 /// Flasher tuning; `None` leaves espflash's own default in place.
 #[derive(Debug, Clone, Default)]
@@ -37,6 +39,7 @@ pub struct EspFlashOptions {
     pub flash_mode: Option<FlashMode>,
     pub flash_freq: Option<FlashFrequency>,
     pub flash_size: Option<FlashSize>,
+    pub expected_mac: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,7 +138,8 @@ fn connect_for_write(
     progress.on_stage(FlashStage::Connecting, &format!("Opening {port}"));
     let mut flasher = open_flasher(port, options)?;
 
-    if let Ok(info) = chip_info_from(&mut flasher) {
+    let info = chip_info_from(&mut flasher).ok();
+    if let Some(info) = &info {
         progress.on_progress(&format!(
             "Connected: {} · MAC {} · {}",
             info.chip,
@@ -145,6 +149,7 @@ fn connect_for_write(
                 .unwrap_or_else(|| "flash size unknown".to_string()),
         ));
     }
+    check_expected_mac(options, info.as_ref())?;
 
     if let Some(size) = options.flash_size {
         flasher.set_flash_size(size);
@@ -283,6 +288,9 @@ pub fn erase(
 ) -> Result<()> {
     progress.on_stage(FlashStage::Connecting, &format!("Opening {port}"));
     let mut flasher = open_flasher(port, options)?;
+    if options.expected_mac.is_some() {
+        check_expected_mac(options, chip_info_from(&mut flasher).ok().as_ref())?;
+    }
     progress.on_stage(
         FlashStage::Erasing,
         "Erasing entire flash — this can take a minute…",
@@ -351,9 +359,24 @@ fn chip_info_from(flasher: &mut Flasher) -> Result<EspChipInfo> {
         mac: info
             .mac_address
             .clone()
-            .unwrap_or_else(|| "(unknown)".to_string()),
+            .unwrap_or_else(|| UNKNOWN_MAC.to_string()),
         flash_size_bytes: Some(info.flash_size.size() as u64),
     })
+}
+
+fn check_expected_mac(options: &EspFlashOptions, info: Option<&EspChipInfo>) -> Result<()> {
+    let Some(expected) = options.expected_mac.as_deref() else {
+        return Ok(());
+    };
+    let actual = info.map_or(UNKNOWN_MAC, |i| i.mac.as_str());
+    if mac_matches(expected, actual) {
+        Ok(())
+    } else {
+        Err(FlashError::IdentityMismatch {
+            expected: expected.to_string(),
+            actual: actual.to_string(),
+        })
+    }
 }
 
 /// Mirror `esptool write-flash --flash-mode/freq/size` on a bootloader image.
@@ -587,6 +610,45 @@ pub fn parse_flash_freq(s: Option<&str>) -> Result<Option<FlashFrequency>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn chip_with_mac(mac: &str) -> EspChipInfo {
+        EspChipInfo {
+            chip: "esp32".into(),
+            features: Vec::new(),
+            mac: mac.into(),
+            flash_size_bytes: None,
+        }
+    }
+
+    #[test]
+    fn an_expected_mac_refuses_any_other_chip() {
+        let options = EspFlashOptions {
+            expected_mac: Some("68:09:47:1d:2f:0c".into()),
+            ..Default::default()
+        };
+        let right = chip_with_mac("68:09:47:1D:2F:0C");
+        assert_eq!(check_expected_mac(&options, Some(&right)), Ok(()));
+
+        let err = check_expected_mac(&options, Some(&chip_with_mac("00:00:00:00:00:01")));
+        let expected = "connected chip reports MAC 00:00:00:00:00:01, expected \
+                        68:09:47:1d:2f:0c; nothing was written";
+        assert_eq!(err.unwrap_err().to_string(), expected);
+
+        let unread = check_expected_mac(&options, None).unwrap_err();
+        let mismatch = FlashError::IdentityMismatch {
+            expected: "68:09:47:1d:2f:0c".into(),
+            actual: UNKNOWN_MAC.into(),
+        };
+        assert_eq!(unread, mismatch);
+    }
+
+    #[test]
+    fn no_expected_mac_accepts_any_chip_or_none() {
+        let options = EspFlashOptions::default();
+        assert_eq!(check_expected_mac(&options, None), Ok(()));
+        let any = chip_with_mac("00:00:00:00:00:01");
+        assert_eq!(check_expected_mac(&options, Some(&any)), Ok(()));
+    }
 
     #[test]
     fn auto_and_blank_mean_none() {

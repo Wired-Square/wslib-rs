@@ -12,6 +12,7 @@ pub mod artefact;
 pub mod chip;
 pub mod endpoint;
 pub mod error;
+pub mod identity;
 pub mod image;
 pub mod ports;
 pub mod progress;

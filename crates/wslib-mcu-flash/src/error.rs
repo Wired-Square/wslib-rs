@@ -2,8 +2,10 @@
 pub enum FlashError {
     #[error("{0}")]
     Message(String),
-    #[error("USB device with serial {0:?} not attached")]
+    #[error("USB device {0:?} not attached")]
     NotAttached(String),
+    #[error("connected chip reports MAC {actual}, expected {expected}; nothing was written")]
+    IdentityMismatch { expected: String, actual: String },
     #[error("cancelled by user")]
     Cancelled,
 }

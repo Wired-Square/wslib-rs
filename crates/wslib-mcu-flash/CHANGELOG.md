@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.0
+
+- `identity::PortIdentity` names a port by USB serial (`usb:<serial>`), by
+  USB topology path (`usb-path:<name>`, a `/dev/serial/by-path` entry) or by
+  tty. It parses strictly, prints as the same string and, with `serde`,
+  serialises as it.
+- `SerialPort.topology` holds a port's `/dev/serial/by-path` names; `ports`
+  fills it on Linux. `by_path_index` reads such a directory.
+- `ports_for_identity`, `identities_for` and `resolve_identity` replace
+  `ports_for_serial` and `resolve_by_serial`.
+- `resolve_endpoint` takes `Option<&PortIdentity>`, so a USB-serial bridge
+  with no serial number is addressable by the USB port it sits on.
+  `FlashEndpoint::Tty` and `DetectedDirectDevice` carry an `identity`; an
+  auto-detected port reports its serial, else its first topology name.
+- A topology identity off Linux fails as unsupported, never as not attached.
+- `FlashError::NotAttached` names the identity: `USB device "usb:X" not
+  attached`.
+- `esp`: `EspFlashOptions.expected_mac` makes `flash`, `flash_images` and
+  `erase` refuse, with `FlashError::IdentityMismatch` and before anything is
+  written, a chip whose MAC differs or cannot be read.
+  `identity::mac_matches` compares MACs across `:` / `-` and case.
+
 ## 0.1.2
 
 - `dfu`: `flash_alt` downloads to a chosen alt setting, with a DfuSe address

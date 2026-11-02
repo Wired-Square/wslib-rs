@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1
+
+- `mcu-flash` accepts wslib-mcu-flash 0.1 or 0.2; `UsbAccess` is the same in
+  both.
+
 ## 0.3.0
 
 - A frame definition's signal keeps its `quantity` through the board TOML.

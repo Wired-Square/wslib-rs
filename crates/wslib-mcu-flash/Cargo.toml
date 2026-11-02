@@ -1,6 +1,6 @@
 [package]
 name = "wslib-mcu-flash"
-version = "0.1.2"
+version = "0.2.0"
 description = "Chip families, USB-serial port resolution, firmware image parsing and the flash backends (esptool, dfu-util, espflash, USB DFU, STM32 AN3155, MCUboot over SMP) Wired Square tools share."
 readme = "README.md"
 edition.workspace = true
@@ -42,4 +42,5 @@ mcumgr-ble = ["mcumgr", "wslib-mcumgr/ble"]
 [dev-dependencies]
 ciborium = { version = "0.2.2", default-features = false, features = ["std"] }
 serde = { version = "1.0.228", features = ["derive"] }
+tempfile = "3.10.1"
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "time"] }

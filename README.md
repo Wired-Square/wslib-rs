@@ -178,8 +178,8 @@ doesn't stop at the old repo's tag.
 ## Releasing a crate
 
 Bump the crate's `version` and give its `CHANGELOG.md` a heading for it in
-the PR. Once that is merged, on `main`, with `.env` filled in from
-`.env.example`:
+the PR. Once that is merged, on `main`, with the release settings in `.env`
+(below):
 
 ```sh
 scripts/release.sh <crate> ... [--execute] [--no-mirror]
@@ -192,7 +192,44 @@ and runs `scripts/mirror.sh`, which copies the registry to the mirror
 consumers read from. Nothing is published without its tag on `main`: a failed
 push publishes nothing, and a failed publish withdraws the tags of the crates
 not yet published. Without `--execute` it stops before tagging, and with
-`--no-mirror` after publishing. Its settings and the `write:package` token
-come from `.env`, mounted from the `wslib-rs` 1Password Environment, so the
-token never sits on disk; `credentials.toml` holds only the read token. The tag records what was
-published; consumers pin the registry version, not the tag.
+`--no-mirror` after publishing. The tag records what was published; consumers
+pin the registry version, not the tag.
+
+### Release settings
+
+`release.sh` and `mirror.sh` read `.env` at the repo root, whose keys
+`.env.example` lists:
+
+| Key                    | Value                                                                     |
+| ---------------------- | ------------------------------------------------------------------------- |
+| `WSLIB_REGISTRY_TOKEN` | A Forgejo `write:package` token, bare: `release.sh` adds `Bearer `        |
+| `WSLIB_FORGE_URL`      | `https://forge.wiredsquare.com`                                           |
+| `WSLIB_FORGE_OWNER`    | `wired-square`                                                            |
+| `WSLIB_MIRROR_DEST`    | `mirror@miranda.wiredsquare.com:cargo/`                                   |
+
+`WSLIB_MIRROR_DEST` is an rsync destination ending in `:` or `/`. The
+`mirror` account on miranda accepts the sync users' own SSH keys and confines
+them to `/srv/mirror` with rrsync, so the path after the colon is relative to
+that, and `cargo/` is the Cargo mirror's directory. Both scripts also read the
+registry index with the read token in `~/.cargo/credentials.toml`, set up as
+in [Using a crate](#using-a-crate).
+
+**From a 1Password Environment**, which keeps the publish token off disk
+(1Password for Mac or Linux; an owner or administrator turns Environments on
+under **Policies** › **Sharing and permissions** › **Developer
+permissions**):
+
+1. In the desktop app, go to **Developer** › **View Environments**, select
+   **New environment**, name it (for example `wslib-rs`) and **Save**.
+2. Select **Edit**, then **New variable** for each key above. Values are
+   hidden unless **Show value by default** is checked; leave it unchecked for
+   `WSLIB_REGISTRY_TOKEN`.
+3. Under **Connect to**, select **Connect** next to **Local .env file**,
+   **Choose file path**, pick `.env` in this checkout, then **Mount .env
+   file**. Remove any plain `.env` there first.
+
+1Password serves the file each time it is read, and asks you to **Authorize**
+the first read after it unlocks; the authorisation lasts until it locks again.
+
+**As a plain file**, copy `.env.example` to `.env`, fill it in and
+`chmod 600 .env`. The publish token then sits on disk in the clear.

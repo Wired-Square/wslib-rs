@@ -9,8 +9,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 die() { printf 'mirror: %s\n' "$*" >&2; exit 1; }
 
-# shellcheck source=/dev/null
-[[ -e .env ]] && . ./.env
+[[ -e .env ]] && eval "$(cat .env)"
 
 forge=${WSLIB_FORGE_URL:?set in .env}
 owner=${WSLIB_FORGE_OWNER:?set in .env}

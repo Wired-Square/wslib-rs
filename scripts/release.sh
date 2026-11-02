@@ -10,8 +10,7 @@ set -eu
 cd "$(dirname "$0")/.."
 die() { printf 'release: %s\n' "$*" >&2; exit 1; }
 say() { printf 'release: %s\n' "$*"; }
-# shellcheck source=/dev/null
-[ -e .env ] && . ./.env
+[ -e .env ] && eval "$(cat .env)"
 
 execute=false mirror=true names=
 for arg; do

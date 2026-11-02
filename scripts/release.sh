@@ -11,7 +11,7 @@ cd "$(dirname "$0")/.."
 die() { printf 'release: %s\n' "$*" >&2; exit 1; }
 say() { printf 'release: %s\n' "$*"; }
 # shellcheck source=/dev/null
-[ -f .env ] && . ./.env
+[ -e .env ] && . ./.env
 
 execute=false mirror=true names=
 for arg; do
@@ -94,8 +94,7 @@ for name in $names; do tags="$tags $(tag "$name")"; done
 # Read before the CI run so a wrong setting fails at once. Never exported, so
 # nothing the run starts sees it.
 if $execute; then
-  token=$(op read --account "${WSLIB_OP_ACCOUNT:?set to the 1Password account that holds the publish token}" \
-    "${WSLIB_REGISTRY_TOKEN_REF:?set to the op:// reference of your publish token}") || die "could not read the publish token"
+  token=${WSLIB_REGISTRY_TOKEN:?set in .env}
 fi
 
 log=$(mktemp "${TMPDIR:-/tmp}/release-ci.XXXXXX")

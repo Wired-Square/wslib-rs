@@ -10,7 +10,7 @@ cd "$(dirname "$0")/.."
 die() { printf 'mirror: %s\n' "$*" >&2; exit 1; }
 
 # shellcheck source=/dev/null
-[[ -f .env ]] && . ./.env
+[[ -e .env ]] && . ./.env
 
 forge=${WSLIB_FORGE_URL:?set in .env}
 owner=${WSLIB_FORGE_OWNER:?set in .env}

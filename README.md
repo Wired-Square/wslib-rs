@@ -192,7 +192,7 @@ and runs `scripts/mirror.sh`, which copies the registry to the mirror
 consumers read from. Nothing is published without its tag on `main`: a failed
 push publishes nothing, and a failed publish withdraws the tags of the crates
 not yet published. Without `--execute` it stops before tagging, and with
-`--no-mirror` after publishing. The `write:package` token is read from 1Password
-(`WSLIB_OP_ACCOUNT`, `WSLIB_REGISTRY_TOKEN_REF`), so it never sits on disk;
-`credentials.toml` holds only the read token. The tag records what was
+`--no-mirror` after publishing. Its settings and the `write:package` token
+come from `.env`, mounted from the `wslib-rs` 1Password Environment, so the
+token never sits on disk; `credentials.toml` holds only the read token. The tag records what was
 published; consumers pin the registry version, not the tag.

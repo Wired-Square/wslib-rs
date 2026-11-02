@@ -5,81 +5,82 @@ appliance chassis and every app beside it.
 
 | Crate                    | What it does                                                  |
 | ------------------------ | ------------------------------------------------------------- |
-| `wslib-build-id`         | Stamps the commit an artefact was built from into it          |
-| `wslib-secret`           | A credential that never prints, loaded from env or file       |
+| `wslib-1password`        | The `op` CLI typed: vaults, items, documents, `op://` reads   |
+| `wslib-appliance`        | The appliance family in one crate, each member a feature      |
+| `wslib-appliance-auth`   | Sign-in: passwords, TOTP, recovery codes, passkeys, sessions  |
+| `wslib-appliance-backup` | Sealed backups, their routes and schedule, on any backend     |
+| `wslib-appliance-client` | A Windows app's connection to its service's control pipe      |
+| `wslib-appliance-config` | An appliance's bootstrap settings: flags, env and files       |
+| `wslib-appliance-core`   | The appliance chassis: roles, routes, state, control sockets  |
+| `wslib-appliance-https`  | The self-served backend: TLS, sign-in, its own accounts       |
+| `wslib-appliance-server` | The backend behind a console, on the app socket it proxies    |
+| `wslib-appliance-service` | The desktop backend, on control sockets and named pipes      |
+| `wslib-appliance-store`  | An appliance's tables, in one SQLite file its product shares  |
+| `wslib-appliance-types`  | An appliance's wire contract, shared by daemon and browser    |
+| `wslib-appliance-xtask`† | A product's packaging, CI gates and a stand-in console        |
+| `wslib-auth`             | Server-side sessions and their cookie, re-auth, attempts      |
+| `wslib-auth-oidc`        | OIDC ID-token checks against a cached, rotation-aware JWKS    |
+| `wslib-auth-passkey`     | WebAuthn passkey ceremonies, none attestation, ES256/EdDSA    |
+| `wslib-auth-password`    | Argon2id password hashes, a dummy verify, rehash, policy      |
+| `wslib-auth-totp`        | TOTP keys, the otpauth URI, code and clock-skew checks        |
 | `wslib-backoff`          | Capped exponential backoff, reset on success                  |
-| `wslib-telemetry`        | One tracing setup, and an in-memory ring of a service's log   |
-| `wslib-mcp`              | Hosting layer for tools-only MCP servers over rmcp            |
+| `wslib-bits`             | Payload fields by bit and order, word swaps, hex and readings |
+| `wslib-build-id`         | Stamps the commit an artefact was built from into it          |
+| `wslib-can`              | CAN frames, length codes, logs, and the task transports share |
+| `wslib-can-gsusb`        | gs_usb (candleLight), a task over nusb, a listing on Linux    |
+| `wslib-can-gvret`        | GVRET, both ends, and a task over TCP or a serial port        |
+| `wslib-can-pcan`         | PCAN-USB and the FD family, a task over nusb or PCAN-Basic    |
+| `wslib-can-slcan`        | SLCAN with Elmue's CAN FD, and a task over a serial port      |
+| `wslib-can-socketcan`    | SocketCAN frame layouts, and a raw-socket task on Linux       |
+| `wslib-checksum`         | Checksum algorithms, and finding or solving a link's checksum |
+| `wslib-cli`              | Tables or JSON, exit codes and config lookup                  |
+| `wslib-crypto`           | Keys via a rustls provider: generate, sign, fingerprint       |
+| `wslib-crypto-ca`        | A CA: requests, issuing under a profile, revocation lists     |
+| `wslib-crypto-x509`      | Certificates read, examined, chain-checked and self-signed    |
+| `wslib-db-sqlite`        | One SQLite database: WAL, migration chains, settings          |
 | `wslib-dns`              | DNS lookups that keep NXDOMAIN, NODATA and failures apart     |
 | `wslib-dns-mail`         | SPF, DMARC, DKIM, BIMI, MTA-STS and TLS-RPT records in DNS    |
-| `wslib-cli`              | Tables or JSON, exit codes and config lookup                  |
+| `wslib-file-atomic`      | Crash-safe whole-file writes, readers set from creation       |
+| `wslib-framelink`        | A FrameLink session over TCP, discovery, BLE Wi-Fi setup      |
+| `wslib-framelink-board`  | FrameLink board TOML: parse, edit, scaffold, display names    |
+| `wslib-framelink-protocol` | FrameLink's wire, sans-io: frames, messages, signal identity |
+| `wslib-framing`          | Framing codecs for byte streams: COBS, with a capped decoder  |
+| `wslib-homeassistant`    | Home Assistant Ingress: peer check, caller and base path      |
+| `wslib-host`             | Hostname, uptime, kernel, OS and an app-specific machine id   |
 | `wslib-http-error`       | One HTTP error body, the axum error and extractors for it     |
 | `wslib-http-scaffold`    | SPA fallback, health and version routes, standard layers      |
 | `wslib-http-server`      | HTTP, TLS and a redirect listener, bounded and drained        |
-| `wslib-systemd-notify`   | Ready, status and watchdog pings to systemd, no libsystemd    |
-| `wslib-tailscale`        | tailscaled's LocalAPI: status, logout, and a fake for tests   |
-| `wslib-file-atomic`      | Crash-safe whole-file writes, readers set from creation       |
-| `wslib-systemd`          | systemd, hostnamed, timedated and logind over D-Bus, typed    |
-| `wslib-auth-oidc`        | OIDC ID-token checks against a cached, rotation-aware JWKS    |
-| `wslib-auth-totp`        | TOTP keys, the otpauth URI, code and clock-skew checks        |
-| `wslib-auth-passkey`     | WebAuthn passkey ceremonies, none attestation, ES256/EdDSA    |
-| `wslib-auth-password`    | Argon2id password hashes, a dummy verify, rehash, policy      |
-| `wslib-auth`             | Server-side sessions and their cookie, re-auth, attempts      |
-| `wslib-crypto`           | Keys via a rustls provider: generate, sign, fingerprint       |
-| `wslib-crypto-x509`      | Certificates read, examined, chain-checked and self-signed    |
-| `wslib-tls`              | Outbound trust, live and typed; the serving pair kept         |
-| `wslib-crypto-ca`        | A CA: requests, issuing under a profile, revocation lists     |
-| `wslib-systemd-journal`  | The journal through journalctl's JSON, bounded and parsed     |
-| `wslib-ssh-keys`         | authorized_keys lines as sshd reads them, and fingerprints    |
-| `wslib-networkmanager`   | NetworkManager over D-Bus: devices, Wi-Fi, checkpoints        |
-| `wslib-mdns`             | DNS-SD adverts and browsing, in process or through avahi      |
-| `wslib-1password`        | The `op` CLI typed: vaults, items, documents, `op://` reads   |
-| `wslib-db-sqlite`        | One SQLite database: WAL, migration chains, settings          |
-| `wslib-host`             | Hostname, uptime, kernel, OS and an app-specific machine id   |
-| `wslib-tasks`            | One task per row of a desired set, reconciled on change       |
-| `wslib-homeassistant`    | Home Assistant Ingress: peer check, caller and base path      |
+| `wslib-instruments`      | Blocking bench-instrument probes: a 121GW, a WiredReflow      |
+| `wslib-mcp`              | Hosting layer for tools-only MCP servers over rmcp            |
 | `wslib-mcu-flash`        | ESP32 and STM32 flashing: tty lookup, images, six backends    |
-| `wslib-service`          | A service under launchd, systemd or Windows, from one call    |
-| `wslib-tauri`            | Tauri desktop pieces: a quit that waits for in-flight work    |
-| `wslib-pairing`          | A one-time pairing code and the URI carrying the key pin      |
-| `wslib-wiretap-protocol` | Capture vocabulary; the ingest, import and link-test wires    |
-| `wslib-bits`             | Payload fields by bit and order, word swaps, hex and readings |
-| `wslib-quantity`         | A value and its unit: parse, convert, auto-scale, precision   |
-| `wslib-checksum`         | Checksum algorithms, and finding or solving a link's checksum |
-| `wslib-tcp`              | A TCP connect that tries each resolved address in one budget  |
+| `wslib-mcumgr`           | SMP (mcumgr): image upload, test and confirm, files, UDP, BLE |
+| `wslib-mdns`             | DNS-SD adverts and browsing, in process or through avahi      |
 | `wslib-modbus`           | Modbus register maps, poll schedules, RTU framing, TCP poller |
+| `wslib-networkmanager`   | NetworkManager over D-Bus: devices, Wi-Fi, checkpoints        |
+| `wslib-pairing`          | A one-time pairing code and the URI carrying the key pin      |
+| `wslib-quantity`         | A value and its unit: parse, convert, auto-scale, precision   |
+| `wslib-secret`           | A credential that never prints, loaded from env or file       |
 | `wslib-serial`           | Serial line settings, SLIP and delimiters, a reopening port   |
 | `wslib-serial-console`   | A shared serial console: its wire, monitor and `/ws/serial`   |
-| `wslib-framing`          | Framing codecs for byte streams: COBS, with a capped decoder  |
-| `wslib-can`              | CAN frames, length codes, logs, and the task transports share |
-| `wslib-can-socketcan`    | SocketCAN frame layouts, and a raw-socket task on Linux       |
-| `wslib-can-gvret`        | GVRET, both ends, and a task over TCP or a serial port        |
-| `wslib-can-slcan`        | SLCAN with Elmue's CAN FD, and a task over a serial port      |
-| `wslib-can-gsusb`        | gs_usb (candleLight), a task over nusb, a listing on Linux    |
-| `wslib-can-pcan`         | PCAN-USB and the FD family, a task over nusb or PCAN-Basic    |
+| `wslib-service`          | A service under launchd, systemd or Windows, from one call    |
+| `wslib-ssh-keys`         | authorized_keys lines as sshd reads them, and fingerprints    |
+| `wslib-systemd`          | systemd, hostnamed, timedated and logind over D-Bus, typed    |
+| `wslib-systemd-journal`  | The journal through journalctl's JSON, bounded and parsed     |
+| `wslib-systemd-notify`   | Ready, status and watchdog pings to systemd, no libsystemd    |
+| `wslib-tailscale`        | tailscaled's LocalAPI: status, logout, and a fake for tests   |
+| `wslib-tasks`            | One task per row of a desired set, reconciled on change       |
+| `wslib-tauri`            | Tauri desktop pieces: a quit that waits for in-flight work    |
+| `wslib-tcp`              | A TCP connect that tries each resolved address in one budget  |
+| `wslib-telemetry`        | One tracing setup, and an in-memory ring of a service's log   |
+| `wslib-tls`              | Outbound trust, live and typed; the serving pair kept         |
 | `wslib-wiretap-catalogue` | Device catalogues: parse, validate, decode, edit, frame, DBC |
 | `wslib-wiretap-gateway`  | A capture gateway's HTTP API, as serde types                  |
-| `wslib-framelink-protocol` | FrameLink's wire, sans-io: frames, messages, signal identity |
-| `wslib-framelink-board`  | FrameLink board TOML: parse, edit, scaffold, display names    |
-| `wslib-mcumgr`           | SMP (mcumgr): image upload, test and confirm, files, UDP, BLE |
-| `wslib-framelink`        | A FrameLink session over TCP, discovery, BLE Wi-Fi setup      |
-| `wslib-instruments`      | Blocking bench-instrument probes: a 121GW, a WiredReflow      |
-| `wslib-appliance-types`  | An appliance's wire contract, shared by daemon and browser    |
-| `wslib-appliance-config` | An appliance's bootstrap settings: flags, env and files       |
-| `wslib-appliance-store`  | An appliance's tables, in one SQLite file its product shares  |
-| `wslib-appliance-auth`   | Sign-in: passwords, TOTP, recovery codes, passkeys, sessions  |
-| `wslib-appliance-core`   | The appliance chassis: roles, routes, state, control sockets  |
-| `wslib-appliance-server` | The backend behind a console, on the app socket it proxies    |
-| `wslib-appliance-https`  | The self-served backend: TLS, sign-in, its own accounts       |
-| `wslib-appliance-service` | The desktop backend, on control sockets and named pipes      |
-| `wslib-appliance-backup` | Sealed backups, their routes and schedule, on any backend     |
-| `wslib-appliance-client` | A Windows app's connection to its service's control pipe      |
-| `wslib-appliance-xtask`† | A product's packaging, CI gates and a stand-in console        |
-| `wslib-appliance`        | The appliance family in one crate, each member a feature      |
+| `wslib-wiretap-protocol` | Capture vocabulary; the ingest, import and link-test wires    |
 
 † marks a crate that ships non-Rust sources, and says so at the top of its own
 README. `wslib-appliance-xtask` ships shell build scripts, Debian maintainer
 scripts, a systemd unit and a Dockerfile, as templates it renders into a
+product.
 
 ## Using a crate
 

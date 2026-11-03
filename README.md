@@ -219,8 +219,11 @@ in [Using a crate](#using-a-crate).
 under **Policies** › **Sharing and permissions** › **Developer
 permissions**):
 
-1. In the desktop app, go to **Developer** › **View Environments**, select
-   **New environment**, name it (for example `wslib-rs`) and **Save**.
+1. In the desktop app's main window (not Settings), select **Developer** in
+   the sidebar, then **View Environments**. **Developer** shows only once
+   **Settings** › **Developer** › **Show 1Password Developer experience** is
+   on. Select **New environment**, name it (for example `wslib-rs`) and
+   **Save**.
 2. Select **Edit**, then **New variable** for each key above. Values are
    hidden unless **Show value by default** is checked; leave it unchecked for
    `WSLIB_REGISTRY_TOKEN`.

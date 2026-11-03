@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.3
+
+- `account::EnabledChange` carries `proof`, defaulted when absent, so
+  `{"enabled":true}` still reads.
+- `account::AppRoleChange { role, proof }`, the body of a host's
+  `PUT /api/users/{id}/apps/{app}`; a `None` role removes the app role.
+
 ## 0.1.2
 
 - `AppManifest::devices`: the hotplugged `DeviceClass`es the console passes in,

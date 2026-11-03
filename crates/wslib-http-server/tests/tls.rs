@@ -1,9 +1,9 @@
 mod support;
 
 use std::net::SocketAddr;
-
 use std::sync::Arc;
 
+use axum::body::Bytes;
 use axum::http::{Request, StatusCode, header};
 use axum::routing::get;
 use axum::{Extension, Router};
@@ -12,8 +12,12 @@ use rcgen::{CertificateParams, DnType, IsCa, Issuer, KeyPair};
 use rustls::RootCertStore;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use rustls::server::WebPkiClientVerifier;
-use support::{Pair, dial, dial_tls, exchange, listener, provider};
+use support::{BRIEF, PATIENT, Pair, dial, dial_tls, exchange, listener, provider};
+use tokio::sync::Notify;
+use tokio::task::JoinHandle;
+use tokio::time::timeout;
 use tokio_rustls::TlsConnector;
+use tokio_util::sync::CancellationToken;
 use wslib_http_server::{
     Bounds, PeerCertificates, Tls, serve_https, server_config_from_pem,
     server_config_from_pem_files,
@@ -253,4 +257,128 @@ async fn a_handler_sees_no_certificate_from_a_client_that_presented_none() {
     let mut stream = dial_tls(address, &pair.cert, &[b"http/1.1"]).await;
     let answer = exchange(&mut stream, "/peer").await.expect("an answer");
     assert!(answer.ends_with("none"), "{answer}");
+}
+
+/// A route that answers once released, telling the test when it has begun.
+fn holding(begun: Arc<Notify>, released: Arc<Notify>) -> Router {
+    app().route(
+        "/held",
+        get(move || async move {
+            begun.notify_one();
+            released.notified().await;
+            "released"
+        }),
+    )
+}
+
+async fn h2_over(
+    stream: tokio_rustls::client::TlsStream<tokio::net::TcpStream>,
+) -> (h2::client::SendRequest<Bytes>, JoinHandle<()>) {
+    let (client, connection) = h2::client::handshake(stream).await.expect("h2");
+    (
+        client,
+        tokio::spawn(async {
+            connection.await.ok();
+        }),
+    )
+}
+
+async fn ended(connection: JoinHandle<()>) -> bool {
+    timeout(PATIENT, connection).await.is_ok()
+}
+
+fn get_request(path: &str) -> Request<()> {
+    Request::get(format!("https://localhost{path}"))
+        .body(())
+        .expect("a request")
+}
+
+async fn body(response: h2::client::ResponseFuture) -> String {
+    let mut body = response.await.expect("a response").into_body();
+    let mut read = Vec::new();
+    while let Some(chunk) = body.data().await {
+        read.extend_from_slice(&chunk.expect("a chunk"));
+    }
+    String::from_utf8(read).expect("text")
+}
+
+#[tokio::test]
+async fn a_renew_drains_open_connections_and_serves_new_ones_the_new_pair() {
+    let (first, second) = (Pair::new(), Pair::new());
+    let (begun, released) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+    let tls = Tls::new(first.server_config());
+    let listener = listener(Bounds::SERVING).await;
+    let address = listener.local_addr();
+    let router = holding(begun.clone(), released.clone());
+    tokio::spawn(serve_https(
+        listener,
+        router,
+        tls.clone(),
+        std::future::pending(),
+    ));
+
+    let (_idle, idle_ended) = h2_over(dial_tls(address, &first.cert, &[b"h2"]).await).await;
+    let (mut busy, busy_ended) = h2_over(dial_tls(address, &first.cert, &[b"h2"]).await).await;
+    let (in_flight, _) = busy.send_request(get_request("/held"), true).expect("sent");
+    timeout(PATIENT, begun.notified()).await.expect("begun");
+
+    tls.reload(second.server_config());
+    tls.renew();
+    assert!(ended(idle_ended).await, "an idle connection is sent away");
+
+    let stream = dial_tls(address, &second.cert, &[b"h2"]).await;
+    assert_eq!(presented(&stream), second.cert);
+    let (mut fresh, _) = h2_over(stream).await;
+    let (answer, _) = fresh.send_request(get_request("/"), true).expect("sent");
+    assert_eq!(
+        timeout(PATIENT, body(answer)).await.expect("answered"),
+        "hello"
+    );
+
+    released.notify_one();
+    assert_eq!(
+        timeout(PATIENT, body(in_flight)).await.expect("finished"),
+        "released"
+    );
+    assert!(
+        ended(busy_ended).await,
+        "a busy connection is closed once its request is done"
+    );
+}
+
+#[tokio::test]
+async fn a_connection_still_busy_at_the_grace_period_after_a_renew_is_closed() {
+    let pair = Pair::new();
+    let (begun, never) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+    let tls = Tls::new(pair.server_config());
+    let listener = listener(Bounds {
+        grace: BRIEF,
+        ..Bounds::SERVING
+    })
+    .await;
+    let address = listener.local_addr();
+    let stop = CancellationToken::new();
+    let serving = tokio::spawn(serve_https(
+        listener,
+        holding(begun.clone(), never),
+        tls.clone(),
+        stop.clone().cancelled_owned(),
+    ));
+
+    let (mut busy, busy_ended) = h2_over(dial_tls(address, &pair.cert, &[b"h2"]).await).await;
+    let (_held, _) = busy.send_request(get_request("/held"), true).expect("sent");
+    timeout(PATIENT, begun.notified()).await.expect("begun");
+    tls.renew();
+    assert!(ended(busy_ended).await, "closed at the grace period");
+
+    let mut stream = dial_tls(address, &pair.cert, &[b"http/1.1"]).await;
+    let answer = exchange(&mut stream, "/").await.expect("still accepting");
+    assert!(answer.ends_with("hello"), "{answer}");
+
+    stop.cancel();
+    timeout(PATIENT, serving)
+        .await
+        .expect("stops")
+        .expect("joined")
+        .expect("served");
 }

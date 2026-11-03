@@ -1,6 +1,6 @@
 [package]
 name = "wslib-http-server"
-version = "0.1.6"
+version = "0.1.7"
 description = "The listeners under an axum app: HTTP, TLS with h1 and h2, a redirect to it, bounded and drained on a token."
 readme = "README.md"
 edition.workspace = true
@@ -17,7 +17,7 @@ hyper-util = { version = "0.1.18", features = ["tokio", "server-auto", "http1", 
 # No provider: two in one binary leave `CryptoProvider::install_default`
 # ambiguous, and rustls panics at the first handshake.
 rustls = { version = "0.23.27", default-features = false }
-tokio = { version = "1.47", features = ["macros", "net", "sync", "time"] }
+tokio = { version = "1.47", features = ["macros", "net", "rt", "sync", "time"] }
 tokio-rustls = { version = "0.26", default-features = false }
 tokio-util = { version = "0.7.19", default-features = false }
 tower = { version = "0.5.2", default-features = false, features = ["util"] }

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.7
+
+- `Tls::renew`: every `serve_https` serving that `Tls` drains the
+  connections open at the time, as a stop would and within the same
+  `Bounds::grace`, and keeps accepting new ones. h2 peers get a GOAWAY and
+  finish their in-flight requests, so a browser picks up a reloaded
+  certificate at once instead of when its connection idles out. A caller
+  that never renews sees no change.
+
 ## 0.1.6
 
 - libc's floor is 0.2.183, the workspace's.

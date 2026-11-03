@@ -1,6 +1,6 @@
 [package]
 name = "wslib-framelink"
-version = "0.3.0"
+version = "0.3.1"
 description = "A FrameLink device session over TCP, with discovery over mDNS and BLE, a device registry, Wi-Fi provisioning over BLE and firmware updates over SMP."
 readme = "README.md"
 edition.workspace = true

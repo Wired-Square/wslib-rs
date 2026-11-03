@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- chrono's floor is 0.4.39.
+
 ## 0.1.1
 
 - `SqlSessionStore::remove_user_in`: a user's sessions removed inside the

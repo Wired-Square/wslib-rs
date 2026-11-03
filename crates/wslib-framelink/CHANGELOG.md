@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1
+
+- tokio's floor is 1.53.3, where it meets wslib-mcumgr.
+
 ## 0.3.0
 
 - On wslib-framelink-board 0.3, whose types it returns

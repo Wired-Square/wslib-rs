@@ -1,6 +1,6 @@
 [package]
 name = "wslib-can-socketcan"
-version = "0.1.0"
+version = "0.1.1"
 description = "SocketCAN's classic and FD frame layouts, and on Linux a CAN task over a raw socket stamped with the kernel's receive time."
 readme = "README.md"
 edition.workspace = true

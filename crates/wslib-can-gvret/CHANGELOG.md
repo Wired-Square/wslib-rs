@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- `docs/gvret.md` specifies the GVRET protocol. No code change.
+
 ## 0.1.0
 
 - The GVRET codec, both ends: `Decoder` and the reply encoders for the device,

@@ -2,6 +2,8 @@
 
 ## 0.2.0
 
+- tokio's floor is 1.53.3 and serialport's 4.9, where it meets
+  wslib-serial-console.
 - `identity::PortIdentity` names a port by USB serial (`usb:<serial>`), by
   USB topology path (`usb-path:<name>`, a `/dev/serial/by-path` entry) or by
   tty. It parses strictly, prints as the same string and, with `serde`,

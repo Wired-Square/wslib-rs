@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.10
+
+- log's floor is 0.4.18.
+
 ## 0.1.9
 
 - `Telemetry::writer` sends the lines to any `MakeWriter`, such as a log file,

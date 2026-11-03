@@ -8,12 +8,13 @@
 use std::fmt;
 use std::str::FromStr;
 
-use pkcs8::der::Decode;
+use pkcs8::der::{Decode, SecretDocument};
 use pkcs8::spki::SubjectPublicKeyInfoRef;
-use pkcs8::{EncodePrivateKey, ObjectIdentifier};
+use pkcs8::{EncodePrivateKey, ObjectIdentifier, PrivateKeyInfo};
 use rand_core::OsRng;
+use rsa::pkcs1;
 use rustls::SignatureScheme;
-use rustls_pki_types::PrivatePkcs8KeyDer;
+use rustls_pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
 
 mod fingerprint;
 mod random;
@@ -67,7 +68,7 @@ impl KeyAlgorithm {
         }
     }
 
-    /// A new private key, as PKCS#8 DER. Blocks: RSA takes seconds.
+    /// A new private key as PKCS#8 DER, which implements `Zeroize`; blocks, as RSA takes seconds.
     pub fn generate(self) -> Result<PrivatePkcs8KeyDer<'static>, Error> {
         let failed = |e: &dyn fmt::Display| Error::Generate(e.to_string());
         let rsa = |bits| rsa::RsaPrivateKey::new(&mut OsRng, bits).map_err(|e| failed(&e));
@@ -103,6 +104,45 @@ impl KeyAlgorithm {
     }
 }
 
+/// A private key of one of the [`KeyAlgorithm`]s as PKCS#8 DER, which implements `Zeroize`; a PKCS#8 key is copied as it is.
+pub fn to_pkcs8(key: &PrivateKeyDer<'_>) -> Result<PrivatePkcs8KeyDer<'static>, Error> {
+    let malformed = |e: &dyn fmt::Display| Error::Malformed(e.to_string());
+    let document = match key {
+        PrivateKeyDer::Pkcs8(key) => return Ok(key.clone_key()),
+        PrivateKeyDer::Sec1(key) => {
+            let der = key.secret_sec1_der();
+            let curve = sec1::EcPrivateKey::from_der(der)
+                .map_err(|e| malformed(&e))?
+                .parameters
+                .and_then(|parameters| parameters.named_curve());
+            match curve {
+                Some(SECP256R1) => p256::SecretKey::from_sec1_der(der)
+                    .map_err(|e| malformed(&e))?
+                    .to_pkcs8_der(),
+                Some(SECP384R1) => p384::SecretKey::from_sec1_der(der)
+                    .map_err(|e| malformed(&e))?
+                    .to_pkcs8_der(),
+                _ => return Err(Error::Unsupported),
+            }
+        }
+        // Wrapped as it is: the rsa crate's own encoder leaves an unwiped PKCS#1 copy behind.
+        PrivateKeyDer::Pkcs1(key) => {
+            let der = key.secret_pkcs1_der();
+            let rsa = pkcs1::RsaPrivateKey::from_der(der).map_err(|e| malformed(&e))?;
+            if rsa.version() != pkcs1::Version::TwoPrime
+                || !matches!(modulus_bits(rsa.modulus.as_bytes()), Some(2048 | 4096))
+            {
+                return Err(Error::Unsupported);
+            }
+            SecretDocument::encode_msg(&PrivateKeyInfo::new(pkcs1::ALGORITHM_ID, der))
+                .map_err(pkcs8::Error::from)
+        }
+        _ => return Err(Error::Unsupported),
+    }
+    .map_err(|e| malformed(&e))?;
+    Ok(PrivatePkcs8KeyDer::from(document.as_bytes().to_vec()))
+}
+
 fn modulus_bits(modulus: &[u8]) -> Option<u32> {
     let first = *modulus.first()?;
     Some((u32::try_from(modulus.len()).ok()? - 1) * 8 + (8 - first.leading_zeros()))
@@ -134,6 +174,8 @@ pub enum Error {
     Load(rustls::Error),
     /// Not a P-256, P-384, RSA-2048 or RSA-4096 key.
     Unsupported,
+    /// The private key's DER does not parse.
+    Malformed(String),
     /// The provider's key does not offer the scheme its algorithm signs with.
     NoScheme(KeyAlgorithm),
     /// The provider gives no public key, and the key is not a PKCS#8 one this crate can read it from.
@@ -152,6 +194,7 @@ impl fmt::Display for Error {
             Self::Generate(e) => write!(f, "generating a key: {e}"),
             Self::Load(e) => write!(f, "the crypto provider will not load the key: {e}"),
             Self::Unsupported => f.write_str("not a P-256, P-384, RSA-2048 or RSA-4096 key"),
+            Self::Malformed(e) => write!(f, "the private key is malformed: {e}"),
             Self::NoScheme(algorithm) => write!(
                 f,
                 "the key does not offer {:?}, which {algorithm} signs with",

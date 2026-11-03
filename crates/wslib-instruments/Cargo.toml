@@ -1,6 +1,6 @@
 [package]
 name = "wslib-instruments"
-version = "0.1.2"
+version = "0.2.0"
 description = "Bench-instrument readers behind one blocking probe: the EEVblog 121GW over BLE and a WiredReflow board over CAN, each reading a FrameLink signal."
 readme = "README.md"
 edition.workspace = true
@@ -31,7 +31,7 @@ wslib-can-gvret = { path = "../wslib-can-gvret", version = "0.1", registry = "wi
 wslib-can-pcan = { path = "../wslib-can-pcan", version = "0.1", registry = "wired-square", optional = true }
 wslib-can-slcan = { path = "../wslib-can-slcan", version = "0.1", registry = "wired-square", optional = true }
 wslib-can-socketcan = { path = "../wslib-can-socketcan", version = "0.1", registry = "wired-square", optional = true }
-wslib-framelink-protocol = { path = "../wslib-framelink-protocol", version = "0.1", registry = "wired-square" }
+wslib-framelink-protocol = { path = "../wslib-framelink-protocol", version = "0.2", registry = "wired-square" }
 wslib-serial = { path = "../wslib-serial", version = "0.1.1", registry = "wired-square", optional = true }
 
 [dev-dependencies]

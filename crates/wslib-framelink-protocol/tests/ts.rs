@@ -97,7 +97,7 @@ fn capabilities() {
 fn frame_signal_def() {
     assert_eq!(
         exported::<FrameSignalDef>(),
-        r#"export type FrameSignalDef = { signal_id: number, start_bit: number, bit_length: number, byte_order: string, value_type: string, scale: number, offset: number, };"#
+        r#"export type FrameSignalDef = { signal_id: number, start_bit: number, bit_length: number, byte_order: string, value_type: string, quantity: string, scale: number, offset: number, };"#
     );
 }
 

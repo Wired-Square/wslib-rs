@@ -1,5 +1,6 @@
 //! Every serialised shape, wire payload and message, against what the source
-//! this crate was moved from produced for the same inputs.
+//! this crate was moved from produced for the same inputs, except that a
+//! frame definition's signal carries the device's `quantity` byte.
 
 use wslib_framelink_protocol as p;
 

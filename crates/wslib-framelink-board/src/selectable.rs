@@ -238,6 +238,7 @@ mod tests {
                     bit_length: 16,
                     byte_order: 0,
                     value_type: 0,
+                    quantity: types::QTY_RAW,
                     scale: 1.0,
                     offset: 0.0,
                 })

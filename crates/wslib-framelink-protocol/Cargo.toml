@@ -1,6 +1,6 @@
 [package]
 name = "wslib-framelink-protocol"
-version = "0.1.0"
+version = "0.2.0"
 description = "The FrameLink protocol, sans-io: frames, messages, the signal vocabulary and its identity tuple, capabilities, rules, file transfer and BLE manufacturer data."
 readme = "README.md"
 edition.workspace = true

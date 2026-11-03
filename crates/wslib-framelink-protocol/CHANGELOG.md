@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.0
+
+- A frame definition's signal is 17 bytes on the wire, as the device has
+  it: `FrameSignalDef` gains `quantity` (a `types::QTY_*`, or'd with
+  `QTY_PER_SECOND` for a rate) after `value_type`. 0.1's 16-byte signals
+  were NACKed by FRAME_DEF_ADD and misread FRAME_DEF_RESP.
+- `frame_def::build_frame_def_add` returns `Result`: it refuses a signal
+  whose `bit_length` is outside 1 to `SIGNAL_MAX_BITS` (64), as
+  `Error::SignalBits`, and more signals than `MAX_SIGNALS` (255) fit in the
+  count byte, as `Error::TooManySignals`, rather than truncating the count.
+  It also refuses `RESERVED_IDS`, the signal store's `FRAME_DEF_ID_USER` and
+  `FRAME_DEF_ID_DEVICE`, as `Error::ReservedFrameDefId`;
+  `frame_def::next_available_id` skips them.
+
 ## 0.1.0
 
 - The FrameLink protocol, version 4 only, moved in with its wire unchanged:

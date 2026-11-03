@@ -1,6 +1,6 @@
 [package]
 name = "wslib-framelink"
-version = "0.1.2"
+version = "0.2.0"
 description = "A FrameLink device session over TCP, with discovery over mDNS and BLE, a device registry, Wi-Fi provisioning over BLE and firmware updates over SMP."
 readme = "README.md"
 edition.workspace = true
@@ -26,8 +26,8 @@ tokio = { version = "1.53.1", default-features = false, features = ["io-util", "
 tracing = "0.1.41"
 uuid = { version = "1.26.1", default-features = false, optional = true }
 wslib-file-atomic = { path = "../wslib-file-atomic", version = "0.1.6", registry = "wired-square", optional = true }
-wslib-framelink-board = { path = "../wslib-framelink-board", version = "0.1", registry = "wired-square" }
-wslib-framelink-protocol = { path = "../wslib-framelink-protocol", version = "0.1", registry = "wired-square" }
+wslib-framelink-board = { path = "../wslib-framelink-board", version = "0.2", registry = "wired-square" }
+wslib-framelink-protocol = { path = "../wslib-framelink-protocol", version = "0.2", registry = "wired-square" }
 wslib-framing = { path = "../wslib-framing", version = "0.1", registry = "wired-square" }
 wslib-mcumgr = { path = "../wslib-mcumgr", version = "0.1", registry = "wired-square", optional = true }
 wslib-mdns = { path = "../wslib-mdns", version = "0.1", registry = "wired-square", features = ["in-process"], optional = true }

@@ -1,6 +1,7 @@
 //! Every serialised shape and written TOML, against what the source this
 //! crate was moved from produced for the same inputs. `IndicatorConfig`'s
-//! `colour` keeps the name `color`.
+//! `colour` keeps the name `color`. A frame definition's signal carries the
+//! device's `quantity` byte.
 
 use wslib_framelink_board as b;
 use wslib_framelink_protocol as p;

@@ -1,4 +1,7 @@
-use crate::manufacturer_data::PAYLOAD_LEN;
+use crate::{
+    frame_def::{MAX_SIGNALS, SIGNAL_MAX_BITS},
+    manufacturer_data::PAYLOAD_LEN,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -17,6 +20,17 @@ pub enum Error {
 
     #[error("invalid payload: {0}")]
     InvalidPayload(&'static str),
+
+    #[error(
+        "frame definition signal {signal_id}: bit_length {bit_length} is outside 1 to {SIGNAL_MAX_BITS}"
+    )]
+    SignalBits { signal_id: u16, bit_length: u16 },
+
+    #[error("frame definition has {0} signals; at most {MAX_SIGNALS} fit")]
+    TooManySignals(usize),
+
+    #[error("frame definition id {0:#06x} is reserved for the signal store")]
+    ReservedFrameDefId(u16),
 
     #[error("manufacturer data length {actual}, expected {PAYLOAD_LEN}")]
     ManufacturerDataLength { actual: usize },

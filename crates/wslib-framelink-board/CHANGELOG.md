@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0
+
+- On wslib-framelink-protocol 0.2: an indicator trigger's frame definition
+  carries the 17-byte signal the device expects, with `quantity` raw.
+
 ## 0.1.0
 
 - FrameLink board definitions moved in, their TOML and JSON unchanged: the

@@ -1,6 +1,6 @@
 [package]
 name = "wslib-framelink-board"
-version = "0.1.0"
+version = "0.2.0"
 description = "FrameLink board definitions: the TOML schema, its parser and editor, display names, scaffolding from a live device, LED discovery and the embedded boards."
 readme = "README.md"
 edition.workspace = true
@@ -18,7 +18,7 @@ flate2 = { version = "1.1.2", default-features = false, features = ["rust_backen
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.20"
 toml_edit = { version = "0.25", default-features = false, features = ["display", "parse", "serde"] }
-wslib-framelink-protocol = { path = "../wslib-framelink-protocol", version = "0.1", registry = "wired-square" }
+wslib-framelink-protocol = { path = "../wslib-framelink-protocol", version = "0.2", registry = "wired-square" }
 wslib-mcu-flash = { path = "../wslib-mcu-flash", version = "0.1", registry = "wired-square", default-features = false, optional = true }
 
 [dev-dependencies]

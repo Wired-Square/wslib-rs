@@ -692,6 +692,7 @@ pub fn build_indicator_trigger_messages(
             bit_length: 1,
             byte_order: 0,
             value_type: 0,
+            quantity: types::QTY_RAW,
             scale: 1.0,
             offset: 0.0,
         }],
@@ -715,7 +716,8 @@ pub fn build_indicator_trigger_messages(
     vec![
         (
             types::MSG_FRAME_DEF_ADD,
-            frame_def::build_frame_def_add(&frame_def_info),
+            frame_def::build_frame_def_add(&frame_def_info)
+                .expect("an indicator trigger's frame definition is valid"),
         ),
         (types::MSG_XFORM_ADD, xform::build_xform_add(&xform_info)),
     ]

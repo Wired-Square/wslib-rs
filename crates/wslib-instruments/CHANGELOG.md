@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.0
+
+- On wslib-framelink-protocol 0.2, whose `SignalKey` it re-exports.
+
 ## 0.1.2
 
 - `Cluster` is `Sync` again, so it can be shared across threads.

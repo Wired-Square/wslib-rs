@@ -6,9 +6,10 @@
 //!   RS485 header: `framing_mode(u8)`
 //!   `num_signals(u8)`
 //!   `[signals: signal_id(u16 LE) start_bit(u16 LE) bit_length(u16 LE)
-//!             byte_order(u8) value_type(u8) scale(f32 LE) offset(f32 LE)]...`
+//!             byte_order(u8) value_type(u8) quantity(u8) scale(f32 LE)
+//!             offset(f32 LE)]...`
 //!
-//! Each signal is 16 bytes.
+//! Each signal is 17 bytes.
 //!
 //! FRAME_DEF_REMOVE (0x31): `frame_def_id(u16 LE)`
 //! FRAME_DEF_LIST (0x32): empty payload
@@ -55,6 +56,10 @@ fn ser_value_type_name<S: Serializer>(value_type: &u8, s: S) -> Result<S::Ok, S:
     s.serialize_str(value_type_name(*value_type))
 }
 
+fn ser_quantity_display<S: Serializer>(quantity: &u8, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&types::quantity_display(*quantity))
+}
+
 // The firmware's `frame_def.h` (`FL_CAN_FLAG_*`).
 pub const CAN_FLAG_EXTENDED: u8 = 0x01;
 pub const CAN_FLAG_FD: u8 = 0x02;
@@ -68,7 +73,11 @@ pub const IFACE_TYPE_RS485: u8 = types::IFACE_RS485;
 pub const IFACE_TYPE_RS232: u8 = types::IFACE_RS232;
 pub const IFACE_TYPE_LIN: u8 = types::IFACE_LIN;
 
-const SIGNAL_SIZE: usize = 16;
+const SIGNAL_SIZE: usize = 17;
+
+pub const SIGNAL_MAX_BITS: u16 = 64;
+pub const MAX_SIGNALS: usize = u8::MAX as usize;
+pub const RESERVED_IDS: [u16; 2] = [types::FRAME_DEF_ID_USER, types::FRAME_DEF_ID_DEVICE];
 
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -82,6 +91,9 @@ pub struct FrameSignalDef {
     #[serde(serialize_with = "ser_value_type_name")]
     #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub value_type: u8,
+    #[serde(serialize_with = "ser_quantity_display")]
+    #[cfg_attr(feature = "ts", ts(type = "string"))]
+    pub quantity: u8,
     pub scale: f32,
     pub offset: f32,
 }
@@ -106,7 +118,26 @@ pub struct FrameDefInfo {
     pub signals: Vec<FrameSignalDef>,
 }
 
-pub fn build_frame_def_add(info: &FrameDefInfo) -> Vec<u8> {
+pub fn build_frame_def_add(info: &FrameDefInfo) -> Result<Vec<u8>, Error> {
+    if RESERVED_IDS.contains(&info.frame_def_id) {
+        return Err(Error::ReservedFrameDefId(info.frame_def_id));
+    }
+    let count =
+        u8::try_from(info.signals.len()).map_err(|_| Error::TooManySignals(info.signals.len()))?;
+    if let Some(sig) = info
+        .signals
+        .iter()
+        .find(|sig| !(1..=SIGNAL_MAX_BITS).contains(&sig.bit_length))
+    {
+        return Err(Error::SignalBits {
+            signal_id: sig.signal_id,
+            bit_length: sig.bit_length,
+        });
+    }
+    Ok(encode(info, count))
+}
+
+fn encode(info: &FrameDefInfo, count: u8) -> Vec<u8> {
     let header_size = match &info.header {
         FrameHeader::Can { .. } => 6,
         FrameHeader::Rs485 { .. } => 1,
@@ -127,7 +158,7 @@ pub fn build_frame_def_add(info: &FrameDefInfo) -> Vec<u8> {
         }
     }
 
-    buf.push(info.signals.len() as u8);
+    buf.push(count);
 
     for sig in &info.signals {
         buf.extend_from_slice(&sig.signal_id.to_le_bytes());
@@ -135,6 +166,7 @@ pub fn build_frame_def_add(info: &FrameDefInfo) -> Vec<u8> {
         buf.extend_from_slice(&sig.bit_length.to_le_bytes());
         buf.push(sig.byte_order);
         buf.push(sig.value_type);
+        buf.push(sig.quantity);
         buf.extend_from_slice(&sig.scale.to_le_bytes());
         buf.extend_from_slice(&sig.offset.to_le_bytes());
     }
@@ -200,17 +232,18 @@ pub fn parse_frame_def_resp(payload: &[u8]) -> Result<FrameDefInfo, Error> {
         let bit_length = u16::from_le_bytes([payload[p + 4], payload[p + 5]]);
         let byte_order = payload[p + 6];
         let value_type = payload[p + 7];
+        let quantity = payload[p + 8];
         let scale = f32::from_le_bytes([
-            payload[p + 8],
             payload[p + 9],
             payload[p + 10],
             payload[p + 11],
+            payload[p + 12],
         ]);
         let offset = f32::from_le_bytes([
-            payload[p + 12],
             payload[p + 13],
             payload[p + 14],
             payload[p + 15],
+            payload[p + 16],
         ]);
 
         signals.push(FrameSignalDef {
@@ -219,6 +252,7 @@ pub fn parse_frame_def_resp(payload: &[u8]) -> Result<FrameDefInfo, Error> {
             bit_length,
             byte_order,
             value_type,
+            quantity,
             scale,
             offset,
         });
@@ -262,12 +296,14 @@ pub fn motorola_bit_positions(start_bit: u16, bit_length: u16) -> Vec<u16> {
 }
 
 pub fn next_available_id(existing: &[FrameDefInfo]) -> u16 {
-    crate::next_free_id(existing.iter().map(|f| f.frame_def_id))
+    crate::next_free_id(existing.iter().map(|f| f.frame_def_id).chain(RESERVED_IDS))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const DEVICE_SIGNAL_BYTES: usize = 17;
 
     #[test]
     fn motorola_8bit_signal() {
@@ -344,6 +380,7 @@ mod tests {
                     bit_length: 16,
                     byte_order: BYTE_ORDER_LE,
                     value_type: VALUE_TYPE_UNSIGNED,
+                    quantity: types::QTY_RAW,
                     scale: 1.0,
                     offset: 0.0,
                 },
@@ -353,15 +390,15 @@ mod tests {
                     bit_length: 8,
                     byte_order: BYTE_ORDER_BE,
                     value_type: VALUE_TYPE_SIGNED,
+                    quantity: types::QTY_RAW,
                     scale: 0.1,
                     offset: -40.0,
                 },
             ],
         };
-        let payload = build_frame_def_add(&info);
+        let payload = build_frame_def_add(&info).unwrap();
 
-        // 3 (id + iface) + 6 (CAN header) + 1 (num_signals) + 2*16 (signals) = 42
-        assert_eq!(payload.len(), 42);
+        assert_eq!(payload.len(), 3 + 6 + 1 + 2 * DEVICE_SIGNAL_BYTES);
 
         assert_eq!(u16::from_le_bytes([payload[0], payload[1]]), 1);
         assert_eq!(payload[2], IFACE_TYPE_CAN);
@@ -377,19 +414,20 @@ mod tests {
         assert_eq!(u16::from_le_bytes([payload[14], payload[15]]), 16); // bit_length
         assert_eq!(payload[16], BYTE_ORDER_LE);
         assert_eq!(payload[17], VALUE_TYPE_UNSIGNED);
+        assert_eq!(payload[18], types::QTY_RAW);
         assert_eq!(
-            f32::from_le_bytes([payload[18], payload[19], payload[20], payload[21]]),
+            f32::from_le_bytes([payload[19], payload[20], payload[21], payload[22]]),
             1.0
         );
         assert_eq!(
-            f32::from_le_bytes([payload[22], payload[23], payload[24], payload[25]]),
+            f32::from_le_bytes([payload[23], payload[24], payload[25], payload[26]]),
             0.0
         );
 
-        // Second signal at offset 26
-        assert_eq!(u16::from_le_bytes([payload[26], payload[27]]), 0x0002);
-        assert_eq!(payload[32], BYTE_ORDER_BE);
-        assert_eq!(payload[33], VALUE_TYPE_SIGNED);
+        assert_eq!(u16::from_le_bytes([payload[27], payload[28]]), 0x0002);
+        assert_eq!(payload[33], BYTE_ORDER_BE);
+        assert_eq!(payload[34], VALUE_TYPE_SIGNED);
+        assert_eq!(payload[35], types::QTY_RAW);
     }
 
     #[test]
@@ -400,7 +438,7 @@ mod tests {
             header: FrameHeader::Rs485 { framing_mode: 2 },
             signals: vec![],
         };
-        let payload = build_frame_def_add(&info);
+        let payload = build_frame_def_add(&info).unwrap();
 
         // 3 (id + iface) + 1 (RS485 header) + 1 (num_signals) = 5
         assert_eq!(payload.len(), 5);
@@ -439,6 +477,7 @@ mod tests {
                     bit_length: 16,
                     byte_order: BYTE_ORDER_LE,
                     value_type: VALUE_TYPE_UNSIGNED,
+                    quantity: types::QTY_RAW,
                     scale: 1.0,
                     offset: 0.0,
                 },
@@ -448,12 +487,13 @@ mod tests {
                     bit_length: 32,
                     byte_order: BYTE_ORDER_BE,
                     value_type: VALUE_TYPE_FLOAT,
+                    quantity: types::QTY_TEMPERATURE | types::QTY_PER_SECOND,
                     scale: 0.01,
                     offset: -273.15,
                 },
             ],
         };
-        let payload = build_frame_def_add(&info);
+        let payload = build_frame_def_add(&info).unwrap();
         let parsed = parse_frame_def_resp(&payload).unwrap();
 
         assert_eq!(parsed.frame_def_id, 5);
@@ -475,6 +515,7 @@ mod tests {
         assert_eq!(parsed.signals[0].bit_length, 16);
         assert_eq!(parsed.signals[0].byte_order, BYTE_ORDER_LE);
         assert_eq!(parsed.signals[0].value_type, VALUE_TYPE_UNSIGNED);
+        assert_eq!(parsed.signals[0].quantity, types::QTY_RAW);
         assert_eq!(parsed.signals[0].scale, 1.0);
         assert_eq!(parsed.signals[0].offset, 0.0);
 
@@ -483,6 +524,10 @@ mod tests {
         assert_eq!(parsed.signals[1].bit_length, 32);
         assert_eq!(parsed.signals[1].byte_order, BYTE_ORDER_BE);
         assert_eq!(parsed.signals[1].value_type, VALUE_TYPE_FLOAT);
+        assert_eq!(
+            parsed.signals[1].quantity,
+            types::QTY_TEMPERATURE | types::QTY_PER_SECOND
+        );
         assert_eq!(parsed.signals[1].scale, 0.01);
         assert_eq!(parsed.signals[1].offset, -273.15);
     }
@@ -495,7 +540,7 @@ mod tests {
             header: FrameHeader::Rs485 { framing_mode: 1 },
             signals: vec![],
         };
-        let payload = build_frame_def_add(&info);
+        let payload = build_frame_def_add(&info).unwrap();
         let parsed = parse_frame_def_resp(&payload).unwrap();
 
         assert_eq!(parsed.frame_def_id, 10);
@@ -527,11 +572,12 @@ mod tests {
                 bit_length: 24,
                 byte_order: BYTE_ORDER_LE,
                 value_type: VALUE_TYPE_BOOL,
+                quantity: types::QTY_RAW,
                 scale: 1.0,
                 offset: 0.0,
             }],
         };
-        let payload = build_frame_def_add(&info);
+        let payload = build_frame_def_add(&info).unwrap();
         let parsed = parse_frame_def_resp(&payload).unwrap();
 
         assert_eq!(parsed.frame_def_id, 3);
@@ -596,6 +642,7 @@ mod tests {
                 bit_length: 16,
                 byte_order: BYTE_ORDER_BE,
                 value_type: VALUE_TYPE_SIGNED,
+                quantity: types::QTY_RAW,
                 scale: 0.1,
                 offset: -40.0,
             }],
@@ -618,5 +665,98 @@ mod tests {
         let v = serde_json::to_value(FrameHeader::Rs485 { framing_mode: 2 }).unwrap();
         assert_eq!(v["kind"], "rs485");
         assert_eq!(v["framing_mode"], 2);
+    }
+
+    fn signal_of(signal_id: u16, bit_length: u16) -> FrameSignalDef {
+        FrameSignalDef {
+            signal_id,
+            start_bit: 0,
+            bit_length,
+            byte_order: BYTE_ORDER_LE,
+            value_type: VALUE_TYPE_UNSIGNED,
+            quantity: types::QTY_RAW,
+            scale: 1.0,
+            offset: 0.0,
+        }
+    }
+
+    fn can_def_with(signals: Vec<FrameSignalDef>) -> FrameDefInfo {
+        FrameDefInfo {
+            frame_def_id: 1,
+            interface_type: IFACE_TYPE_CAN,
+            header: FrameHeader::Can {
+                can_id: 0x100,
+                dlc: 8,
+                flags: 0,
+            },
+            signals,
+        }
+    }
+
+    #[test]
+    fn a_signal_of_one_to_sixty_four_bits_encodes() {
+        for bits in [1, SIGNAL_MAX_BITS] {
+            assert!(build_frame_def_add(&can_def_with(vec![signal_of(7, bits)])).is_ok());
+        }
+    }
+
+    #[test]
+    fn a_signal_of_no_bits_or_more_than_sixty_four_is_refused_naming_it() {
+        for bits in [0, SIGNAL_MAX_BITS + 1] {
+            assert_eq!(
+                build_frame_def_add(&can_def_with(vec![signal_of(1, 8), signal_of(7, bits)])),
+                Err(Error::SignalBits {
+                    signal_id: 7,
+                    bit_length: bits
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn more_signals_than_the_count_byte_holds_are_refused_not_truncated() {
+        let fits: Vec<_> = (0..MAX_SIGNALS as u16).map(|id| signal_of(id, 1)).collect();
+        let payload = build_frame_def_add(&can_def_with(fits.clone())).unwrap();
+        assert_eq!(
+            parse_frame_def_resp(&payload).unwrap().signals.len(),
+            MAX_SIGNALS
+        );
+        let mut over = fits;
+        over.push(signal_of(MAX_SIGNALS as u16, 1));
+        assert_eq!(
+            build_frame_def_add(&can_def_with(over)),
+            Err(Error::TooManySignals(MAX_SIGNALS + 1))
+        );
+    }
+
+    #[test]
+    fn a_reserved_frame_def_id_is_refused() {
+        for id in RESERVED_IDS {
+            let mut info = can_def_with(vec![signal_of(1, 8)]);
+            info.frame_def_id = id;
+            assert_eq!(
+                build_frame_def_add(&info),
+                Err(Error::ReservedFrameDefId(id))
+            );
+        }
+    }
+
+    #[test]
+    fn the_next_available_id_skips_the_user_tag_and_running_out_is_refused() {
+        let taken: Vec<_> = (0..types::FRAME_DEF_ID_USER)
+            .map(|frame_def_id| FrameDefInfo {
+                frame_def_id,
+                ..can_def_with(vec![])
+            })
+            .collect();
+        let next = next_available_id(&taken);
+        assert_eq!(next, types::FRAME_DEF_ID_DEVICE);
+        assert_eq!(
+            build_frame_def_add(&FrameDefInfo {
+                frame_def_id: next,
+                ..can_def_with(vec![])
+            }),
+            Err(Error::ReservedFrameDefId(next))
+        );
     }
 }

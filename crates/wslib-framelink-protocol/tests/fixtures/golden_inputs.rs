@@ -122,6 +122,7 @@ fn protocol_goldens() -> Vec<(&'static str, String)> {
             bit_length: 12,
             byte_order: frame_def::BYTE_ORDER_BE,
             value_type: frame_def::VALUE_TYPE_FLOAT,
+            quantity: p::types::QTY_TEMPERATURE,
             scale: 0.25,
             offset: -3.5,
         }],
@@ -235,7 +236,7 @@ fn protocol_goldens() -> Vec<(&'static str, String)> {
         ("frame_def_rs485", json(&rs_def)),
         (
             "frame_def_can_wire",
-            hex(&frame_def::build_frame_def_add(&can_def)),
+            hex(&frame_def::build_frame_def_add(&can_def).unwrap()),
         ),
         ("bridge", json(&bridge_info)),
         ("bridge_wire", hex(&bridge::build_bridge_add(&bridge_info))),

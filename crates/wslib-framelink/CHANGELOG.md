@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0
+
+- On wslib-framelink-protocol 0.2 and wslib-framelink-board 0.2, whose
+  types it returns: a frame definition's signal carries `quantity`.
+
 ## 0.1.2
 
 - An update can be cancelled with its outcome reported:

@@ -560,6 +560,7 @@ mod tests {
                 bit_length: 8,
                 byte_order: frame_def::BYTE_ORDER_LE,
                 value_type: frame_def::VALUE_TYPE_UNSIGNED,
+                quantity: types::QTY_RAW,
                 scale: 1.0,
                 offset: 0.0,
             }],

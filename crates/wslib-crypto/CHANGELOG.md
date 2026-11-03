@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4
+
+- `KeyAlgorithm::generate` leaves no unwiped copy of an RSA key behind: its
+  PKCS#1 is encoded here rather than by the `rsa` crate. The PKCS#8 is
+  unchanged.
+
 ## 0.1.3
 
 - `to_pkcs8`: a private key as PKCS#8. A SEC1 P-256 or P-384 key is

@@ -45,6 +45,22 @@ fn a_pkcs1_key_is_wrapped_as_openssl_wraps_it() {
 }
 
 #[test]
+fn a_generated_rsa_key_encodes_as_the_rsa_crate_would() {
+    use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey};
+    let key = KeyAlgorithm::Rsa2048.generate().unwrap();
+    let rsa = rsa::RsaPrivateKey::from_pkcs8_der(key.secret_pkcs8_der()).expect("decodes");
+    assert_eq!(
+        key.secret_pkcs8_der(),
+        rsa.to_pkcs8_der().unwrap().as_bytes()
+    );
+    let key = PrivateKeyDer::Pkcs8(key);
+    assert_eq!(
+        KeyAlgorithm::of_spki(&spki(&key)),
+        Some(KeyAlgorithm::Rsa2048)
+    );
+}
+
+#[test]
 fn a_pkcs8_key_passes_through_unchanged() {
     let key = KeyAlgorithm::EcP256.generate().unwrap();
     let converted = to_pkcs8(&PrivateKeyDer::Pkcs8(key.clone_key())).unwrap();

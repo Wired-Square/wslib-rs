@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.7
+
+- `pem::private_key` leaves no unwiped copy of the pasted text behind: it is
+  tidied into a buffer sized up front and wiped on drop, and a refused second
+  key is wiped too. The `rustls-pki-types` decoder it reads through still
+  keeps its own unwiped copy of the base64.
+
 ## 0.1.6
 
 - `pem::encode_private_key`: a PKCS#8 key as `PRIVATE KEY` PEM, in a

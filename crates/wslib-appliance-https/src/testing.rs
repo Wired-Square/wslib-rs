@@ -238,7 +238,7 @@ impl Harness {
             self.port.clone(),
             (std::net::Ipv4Addr::LOCALHOST, 0).into(),
             self.https.clone(),
-            backend::tls_config(&self.state.tls),
+            backend::serving_tls(&self.state.tls),
             self.stop.token().clone(),
         ));
         let port = *serving

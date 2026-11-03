@@ -18,6 +18,7 @@ https.serve(app, stop.cancelled_owned()).await?;
 
 // On a certificate install, from anywhere holding a clone:
 tls.reload(new_config);
+tls.renew();
 ```
 
 Without TLS, `serve_http(Listener::bind(address, Bounds::SERVING).await?, app, stop)`.
@@ -52,6 +53,9 @@ filters by target has to include it.
 - **`Tls`**: the config a TLS listener serves. `Tls::new` offers h2 and
   http/1.1 by ALPN when the config names none; a config that names its own
   keeps them. `reload` swaps the config for new connections; clones share it.
+  `renew` then drains the connections open on every `serve_https` serving
+  it, as a stop would and within the same `grace`, while new ones are
+  accepted: h2 peers get a GOAWAY and reconnect on the new config.
   `Tls::from(RustlsConfig)` shares a handle another owner reloads, and its
   ALPN is that owner's to set.
 - **`serve_redirect(listener, https_port, stop)`**: a 307 for every request

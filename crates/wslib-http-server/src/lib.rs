@@ -14,6 +14,7 @@ mod tls;
 
 use std::io;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
@@ -25,6 +26,7 @@ use axum_server::{Address, Handle, Server};
 use hyper_util::rt::{TokioExecutor, TokioTimer};
 use hyper_util::server::conn::auto::{Builder, Http1Builder};
 use tokio::sync::watch;
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tower::util::MapResponse;
 
@@ -57,13 +59,16 @@ pub async fn serve_http(
     let bounds = listener.bounds;
     tracing::info!(address = %listener.local_addr(), "listening");
     let handle = Handle::<Peer>::new();
-    let server = bound(Server::from_listener(listener), bounds.head).handle(handle.clone());
+    let server =
+        bound(Server::from_listener(Arc::new(listener)), bounds.head).handle(handle.clone());
     let serving = server.serve(app::<SocketAddr>(router));
     until_stopped(serving, handle, stop, bounds.grace).await
 }
 
 /// Serve `router` over TLS on `listener` until `stop` completes and it has
-/// drained. Handlers get [`PeerCertificates`] as an extension.
+/// drained. Handlers get [`PeerCertificates`] as an extension. Each
+/// [`Tls::renew`] drains the connections then open, as a stop would, while
+/// new ones are accepted.
 pub async fn serve_https(
     listener: Listener,
     router: Router,
@@ -72,15 +77,38 @@ pub async fn serve_https(
 ) -> io::Result<()> {
     let bounds = listener.bounds;
     tracing::info!(address = %listener.local_addr(), "listening");
-    let handle = Handle::<Peer>::new();
-    let acceptor = Identifying(RustlsAcceptor::new(tls.config()).handshake_timeout(bounds.head));
-    let server = bound(
-        Server::from_listener(listener).acceptor(acceptor),
-        bounds.head,
-    )
-    .handle(handle.clone());
-    let serving = server.serve(app::<SocketAddr>(router));
-    until_stopped(serving, handle, stop, bounds.grace).await
+    let listener = Arc::new(listener);
+    let mut renewals = tls.renewals();
+    let mut generations = JoinSet::new();
+    tokio::pin!(stop);
+    loop {
+        let handle = Handle::<Peer>::new();
+        let acceptor =
+            Identifying(RustlsAcceptor::new(tls.config()).handshake_timeout(bounds.head));
+        let server = bound(
+            Server::from_listener(Arc::clone(&listener)).acceptor(acceptor),
+            bounds.head,
+        )
+        .handle(handle.clone());
+        generations.spawn(server.serve(app::<SocketAddr>(router.clone())));
+        let renewed = loop {
+            tokio::select! {
+                Some(ended) = generations.join_next() => ended.map_err(io::Error::other)??,
+                Ok(()) = renewals.changed() => break true,
+                () = &mut stop => break false,
+            }
+        };
+        handle.graceful_shutdown(Some(bounds.grace));
+        if !renewed {
+            break;
+        }
+    }
+    let stopping = tokio::time::Instant::now();
+    while let Some(ended) = generations.join_next().await {
+        ended.map_err(io::Error::other)??;
+    }
+    warn_past(stopping, bounds.grace);
+    Ok(())
 }
 
 /// A TLS listener and, if asked for, the redirect to it, served together.
@@ -217,8 +245,12 @@ async fn until_stopped<A: Address>(
     let stopping = tokio::time::Instant::now();
     handle.graceful_shutdown(Some(grace));
     let served = serving.await;
+    warn_past(stopping, grace);
+    served
+}
+
+fn warn_past(stopping: tokio::time::Instant, grace: Duration) {
     if stopping.elapsed() >= grace {
         tracing::warn!(?grace, "closed connections still open at the grace period");
     }
-    served
 }

@@ -6,9 +6,13 @@
   administrator's proof over a session, as a role change does: the switch in
   its body's `proof`, the delete as a bare `FactorProof` body. The control
   socket still gives none, and a delete with no body still reads. A browser
-  on an appliance-ui before one that sends the proof on enable and delete is
-  refused.
+  on an appliance-ui before 0.8.0, which sends it, is refused.
 - Needs `wslib-appliance-types` 0.1.3.
+- An installed or restored pair reaches the browsers already connected: the
+  listener drains their connections, which reconnect on the new pair, rather
+  than serving the old one until they idle out. `wslib-http-server` >= 0.1.7.
+- Pins `wslib-appliance-core` at 0.1.3.
+- `axum-server` is no longer a dependency.
 
 ## 0.1.2
 

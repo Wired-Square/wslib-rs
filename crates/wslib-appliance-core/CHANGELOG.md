@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.3
+
+- `Tls::install_pem` renews the connections open on the listener after
+  reloading it, so a pair installed by an operator or by a restore reaches
+  browsers already connected; each connection finishes what it has begun,
+  within the listener's grace period. `backend::serving_tls` hands
+  `serve_https` the listener's `wslib_http_server::Tls` (>= 0.1.7), which an
+  install renews; `backend::tls_config` still reloads only new connections.
+
 ## 0.1.2
 
 - libc's floor is 0.2.183, the workspace's.

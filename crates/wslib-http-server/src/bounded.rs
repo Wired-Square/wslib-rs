@@ -81,7 +81,7 @@ pub struct Peer(SocketAddr);
 
 impl Address for Peer {
     type Stream = Permitted<TcpStream>;
-    type Listener = Listener;
+    type Listener = Arc<Listener>;
 }
 
 impl axum::extract::connect_info::Connected<Peer> for SocketAddr {
@@ -92,7 +92,7 @@ impl axum::extract::connect_info::Connected<Peer> for SocketAddr {
 
 // The permit is taken before `accept`, so at the cap the connections waiting
 // cost the kernel's backlog and not this process's descriptors.
-impl AddrListener<Permitted<TcpStream>, Peer> for Listener {
+impl AddrListener<Permitted<TcpStream>, Peer> for Arc<Listener> {
     async fn bind_to(_: Peer) -> io::Result<Self> {
         Err(made_bound())
     }

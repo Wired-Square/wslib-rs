@@ -10,7 +10,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Router;
-use axum_server::tls_rustls::RustlsConfig;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use wslib_appliance_config::Bootstrap;
@@ -53,7 +52,7 @@ pub(crate) async fn run(
     local: ControlRouter,
     bootstrap: &Bootstrap,
     port: HttpsPort,
-    tls: RustlsConfig,
+    tls: Tls,
     root: CancellationToken,
     stop: impl Future<Output = ()>,
 ) -> Result<(), ServeError> {
@@ -94,14 +93,14 @@ pub(crate) async fn serve_tls(
     port: HttpsPort,
     address: SocketAddr,
     router: Router,
-    tls: RustlsConfig,
+    tls: Tls,
     stop: CancellationToken,
 ) -> Result<(), ServeError> {
     let listener = Listener::bind(address, Bounds::SERVING)
         .await
         .map_err(|e| bind_failed(address, &e))?;
     port.0.send_replace(listener.local_addr().port());
-    wslib_http_server::serve_https(listener, router, Tls::from(tls), stop.cancelled_owned())
+    wslib_http_server::serve_https(listener, router, tls, stop.cancelled_owned())
         .await
         .map_err(|e| ServeError::Serving(foreign(&e)))
 }
@@ -209,7 +208,7 @@ mod tests {
             port,
             (Ipv4Addr::LOCALHOST, 0).into(),
             Router::new(),
-            backend::tls_config(&tls),
+            backend::serving_tls(&tls),
             CancellationToken::new(),
         ));
         let port = *bound.wait_for(|&port| port != 0).await.expect("binds");
@@ -294,7 +293,7 @@ mod tests {
             ControlRouter::empty(),
             &bootstrap,
             HttpsPort::new(bootstrap.https_port),
-            backend::tls_config(&tls),
+            backend::serving_tls(&tls),
             stop,
             std::future::pending(),
         )

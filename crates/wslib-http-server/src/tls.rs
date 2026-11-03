@@ -11,32 +11,51 @@ use rustls::ServerConfig;
 use rustls::crypto::CryptoProvider;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use tokio::sync::watch;
 use tokio_rustls::server::TlsStream;
 
 /// The TLS listener's configuration, reloadable in place; clones share it.
 #[derive(Clone, Debug)]
-pub struct Tls(RustlsConfig);
+pub struct Tls {
+    config: RustlsConfig,
+    renewals: watch::Sender<()>,
+}
 
 impl Tls {
     /// Serve `config`, offering h2 and http/1.1 by ALPN unless it names its own.
     pub fn new(config: Arc<ServerConfig>) -> Self {
-        Self(RustlsConfig::from_config(with_alpn(config)))
+        Self::from(RustlsConfig::from_config(with_alpn(config)))
     }
 
-    /// Serve `config` to every connection from now on; open ones keep theirs.
+    /// Serve `config` to every connection from now on; open ones keep theirs
+    /// until a [`renew`](Self::renew).
     pub fn reload(&self, config: Arc<ServerConfig>) {
-        self.0.reload_from_config(with_alpn(config));
+        self.config.reload_from_config(with_alpn(config));
+    }
+
+    /// Close every open connection gracefully, so its peer reconnects on the
+    /// configuration served now; each has the listener's grace period to
+    /// finish the requests it has begun. New connections are still accepted.
+    pub fn renew(&self) {
+        self.renewals.send_replace(());
     }
 
     pub(crate) fn config(&self) -> RustlsConfig {
-        self.0.clone()
+        self.config.clone()
+    }
+
+    pub(crate) fn renewals(&self) -> watch::Receiver<()> {
+        self.renewals.subscribe()
     }
 }
 
 /// Serve a config whose owner reloads it; its ALPN is the owner's to set.
 impl From<RustlsConfig> for Tls {
     fn from(config: RustlsConfig) -> Self {
-        Self(config)
+        Self {
+            config,
+            renewals: watch::Sender::new(()),
+        }
     }
 }
 

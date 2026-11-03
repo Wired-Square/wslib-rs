@@ -1,4 +1,5 @@
 use std::io;
+use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
@@ -25,7 +26,7 @@ pub async fn serve_redirect(
     // Cleartext h2 would let an unauthenticated peer hold streams open on a
     // listener with nothing to stream; an axum-server `map` after this would
     // clear `http1_only`.
-    let mut server = Server::from_listener(listener)
+    let mut server = Server::from_listener(Arc::new(listener))
         .http1_only()
         .handle(handle.clone());
     head_within(server.http_builder(), bounds.head).keep_alive(false);

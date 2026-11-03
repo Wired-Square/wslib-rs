@@ -121,7 +121,7 @@ wslib-build-id = { version = "0.1", registry = "wired-square" }
 
 GitHub Actions can't reach Forgejo, so it reads the read-only mirror at
 `mirror.wiredsquare.com/cargo/` instead, with its own read token; so can any other
-machine off the network. In that machine's `~/.cargo/config.toml`:
+machine off the network, though not to release. In that machine's `~/.cargo/config.toml`:
 
 ```toml
 [registry]
@@ -146,16 +146,18 @@ In Actions, supply the token from a repository secret as
 
 Each crate has its own `version` and `CHANGELOG.md`. Crates depend on each
 other by `path`, `version` and `registry = "wired-square"`; without the
-registry, the published crate looks for its sibling on crates.io. Publish the
-dependency and run `scripts/mirror.sh` before the crate that needs it, since
-lookups go through the mirror. No crate enables a rustls provider by default;
-the app installs one.
+registry, the published crate looks for its sibling on crates.io. A
+dependency is published before the crate that needs it: name both to one
+`scripts/release.sh` run, which orders them. No crate enables a rustls
+provider by default; the app installs one.
 
 `scripts/ci.sh` is the CI definition: text gates, fmt and a workspace check,
 then clippy, tests and each feature for the crates changed since their last
 release plus their reverse dependencies. `--tag` runs every crate, docs, the
 MSRV check and a build at each crate's dependency floors, which needs
-nightly. It needs `cargo-hack` and `jq`. A crate's checks are skipped when
+nightly. It needs `cargo-hack`, `jq` and, off Windows, the
+`x86_64-pc-windows-msvc` target, which `--tag` needs on nightly too. A
+crate's checks are skipped when
 its files, its workspace dependencies' files, the locked packages it builds,
 the toolchains and `ci.sh` match a run that passed (stamps under `target/ci-passed/`);
 `--no-cache` reruns them. `--dry-run` lists the crates changed since their tag,
@@ -196,6 +198,12 @@ push publishes nothing, and a failed publish withdraws the tags of the crates
 not yet published. Without `--execute` it stops before tagging, and with
 `--no-mirror` after publishing. The tag records what was published; consumers
 pin the registry version, not the tag.
+
+Release from a machine that reads Forgejo directly. With the mirror's source
+replacement (`replace-with = "wired-square-mirror"`) in its Cargo config,
+packaging resolves workspace dependencies from the mirror, which lacks a
+version not yet published, so a crate released with a new version of its
+dependency fails at `cargo package`.
 
 ### Release settings
 

@@ -68,3 +68,6 @@ publishing them.
 - A release runs from `main` after the merge. `scripts/release.sh <crate> ...
   --execute` tags the crates named, pushes the tags, publishes and mirrors
   the registry. Every published version has its tag on `main`.
+- Name a crate and the dependency it needs at a new version to one release
+  run, and release from a machine that reads Forgejo directly, not through
+  the mirror's source replacement.

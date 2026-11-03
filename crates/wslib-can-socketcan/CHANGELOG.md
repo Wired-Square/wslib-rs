@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- `docs/socketcan.md` gives the SocketCAN frame layouts. No code change.
+
 ## 0.1.0
 
 - `Frame`, `parse_frame`, `encode_frame` and the id flags: SocketCAN's classic

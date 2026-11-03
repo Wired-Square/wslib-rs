@@ -1,6 +1,6 @@
 [package]
 name = "wslib-backoff"
-version = "0.1.2"
+version = "0.1.3"
 description = "Capped exponential backoff that restarts on success, with an optional async retry loop."
 edition.workspace = true
 rust-version.workspace = true

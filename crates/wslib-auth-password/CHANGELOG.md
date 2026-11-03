@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- tokio's floor is 1.47.
+
 ## 0.1.2
 
 - `why_unreadable`: why a stored hash is not a readable PHC string, for a

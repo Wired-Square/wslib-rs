@@ -13,8 +13,8 @@ use serde::Deserialize;
 
 /// The family crates whose layout and keys the rendered files assume.
 pub const RENDERS_FOR: [(&str, &str); 3] = [
-    ("wslib-appliance-config", "0.1.1"),
-    ("wslib-appliance-store", "0.1.1"),
+    ("wslib-appliance-config", "0.1.2"),
+    ("wslib-appliance-store", "0.1.2"),
     ("wslib-appliance-server", "0.1.2"),
 ];
 
@@ -488,7 +488,7 @@ mod tests {
     #[test]
     fn family_crates_from_the_registry_pass_and_others_do_not() {
         let fine = lock_of(&[
-            locked("wslib-appliance-config", "0.1.1", Some(REGISTRY)),
+            locked("wslib-appliance-config", "0.1.2", Some(REGISTRY)),
             locked(
                 "wslib-appliance-core",
                 "0.1.0",
@@ -538,7 +538,7 @@ mod tests {
         assert_eq!(verdict.outcome, Outcome::Passed);
         assert_eq!(
             verdict.warnings,
-            ["wslib-appliance-config is locked at 0.1.0; this tool renders for 0.1.1"]
+            ["wslib-appliance-config is locked at 0.1.0; this tool renders for 0.1.2"]
         );
     }
 

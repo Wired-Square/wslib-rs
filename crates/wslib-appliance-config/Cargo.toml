@@ -1,6 +1,6 @@
 [package]
 name = "wslib-appliance-config"
-version = "0.1.1"
+version = "0.1.2"
 description = "An appliance's bootstrap settings: what has to be known before there is a database, from flags, environment and files."
 readme = "README.md"
 edition.workspace = true

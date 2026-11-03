@@ -1,6 +1,6 @@
 [package]
 name = "wslib-ssh-keys"
-version = "0.1.0"
+version = "0.1.1"
 description = "OpenSSH authorized_keys: key lines checked as sshd reads them, SHA256 fingerprints as ssh-keygen prints them, who added each key, and a whole-file rewrite."
 readme = "README.md"
 edition.workspace = true

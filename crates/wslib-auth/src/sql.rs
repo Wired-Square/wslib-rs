@@ -6,16 +6,19 @@ use std::str::FromStr;
 use chrono::{DateTime, Utc};
 use sqlx::{Database, Pool, Row};
 
-use crate::session::{Session, SessionStore, parse_stamp, stamp};
+use crate::session::{BoundSecretStore, Session, SessionStore, parse_stamp, stamp};
 use crate::token::TokenHash;
 
 /// A [`SessionStore`] in a table of the caller's, on a sqlx pool; the README carries its DDL.
 ///
 /// Times are stored as [`stamp`]s. The user id is stored as its `Display` and
-/// read back with `FromStr`.
+/// read back with `FromStr`. It is a [`BoundSecretStore`] once given a second
+/// table with [`with_bound_secrets`](Self::with_bound_secrets); until then its
+/// calls fail with `sqlx::Error::Configuration`.
 pub struct SqlSessionStore<DB: Database, U> {
     pool: Pool<DB>,
     queries: Queries,
+    bound: Option<BoundQueries>,
     user_id: PhantomData<fn() -> U>,
 }
 
@@ -30,6 +33,7 @@ impl<DB: Database, U> Clone for SqlSessionStore<DB, U> {
         Self {
             pool: self.pool.clone(),
             queries: self.queries.clone(),
+            bound: self.bound.clone(),
             user_id: PhantomData,
         }
     }
@@ -39,6 +43,10 @@ impl<DB: Database, U> fmt::Debug for SqlSessionStore<DB, U> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SqlSessionStore")
             .field("table", &self.queries.table)
+            .field(
+                "bound_secrets",
+                &self.bound.as_ref().map(|bound| &bound.table),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -49,8 +57,24 @@ impl<DB: Database, U> SqlSessionStore<DB, U> {
         Self {
             pool,
             queries: Queries::for_table(table),
+            bound: None,
             user_id: PhantomData,
         }
+    }
+
+    /// Secrets bound to the sessions in `table`, whose rows reference the
+    /// sessions table with `ON DELETE CASCADE`; the README carries its DDL.
+    pub fn with_bound_secrets(self, table: TableName) -> Self {
+        Self {
+            bound: Some(BoundQueries::for_tables(&self.queries.table, table)),
+            ..self
+        }
+    }
+
+    fn bound_queries(&self) -> Result<&BoundQueries, sqlx::Error> {
+        self.bound.as_ref().ok_or_else(|| {
+            sqlx::Error::Configuration("no table for bound secrets: call with_bound_secrets".into())
+        })
     }
 
     pub fn pool(&self) -> &Pool<DB> {
@@ -155,6 +179,34 @@ impl Queries {
             remove: format!("DELETE FROM {name} WHERE token_hash = $1"),
             remove_user: format!("DELETE FROM {name} WHERE user_id = $1"),
             remove_expired: format!("DELETE FROM {name} WHERE expires_at <= $1"),
+            table,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct BoundQueries {
+    table: TableName,
+    insert: String,
+    prune: String,
+    select: String,
+}
+
+impl BoundQueries {
+    fn for_tables(sessions: &TableName, table: TableName) -> Self {
+        let (sessions, name) = (sessions.as_str(), table.as_str());
+        Self {
+            insert: format!(
+                "INSERT INTO {name} (session_hash, secret_hash, issued_at) \
+                 SELECT token_hash, $2, $3 FROM {sessions} \
+                 WHERE token_hash = $1 AND expires_at > $3"
+            ),
+            prune: format!(
+                "DELETE FROM {name} WHERE session_hash = $1 AND secret_hash NOT IN \
+                 (SELECT secret_hash FROM {name} WHERE session_hash = $1 \
+                 ORDER BY issued_at DESC, secret_hash DESC LIMIT $2)"
+            ),
+            select: format!("SELECT secret_hash FROM {name} WHERE session_hash = $1"),
             table,
         }
     }
@@ -291,6 +343,47 @@ macro_rules! session_store_for {
                 Ok(())
             }
         }
+
+        impl<U> BoundSecretStore for SqlSessionStore<$db, U>
+        where
+            U: fmt::Display + FromStr + Send + Sync,
+            U::Err: std::error::Error + Send + Sync + 'static,
+        {
+            async fn bind_secret(
+                &self,
+                session: &TokenHash,
+                secret: &TokenHash,
+                at: DateTime<Utc>,
+                keep: usize,
+            ) -> Result<bool, sqlx::Error> {
+                let queries = self.bound_queries()?;
+                let mut tx = self.pool.begin().await?;
+                let inserted = sqlx::query(&queries.insert)
+                    .bind(session.as_str())
+                    .bind(secret.as_str())
+                    .bind(stamp(at))
+                    .execute(&mut *tx)
+                    .await?;
+                sqlx::query(&queries.prune)
+                    .bind(session.as_str())
+                    .bind(i64::try_from(keep).unwrap_or(i64::MAX))
+                    .execute(&mut *tx)
+                    .await?;
+                tx.commit().await?;
+                Ok(inserted.rows_affected() > 0)
+            }
+
+            async fn bound_secrets(
+                &self,
+                session: &TokenHash,
+            ) -> Result<Vec<TokenHash>, sqlx::Error> {
+                let hashes: Vec<String> = sqlx::query_scalar(&self.bound_queries()?.select)
+                    .bind(session.as_str())
+                    .fetch_all(&self.pool)
+                    .await?;
+                Ok(hashes.into_iter().map(TokenHash::from_stored).collect())
+            }
+        }
     };
 }
 
@@ -358,6 +451,13 @@ mod sqlite_tests {
         reauthenticated_at  TEXT NOT NULL
     ) STRICT";
 
+    const BOUND_DDL: &str = "CREATE TABLE app_session_secrets (
+        session_hash  TEXT NOT NULL REFERENCES app_sessions (token_hash) ON DELETE CASCADE,
+        secret_hash   TEXT NOT NULL,
+        issued_at     TEXT NOT NULL,
+        PRIMARY KEY (session_hash, secret_hash)
+    ) STRICT";
+
     async fn store<U>(table: &'static str) -> SqliteSessionStore<U> {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
@@ -375,6 +475,42 @@ mod sqlite_tests {
 
     async fn sessions() -> Sessions<SqliteSessionStore<String>> {
         Sessions::new(store("app_sessions").await)
+    }
+
+    async fn bound_sessions() -> Sessions<SqliteSessionStore<String>> {
+        let store = store("app_sessions").await;
+        sqlx::query(BOUND_DDL).execute(store.pool()).await.unwrap();
+        Sessions::new(store.with_bound_secrets(TableName::new("app_session_secrets")))
+    }
+
+    async fn secret_rows(sessions: &Sessions<SqliteSessionStore<String>>) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM app_session_secrets")
+            .fetch_one(sessions.store().pool())
+            .await
+            .unwrap()
+    }
+
+    async fn bind(
+        sessions: &Sessions<SqliteSessionStore<String>>,
+        token: &SessionToken,
+    ) -> SessionToken {
+        sessions
+            .bind(token)
+            .await
+            .unwrap()
+            .expect("a session to bind to")
+    }
+
+    async fn admitted(
+        sessions: &Sessions<SqliteSessionStore<String>>,
+        token: &SessionToken,
+        secret: Option<&SessionToken>,
+    ) -> bool {
+        sessions
+            .lookup_bound(token, secret)
+            .await
+            .unwrap()
+            .is_some()
     }
 
     async fn issue(sessions: &Sessions<SqliteSessionStore<String>>, user_id: &str) -> SessionToken {
@@ -551,5 +687,96 @@ mod sqlite_tests {
             panic!("a decode error");
         };
         assert_eq!(index, "s.user_id");
+    }
+
+    #[tokio::test]
+    async fn a_bound_session_is_found_only_with_one_of_its_secrets_and_only_its_hash_is_kept() {
+        let sessions = bound_sessions().await;
+        let token = issue(&sessions, "u1").await;
+        assert!(admitted(&sessions, &token, None).await, "nothing bound yet");
+
+        let secret = bind(&sessions, &token).await;
+        let stranger = SessionToken::generate().unwrap();
+        assert!(!admitted(&sessions, &token, None).await);
+        assert!(!admitted(&sessions, &token, Some(&stranger)).await);
+        assert!(
+            !admitted(&sessions, &token, Some(&token)).await,
+            "the token is no secret"
+        );
+        assert!(admitted(&sessions, &token, Some(&secret)).await);
+        assert!(!admitted(&sessions, &stranger, Some(&secret)).await);
+
+        let stored: String = sqlx::query_scalar("SELECT secret_hash FROM app_session_secrets")
+            .fetch_one(sessions.store().pool())
+            .await
+            .unwrap();
+        assert_eq!(stored, secret.hash().as_str());
+    }
+
+    #[tokio::test]
+    async fn a_session_keeps_its_newest_sixteen_secrets_and_leaves_anothers_alone() {
+        let sessions = bound_sessions().await;
+        let token = issue(&sessions, "u1").await;
+        let other = issue(&sessions, "u1").await;
+        let others = bind(&sessions, &other).await;
+
+        let mut secrets = Vec::new();
+        for _ in 0..=crate::BOUND_SECRETS_KEPT {
+            a_moment_passes();
+            secrets.push(bind(&sessions, &token).await);
+        }
+        assert!(
+            !admitted(&sessions, &token, Some(&secrets[0])).await,
+            "the oldest went"
+        );
+        for secret in &secrets[1..] {
+            assert!(admitted(&sessions, &token, Some(secret)).await);
+        }
+        assert!(admitted(&sessions, &other, Some(&others)).await);
+        assert_eq!(secret_rows(&sessions).await, 17);
+    }
+
+    #[tokio::test]
+    async fn nothing_binds_to_an_unknown_or_expired_session() {
+        let sessions = bound_sessions().await.with_lifetime(TimeDelta::zero());
+        let expired = issue(&sessions, "u1").await;
+        let stranger = SessionToken::generate().unwrap();
+        for token in [expired, stranger] {
+            assert_eq!(sessions.bind(&token).await.unwrap(), None);
+        }
+        assert_eq!(secret_rows(&sessions).await, 0);
+    }
+
+    #[tokio::test]
+    async fn the_secrets_end_with_their_session_however_it_ends() {
+        let sessions = bound_sessions().await;
+        let ended = issue(&sessions, "a").await;
+        bind(&sessions, &ended).await;
+        let a = issue(&sessions, "a").await;
+        bind(&sessions, &a).await;
+        let b = issue(&sessions, "b").await;
+        bind(&sessions, &b).await;
+
+        sessions.end(&ended).await.unwrap();
+        assert_eq!(secret_rows(&sessions).await, 2);
+        sessions.end_all(&"a".to_owned()).await.unwrap();
+        assert_eq!(secret_rows(&sessions).await, 1);
+        sessions
+            .store()
+            .remove_expired(crate::now() + TimeDelta::hours(13))
+            .await
+            .unwrap();
+        assert_eq!(secret_rows(&sessions).await, 0);
+    }
+
+    #[tokio::test]
+    async fn a_store_without_a_secrets_table_fails_to_bind_or_look_up_bound() {
+        let sessions = sessions().await;
+        let token = issue(&sessions, "u1").await;
+        let unconfigured = |e| matches!(e, SessionError::Store(sqlx::Error::Configuration(_)));
+        assert!(unconfigured(sessions.bind(&token).await.unwrap_err()));
+        assert!(unconfigured(
+            sessions.lookup_bound(&token, None).await.unwrap_err()
+        ));
     }
 }

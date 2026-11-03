@@ -98,7 +98,7 @@ mod tests {
         let chains = chains(Some(&app)).expect("composes");
         let names: Vec<&str> = chains.iter().map(Chain::name).collect();
         assert_eq!(names, ["platform", APP]);
-        assert_eq!(chains[0].version(), Some(7));
+        assert_eq!(chains[0].version(), Some(8));
         assert_eq!(chains[1].version(), Some(1000));
     }
 

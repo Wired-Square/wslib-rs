@@ -70,6 +70,15 @@ and the commit still reads the old one.
   check.
 - **`Proof`**: `Proof::begin()` before any credential check (password,
   passkey, code); `Copy`, so a pending second step can hold one.
+- **Bound secrets**, for a cookie a browser would also send to another app on
+  the host or a same-site page: `bind(token)` mints a second random secret
+  for the session, returned to the page that holds it (in `sessionStorage`,
+  sent as a header), and `lookup_bound(token, secret)` refuses the session
+  without one of its secrets once it has any. A session keeps its newest 16
+  (`BOUND_SECRETS_KEPT`), hashed as tokens are, and they end with its row. A
+  session never bound is found as by `lookup`, so rows from before the
+  change still sign in. Over a `BoundSecretStore`; the sqlx stores take the
+  table with `with_bound_secrets`.
 - **`SessionStore`**: an async trait (native `impl Future + Send`) with the
   user id as an associated type, for a store of your own.
 - **`SqliteSessionStore<U>`** and **`PgSessionStore<U>`**, features `sqlite`
@@ -148,6 +157,28 @@ UPDATE app_sessions SET proved_at = created_at;
 ALTER TABLE app_sessions ADD COLUMN proved_at TEXT COLLATE "C";
 UPDATE app_sessions SET proved_at = created_at;
 ALTER TABLE app_sessions ALTER COLUMN proved_at SET NOT NULL;
+```
+
+The bound secrets' table, if the app binds any, names the sessions table in
+its foreign key; the cascade is what ends a session's secrets with it, so on
+SQLite keep foreign keys on (sqlx's default):
+
+```sql
+-- SQLite
+CREATE TABLE app_session_secrets (
+    session_hash  TEXT NOT NULL REFERENCES app_sessions (token_hash) ON DELETE CASCADE,
+    secret_hash   TEXT NOT NULL,
+    issued_at     TEXT NOT NULL,
+    PRIMARY KEY (session_hash, secret_hash)
+) STRICT;
+
+-- PostgreSQL
+CREATE TABLE app_session_secrets (
+    session_hash  TEXT NOT NULL REFERENCES app_sessions (token_hash) ON DELETE CASCADE,
+    secret_hash   TEXT NOT NULL,
+    issued_at     TEXT COLLATE "C" NOT NULL,
+    PRIMARY KEY (session_hash, secret_hash)
+);
 ```
 
 A foreign key to the users table, and `ON DELETE CASCADE`, are the app's

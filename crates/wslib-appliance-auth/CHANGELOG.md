@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.2
+
+- `Sessions::bind` mints a secret bound to a session that resolves, kept in
+  the store's `SESSION_SECRETS_TABLE` (newest 16), and
+  `Sessions::resolve_bound` resolves as `resolve_with_reauthenticated_at`
+  but answers `AuthError::NoSession` when the session has a bound secret and
+  is not given one of them. A session never bound resolves without one. The
+  secrets end with the session's row.
+- Floors: `wslib-auth` 0.1.3 and `wslib-appliance-store` 0.1.3, for the
+  bound secrets and their table.
+
 ## 0.1.1
 
 - Dependency floors: `wslib-secret`, `wslib-appliance-store` and

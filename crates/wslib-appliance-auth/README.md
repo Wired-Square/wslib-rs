@@ -40,4 +40,7 @@ if totp_is_on {
 - **Sessions**: `wslib-auth`'s rows in the store's `SESSIONS_TABLE`. Each
   request re-reads the account, and a session is refused once its account is
   deleted or disabled, or if it was proved before the account's sessions were
-  ended.
+  ended. `bind` mints a second secret beside the cookie, for the page to send
+  as a header, and `resolve_bound` then refuses the session without one of
+  its secrets, so a browser sending the cookie to another app on the host, or
+  a same-site page, is not signed in; the secrets end with the session.

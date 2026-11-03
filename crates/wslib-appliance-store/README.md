@@ -71,7 +71,8 @@ deleting `_sqlx_migrations` rows must drop `_migration_chains`,
   once its write commits.
 - **Audit**, cursor-paged and swept; **trusted** certificates and authorities;
   **asserted callers'** roles.
-- **Sessions**: `platform_sessions`, `wslib-auth`'s table.
+- **Sessions**: `platform_sessions`, `wslib-auth`'s table, and
+  `platform_session_secrets`, the secrets bound to them.
 
 A restore replaces accounts, settings and trust in one transaction with the
 `replace_*` calls; a factory reset empties every platform table with

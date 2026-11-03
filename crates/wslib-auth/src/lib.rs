@@ -29,8 +29,8 @@ mod token;
 pub use attempts::{Attempt, Attempts, TooManyAttempts};
 pub use cookie::{SameSite, SessionCookie};
 pub use session::{
-    Proof, REAUTHENTICATION_WINDOW, SESSION_LIFETIME, Session, SessionError, SessionStore,
-    Sessions, now, parse_stamp, stamp,
+    BOUND_SECRETS_KEPT, BoundSecretStore, Proof, REAUTHENTICATION_WINDOW, SESSION_LIFETIME,
+    Session, SessionError, SessionStore, Sessions, now, parse_stamp, stamp,
 };
 #[cfg(feature = "postgres")]
 pub use sql::PgSessionStore;

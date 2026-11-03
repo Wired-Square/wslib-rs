@@ -22,7 +22,7 @@ async fn app_and(extra: &[Migration]) -> Migrator {
     migrator(app().iter().cloned().chain(extra.iter().cloned())).await
 }
 
-const PREVIOUS_VERSIONS: [i64; 8] = [1, 2, 3, 4, 5, 6, 7, 1000];
+const PREVIOUS_VERSIONS: [i64; 9] = [1, 2, 3, 4, 5, 6, 7, 8, 1000];
 
 /// A database as the previous build leaves it, with an account and a setting.
 async fn previous_database(dir: &TempDir, app: &Migrator) -> PathBuf {
@@ -185,7 +185,7 @@ async fn a_database_before_0007_gains_it_in_both_records_in_the_importing_open()
         "SELECT version, checksum FROM _platform_migrations ORDER BY version",
     )
     .await;
-    assert_eq!(versions(&platform), [1, 2, 3, 4, 5, 6, 7]);
+    assert_eq!(versions(&platform), [1, 2, 3, 4, 5, 6, 7, 8]);
     assert_eq!(versions(&legacy(&path).await), PREVIOUS_VERSIONS);
     previous_build(&path, &app())
         .await

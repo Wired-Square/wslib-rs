@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.3
+
+- `PUT /api/users/{id}/enabled` and `DELETE /api/users/{id}` take the acting
+  administrator's proof over a session, as a role change does: the switch in
+  its body's `proof`, the delete as a bare `FactorProof` body. The control
+  socket still gives none, and a delete with no body still reads. A browser
+  on an appliance-ui before one that sends the proof on enable and delete is
+  refused.
+- Needs `wslib-appliance-types` 0.1.3.
+
 ## 0.1.2
 
 - Pins `wslib-appliance-core` 0.1.2.

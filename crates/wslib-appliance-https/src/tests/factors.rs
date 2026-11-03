@@ -1265,6 +1265,26 @@ async fn a_refused_target_spends_none_of_the_admins_codes() {
         .send()
         .await;
     assert_eq!(reset.status(), StatusCode::NOT_FOUND);
+    for (n, (account, status)) in [
+        ("nobody", StatusCode::NOT_FOUND),
+        (owner.as_str(), StatusCode::FORBIDDEN),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let disabled = at_box(app.put(&format!("/api/users/{account}/enabled")))
+            .cookie(&admin)
+            .json(json!({ "enabled": false, "proof": by(7 + n) }))
+            .send()
+            .await;
+        assert_eq!(disabled.status(), status, "disabling {account}");
+        let deleted = at_box(app.delete(&format!("/api/users/{account}")))
+            .cookie(&admin)
+            .json(by(7 + n))
+            .send()
+            .await;
+        assert_eq!(deleted.status(), status, "deleting {account}");
+    }
     assert_eq!(left().await, 10, "every code is still there");
 
     for (account, status) in [

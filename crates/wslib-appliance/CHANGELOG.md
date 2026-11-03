@@ -3,6 +3,7 @@
 ## 0.1.7
 
 - Pins `wslib-appliance-auth` at 0.1.2 and `wslib-appliance-store` at 0.1.3.
+- Pins `wslib-appliance-https` at 0.1.3.
 
 ## 0.1.6
 

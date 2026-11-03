@@ -10,12 +10,14 @@
 //!   and the socket never does. The store refuses losing the last host admin.
 //!   Every write on another account goes through `store_for`, whose statement
 //!   spares a host admin's account when the caller is not one.
-//! - Making an account, changing a role, resetting a password, requiring TOTP
-//!   and removing a passkey each ask the administrator's fresh proof over
-//!   HTTPS; the socket gives none. The target is checked first, so a refused
-//!   change spends no code.
+//! - Making, enabling, disabling or deleting an account, changing a role,
+//!   resetting a password, requiring TOTP and removing a passkey each ask the
+//!   administrator's fresh proof over HTTPS; the socket gives none. The target
+//!   is checked first, so a refused change spends no code.
 
-use axum::extract::{Path, State};
+use axum::body::HttpBody;
+use axum::extract::rejection::JsonRejection;
+use axum::extract::{FromRequest, OptionalFromRequest, Path, Request, State};
 use axum::http::StatusCode;
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
@@ -36,7 +38,7 @@ use crate::{Admin, ApiError, ApplianceState, Identity, Reached, audit, clean_nam
 pub(crate) fn routes() -> Router<ApplianceState> {
     Router::new()
         .route("/users", get(list).post(create))
-        .route("/users/{id}", delete(remove))
+        .route("/users/{id}", delete(remove).layer(capped()))
         .route("/users/{id}/role", put(set_role))
         .route("/users/{id}/enabled", put(set_enabled))
         .route("/users/{id}/password", put(set_password))
@@ -163,12 +165,21 @@ async fn set_enabled(
     Admin(who): Admin,
     State(app): State<ApplianceState>,
     Path(id): Path<String>,
+    reached: Reached,
     Json(body): Json<EnabledChange>,
 ) -> Result<StatusCode, ApiError> {
     if !body.enabled {
         refuse_if_last_admin(&app, &who, &id, "disable").await?;
     }
-    store_for(&app, &who).set_enabled(&id, body.enabled).await?;
+    let store = store_for(&app, &who);
+    store.writable(&id).await?;
+    let what = if body.enabled {
+        "enabling an account"
+    } else {
+        "disabling an account"
+    };
+    prove_acting_admin(&app, &who, &reached, body.proof, what).await?;
+    store.set_enabled(&id, body.enabled).await?;
     audit!(
         &app,
         &who,
@@ -240,11 +251,31 @@ async fn remove(
     Admin(who): Admin,
     State(app): State<ApplianceState>,
     Path(id): Path<String>,
+    reached: Reached,
+    OptionalProof(proof): OptionalProof,
 ) -> Result<StatusCode, ApiError> {
     refuse_if_last_admin(&app, &who, &id, "delete").await?;
-    store_for(&app, &who).delete_user(&id).await?;
+    let store = store_for(&app, &who);
+    store.writable(&id).await?;
+    prove_acting_admin(&app, &who, &reached, proof, "deleting an account").await?;
+    store.delete_user(&id).await?;
     audit!(&app, &who, "deleted an account", "user_id" => &id).await;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// A DELETE's proof, read as none when it has no body or no content type.
+struct OptionalProof(FactorProof);
+
+impl<S: Send + Sync> FromRequest<S> for OptionalProof {
+    type Rejection = JsonRejection;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        if req.body().size_hint().exact() == Some(0) {
+            return Ok(Self(FactorProof::default()));
+        }
+        let body = <Json<FactorProof> as OptionalFromRequest<S>>::from_request(req, state).await?;
+        Ok(Self(body.map(|Json(proof)| proof).unwrap_or_default()))
+    }
 }
 
 fn refuse_making_a_host_admin(who: &Identity, role: Role) -> Result<(), ApiError> {
@@ -511,6 +542,7 @@ mod tests {
         let removed = app
             .delete(&format!("/api/users/{id}"))
             .cookie(&token)
+            .json(proof())
             .send()
             .await;
         assert_eq!(removed.status(), StatusCode::NO_CONTENT);
@@ -703,6 +735,78 @@ mod tests {
         assert!(still.user.enabled);
     }
 
+    #[tokio::test]
+    async fn enabling_disabling_or_deleting_asks_the_administrator_to_prove_themselves() {
+        let app = app().await;
+        let token = app.admin("admin").await;
+        let member = app.create("member", Role::Viewer).await;
+        let enabled = |enabled: bool, proof: serde_json::Value| {
+            app.put(&format!("/api/users/{member}/enabled"))
+                .cookie(&token)
+                .json(serde_json::json!({ "enabled": enabled, "proof": proof }))
+        };
+        let deleted = || app.delete(&format!("/api/users/{member}")).cookie(&token);
+        let wrong = serde_json::json!({ "password": "not it" });
+
+        for refused in [
+            app.put(&format!("/api/users/{member}/enabled"))
+                .cookie(&token)
+                .json(serde_json::json!({ "enabled": false }))
+                .send()
+                .await,
+            enabled(false, wrong.clone()).send().await,
+            deleted().send().await,
+            deleted().json(wrong).send().await,
+        ] {
+            assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+            assert_eq!(
+                body_json(refused).await["error"],
+                "the password is incorrect"
+            );
+        }
+        assert!(app.signs_in("member", Harness::PASSWORD).await);
+
+        for on in [false, true] {
+            assert_eq!(
+                enabled(on, proof()).send().await.status(),
+                StatusCode::NO_CONTENT
+            );
+            let user = app.store().user_by_id(&member).await.unwrap().unwrap().user;
+            assert_eq!(user.enabled, on);
+        }
+        assert_eq!(
+            deleted().json(proof()).send().await.status(),
+            StatusCode::NO_CONTENT
+        );
+        assert!(app.store().user_by_id(&member).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn the_socket_disables_and_deletes_with_no_proof_and_no_body() {
+        let app = app().await;
+        let members = [
+            app.create("member", Role::Viewer).await,
+            app.create("other", Role::Viewer).await,
+        ];
+
+        let disabled = app
+            .put(&format!("/api/users/{}/enabled", members[0]))
+            .local()
+            .json(serde_json::json!({ "enabled": false }))
+            .send()
+            .await;
+        assert_eq!(disabled.status(), StatusCode::NO_CONTENT);
+        let bare = app.delete(&format!("/api/users/{}", members[0])).local();
+        let empty_json = app
+            .delete(&format!("/api/users/{}", members[1]))
+            .local()
+            .body("application/json", Vec::new());
+        for request in [bare, empty_json] {
+            assert_eq!(request.send().await.status(), StatusCode::NO_CONTENT);
+        }
+        assert_eq!(app.store().user_count().await.unwrap(), 0);
+    }
+
     async fn changes_to(
         app: &Harness,
         id: &str,
@@ -715,14 +819,14 @@ mod tests {
                 .send()
                 .await,
             who(app.put(&at("/enabled")))
-                .json(serde_json::json!({ "enabled": false }))
+                .json(serde_json::json!({ "enabled": false, "proof": proof() }))
                 .send()
                 .await,
             who(app.put(&at("/password")))
                 .json(reset_by(Harness::PASSWORD))
                 .send()
                 .await,
-            who(app.delete(&at(""))).send().await,
+            who(app.delete(&at(""))).json(proof()).send().await,
         ]
     }
 

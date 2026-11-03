@@ -25,7 +25,7 @@ client = ["dep:wslib-appliance-client"]
 wslib-appliance-auth = { path = "../wslib-appliance-auth", version = "=0.1.2", registry = "wired-square", optional = true }
 wslib-appliance-core = { path = "../wslib-appliance-core", version = "=0.1.2", registry = "wired-square", optional = true }
 wslib-appliance-server = { path = "../wslib-appliance-server", version = "=0.1.2", registry = "wired-square", optional = true }
-wslib-appliance-https = { path = "../wslib-appliance-https", version = "=0.1.2", registry = "wired-square", optional = true }
+wslib-appliance-https = { path = "../wslib-appliance-https", version = "=0.1.3", registry = "wired-square", optional = true }
 wslib-appliance-service = { path = "../wslib-appliance-service", version = "=0.1.2", registry = "wired-square", optional = true }
 wslib-appliance-backup = { path = "../wslib-appliance-backup", version = "=0.1.2", registry = "wired-square", optional = true }
 wslib-appliance-client = { path = "../wslib-appliance-client", version = "=0.1.1", registry = "wired-square", optional = true }

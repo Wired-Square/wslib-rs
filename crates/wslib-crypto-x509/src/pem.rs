@@ -1,9 +1,11 @@
 //! PEM text as people paste it: tidied, filtered to certificates, and refused
 //! when a private key sits where a certificate goes.
 
+use std::mem;
+
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::Error;
 
@@ -20,7 +22,7 @@ pub const PUBLIC_KEY: &str = "PUBLIC KEY";
 /// keys; what goes is commentary such as "Bag Attributes" and CRLF endings.
 pub fn normalise(pem: &str) -> Result<String, Error> {
     within_length(pem)?;
-    let out = sections(pem, |_| true)?;
+    let out = mem::take(&mut *sections(pem, |_| true)?);
     if out.is_empty() {
         return Err(Error::NotPem);
     }
@@ -30,7 +32,8 @@ pub fn normalise(pem: &str) -> Result<String, Error> {
 /// The `CERTIFICATE` sections of `pem`, as [`normalise`] writes them, and nothing else.
 pub fn certificate_sections(pem: &str) -> Result<String, Error> {
     within_length(pem)?;
-    sections(pem, |label| label == CERTIFICATE)
+    let mut out = sections(pem, |label| label == CERTIFICATE)?;
+    Ok(mem::take(&mut *out))
 }
 
 /// The certificates in `pem`, at least one and leaf first; any other section is refused, a private key above all.
@@ -66,7 +69,10 @@ pub fn private_key(pem: &str) -> Result<PrivateKeyDer<'static>, Error> {
         Some(key) => key.map_err(|e| Error::Malformed(e.to_string()))?,
         None => return Err(missing(pem, PRIVATE_KEY)),
     };
-    if keys.next().is_some() {
+    if let Some(second) = keys.next() {
+        for mut key in [Ok(key), second].into_iter().flatten() {
+            key.zeroize();
+        }
         return Err(Error::MoreThanOneKey);
     }
     Ok(key)
@@ -144,8 +150,11 @@ fn encrypted(pem: &str) -> bool {
             .any(|line| line.trim().starts_with("Proc-Type: 4,ENCRYPTED"))
 }
 
-fn sections(pem: &str, keep: impl Fn(&str) -> bool) -> Result<String, Error> {
-    let mut out = String::new();
+fn sections(pem: &str, keep: impl Fn(&str) -> bool) -> Result<Zeroizing<String>, Error> {
+    // Sized up front, so a private key is never left behind in a reallocated buffer. Each kept
+    // line is no longer than in `pem`, and only a last line without a newline gains one.
+    let capacity = pem.len() + 1;
+    let mut out = Zeroizing::new(String::with_capacity(capacity));
     let mut open: Option<(&str, bool)> = None;
     for line in pem.lines().map(str::trim) {
         let kept = match open {
@@ -169,6 +178,7 @@ fn sections(pem: &str, keep: impl Fn(&str) -> bool) -> Result<String, Error> {
             out.push('\n');
         }
     }
+    debug_assert_eq!(out.capacity(), capacity);
     match open {
         Some((label, _)) => Err(Error::Unterminated {
             label: label.to_string(),
@@ -282,6 +292,16 @@ mod tests {
                 found: CERTIFICATE.to_string()
             })
         );
+    }
+
+    #[test]
+    fn a_key_with_crlf_endings_or_no_final_newline_still_reads() {
+        let pem = key_pem();
+        let unterminated = pem.trim_end();
+        let crlf = unterminated.replace('\n', "\r\n");
+        for pasted in [unterminated, &crlf] {
+            assert_eq!(private_key(pasted), private_key(&pem));
+        }
     }
 
     #[test]

@@ -1,5 +1,5 @@
 //! What a client sends to create or change an account, one body per route.
-//! Each but `EnabledChange` carries `proof`, the acting administrator's own.
+//! Each carries `proof`, the acting administrator's own.
 
 use serde::{Deserialize, Serialize};
 use wslib_secret::Secret;
@@ -38,6 +38,20 @@ pub struct RoleChange {
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct EnabledChange {
     pub enabled: bool,
+    #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(as = "Option<FactorProof>", optional))]
+    pub proof: FactorProof,
+}
+
+/// The body of a host's `PUT /api/users/{id}/apps/{app}`; `None` removes the app role.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct AppRoleChange {
+    pub role: Option<Role>,
+    #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(as = "Option<FactorProof>", optional))]
+    pub proof: FactorProof,
 }
 
 /// Reset somebody else's password, and clear their second factors; never the caller's.
@@ -88,5 +102,23 @@ mod tests {
         assert_eq!(body.role, Role::Operator);
         let written = serde_json::to_string(&body).unwrap();
         assert!(written.starts_with(json.trim_end_matches('}')), "{written}");
+    }
+
+    #[test]
+    fn an_enabled_change_without_a_proof_still_reads() {
+        let body: EnabledChange = serde_json::from_str(r#"{"enabled":true}"#).unwrap();
+        assert!(body.enabled);
+        assert!(body.proof.password.is_none());
+    }
+
+    #[test]
+    fn an_app_role_change_round_trips_a_removal_and_a_role() {
+        for json in [r#"{"role":null}"#, r#"{"role":"operator"}"#] {
+            let body: AppRoleChange = serde_json::from_str(json).expect(json);
+            let written = serde_json::to_string(&body).unwrap();
+            assert!(written.starts_with(json.trim_end_matches('}')), "{written}");
+            let again: AppRoleChange = serde_json::from_str(&written).unwrap();
+            assert_eq!(again.role, body.role);
+        }
     }
 }

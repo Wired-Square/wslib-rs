@@ -1,6 +1,6 @@
 [package]
 name = "wslib-appliance-types"
-version = "0.1.2"
+version = "0.1.3"
 description = "An appliance's wire contract: the types its daemon, its browser and any other client share."
 readme = "README.md"
 edition.workspace = true

@@ -8,11 +8,13 @@
 use std::fmt;
 use std::str::FromStr;
 
+use pkcs8::der::zeroize::Zeroizing;
 use pkcs8::der::{Decode, SecretDocument};
 use pkcs8::spki::SubjectPublicKeyInfoRef;
 use pkcs8::{EncodePrivateKey, ObjectIdentifier, PrivateKeyInfo};
 use rand_core::OsRng;
 use rsa::pkcs1;
+use rsa::traits::{PrivateKeyParts, PublicKeyParts};
 use rustls::SignatureScheme;
 use rustls_pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
 
@@ -75,8 +77,8 @@ impl KeyAlgorithm {
         let document = match self {
             Self::EcP256 => p256::SecretKey::random(&mut OsRng).to_pkcs8_der(),
             Self::EcP384 => p384::SecretKey::random(&mut OsRng).to_pkcs8_der(),
-            Self::Rsa2048 => rsa(2048)?.to_pkcs8_der(),
-            Self::Rsa4096 => rsa(4096)?.to_pkcs8_der(),
+            Self::Rsa2048 => rsa_pkcs8(&rsa(2048)?),
+            Self::Rsa4096 => rsa_pkcs8(&rsa(4096)?),
         }
         .map_err(|e| failed(&e))?;
         Ok(PrivatePkcs8KeyDer::from(document.as_bytes().to_vec()))
@@ -141,6 +143,32 @@ pub fn to_pkcs8(key: &PrivateKeyDer<'_>) -> Result<PrivatePkcs8KeyDer<'static>, 
     }
     .map_err(|e| malformed(&e))?;
     Ok(PrivatePkcs8KeyDer::from(document.as_bytes().to_vec()))
+}
+
+// The rsa crate's own encoder leaves an unwiped PKCS#1 copy behind and recomputes the CRT values unwiped.
+fn rsa_pkcs8(key: &rsa::RsaPrivateKey) -> pkcs8::Result<SecretDocument> {
+    let [p, q] = key.primes() else {
+        return Err(pkcs1::Error::Version.into());
+    };
+    let (Some(dp), Some(dq), Some(qinv)) = (key.dp(), key.dq(), key.qinv()) else {
+        return Err(pkcs1::Error::Crypto.into());
+    };
+    let [n, e, d, p, q, dp, dq] =
+        [key.n(), key.e(), key.d(), p, q, dp, dq].map(|n| Zeroizing::new(n.to_bytes_be()));
+    let qinv = Zeroizing::new(qinv.to_bytes_be().1);
+    let pkcs1 = SecretDocument::encode_msg(&pkcs1::RsaPrivateKey {
+        modulus: pkcs1::UintRef::new(&n)?,
+        public_exponent: pkcs1::UintRef::new(&e)?,
+        private_exponent: pkcs1::UintRef::new(&d)?,
+        prime1: pkcs1::UintRef::new(&p)?,
+        prime2: pkcs1::UintRef::new(&q)?,
+        exponent1: pkcs1::UintRef::new(&dp)?,
+        exponent2: pkcs1::UintRef::new(&dq)?,
+        coefficient: pkcs1::UintRef::new(&qinv)?,
+        other_prime_infos: None,
+    })?;
+    SecretDocument::encode_msg(&PrivateKeyInfo::new(pkcs1::ALGORITHM_ID, pkcs1.as_bytes()))
+        .map_err(pkcs8::Error::from)
 }
 
 fn modulus_bits(modulus: &[u8]) -> Option<u32> {

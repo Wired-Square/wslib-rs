@@ -213,7 +213,11 @@ async fn a_deployed_database() {
     let before_sign_in = digest(&before, Some(&SIGN_IN)).await;
     let app_chain = app(&before).await;
     let newest_app = app_chain.iter().map(|m| m.version).max().expect("an app");
-    let had_7 = before_legacy.iter().any(|row| row.0 == 7);
+    let pending: Vec<i64> = platform()
+        .iter()
+        .map(|m| m.version)
+        .filter(|version| !before_legacy.iter().any(|row| row.0 == *version))
+        .collect();
     println!(
         "_sqlx_migrations: {:?}",
         before_legacy.iter().map(|r| r.0).collect::<Vec<_>>()
@@ -273,7 +277,7 @@ async fn a_deployed_database() {
         .collect();
     println!("every applied row unchanged, none re-ran: {kept}; added: {added:?}");
     assert!(kept);
-    assert_eq!(added, if had_7 { vec![] } else { vec![7] });
+    assert_eq!(added, pending);
 
     let after_counts = counts(&path).await;
     let changed: Vec<String> = after_counts
@@ -288,8 +292,12 @@ async fn a_deployed_database() {
         )
         .collect();
     println!("row counts changed: {changed:?}");
+    let created = [
+        "platform_sessions: None -> 0",
+        "platform_session_secrets: None -> 0",
+    ];
     assert!(
-        changed.iter().all(|c| c == "platform_sessions: None -> 0"),
+        changed.iter().all(|c| created.contains(&c.as_str())),
         "{changed:?}"
     );
     let sign_in_kept = digest(&path, Some(&SIGN_IN)).await == before_sign_in;
@@ -347,7 +355,7 @@ async fn a_deployed_database() {
         "open_existing before the import: {}, nothing written {untouched}",
         verdict(&offline)
     );
-    assert!(untouched && offline.is_ok() == had_7);
+    assert!(untouched && offline.is_ok() == pending.is_empty());
     if let Ok(store) = offline {
         store.close().await;
     }

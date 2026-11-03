@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.3
+
+- Migration 0008 adds `platform_session_secrets`, `wslib-auth`'s table of
+  secrets bound to a session, which cascades from `platform_sessions`; a
+  factory reset empties it. `SESSION_SECRETS_TABLE` names it. A build before
+  this one refuses a database it has migrated.
+
 ## 0.1.2
 
 - The README says why a product with migrations declares sqlx itself. No

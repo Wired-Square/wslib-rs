@@ -65,6 +65,9 @@ pub use sqlx::migrate::Migrator;
 /// The table the sessions are rows of, for the session store; never in a backup.
 pub const SESSIONS_TABLE: &str = "platform_sessions";
 
+/// The table of secrets bound to the sessions, which end with their session's row.
+pub const SESSION_SECRETS_TABLE: &str = "platform_session_secrets";
+
 /// Why a store operation could not be completed.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -335,16 +338,27 @@ mod tests {
         .expect("list schema objects")
     }
 
+    /// A session row with a secret bound to it.
     pub(crate) async fn session(store: &Store, user_id: &str) {
+        let hash = uuid::Uuid::new_v4().to_string();
         sqlx::query(&format!(
             "INSERT INTO {SESSIONS_TABLE} VALUES (?1, ?2, ?3, ?3, ?3, ?3)"
         ))
-        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&hash)
         .bind(user_id)
         .bind(stamp(now()))
         .execute(store.pool())
         .await
         .expect("a session row");
+        sqlx::query(&format!(
+            "INSERT INTO {SESSION_SECRETS_TABLE} VALUES (?1, ?2, ?3)"
+        ))
+        .bind(&hash)
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(stamp(now()))
+        .execute(store.pool())
+        .await
+        .expect("a bound secret");
     }
 
     #[tokio::test]

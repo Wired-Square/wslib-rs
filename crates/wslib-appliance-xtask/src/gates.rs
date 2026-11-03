@@ -14,7 +14,7 @@ use serde::Deserialize;
 /// The family crates whose layout and keys the rendered files assume.
 pub const RENDERS_FOR: [(&str, &str); 3] = [
     ("wslib-appliance-config", "0.1.2"),
-    ("wslib-appliance-store", "0.1.2"),
+    ("wslib-appliance-store", "0.1.3"),
     ("wslib-appliance-server", "0.1.2"),
 ];
 

@@ -689,8 +689,8 @@ fn account_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<Account, StoreError
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SESSIONS_TABLE;
     use crate::tests::store;
+    use crate::{SESSION_SECRETS_TABLE, SESSIONS_TABLE};
 
     const HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$c2FsdHNhbHRzYWx0$aGFzaGhhc2hoYXNo";
 
@@ -740,8 +740,12 @@ mod tests {
         tx.commit().await.expect("commit");
     }
 
+    /// The session rows, each still with the one secret bound to it.
     async fn sessions(store: &Store) -> i64 {
-        crate::reset::tests::rows(store, SESSIONS_TABLE).await
+        let rows = crate::reset::tests::rows(store, SESSIONS_TABLE).await;
+        let secrets = crate::reset::tests::rows(store, SESSION_SECRETS_TABLE).await;
+        assert_eq!(secrets, rows, "the secrets went with their sessions");
+        rows
     }
 
     async fn cutoff(store: &Store, id: &str) -> DateTime<Utc> {

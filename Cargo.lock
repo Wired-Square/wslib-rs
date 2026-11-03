@@ -8030,7 +8030,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "wslib-appliance-auth",
  "wslib-appliance-backup",
@@ -8046,7 +8046,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-auth"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -8242,7 +8242,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-store"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "chrono",
  "serde",
@@ -8276,7 +8276,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-xtask"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "chrono",
  "clap",
@@ -8298,7 +8298,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-auth"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "base64 0.23.1",
  "chrono",

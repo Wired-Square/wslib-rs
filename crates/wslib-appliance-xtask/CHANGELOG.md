@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.3
+
+- Renders for `wslib-appliance-store` 0.1.3, so `gates` no longer warns on a
+  lock that holds it.
+
 ## 0.2.2
 
 - Renders for `wslib-appliance-config` 0.1.2, `wslib-appliance-store` 0.1.2

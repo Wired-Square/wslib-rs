@@ -11,10 +11,12 @@ use wslib_appliance_store::sqlx;
 use wslib_appliance_store::{Account, Store, StoreError};
 use wslib_appliance_types::User;
 use wslib_auth::{Proof, Session, SessionError, SessionToken, SqliteSessionStore, TableName};
+use wslib_secret::Secret;
 
 use crate::AuthError;
 
 const TABLE: TableName = TableName::new(wslib_appliance_store::SESSIONS_TABLE);
+const SECRETS_TABLE: TableName = TableName::new(wslib_appliance_store::SESSION_SECRETS_TABLE);
 
 /// An appliance's sessions, as rows of the store's sessions table.
 #[derive(Clone, Debug)]
@@ -31,7 +33,8 @@ impl From<SessionError<sqlx::Error>> for AuthError {
 
 impl Sessions {
     pub fn new(store: &Store) -> Self {
-        let rows = SqliteSessionStore::new(store.pool().clone(), TABLE);
+        let rows =
+            SqliteSessionStore::new(store.pool().clone(), TABLE).with_bound_secrets(SECRETS_TABLE);
         Self(wslib_auth::Sessions::new(rows))
     }
 
@@ -87,6 +90,31 @@ impl Sessions {
         Ok((account.user, session.reauthenticated_at))
     }
 
+    /// A new secret for `token`'s session, which [`resolve_bound`](Self::resolve_bound)
+    /// then asks for beside the cookie; [`AuthError::NoSession`] unless it
+    /// [resolves](Self::resolve). Call it only where the cookie is set: it is
+    /// not a route of its own. The session keeps its newest 16.
+    pub async fn bind(&self, store: &Store, token: &SessionToken) -> Result<Secret, AuthError> {
+        self.current(store, token).await?;
+        let secret = self.0.bind(token).await?.ok_or(AuthError::NoSession)?;
+        Ok(Secret::new(secret.expose()))
+    }
+
+    /// [`resolve_with_reauthenticated_at`](Self::resolve_with_reauthenticated_at),
+    /// and [`AuthError::NoSession`] when the session has a bound secret and
+    /// `secret` is none of them. A session never bound resolves without one.
+    pub async fn resolve_bound(
+        &self,
+        store: &Store,
+        token: &SessionToken,
+        secret: Option<&Secret>,
+    ) -> Result<(User, DateTime<Utc>), AuthError> {
+        let secret = secret.map(|secret| SessionToken::from_presented(secret.expose()));
+        let session = self.0.lookup_bound(token, secret.as_ref()).await?;
+        let (account, session) = Self::checked(store, session).await?;
+        Ok((account.user, session.reauthenticated_at))
+    }
+
     /// Stamp `token`'s session as having proved its account again on `proof`:
     /// [`AuthError::NoSession`] unless it [resolves](Self::resolve), and
     /// [`AuthError::Refused`] if `proof` began before the account's sessions
@@ -113,7 +141,14 @@ impl Sessions {
         store: &Store,
         token: &SessionToken,
     ) -> Result<(Account, Session<String>), AuthError> {
-        let session = self.0.lookup(token).await?.ok_or(AuthError::NoSession)?;
+        Self::checked(store, self.0.lookup(token).await?).await
+    }
+
+    async fn checked(
+        store: &Store,
+        session: Option<Session<String>>,
+    ) -> Result<(Account, Session<String>), AuthError> {
+        let session = session.ok_or(AuthError::NoSession)?;
         let account = store
             .user_by_id(&session.user_id)
             .await?
@@ -500,6 +535,84 @@ mod tests {
             );
             let kept = sessions.resolve_with_reauthenticated_at(&store, &after);
             assert_eq!(kept.await.expect("resolves").1, issued, "{revoke}");
+        }
+    }
+
+    async fn secrets(store: &Store) -> i64 {
+        let count = format!(
+            "SELECT count(*) FROM {}",
+            wslib_appliance_store::SESSION_SECRETS_TABLE
+        );
+        sqlx::query_scalar(&count)
+            .fetch_one(store.pool())
+            .await
+            .expect("count")
+    }
+
+    #[tokio::test]
+    async fn a_bound_session_resolves_only_with_one_of_its_secrets() {
+        let store = store().await;
+        let created = user(&store, "admin", Role::Admin).await;
+        let sessions = Sessions::new(&store);
+        let token = signed_in(&sessions, &store, &created).await;
+        let bound = |secret: Option<Secret>| {
+            let (sessions, store, token) = (&sessions, &store, &token);
+            async move { sessions.resolve_bound(store, token, secret.as_ref()).await }
+        };
+        assert!(bound(None).await.is_ok(), "a session never bound");
+
+        let secret = sessions.bind(&store, &token).await.expect("bind");
+        let (resolved, _) = bound(Some(secret.clone())).await.expect("resolves");
+        assert_eq!(resolved, created);
+        for refused in [
+            None,
+            Some(Secret::new("")),
+            Some(Secret::new(token.expose())),
+        ] {
+            let refused = bound(refused).await;
+            assert!(matches!(refused, Err(AuthError::NoSession)), "{refused:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn only_a_session_that_resolves_is_bound() {
+        let store = store().await;
+        let created = user(&store, "admin", Role::Admin).await;
+        let sessions = Sessions::new(&store);
+        let token = signed_in(&sessions, &store, &created).await;
+        store
+            .set_enabled(&created.id, false)
+            .await
+            .expect("disable");
+
+        for token in [token, SessionToken::from_presented("unknown")] {
+            let bound = sessions.bind(&store, &token).await;
+            assert!(matches!(bound, Err(AuthError::NoSession)), "{bound:?}");
+        }
+        assert_eq!(secrets(&store).await, 0);
+    }
+
+    #[tokio::test]
+    async fn the_secrets_go_with_their_session_however_it_ends() {
+        for end in ["sign out", "password reset", "delete"] {
+            let store = store().await;
+            let created = user(&store, "admin", Role::Admin).await;
+            let sessions = Sessions::new(&store);
+            let token = signed_in(&sessions, &store, &created).await;
+            sessions.bind(&store, &token).await.expect("bind");
+            sessions.bind(&store, &token).await.expect("bind again");
+            assert_eq!(secrets(&store).await, 2, "{end}");
+
+            match end {
+                "sign out" => sessions.end(&token).await.expect("end"),
+                "password reset" => store
+                    .set_password(&created.id, "$argon2id$v=19$reset")
+                    .await
+                    .map(drop)
+                    .expect("reset"),
+                _ => store.delete_user(&created.id).await.expect("delete"),
+            }
+            assert_eq!(secrets(&store).await, 0, "{end}");
         }
     }
 

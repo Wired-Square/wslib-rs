@@ -7,11 +7,12 @@ use crate::{Store, StoreError};
 
 /// Every table the platform's migrations create, in name order; a test holds
 /// it to `sqlite_master`.
-pub(crate) const PLATFORM_TABLES: [&str; 12] = [
+pub(crate) const PLATFORM_TABLES: [&str; 13] = [
     "app_roles",
     "asserted_roles",
     "audit",
     "passkeys",
+    "platform_session_secrets",
     "platform_sessions",
     "recovery_codes",
     "settings",

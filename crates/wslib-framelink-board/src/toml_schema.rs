@@ -3,7 +3,8 @@
 
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer, de::Error as _};
+use wslib_framelink_protocol::types;
 
 #[derive(Debug, Deserialize)]
 pub struct BoardFile {
@@ -130,6 +131,8 @@ pub struct FrameSignalDefToml {
     pub byte_order: String,
     #[serde(default = "default_value_type")]
     pub value_type: String,
+    #[serde(default = "raw_quantity", deserialize_with = "quantity_from_toml")]
+    pub quantity: u8,
     #[serde(default = "default_scale")]
     pub scale: f32,
     #[serde(default)]
@@ -151,6 +154,44 @@ fn default_value_type() -> String {
 fn default_scale() -> f32 {
     1.0
 }
+
+fn raw_quantity() -> u8 {
+    types::QTY_RAW
+}
+
+fn quantity_from_toml<'de, D: Deserializer<'de>>(d: D) -> Result<u8, D::Error> {
+    let text = String::deserialize(d)?;
+    quantity_from_text(&text).ok_or_else(|| D::Error::custom(format!("unknown quantity '{text}'")))
+}
+
+fn quantity_from_text(text: &str) -> Option<u8> {
+    types::quantity_from_slug(text).or_else(|| {
+        text.strip_prefix(HEX_PREFIX)
+            .and_then(|hex| u8::from_str_radix(hex, HEX_RADIX).ok())
+    })
+}
+
+/// A frame signal's quantity as the board TOML writes it: its slug, or hex
+/// for one this crate has no slug for, and `None` for raw, which the TOML
+/// leaves out.
+pub fn quantity_to_toml(quantity: u8) -> Option<String> {
+    if quantity == types::QTY_RAW {
+        return None;
+    }
+    let mut slug = types::quantity_slug(quantity).to_string();
+    if quantity & types::QTY_PER_SECOND != 0 {
+        slug.push_str(PER_SECOND_SUFFIX);
+    }
+    if types::quantity_from_slug(&slug) == Some(quantity) {
+        Some(slug)
+    } else {
+        Some(format!("{quantity:#04x}"))
+    }
+}
+
+const PER_SECOND_SUFFIX: &str = "_per_s";
+const HEX_PREFIX: &str = "0x";
+const HEX_RADIX: u32 = 16;
 
 /// A named colour palette stored as user signals.
 #[derive(Debug, Deserialize)]
@@ -192,5 +233,19 @@ pub fn parse_hex_key(s: &str) -> Result<u16, std::num::ParseIntError> {
     match s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
         Some(hex) => u16::from_str_radix(hex, 16),
         None => s.parse(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_quantity_survives_the_board_toml() {
+        for quantity in 0..=u8::MAX {
+            let read = quantity_to_toml(quantity)
+                .map_or(Some(types::QTY_RAW), |text| quantity_from_text(&text));
+            assert_eq!(read, Some(quantity), "{quantity:#04x}");
+        }
     }
 }

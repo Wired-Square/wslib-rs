@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0
+
+- On wslib-framelink-board 0.3, whose types it returns
+  (`collect_active_rule_ids`, `Error::Board`, `DeviceIdentity`).
+
 ## 0.2.0
 
 - On wslib-framelink-protocol 0.2 and wslib-framelink-board 0.2, whose

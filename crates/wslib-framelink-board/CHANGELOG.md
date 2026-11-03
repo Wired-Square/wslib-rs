@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0
+
+- A frame definition's signal keeps its `quantity` through the board TOML.
+  `FrameSignalDefToml`, `FrameSignalDisplayInfo` and `EditableFrameSignal`
+  gain `quantity` (a `types::QTY_*`). The TOML holds it as `quantity`, a
+  quantity slug such as `"temperature"` or `"temperature_per_s"`, or as a
+  `0x` hex string such as `"0x16"` for a quantity this crate has no slug
+  for; raw is left out, and anything else fails the load. `sync_frame_defs`
+  and the editable writer write it, and `toml_schema::quantity_to_toml`
+  gives the slug or hex.
+
 ## 0.2.0
 
 - On wslib-framelink-protocol 0.2: an indicator trigger's frame definition

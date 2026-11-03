@@ -86,6 +86,7 @@ pub struct EditableFrameSignal {
     pub bit_length: u16,
     pub byte_order: String,
     pub value_type: String,
+    pub quantity: u8,
     pub scale: f32,
     pub offset: f32,
     pub unit: String,
@@ -498,6 +499,9 @@ impl EditableBoardDef {
                         );
                         st.insert("byte_order", toml_edit::value(&sig.byte_order));
                         st.insert("value_type", toml_edit::value(&sig.value_type));
+                        if let Some(quantity) = toml_schema::quantity_to_toml(sig.quantity) {
+                            st.insert("quantity", toml_edit::value(quantity));
+                        }
                         st.insert("scale", toml_edit::value(f64::from(sig.scale)));
                         st.insert("offset", toml_edit::value(f64::from(sig.offset)));
                         if !sig.unit.is_empty() {
@@ -875,6 +879,7 @@ fn editable_frame_def_from_display(info: &FrameDefDisplayInfo) -> EditableFrameD
             bit_length: s.bit_length,
             byte_order: s.byte_order.clone(),
             value_type: s.value_type.clone(),
+            quantity: s.quantity,
             scale: s.scale,
             offset: s.offset,
             unit: s.unit.clone(),
@@ -919,6 +924,7 @@ fn editable_frame_def_from_toml(def: toml_schema::FrameDefDef) -> EditableFrameD
                 bit_length: len,
                 byte_order: sig.byte_order,
                 value_type: sig.value_type,
+                quantity: sig.quantity,
                 scale: sig.scale,
                 offset: sig.offset,
                 unit: sig.unit,
@@ -942,6 +948,7 @@ fn editable_frame_def_from_toml(def: toml_schema::FrameDefDef) -> EditableFrameD
 mod tests {
     use super::*;
     use std::collections::HashSet;
+    use wslib_framelink_protocol::types;
 
     #[test]
     fn user_signals_round_trip_through_toml() {
@@ -1112,6 +1119,55 @@ description = "Maps CAN signals to LED indicators"
         assert_eq!(sig.start_bit, 0);
         assert_eq!(sig.bit_length, 16);
         assert_eq!(sig.unit, "rpm");
+    }
+
+    #[test]
+    fn a_frame_signal_quantity_round_trips_and_raw_is_left_out() {
+        let rated = TEST_TOML.replace(
+            "unit = \"rpm\"",
+            "unit = \"rpm\"\nquantity = \"temperature_per_s\"",
+        );
+        let ed = EditableBoardDef::from_toml(&rated).unwrap();
+        assert_eq!(
+            ed.frame_defs[&0x0001].signals[0].quantity,
+            types::QTY_TEMPERATURE | types::QTY_PER_SECOND
+        );
+        let written = ed.to_toml();
+        assert!(
+            written.contains("quantity = \"temperature_per_s\""),
+            "{written}"
+        );
+        assert_eq!(
+            EditableBoardDef::from_toml(&written).unwrap().frame_defs[&0x0001].signals[0].quantity,
+            types::QTY_TEMPERATURE | types::QTY_PER_SECOND
+        );
+
+        let raw = EditableBoardDef::from_toml(TEST_TOML).unwrap();
+        assert_eq!(raw.frame_defs[&0x0001].signals[0].quantity, types::QTY_RAW);
+        assert!(!raw.to_toml().contains("quantity ="));
+    }
+
+    #[test]
+    fn an_unnamed_frame_signal_quantity_loads_from_hex_and_decimal_is_refused() {
+        let hex = TEST_TOML.replace("unit = \"rpm\"", "unit = \"rpm\"\nquantity = \"0x96\"");
+        let ed = EditableBoardDef::from_toml(&hex).unwrap();
+        assert_eq!(ed.frame_defs[&0x0001].signals[0].quantity, 0x96);
+        assert!(ed.to_toml().contains("quantity = \"0x96\""));
+
+        let decimal = TEST_TOML.replace("unit = \"rpm\"", "unit = \"rpm\"\nquantity = \"22\"");
+        let error = EditableBoardDef::from_toml(&decimal)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("unknown quantity '22'"), "{error}");
+    }
+
+    #[test]
+    fn an_unknown_frame_signal_quantity_is_refused() {
+        let unknown = TEST_TOML.replace("unit = \"rpm\"", "unit = \"rpm\"\nquantity = \"warmth\"");
+        let error = EditableBoardDef::from_toml(&unknown)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("unknown quantity 'warmth'"), "{error}");
     }
 
     #[test]

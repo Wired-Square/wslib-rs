@@ -196,6 +196,7 @@ mod tests {
                     bit_length: 16,
                     byte_order: "le".to_string(),
                     value_type: "unsigned".to_string(),
+                    quantity: types::QTY_RAW,
                     scale: 1.0,
                     offset: 0.0,
                     unit: "rpm".to_string(),

@@ -244,6 +244,9 @@ pub fn sync_frame_defs(
                         _ => "unsigned",
                     };
                     sig_entry.insert("value_type", toml_edit::Item::Value(vt.into()));
+                    if let Some(quantity) = toml_schema::quantity_to_toml(sig.quantity) {
+                        sig_entry.insert("quantity", toml_edit::Item::Value(quantity.into()));
+                    }
                     sig_entry.insert("scale", toml_edit::Item::Value(f64::from(sig.scale).into()));
                     sig_entry.insert(
                         "offset",
@@ -574,6 +577,42 @@ mod tests {
         let entry = fd_table.get("0x0001").unwrap().as_table().unwrap();
         assert_eq!(entry["name"].as_str().unwrap(), "Frame 0x0001");
         assert_eq!(entry["interface_type"].as_str().unwrap(), "can");
+    }
+
+    #[test]
+    fn sync_frame_defs_writes_a_quantity_only_when_not_raw() {
+        let mut doc = empty_doc();
+        let signal = |signal_id, quantity| frame_def::FrameSignalDef {
+            signal_id,
+            start_bit: 0,
+            bit_length: 8,
+            byte_order: frame_def::BYTE_ORDER_LE,
+            value_type: frame_def::VALUE_TYPE_UNSIGNED,
+            quantity,
+            scale: 1.0,
+            offset: 0.0,
+        };
+        let fds = [frame_def::FrameDefInfo {
+            frame_def_id: 0x0001,
+            interface_type: frame_def::IFACE_TYPE_CAN,
+            header: frame_def::FrameHeader::Can {
+                can_id: 0x100,
+                dlc: 8,
+                flags: 0,
+            },
+            signals: vec![
+                signal(0x0010, types::QTY_TEMPERATURE),
+                signal(0x0011, types::QTY_RAW),
+            ],
+        }];
+        sync_frame_defs(&mut doc, &fds);
+        let signals = doc["frame_defs"]["0x0001"]["signals"].as_table().unwrap();
+        let quantities: Vec<_> = signals
+            .iter()
+            .map(|(_, sig)| sig.get("quantity").and_then(|q| q.as_str()))
+            .collect();
+        assert!(quantities.contains(&Some("temperature")), "{quantities:?}");
+        assert!(quantities.contains(&None), "{quantities:?}");
     }
 
     fn synced_can_flag_labels(flags: u8) -> Vec<String> {

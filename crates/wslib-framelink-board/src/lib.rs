@@ -189,6 +189,7 @@ pub struct FrameSignalDisplayInfo {
     pub bit_length: u16,
     pub byte_order: String,
     pub value_type: String,
+    pub quantity: u8,
     pub scale: f32,
     pub offset: f32,
     pub unit: String,
@@ -390,6 +391,7 @@ pub fn parse_board_def(toml_str: &str) -> Result<BoardDef, Error> {
                         bit_length: len,
                         byte_order: sig.byte_order,
                         value_type: sig.value_type,
+                        quantity: sig.quantity,
                         scale: sig.scale,
                         offset: sig.offset,
                         unit: sig.unit,
@@ -854,6 +856,28 @@ mod tests {
         let info = bd.user_signal_info(0x0200).expect("user signal present");
         assert_eq!(info.name, "Battery SOC");
         assert_eq!(info.unit, "%");
+    }
+
+    #[test]
+    fn parse_board_def_reads_a_frame_signal_quantity() {
+        let toml = "[board]\nname=\"t\"\nrevision=\"a\"\n\
+                    [frame_defs.0x0001]\nname=\"f\"\ninterface_type=\"can\"\n\
+                    [frame_defs.0x0001.signals.rate]\nname=\"Rate\"\nbits=\"0:8\"\n\
+                    quantity=\"count_per_s\"\n\
+                    [frame_defs.0x0001.signals.plain]\nname=\"Plain\"\nbits=\"8:8\"\n";
+        let bd = parse_board_def(toml).unwrap();
+        let quantity_of = |slug: &str| {
+            bd.frame_defs[&0x0001]
+                .signals
+                .iter()
+                .find(|s| s.slug == slug)
+                .map(|s| s.quantity)
+        };
+        assert_eq!(
+            quantity_of("rate"),
+            Some(types::QTY_COUNT | types::QTY_PER_SECOND)
+        );
+        assert_eq!(quantity_of("plain"), Some(types::QTY_RAW));
     }
 
     #[test]

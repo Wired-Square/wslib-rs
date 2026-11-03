@@ -5,7 +5,7 @@
 # once per clean commit. A crate whose inputs already passed in this mode is
 # skipped; --no-cache reruns it.
 #
-#   scripts/ci.sh [--tag] [--no-cache]
+#   scripts/ci.sh [--tag] [--no-cache] [--dry-run]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -23,11 +23,13 @@ check_on() {
 
 all=false
 cache=true
+dry_run=false
 for arg; do
   case $arg in
     --tag) all=true ;;
     --no-cache) cache=false ;;
-    *) die "usage: scripts/ci.sh [--tag] [--no-cache]" ;;
+    --dry-run) dry_run=true ;;
+    *) die "usage: scripts/ci.sh [--tag] [--no-cache] [--dry-run]" ;;
   esac
 done
 mode=default
@@ -59,67 +61,7 @@ if $cross_windows; then
   export CC_x86_64_pc_windows_msvc=true AR_x86_64_pc_windows_msvc="$tmp/ar"
 fi
 
-step "No consumer is named"
-names=scripts/forbidden-names.txt
-! git grep -nIiE --untracked -f "$names" -- ":!$names" || die "a consumer is named in the tree"
-! git log --format=%B | grep -nIiE -f "$names" || die "a consumer is named in a commit message"
-
-step "No reference to the project dossier"
-! git grep -nIE --untracked '\[\[[A-Za-z][^]]*\]\]' -- ':!scripts/ci.sh' ':!*.toml' ':!*.lock' || die "the dossier is cited; state the constraint here"
-
-# A consumer's clean checkout has neither a live database nor a .sqlx cache.
-step "No compile-time-checked sqlx query"
-! git grep -nE --untracked 'sqlx::(query|query_as|query_scalar|query_file)[a-z_]*!' -- '*.rs' \
-  || die "a sqlx query! macro needs a database to build; use the runtime sqlx::query API"
-
-# Shared crates take no rustls provider; the app installs one.
-step "No rustls provider by default"
-graph=$(cargo tree --workspace -e normal --prefix none)
-! grep -E '^(aws-lc-rs|ring) ' <<<"$graph" || die "a rustls provider is in the default graph"
-
-step "wslib-telemetry's setup-core has no regex engine"
-graph=$(normal_tree wslib-telemetry --no-default-features --features setup-core)
-! grep -E '^(regex|regex-automata|matchers) ' <<<"$graph" || die "setup-core pulls in a regex engine"
-
-# A desktop app takes wslib-appliance-client alone, or the facade with only
-# `client`; --target all covers the Windows graph.
-step "wslib-appliance-client carries no server stack"
-for graph in "wslib-appliance-client" "wslib-appliance --no-default-features --features client"; do
-  read -ra args <<<"$graph"
-  tree=$(normal_tree "${args[@]}" --target all)
-  ! grep -qE '(^|[-_])(axum|sqlx|rustls)([-_][a-z0-9_]+)* v[0-9]' <<<"$tree" \
-    || die "cargo tree $graph pulls in axum, sqlx or rustls"
-done
-
-step "The appliance facade pins each library member at its version"
 metadata=$(cargo metadata --format-version 1 --no-deps --locked)
-jq -e '(.packages
-  | map(select(all(.targets[].kind[]; IN("bin", "test", "bench", "example", "custom-build")) | not))
-  | map({key: .name, value: .version}) | from_entries) as $version
-  | .packages[] | select(.name == "wslib-appliance") | .dependencies as $pins
-  | $version | keys | map(select(startswith("wslib-appliance-")))
-  | all(. as $member | any($pins[]; .name == $member and .req == "=" + $version[$member]))' \
-  <<<"$metadata" >/dev/null || die "wslib-appliance does not pin every member at its version"
-
-step "The appliance family pins core exactly"
-jq -e '[.packages[].dependencies[] | select(.name == "wslib-appliance-core") | .req]
-  | all(startswith("="))' <<<"$metadata" >/dev/null \
-  || die "a dependency on wslib-appliance-core is not an = pin"
-
-# SessionAdmin and HostAdmin refuse a control socket, so it satisfies every role, never every rung.
-step "No control socket reaches every rung"
-! git grep -nIiE --untracked 'satisf[a-z_]*[ _]every[ _]rung' -- 'crates/wslib-appliance*' \
-  || die "the claim that a control socket meets every rung is false; see wslib-appliance-core's extract.rs"
-
-step "Format"
-cargo fmt --all --check
-
-if $all; then
-  step "Docs"
-  RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
-  step "Check on the stated rust-version"
-  cargo "+$msrv" check --workspace --locked
-fi
 
 # A crate counts as changed if its directory differs from its newest release tag,
 # or it has never been released.
@@ -160,6 +102,7 @@ inputs=$({
 passed=$target/ci-passed/$mode
 pending=
 skipped=0
+cached=
 closures=$(cargo metadata --format-version 1 --all-features --locked | jq -r --rawfile lock Cargo.lock \
   --arg trees "$(git ls-tree "$worktree" crates/)" --arg selected "$selected" '
   ($trees | split("\n") | map(select(. != "") | split("\t")
@@ -184,12 +127,83 @@ while read -r name closure; do
   key="$passed/$name-$(git hash-object --stdin <<<"$inputs $closure")"
   if $cache && [[ -e $key ]]; then
     skipped=$((skipped + 1))
+    cached+="$name "
   else
     pending+="$name $key"$'\n'
   fi
 done <<<"$closures"
 todo=$(cut -d' ' -f1 <<<"$pending")
 ((skipped == 0)) || printf '\nci: %d crates already passed with these inputs; skipping their checks\n' "$skipped"
+
+if $dry_run; then
+  $all || printf 'ci: changed since their tag: %s\n' "${changed[*]:-none}"
+  printf 'ci: selected: %s\n' "$(tr '\n' ' ' <<<"$selected")"
+  printf 'ci: already passed: %s\n' "${cached:-none}"
+  printf 'ci: would check: %s\n' "$(tr '\n' ' ' <<<"$todo")"
+  exit 0
+fi
+
+step "No consumer is named"
+names=scripts/forbidden-names.txt
+! git grep -nIiE --untracked -f "$names" -- ":!$names" || die "a consumer is named in the tree"
+! git log --format=%B | grep -nIiE -f "$names" || die "a consumer is named in a commit message"
+
+step "No reference to the project dossier"
+! git grep -nIE --untracked '\[\[[A-Za-z][^]]*\]\]' -- ':!scripts/ci.sh' ':!*.toml' ':!*.lock' || die "the dossier is cited; state the constraint here"
+
+# A consumer's clean checkout has neither a live database nor a .sqlx cache.
+step "No compile-time-checked sqlx query"
+! git grep -nE --untracked 'sqlx::(query|query_as|query_scalar|query_file)[a-z_]*!' -- '*.rs' \
+  || die "a sqlx query! macro needs a database to build; use the runtime sqlx::query API"
+
+# Shared crates take no rustls provider; the app installs one.
+step "No rustls provider by default"
+graph=$(cargo tree --workspace -e normal --prefix none)
+! grep -E '^(aws-lc-rs|ring) ' <<<"$graph" || die "a rustls provider is in the default graph"
+
+step "wslib-telemetry's setup-core has no regex engine"
+graph=$(normal_tree wslib-telemetry --no-default-features --features setup-core)
+! grep -E '^(regex|regex-automata|matchers) ' <<<"$graph" || die "setup-core pulls in a regex engine"
+
+# A desktop app takes wslib-appliance-client alone, or the facade with only
+# `client`; --target all covers the Windows graph.
+step "wslib-appliance-client carries no server stack"
+for graph in "wslib-appliance-client" "wslib-appliance --no-default-features --features client"; do
+  read -ra args <<<"$graph"
+  tree=$(normal_tree "${args[@]}" --target all)
+  ! grep -qE '(^|[-_])(axum|sqlx|rustls)([-_][a-z0-9_]+)* v[0-9]' <<<"$tree" \
+    || die "cargo tree $graph pulls in axum, sqlx or rustls"
+done
+
+step "The appliance facade pins each library member at its version"
+jq -e '(.packages
+  | map(select(all(.targets[].kind[]; IN("bin", "test", "bench", "example", "custom-build")) | not))
+  | map({key: .name, value: .version}) | from_entries) as $version
+  | .packages[] | select(.name == "wslib-appliance") | .dependencies as $pins
+  | $version | keys | map(select(startswith("wslib-appliance-")))
+  | all(. as $member | any($pins[]; .name == $member and .req == "=" + $version[$member]))' \
+  <<<"$metadata" >/dev/null || die "wslib-appliance does not pin every member at its version"
+
+step "The appliance family pins core exactly"
+jq -e '[.packages[].dependencies[] | select(.name == "wslib-appliance-core") | .req]
+  | all(startswith("="))' <<<"$metadata" >/dev/null \
+  || die "a dependency on wslib-appliance-core is not an = pin"
+
+# SessionAdmin and HostAdmin refuse a control socket, so it satisfies every role, never every rung.
+step "No control socket reaches every rung"
+! git grep -nIiE --untracked 'satisf[a-z_]*[ _]every[ _]rung' -- 'crates/wslib-appliance*' \
+  || die "the claim that a control socket meets every rung is false; see wslib-appliance-core's extract.rs"
+
+step "Format"
+cargo fmt --all --check
+
+if $all; then
+  step "Docs"
+  RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
+  step "Check on the stated rust-version"
+  cargo "+$msrv" check --workspace --locked
+fi
+
 
 packages=()
 for crate in $todo; do packages+=(-p "$crate"); done

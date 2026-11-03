@@ -5,7 +5,7 @@
 # once per clean commit. A crate whose inputs already passed in this mode is
 # skipped; --no-cache reruns it.
 #
-#   scripts/ci.sh [--tag] [--no-cache]
+#   scripts/ci.sh [--tag] [--no-cache] [--dry-run]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -23,11 +23,13 @@ check_on() {
 
 all=false
 cache=true
+dry_run=false
 for arg; do
   case $arg in
     --tag) all=true ;;
     --no-cache) cache=false ;;
-    *) die "usage: scripts/ci.sh [--tag] [--no-cache]" ;;
+    --dry-run) dry_run=true ;;
+    *) die "usage: scripts/ci.sh [--tag] [--no-cache] [--dry-run]" ;;
   esac
 done
 mode=default
@@ -57,6 +59,88 @@ if $cross_windows; then
   printf '#!/bin/sh\nfor a; do case $a in -out:*) touch "${a#-out:}";; esac; done\n' >"$tmp/ar"
   chmod +x "$tmp/ar"
   export CC_x86_64_pc_windows_msvc=true AR_x86_64_pc_windows_msvc="$tmp/ar"
+fi
+
+metadata=$(cargo metadata --format-version 1 --no-deps --locked)
+
+# A crate counts as changed if its directory differs from its newest release tag,
+# or it has never been released.
+changed=()
+for dir in crates/*/; do
+  name=$(basename "$dir")
+  tag=$(git tag --list "$name-v*" --sort=-v:refname | head -n1)
+  if [[ -z $tag ]] || ! git diff --quiet "$tag" -- "$dir"; then
+    changed+=("$name")
+  fi
+done
+export CHANGED="${changed[*]:-}"
+selected=$(jq -r --argjson all "$all" '
+  .packages as $p
+  | ($p | map(.name)) as $names
+  | def changed($n): $all or ($n | IN($ENV.CHANGED | split(" ")[]));
+    def rdeps($n): [$p[] | select(any(.dependencies[]; .name == $n)) | .name];
+    def dependants: (. + map(rdeps(.)[]) | unique) as $next
+      | if $next == . then . else $next | dependants end;
+    [$names[] | select(changed(.))] | unique | dependants | .[]' <<<"$metadata")
+
+# A crate's key covers its own tree and every workspace crate it reaches through
+# any dependency kind, taken from the working tree so a dirty tree counts as it stands,
+# and the locked name, version, source and checksum of every package it builds on any
+# platform with all features. A dev-dependency counts for the crate itself alone.
+index=$tmp/index
+cp "$(git rev-parse --git-path index)" "$index"
+GIT_INDEX_FILE=$index git add -A
+worktree=$(GIT_INDEX_FILE=$index git write-tree)
+inputs=$({
+  echo "$mode"
+  rustc -vV
+  ! $all || { rustc +nightly -vV; rustc "+$msrv" -vV; }
+  cargo hack --version
+  git rev-parse "$worktree:Cargo.toml" "$worktree:.cargo" \
+    "$worktree:scripts/ci.sh" "$worktree:scripts/floor-pins.txt"
+} | git hash-object --stdin)
+passed=$target/ci-passed/$mode
+pending=
+skipped=0
+cached=
+closures=$(cargo metadata --format-version 1 --all-features --locked | jq -r --rawfile lock Cargo.lock \
+  --arg trees "$(git ls-tree "$worktree" crates/)" --arg selected "$selected" '
+  ($trees | split("\n") | map(select(. != "") | split("\t")
+    | {key: (.[1] | ltrimstr("crates/")), value: (.[0] | split(" ")[2])}) | from_entries) as $tree
+  | ($lock | split("\n\n") | map([capture("(?<key>name|version|source|checksum) = \"(?<value>[^\"]*)\""; "g")]
+    | from_entries | select(.name) | {key: "\(.name) \(.version) \(.source)", value: .checksum})
+    | from_entries) as $checksum
+  | .workspace_members as $members
+  | (.packages | map(select(.id | IN($members[]))) | INDEX(.name)) as $workspace
+  | (.packages | map(select(.id | IN($members[]) | not)) | INDEX(.id)
+    | map_values("\(.name) \(.version) \(.source) \($checksum["\(.name) \(.version) \(.source)"])")) as $external
+  | (.resolve.nodes | INDEX(.id)) as $node
+  | ($node | map_values([.deps[] | select(any(.dep_kinds[]; .kind != "dev")) | .pkg])) as $built
+  | def reach: (. + map($built[.][]) | unique) as $next | if $next == . then . else $next | reach end;
+    def closure: (. + map($workspace[.].dependencies[].name | select($workspace[.])) | unique) as $next
+      | if $next == . then . else $next | closure end;
+  $workspace[] | select(.name | IN($selected | split("\n")[]))
+  | "\(.name) \([.name] | closure | map("\(.)=\($tree[.] // error("no crates/\(.)"))") | join(" "))"
+    + " \([$node[.id].deps[].pkg] | reach | map($external[.] // empty) | join(" "))"')
+while read -r name closure; do
+  [[ -n $name ]] || continue
+  key="$passed/$name-$(git hash-object --stdin <<<"$inputs $closure")"
+  if $cache && [[ -e $key ]]; then
+    skipped=$((skipped + 1))
+    cached+="$name "
+  else
+    pending+="$name $key"$'\n'
+  fi
+done <<<"$closures"
+todo=$(cut -d' ' -f1 <<<"$pending")
+((skipped == 0)) || printf '\nci: %d crates already passed with these inputs; skipping their checks\n' "$skipped"
+
+if $dry_run; then
+  $all || printf 'ci: changed since their tag: %s\n' "${changed[*]:-none}"
+  printf 'ci: selected: %s\n' "$(tr '\n' ' ' <<<"$selected")"
+  printf 'ci: already passed: %s\n' "${cached:-none}"
+  printf 'ci: would check: %s\n' "$(tr '\n' ' ' <<<"$todo")"
+  exit 0
 fi
 
 step "No consumer is named"
@@ -92,7 +176,6 @@ for graph in "wslib-appliance-client" "wslib-appliance --no-default-features --f
 done
 
 step "The appliance facade pins each library member at its version"
-metadata=$(cargo metadata --format-version 1 --no-deps --locked)
 jq -e '(.packages
   | map(select(all(.targets[].kind[]; IN("bin", "test", "bench", "example", "custom-build")) | not))
   | map({key: .name, value: .version}) | from_entries) as $version
@@ -121,62 +204,6 @@ if $all; then
   cargo "+$msrv" check --workspace --locked
 fi
 
-# A crate counts as changed if its directory differs from its newest release tag,
-# or it has never been released.
-changed=()
-for dir in crates/*/; do
-  name=$(basename "$dir")
-  tag=$(git tag --list "$name-v*" --sort=-v:refname | head -n1)
-  if [[ -z $tag ]] || ! git diff --quiet "$tag" -- "$dir"; then
-    changed+=("$name")
-  fi
-done
-export CHANGED="${changed[*]:-}"
-selected=$(jq -r --argjson all "$all" '
-  .packages as $p
-  | ($p | map(.name)) as $names
-  | def changed($n): $all or ($n | IN($ENV.CHANGED | split(" ")[]));
-    def rdeps($n): [$p[] | select(any(.dependencies[]; .name == $n)) | .name];
-    def dependants: (. + map(rdeps(.)[]) | unique) as $next
-      | if $next == . then . else $next | dependants end;
-    [$names[] | select(changed(.))] | unique | dependants | .[]' <<<"$metadata")
-
-# A crate's key covers its own tree and every workspace crate it reaches through
-# any dependency kind, taken from the working tree so a dirty tree counts as it stands.
-index=$tmp/index
-cp "$(git rev-parse --git-path index)" "$index"
-GIT_INDEX_FILE=$index git add -A
-worktree=$(GIT_INDEX_FILE=$index git write-tree)
-inputs=$({
-  echo "$mode"
-  rustc -vV
-  ! $all || { rustc +nightly -vV; rustc "+$msrv" -vV; }
-  cargo hack --version
-  git rev-parse "$worktree:Cargo.lock" "$worktree:Cargo.toml" "$worktree:.cargo" \
-    "$worktree:scripts/ci.sh" "$worktree:scripts/floor-pins.txt"
-} | git hash-object --stdin)
-passed=$target/ci-passed/$mode
-pending=
-skipped=0
-closures=$(jq -r --arg trees "$(git ls-tree "$worktree" crates/)" --arg selected "$selected" '
-  ($trees | split("\n") | map(select(. != "") | split("\t")
-    | {key: (.[1] | ltrimstr("crates/")), value: (.[0] | split(" ")[2])}) | from_entries) as $tree
-  | (.packages | map({key: .name, value: [.dependencies[].name]}) | from_entries) as $deps
-  | def closure: (. + map($deps[.][] | select($deps[.])) | unique) as $next
-      | if $next == . then . else $next | closure end;
-  .packages[] | .name | select(IN($selected | split("\n")[]))
-  | "\(.) \([.] | closure | map("\(.)=\($tree[.] // error("no crates/\(.)"))") | join(" "))"' <<<"$metadata")
-while read -r name closure; do
-  [[ -n $name ]] || continue
-  key="$passed/$name-$(git hash-object --stdin <<<"$inputs $closure")"
-  if $cache && [[ -e $key ]]; then
-    skipped=$((skipped + 1))
-  else
-    pending+="$name $key"$'\n'
-  fi
-done <<<"$closures"
-todo=$(cut -d' ' -f1 <<<"$pending")
-((skipped == 0)) || printf '\nci: %d crates already passed with these inputs; skipping their checks\n' "$skipped"
 
 packages=()
 for crate in $todo; do packages+=(-p "$crate"); done

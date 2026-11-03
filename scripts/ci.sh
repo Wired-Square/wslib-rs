@@ -142,7 +142,9 @@ selected=$(jq -r --argjson all "$all" '
     [$names[] | select(changed(.))] | unique | dependants | .[]' <<<"$metadata")
 
 # A crate's key covers its own tree and every workspace crate it reaches through
-# any dependency kind, taken from the working tree so a dirty tree counts as it stands.
+# any dependency kind, taken from the working tree so a dirty tree counts as it stands,
+# and the locked name, version, source and checksum of every package it builds on any
+# platform with all features. A dev-dependency counts for the crate itself alone.
 index=$tmp/index
 cp "$(git rev-parse --git-path index)" "$index"
 GIT_INDEX_FILE=$index git add -A
@@ -152,20 +154,31 @@ inputs=$({
   rustc -vV
   ! $all || { rustc +nightly -vV; rustc "+$msrv" -vV; }
   cargo hack --version
-  git rev-parse "$worktree:Cargo.lock" "$worktree:Cargo.toml" "$worktree:.cargo" \
+  git rev-parse "$worktree:Cargo.toml" "$worktree:.cargo" \
     "$worktree:scripts/ci.sh" "$worktree:scripts/floor-pins.txt"
 } | git hash-object --stdin)
 passed=$target/ci-passed/$mode
 pending=
 skipped=0
-closures=$(jq -r --arg trees "$(git ls-tree "$worktree" crates/)" --arg selected "$selected" '
+closures=$(cargo metadata --format-version 1 --all-features --locked | jq -r --rawfile lock Cargo.lock \
+  --arg trees "$(git ls-tree "$worktree" crates/)" --arg selected "$selected" '
   ($trees | split("\n") | map(select(. != "") | split("\t")
     | {key: (.[1] | ltrimstr("crates/")), value: (.[0] | split(" ")[2])}) | from_entries) as $tree
-  | (.packages | map({key: .name, value: [.dependencies[].name]}) | from_entries) as $deps
-  | def closure: (. + map($deps[.][] | select($deps[.])) | unique) as $next
+  | ($lock | split("\n\n") | map([capture("(?<key>name|version|source|checksum) = \"(?<value>[^\"]*)\""; "g")]
+    | from_entries | select(.name) | {key: "\(.name) \(.version) \(.source)", value: .checksum})
+    | from_entries) as $checksum
+  | .workspace_members as $members
+  | (.packages | map(select(.id | IN($members[]))) | INDEX(.name)) as $workspace
+  | (.packages | map(select(.id | IN($members[]) | not)) | INDEX(.id)
+    | map_values("\(.name) \(.version) \(.source) \($checksum["\(.name) \(.version) \(.source)"])")) as $external
+  | (.resolve.nodes | INDEX(.id)) as $node
+  | ($node | map_values([.deps[] | select(any(.dep_kinds[]; .kind != "dev")) | .pkg])) as $built
+  | def reach: (. + map($built[.][]) | unique) as $next | if $next == . then . else $next | reach end;
+    def closure: (. + map($workspace[.].dependencies[].name | select($workspace[.])) | unique) as $next
       | if $next == . then . else $next | closure end;
-  .packages[] | .name | select(IN($selected | split("\n")[]))
-  | "\(.) \([.] | closure | map("\(.)=\($tree[.] // error("no crates/\(.)"))") | join(" "))"' <<<"$metadata")
+  $workspace[] | select(.name | IN($selected | split("\n")[]))
+  | "\(.name) \([.name] | closure | map("\(.)=\($tree[.] // error("no crates/\(.)"))") | join(" "))"
+    + " \([$node[.id].deps[].pkg] | reach | map($external[.] // empty) | join(" "))"')
 while read -r name closure; do
   [[ -n $name ]] || continue
   key="$passed/$name-$(git hash-object --stdin <<<"$inputs $closure")"

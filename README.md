@@ -156,8 +156,8 @@ then clippy, tests and each feature for the crates changed since their last
 release plus their reverse dependencies. `--tag` runs every crate, docs, the
 MSRV check and a build at each crate's dependency floors, which needs
 nightly. It needs `cargo-hack` and `jq`. A crate's checks are skipped when
-its files, its workspace dependencies' files, the lockfile, the toolchains and
-`ci.sh` match a run that passed (stamps under `target/ci-passed/`);
+its files, its workspace dependencies' files, the locked packages it builds,
+the toolchains and `ci.sh` match a run that passed (stamps under `target/ci-passed/`);
 `--no-cache` reruns them.
 
 Run it before every push, once per clone:

@@ -1,6 +1,6 @@
 [package]
 name = "wslib-framelink"
-version = "0.3.0"
+version = "0.3.1"
 description = "A FrameLink device session over TCP, with discovery over mDNS and BLE, a device registry, Wi-Fi provisioning over BLE and firmware updates over SMP."
 readme = "README.md"
 edition.workspace = true
@@ -22,7 +22,7 @@ futures-util = { version = "0.3.34", default-features = false, optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.85", optional = true }
 thiserror = "2.0.20"
-tokio = { version = "1.53.1", default-features = false, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+tokio = { version = "1.53.3", default-features = false, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 tracing = "0.1.41"
 uuid = { version = "1.26.1", default-features = false, optional = true }
 wslib-file-atomic = { path = "../wslib-file-atomic", version = "0.1.6", registry = "wired-square", optional = true }
@@ -34,7 +34,7 @@ wslib-mdns = { path = "../wslib-mdns", version = "0.1", registry = "wired-square
 
 [dev-dependencies]
 serde_json = "1.0.85"
-tokio = { version = "1.53.1", features = ["io-util", "macros", "net", "rt", "time"] }
+tokio = { version = "1.53.3", features = ["io-util", "macros", "net", "rt", "time"] }
 
 [[test]]
 name = "goldens"

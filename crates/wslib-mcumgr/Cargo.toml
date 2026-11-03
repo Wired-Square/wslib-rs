@@ -1,6 +1,6 @@
 [package]
 name = "wslib-mcumgr"
-version = "0.1.0"
+version = "0.1.1"
 description = "An SMP (mcumgr) client: the frame codec, image upload, test and confirm, reset and file transfer, over UDP, BLE or a transport of your own."
 readme = "README.md"
 edition.workspace = true
@@ -21,11 +21,11 @@ futures-core = { version = "0.3.34", default-features = false }
 serde = { version = "1.0.228", features = ["derive"] }
 sha2 = { version = "0.10.9", default-features = false }
 thiserror = "2.0.20"
-tokio = { version = "1.53.1", default-features = false, features = ["macros", "rt", "sync", "time"] }
+tokio = { version = "1.53.3", default-features = false, features = ["macros", "rt", "sync", "time"] }
 tracing = "0.1.41"
 uuid = { version = "1.26.1", default-features = false, optional = true }
 wslib-checksum = { path = "../wslib-checksum", version = "0.1", registry = "wired-square" }
 
 [dev-dependencies]
 serde_json = "1.0.85"
-tokio = { version = "1.53.1", features = ["macros", "net", "rt", "time"] }
+tokio = { version = "1.53.3", features = ["macros", "net", "rt", "time"] }

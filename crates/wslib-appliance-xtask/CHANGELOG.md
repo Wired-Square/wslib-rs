@@ -2,8 +2,8 @@
 
 ## 0.2.3
 
-- Renders for `wslib-appliance-store` 0.1.3, so `gates` no longer warns on a
-  lock that holds it.
+- Renders for `wslib-appliance-store` 0.1.3 and `wslib-appliance-server`
+  0.1.3, so `gates` no longer warns on a lock that holds them.
 
 ## 0.2.2
 

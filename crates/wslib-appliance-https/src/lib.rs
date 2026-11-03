@@ -205,7 +205,7 @@ impl Server {
         #[cfg(test)]
         install_test_provider();
         let tls = Arc::new(backend::load_or_mint(&bootstrap.tls, None).await?);
-        let config = backend::tls_config(&tls);
+        let serving_tls = backend::serving_tls(&tls);
         serve::moved_port(&self.store, bootstrap.https_port).await;
 
         let port = serve::HttpsPort::new(bootstrap.https_port);
@@ -215,7 +215,7 @@ impl Server {
             built.control,
             bootstrap,
             port,
-            config,
+            serving_tls,
             built.stop,
             stop,
         )

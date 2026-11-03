@@ -7,7 +7,8 @@
 //! too; a pair somebody named
 //! ([`Tls::named`](wslib_appliance_config::Tls::named)) refuses the start
 //! instead. [`Tls::install_pem`] writes both files as one transaction, then
-//! reloads the listener. Dialling out is [`Outbound`]'s.
+//! reloads the listener and renews its open connections. Dialling out is
+//! [`Outbound`]'s.
 
 pub(crate) mod inspect;
 pub(crate) mod outbound;
@@ -101,6 +102,7 @@ pub struct Tls {
 struct Served {
     serving: Serving,
     listener: RustlsConfig,
+    renewing: wslib_http_server::Tls,
     /// Held across reading the configuration and reloading the listener, so a
     /// reload that lost the race cannot put back a replaced pair.
     reloading: Mutex<()>,
@@ -129,9 +131,11 @@ impl Tls {
                     because,
                 })?
                 .with_alpn(vec![b"h2".to_vec(), b"http/1.1".to_vec()]);
+        let listener = RustlsConfig::from_config(serving.config());
         Ok(Self {
             served: Some(Served {
-                listener: RustlsConfig::from_config(serving.config()),
+                renewing: wslib_http_server::Tls::from(listener.clone()),
+                listener,
                 serving,
                 reloading: Mutex::default(),
             }),
@@ -160,6 +164,12 @@ impl Tls {
         self.served.as_ref().map(|served| served.listener.clone())
     }
 
+    /// The listener's configuration as `serve_https` takes it, so an install
+    /// also renews the connections open on it.
+    pub(crate) fn serving_tls(&self) -> Option<wslib_http_server::Tls> {
+        self.served.as_ref().map(|served| served.renewing.clone())
+    }
+
     /// Install a pair an operator holds; `host` is the name the requesting
     /// browser uses, so the report can warn when it is not covered.
     pub async fn install_pem(
@@ -186,6 +196,7 @@ impl Tls {
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         served.listener.reload_from_config(served.serving.config());
+        served.renewing.renew();
         Ok(report)
     }
 
@@ -963,6 +974,69 @@ mod tests {
             reloaded.alpn_protocols,
             [b"h2".to_vec(), b"http/1.1".to_vec()]
         );
+    }
+
+    #[tokio::test]
+    async fn an_install_renews_the_connections_open_on_the_listener() {
+        use rustls::pki_types::pem::PemObject;
+        use rustls::pki_types::{CertificateDer, ServerName};
+        use std::time::Duration;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::time::timeout;
+        use wslib_http_server::{Bounds, Listener, serve_https};
+
+        const WITHIN: Duration = Duration::from_secs(5);
+        let dir = tempfile::tempdir().unwrap();
+        let tls = Tls::minted_in(&dir).await;
+        let listener = Listener::bind(([127, 0, 0, 1], 0).into(), Bounds::SERVING)
+            .await
+            .unwrap();
+        let address = listener.local_addr();
+        let serving = tls.serving_tls().unwrap();
+        tokio::spawn(serve_https(
+            listener,
+            axum::Router::new(),
+            serving,
+            std::future::pending(),
+        ));
+
+        let pem = std::fs::read(dir.path().join("cert.pem")).unwrap();
+        let mut roots = rustls::RootCertStore::empty();
+        roots
+            .add(CertificateDer::from_pem_slice(&pem).unwrap())
+            .unwrap();
+        let mut client = rustls::ClientConfig::builder_with_provider(provider().unwrap())
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        client.alpn_protocols = vec![b"http/1.1".to_vec()];
+        let tcp = tokio::net::TcpStream::connect(address).await.unwrap();
+        let mut peer = timeout(
+            WITHIN,
+            tokio_rustls::TlsConnector::from(Arc::new(client))
+                .connect(ServerName::try_from("localhost").unwrap(), tcp),
+        )
+        .await
+        .expect("a handshake")
+        .unwrap();
+        peer.write_all(b"GET / HTTP/1.1\r\nHost: box\r\n\r\n")
+            .await
+            .unwrap();
+        let mut status = [0; 12];
+        timeout(WITHIN, peer.read_exact(&mut status))
+            .await
+            .expect("an answer")
+            .unwrap();
+
+        let pair = another_pair().await;
+        tls.install_pem(&pair.cert_pem, &pair.key_pem, None)
+            .await
+            .expect("installs");
+        let mut rest = Vec::new();
+        let _ = timeout(WITHIN, peer.read_to_end(&mut rest))
+            .await
+            .expect("the open connection is closed after the install");
     }
 
     /// `openssl pkcs12 -nodes` writes the key beside the certificate.

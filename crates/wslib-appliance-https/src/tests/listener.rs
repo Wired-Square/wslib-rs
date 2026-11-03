@@ -36,12 +36,24 @@ async fn a_handler_is_told_the_address_its_request_came_from() {
     assert_eq!(body_bytes(response).await, "fd7a:115c:a1e0::9");
 }
 
-/// An installed pair reaches the listener already serving, h2 and all.
+/// An installed pair reaches the listener already serving, h2 and all, and
+/// a connection open on the old one is closed.
 #[tokio::test]
 async fn an_installed_pair_is_served_to_the_next_connection() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
     let app = Harness::new().await;
     let address = app.serve_tls().await;
     dial_tls(app.dir(), address, Some(b"h2")).await;
+    let mut open = dial_tls(app.dir(), address, Some(b"http/1.1")).await;
+    open.write_all(b"GET /api/branding HTTP/1.1\r\nHost: box\r\n\r\n")
+        .await
+        .expect("a request");
+    let mut status = [0; 12];
+    tokio::time::timeout(WITHIN, open.read_exact(&mut status))
+        .await
+        .expect("an answer inside the timeout")
+        .expect("an answer");
 
     let elsewhere = tempfile::TempDir::new().expect("a directory");
     let pair = wslib_appliance_core::backend::minted_in(&elsewhere)
@@ -56,6 +68,10 @@ async fn an_installed_pair_is_served_to_the_next_connection() {
         .expect("installs");
 
     dial_tls(elsewhere.path(), address, Some(b"h2")).await;
+    let mut rest = Vec::new();
+    let _ = tokio::time::timeout(WITHIN, open.read_to_end(&mut rest))
+        .await
+        .expect("the connection open before the install is closed");
 }
 
 #[tokio::test]

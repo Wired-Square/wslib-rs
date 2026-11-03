@@ -218,11 +218,19 @@ pub mod backend {
         tls.serves()
     }
 
-    /// An install reloads this configuration in place.
+    /// An install reloads this configuration in place; open connections keep
+    /// the old one, as [`serving_tls`] does not.
     pub fn tls_config(tls: &Tls) -> RustlsConfig {
-        tls.config()
-            .expect("a backend that serves its own TLS listener loaded its pair at start")
+        tls.config().expect(LOADED_AT_START)
     }
+
+    /// For `serve_https`: an install reloads it and renews the open connections.
+    pub fn serving_tls(tls: &Tls) -> wslib_http_server::Tls {
+        tls.serving_tls().expect(LOADED_AT_START)
+    }
+
+    const LOADED_AT_START: &str =
+        "a backend that serves its own TLS listener loaded its pair at start";
 
     #[cfg(any(test, feature = "testing"))]
     pub async fn minted_in(dir: impl AsRef<std::path::Path>) -> Tls {

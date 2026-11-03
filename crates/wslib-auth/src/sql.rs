@@ -358,12 +358,19 @@ macro_rules! session_store_for {
             ) -> Result<bool, sqlx::Error> {
                 let queries = self.bound_queries()?;
                 let mut tx = self.pool.begin().await?;
-                let inserted = sqlx::query(&queries.insert)
+                let inserted = match sqlx::query(&queries.insert)
                     .bind(session.as_str())
                     .bind(secret.as_str())
                     .bind(stamp(at))
                     .execute(&mut *tx)
-                    .await?;
+                    .await
+                {
+                    // The session went after the insert read it.
+                    Err(sqlx::Error::Database(e)) if e.is_foreign_key_violation() => {
+                        return Ok(false);
+                    }
+                    inserted => inserted?,
+                };
                 sqlx::query(&queries.prune)
                     .bind(session.as_str())
                     .bind(i64::try_from(keep).unwrap_or(i64::MAX))

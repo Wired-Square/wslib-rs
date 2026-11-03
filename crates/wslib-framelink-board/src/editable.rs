@@ -1,11 +1,13 @@
 //! A board definition to edit, from a [`BoardDef`] or TOML, written back as
 //! TOML.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
-use toml_edit::{DocumentMut, Item, Table};
+use toml_edit::{Array, DocumentMut, Item, Table};
 use wslib_framelink_protocol::dsig::{SignalKey, format_signal_key, parse_signal_key};
+use wslib_framelink_protocol::frame_def::{self, FrameDefInfo, FrameHeader};
+use wslib_framelink_protocol::types;
 
 use crate::toml_schema::{self, BoardFile, parse_hex_key};
 use crate::{BoardDef, Error, FrameDefDisplayInfo};
@@ -392,8 +394,6 @@ impl EditableBoardDef {
     }
 
     pub fn to_toml(&self) -> String {
-        use toml_edit::Array;
-
         let mut doc = DocumentMut::new();
 
         doc.decor_mut().set_prefix(format!(
@@ -454,65 +454,7 @@ impl EditableBoardDef {
         if !self.frame_defs.is_empty() {
             let mut fdefs = section("Frame definitions");
             for (&id, fdef) in &self.frame_defs {
-                let hex_key = hex(id);
-                let mut t = Table::new();
-                t.insert("name", toml_edit::value(&fdef.name));
-                if !fdef.description.is_empty() {
-                    t.insert("description", toml_edit::value(&fdef.description));
-                }
-                if !fdef.interface_type.is_empty() {
-                    t.insert("interface_type", toml_edit::value(&fdef.interface_type));
-                }
-
-                if let Some(can) = &fdef.can {
-                    let mut ct = Table::new();
-                    ct.insert("can_id", toml_edit::value(i64::from(can.can_id)));
-                    ct.insert("dlc", toml_edit::value(i64::from(can.dlc)));
-                    if !can.flags.is_empty() {
-                        let mut arr = Array::new();
-                        for flag in &can.flags {
-                            arr.push(flag.as_str());
-                        }
-                        ct.insert("flags", toml_edit::value(arr));
-                    } else {
-                        ct.insert("flags", toml_edit::value(Array::new()));
-                    }
-                    t.insert("can", Item::Table(ct));
-                }
-
-                if let Some(rs) = &fdef.rs485 {
-                    let mut rt = Table::new();
-                    if !rs.framing_mode.is_empty() {
-                        rt.insert("framing_mode", toml_edit::value(&rs.framing_mode));
-                    }
-                    t.insert("rs485", Item::Table(rt));
-                }
-
-                if !fdef.signals.is_empty() {
-                    let mut sig_table = Table::new();
-                    for sig in &fdef.signals {
-                        let mut st = Table::new();
-                        st.insert("name", toml_edit::value(&sig.name));
-                        st.insert(
-                            "bits",
-                            toml_edit::value(format!("{}:{}", sig.start_bit, sig.bit_length)),
-                        );
-                        st.insert("byte_order", toml_edit::value(&sig.byte_order));
-                        st.insert("value_type", toml_edit::value(&sig.value_type));
-                        if let Some(quantity) = toml_schema::quantity_to_toml(sig.quantity) {
-                            st.insert("quantity", toml_edit::value(quantity));
-                        }
-                        st.insert("scale", toml_edit::value(f64::from(sig.scale)));
-                        st.insert("offset", toml_edit::value(f64::from(sig.offset)));
-                        if !sig.unit.is_empty() {
-                            st.insert("unit", toml_edit::value(&sig.unit));
-                        }
-                        sig_table.insert(&sig.slug, Item::Table(st));
-                    }
-                    t.insert("signals", Item::Table(sig_table));
-                }
-
-                fdefs.insert(&hex_key, Item::Table(t));
+                fdefs.insert(&hex(id), Item::Table(frame_def_table(fdef)));
             }
             doc.insert("frame_defs", Item::Table(fdefs));
         }
@@ -686,6 +628,45 @@ impl EditableBoardDef {
         read_labels(&doc, "transformers", &mut self.pending.transformers)
     }
 
+    /// Inserts the device's frame definition, or replaces the header and
+    /// signals of the one here, keeping its name and description. A signal
+    /// keeps the slug, name and unit of the old signal whose slug parses as
+    /// its id, or else of an unmatched old signal with a non-numeric slug at
+    /// the same bits; each old signal is kept at most once. `names` overrides
+    /// a signal's name by id.
+    pub fn put_frame_def(&mut self, def: &FrameDefInfo, names: &HashMap<u16, String>) {
+        let mut put = frame_def_from_device(def);
+        if let Some(had) = self.frame_defs.get(&def.frame_def_id) {
+            put.name.clone_from(&had.name);
+            put.description.clone_from(&had.description);
+            let kept = kept_signals(&had.signals, &def.signals);
+            for (sig, old) in put.signals.iter_mut().zip(kept) {
+                if let Some(old) = old.map(|i| &had.signals[i]) {
+                    sig.slug.clone_from(&old.slug);
+                    sig.name.clone_from(&old.name);
+                    sig.unit.clone_from(&old.unit);
+                }
+            }
+        }
+        for (sig, device) in put.signals.iter_mut().zip(&def.signals) {
+            if let Some(name) = names.get(&device.signal_id) {
+                sig.name.clone_from(name);
+            }
+        }
+        self.frame_defs.insert(def.frame_def_id, put);
+    }
+
+    /// Drops the frame definitions, generators and transformers the device
+    /// does not hold.
+    pub fn retain_active(&mut self, active: &ActiveRuleIds) {
+        self.frame_defs
+            .retain(|id, _| active.frame_defs.contains(id));
+        self.generators
+            .retain(|id, _| active.generators.contains(id));
+        self.transformers
+            .retain(|id, _| active.transformers.contains(id));
+    }
+
     /// Commits the pending labels of the rules the device holds, and drops
     /// the rest.
     pub fn merge_pending(&mut self, active: &ActiveRuleIds) {
@@ -695,7 +676,7 @@ impl EditableBoardDef {
                     .frame_defs
                     .entry(id)
                     .or_insert_with(|| EditableFrameDef {
-                        name: format!("Frame 0x{id:04X}"),
+                        name: frame_def_name(id),
                         description: String::new(),
                         interface_type: String::new(),
                         can: None,
@@ -821,6 +802,184 @@ fn read_labels(
         );
     }
     Ok(())
+}
+
+const CAN_FLAG_LABELS: [(u8, &str); 5] = [
+    (frame_def::CAN_FLAG_EXTENDED, "extended"),
+    (frame_def::CAN_FLAG_FD, "fd"),
+    (frame_def::CAN_FLAG_BRS, "brs"),
+    (frame_def::CAN_FLAG_RTR, "rtr"),
+    (frame_def::CAN_FLAG_MATCH_ANY, "match_any"),
+];
+const FRAMING_MODES: [(u8, &str); 3] = [(0, "none"), (1, "idle"), (2, "chunk")];
+const UNKNOWN: &str = "unknown";
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SignalMatch {
+    ById,
+    ByBits,
+}
+
+fn same_signal(
+    old: &EditableFrameSignal,
+    device: &frame_def::FrameSignalDef,
+    by: SignalMatch,
+) -> bool {
+    match (parse_hex_key(&old.slug), by) {
+        (Ok(id), SignalMatch::ById) => id == device.signal_id,
+        (Err(_), SignalMatch::ByBits) => {
+            (old.start_bit, old.bit_length) == (device.start_bit, device.bit_length)
+        }
+        _ => false,
+    }
+}
+
+fn kept_signals(
+    old: &[EditableFrameSignal],
+    device: &[frame_def::FrameSignalDef],
+) -> Vec<Option<usize>> {
+    let mut taken = vec![false; old.len()];
+    let mut kept = vec![None; device.len()];
+    for by in [SignalMatch::ById, SignalMatch::ByBits] {
+        for (slot, dev) in kept.iter_mut().zip(device) {
+            if slot.is_some() {
+                continue;
+            }
+            *slot = (0..old.len()).find(|&i| !taken[i] && same_signal(&old[i], dev, by));
+            if let Some(i) = *slot {
+                taken[i] = true;
+            }
+        }
+    }
+    kept
+}
+
+fn can_flag_labels(flags: u8) -> Vec<String> {
+    (0..u8::BITS)
+        .map(|shift| 1u8 << shift)
+        .filter(|bit| flags & bit != 0)
+        .map(|bit| {
+            CAN_FLAG_LABELS
+                .iter()
+                .find(|(labelled, _)| *labelled == bit)
+                .map_or_else(|| format!("{bit:#04x}"), |(_, label)| (*label).to_owned())
+        })
+        .collect()
+}
+
+fn frame_def_name(id: u16) -> String {
+    format!("Frame 0x{id:04X}")
+}
+
+fn frame_signal_name(id: u16) -> String {
+    format!("Signal 0x{id:04X}")
+}
+
+pub(crate) fn frame_def_from_device(def: &FrameDefInfo) -> EditableFrameDef {
+    let (can, rs485) = match &def.header {
+        FrameHeader::Can { can_id, dlc, flags } => (
+            Some(EditableCanHeader {
+                can_id: *can_id,
+                dlc: *dlc,
+                flags: can_flag_labels(*flags),
+            }),
+            None,
+        ),
+        FrameHeader::Rs485 { framing_mode } => (
+            None,
+            Some(EditableRs485Header {
+                framing_mode: FRAMING_MODES
+                    .iter()
+                    .find(|(mode, _)| mode == framing_mode)
+                    .map_or(UNKNOWN, |(_, name)| name)
+                    .to_owned(),
+            }),
+        ),
+        _ => (None, None),
+    };
+    EditableFrameDef {
+        name: frame_def_name(def.frame_def_id),
+        description: String::new(),
+        interface_type: types::interface_slug(def.interface_type).to_owned(),
+        can,
+        rs485,
+        signals: def
+            .signals
+            .iter()
+            .map(|sig| EditableFrameSignal {
+                slug: hex(sig.signal_id),
+                name: frame_signal_name(sig.signal_id),
+                start_bit: sig.start_bit,
+                bit_length: sig.bit_length,
+                byte_order: frame_def::byte_order_name(sig.byte_order).to_owned(),
+                value_type: frame_def::value_type_name(sig.value_type).to_owned(),
+                quantity: sig.quantity,
+                scale: sig.scale,
+                offset: sig.offset,
+                unit: String::new(),
+            })
+            .collect(),
+    }
+}
+
+pub(crate) fn frame_def_table(fdef: &EditableFrameDef) -> Table {
+    let mut t = Table::new();
+    t.insert("name", toml_edit::value(&fdef.name));
+    if !fdef.description.is_empty() {
+        t.insert("description", toml_edit::value(&fdef.description));
+    }
+    if !fdef.interface_type.is_empty() {
+        t.insert("interface_type", toml_edit::value(&fdef.interface_type));
+    }
+
+    if let Some(can) = &fdef.can {
+        let mut ct = Table::new();
+        ct.insert("can_id", toml_edit::value(i64::from(can.can_id)));
+        ct.insert("dlc", toml_edit::value(i64::from(can.dlc)));
+        if !can.flags.is_empty() {
+            let mut arr = Array::new();
+            for flag in &can.flags {
+                arr.push(flag.as_str());
+            }
+            ct.insert("flags", toml_edit::value(arr));
+        } else {
+            ct.insert("flags", toml_edit::value(Array::new()));
+        }
+        t.insert("can", Item::Table(ct));
+    }
+
+    if let Some(rs) = &fdef.rs485 {
+        let mut rt = Table::new();
+        if !rs.framing_mode.is_empty() {
+            rt.insert("framing_mode", toml_edit::value(&rs.framing_mode));
+        }
+        t.insert("rs485", Item::Table(rt));
+    }
+
+    if !fdef.signals.is_empty() {
+        let mut sig_table = Table::new();
+        for sig in &fdef.signals {
+            let mut st = Table::new();
+            st.insert("name", toml_edit::value(&sig.name));
+            st.insert(
+                "bits",
+                toml_edit::value(format!("{}:{}", sig.start_bit, sig.bit_length)),
+            );
+            st.insert("byte_order", toml_edit::value(&sig.byte_order));
+            st.insert("value_type", toml_edit::value(&sig.value_type));
+            if let Some(quantity) = toml_schema::quantity_to_toml(sig.quantity) {
+                st.insert("quantity", toml_edit::value(quantity));
+            }
+            st.insert("scale", toml_edit::value(f64::from(sig.scale)));
+            st.insert("offset", toml_edit::value(f64::from(sig.offset)));
+            if !sig.unit.is_empty() {
+                st.insert("unit", toml_edit::value(&sig.unit));
+            }
+            sig_table.insert(&sig.slug, Item::Table(st));
+        }
+        t.insert("signals", Item::Table(sig_table));
+    }
+    t
 }
 
 fn hex(id: u16) -> String {
@@ -1409,5 +1568,199 @@ params = ["palette_signal_start:u16", "signal_max:u16"]
         assert!(!dir.join("test-empty.pending.toml").exists());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    const ENGINE_FRAME: u16 = 0x0001;
+    const RPM_SIGNAL: u16 = 0x0010;
+    const COOLANT_SIGNAL: u16 = 0x0011;
+
+    fn device_signal(signal_id: u16, start_bit: u16) -> frame_def::FrameSignalDef {
+        frame_def::FrameSignalDef {
+            signal_id,
+            start_bit,
+            bit_length: 16,
+            byte_order: frame_def::BYTE_ORDER_BE,
+            value_type: frame_def::VALUE_TYPE_ARRAY,
+            quantity: types::QTY_TEMPERATURE,
+            scale: 0.5,
+            offset: -40.0,
+        }
+    }
+
+    fn device_frame(signals: Vec<frame_def::FrameSignalDef>) -> FrameDefInfo {
+        FrameDefInfo {
+            frame_def_id: ENGINE_FRAME,
+            interface_type: types::IFACE_CAN,
+            header: FrameHeader::Can {
+                can_id: 0x18FF_0001,
+                dlc: 8,
+                flags: frame_def::CAN_FLAG_EXTENDED,
+            },
+            signals,
+        }
+    }
+
+    #[test]
+    fn put_frame_def_builds_a_new_definition_from_the_device() {
+        let mut ed = EditableBoardDef::new_empty();
+        let names = HashMap::from([(RPM_SIGNAL, "Engine RPM".to_owned())]);
+        ed.put_frame_def(&device_frame(vec![device_signal(RPM_SIGNAL, 0)]), &names);
+
+        let fdef = &ed.frame_defs[&ENGINE_FRAME];
+        assert_eq!(fdef.interface_type, "can");
+        let can = fdef.can.as_ref().unwrap();
+        assert_eq!((can.can_id, can.dlc), (0x18FF_0001, 8));
+        assert_eq!(can.flags, ["extended"]);
+        let sig = &fdef.signals[0];
+        assert_eq!(sig.slug, "0x0010");
+        assert_eq!(sig.name, "Engine RPM");
+        assert_eq!(
+            (sig.byte_order.as_str(), sig.value_type.as_str()),
+            ("be", "array")
+        );
+        assert_eq!(sig.quantity, types::QTY_TEMPERATURE);
+    }
+
+    #[test]
+    fn put_frame_def_keeps_what_the_board_knows_and_follows_the_device() {
+        let mut ed = EditableBoardDef::from_toml(TEST_TOML).unwrap();
+        ed.frame_defs.get_mut(&ENGINE_FRAME).unwrap().signals[0].slug = hex(RPM_SIGNAL);
+        ed.put_frame_def(
+            &device_frame(vec![
+                device_signal(RPM_SIGNAL, 0),
+                device_signal(COOLANT_SIGNAL, 16),
+            ]),
+            &HashMap::new(),
+        );
+
+        let fdef = &ed.frame_defs[&ENGINE_FRAME];
+        assert_eq!(fdef.name, "Engine Status");
+        assert_eq!(fdef.can.as_ref().unwrap().can_id, 0x18FF_0001);
+        let slugs: Vec<_> = fdef.signals.iter().map(|s| s.slug.as_str()).collect();
+        assert_eq!(slugs, ["0x0010", "0x0011"]);
+        assert_eq!(
+            (fdef.signals[0].name.as_str(), fdef.signals[0].unit.as_str()),
+            ("Engine RPM", "rpm")
+        );
+        assert_eq!(fdef.signals[1].name, "Signal 0x0011");
+        assert!(fdef.signals[1].unit.is_empty());
+    }
+
+    #[test]
+    fn put_frame_def_keeps_a_hand_named_signal_at_the_same_bits() {
+        let mut ed = EditableBoardDef::from_toml(TEST_TOML).unwrap();
+        ed.put_frame_def(
+            &device_frame(vec![
+                device_signal(RPM_SIGNAL, 0),
+                device_signal(COOLANT_SIGNAL, 16),
+            ]),
+            &HashMap::new(),
+        );
+
+        let fdef = &ed.frame_defs[&ENGINE_FRAME];
+        let kept = &fdef.signals[0];
+        assert_eq!(
+            (kept.slug.as_str(), kept.name.as_str(), kept.unit.as_str()),
+            ("engine_rpm", "Engine RPM", "rpm")
+        );
+        assert_eq!(fdef.signals[1].slug, "0x0011");
+    }
+
+    #[test]
+    fn a_hex_slug_for_another_id_is_not_matched_by_its_bits() {
+        let mut ed = EditableBoardDef::from_toml(TEST_TOML).unwrap();
+        ed.frame_defs.get_mut(&ENGINE_FRAME).unwrap().signals[0].slug = hex(COOLANT_SIGNAL);
+        ed.put_frame_def(
+            &device_frame(vec![device_signal(RPM_SIGNAL, 0)]),
+            &HashMap::new(),
+        );
+
+        let sig = &ed.frame_defs[&ENGINE_FRAME].signals[0];
+        assert_eq!(
+            (sig.slug.as_str(), sig.name.as_str()),
+            ("0x0010", "Signal 0x0010")
+        );
+    }
+
+    #[test]
+    fn a_moved_signal_keeps_its_id_slug_over_a_hand_named_one_at_its_new_bits() {
+        let mut ed = EditableBoardDef::new_empty();
+        ed.put_frame_def(
+            &device_frame(vec![device_signal(RPM_SIGNAL, 16)]),
+            &HashMap::from([(RPM_SIGNAL, "Engine RPM".to_owned())]),
+        );
+        let oil = EditableFrameSignal {
+            slug: "oil".into(),
+            name: "Oil".into(),
+            start_bit: 0,
+            ..ed.frame_defs[&ENGINE_FRAME].signals[0].clone()
+        };
+        ed.frame_defs
+            .get_mut(&ENGINE_FRAME)
+            .unwrap()
+            .signals
+            .insert(0, oil);
+        ed.put_frame_def(
+            &device_frame(vec![device_signal(RPM_SIGNAL, 0)]),
+            &HashMap::new(),
+        );
+
+        let sig = &ed.frame_defs[&ENGINE_FRAME].signals[0];
+        assert_eq!(
+            (sig.slug.as_str(), sig.name.as_str()),
+            ("0x0010", "Engine RPM")
+        );
+    }
+
+    #[test]
+    fn one_hand_named_signal_is_kept_for_one_device_signal_only() {
+        let mut ed = EditableBoardDef::from_toml(TEST_TOML).unwrap();
+        ed.put_frame_def(
+            &device_frame(vec![
+                device_signal(RPM_SIGNAL, 0),
+                device_signal(COOLANT_SIGNAL, 0),
+            ]),
+            &HashMap::new(),
+        );
+
+        let slugs: Vec<_> = ed.frame_defs[&ENGINE_FRAME]
+            .signals
+            .iter()
+            .map(|s| s.slug.as_str())
+            .collect();
+        assert_eq!(slugs, ["engine_rpm", "0x0011"]);
+    }
+
+    #[test]
+    fn a_pending_label_merged_after_put_frame_def_keeps_its_header_and_signals() {
+        let mut ed = EditableBoardDef::new_empty();
+        ed.put_frame_def(
+            &device_frame(vec![device_signal(RPM_SIGNAL, 0)]),
+            &HashMap::new(),
+        );
+        ed.set_pending_frame_def(ENGINE_FRAME, Some("Engine".into()), None);
+        ed.merge_pending(&ActiveRuleIds {
+            frame_defs: HashSet::from([ENGINE_FRAME]),
+            generators: HashSet::new(),
+            transformers: HashSet::new(),
+        });
+
+        let fdef = &ed.frame_defs[&ENGINE_FRAME];
+        assert_eq!(fdef.name, "Engine");
+        assert!(fdef.can.is_some());
+        assert_eq!(fdef.signals.len(), 1);
+    }
+
+    #[test]
+    fn retain_active_drops_rules_the_device_does_not_hold() {
+        let mut ed = EditableBoardDef::from_toml(TEST_TOML).unwrap();
+        ed.retain_active(&ActiveRuleIds {
+            frame_defs: HashSet::new(),
+            generators: HashSet::from([0x0010]),
+            transformers: HashSet::new(),
+        });
+        assert!(ed.frame_defs.is_empty());
+        assert_eq!(ed.generators.keys().copied().collect::<Vec<_>>(), [0x0010]);
+        assert!(ed.transformers.is_empty());
     }
 }

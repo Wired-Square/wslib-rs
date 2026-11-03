@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.2
+
+- `EditableBoardDef::put_frame_def` takes a device's frame definition and
+  inserts it, or replaces the header and signals of the one already there.
+  It keeps the definition's name and description. A signal keeps the slug,
+  name and unit of the old signal whose slug parses as its id, or else of an
+  unmatched old signal with a non-numeric slug at the same bits, each old
+  signal at most once; `names` overrides signal names by id.
+- `EditableBoardDef::retain_active` drops the frame definitions, generators
+  and transformers the device does not hold.
+- `sync_frame_defs` names every value type and byte order as the protocol
+  does: an array signal is `array`, no longer `unsigned`. It shares
+  `put_frame_def`'s mapping from a device definition to the board TOML.
+- A CAN frame definition's `match_any` flag is written to the board TOML,
+  where it was dropped, and a flag bit with no label is written as hex such
+  as `"0x20"`.
+
 ## 0.3.1
 
 - `mcu-flash` accepts wslib-mcu-flash 0.1 or 0.2; `UsbAccess` is the same in

@@ -2,16 +2,9 @@
 
 use std::collections::HashSet;
 
-use crate::toml_schema;
+use crate::{editable, toml_schema};
 use wslib_framelink_protocol::dsig::{format_signal_key, parse_signal_key};
 use wslib_framelink_protocol::{capabilities, dsig, frame_def, generator, types, xform};
-
-const CAN_FLAG_LABELS: [(u8, &str); 4] = [
-    (frame_def::CAN_FLAG_EXTENDED, "extended"),
-    (frame_def::CAN_FLAG_FD, "fd"),
-    (frame_def::CAN_FLAG_BRS, "brs"),
-    (frame_def::CAN_FLAG_RTR, "rtr"),
-];
 
 /// What a sync added, and what the TOML has that the device does not.
 #[derive(Debug, Default)]
@@ -170,95 +163,9 @@ pub fn sync_frame_defs(
         let key = format!("0x{:04X}", fdef.frame_def_id);
 
         if fd_table.get(&key).is_none() {
-            let mut entry = toml_edit::Table::new();
-            entry.insert(
-                "name",
-                toml_edit::Item::Value(format!("Frame 0x{:04X}", fdef.frame_def_id).into()),
-            );
-
-            let iface_type_str = types::interface_slug(fdef.interface_type);
-            entry.insert(
-                "interface_type",
-                toml_edit::Item::Value(iface_type_str.into()),
-            );
-
-            match &fdef.header {
-                frame_def::FrameHeader::Can { can_id, dlc, flags } => {
-                    let mut can_table = toml_edit::Table::new();
-                    can_table.insert("can_id", toml_edit::Item::Value((*can_id as i64).into()));
-                    can_table.insert("dlc", toml_edit::Item::Value((*dlc as i64).into()));
-                    let mut flag_arr = toml_edit::Array::new();
-                    for (bit, label) in CAN_FLAG_LABELS {
-                        if flags & bit != 0 {
-                            flag_arr.push(label);
-                        }
-                    }
-                    can_table.insert(
-                        "flags",
-                        toml_edit::Item::Value(toml_edit::Value::Array(flag_arr)),
-                    );
-                    entry.insert("can", toml_edit::Item::Table(can_table));
-                }
-                frame_def::FrameHeader::Rs485 { framing_mode } => {
-                    let mut rs_table = toml_edit::Table::new();
-                    let mode_str = match framing_mode {
-                        0 => "none",
-                        1 => "idle",
-                        2 => "chunk",
-                        _ => "unknown",
-                    };
-                    rs_table.insert("framing_mode", toml_edit::Item::Value(mode_str.into()));
-                    entry.insert("rs485", toml_edit::Item::Table(rs_table));
-                }
-                _ => {}
-            }
-
-            if !fdef.signals.is_empty() {
-                let mut sigs_table = toml_edit::Table::new();
-                for sig in &fdef.signals {
-                    let sig_key = format!("0x{:04X}", sig.signal_id);
-                    let mut sig_entry = toml_edit::Table::new();
-                    sig_entry.insert(
-                        "name",
-                        toml_edit::Item::Value(format!("Signal 0x{:04X}", sig.signal_id).into()),
-                    );
-                    sig_entry.insert(
-                        "bits",
-                        toml_edit::Item::Value(
-                            format!("{}:{}", sig.start_bit, sig.bit_length).into(),
-                        ),
-                    );
-
-                    let bo = match sig.byte_order {
-                        frame_def::BYTE_ORDER_LE => "le",
-                        frame_def::BYTE_ORDER_BE => "be",
-                        _ => "le",
-                    };
-                    sig_entry.insert("byte_order", toml_edit::Item::Value(bo.into()));
-
-                    let vt = match sig.value_type {
-                        frame_def::VALUE_TYPE_UNSIGNED => "unsigned",
-                        frame_def::VALUE_TYPE_SIGNED => "signed",
-                        frame_def::VALUE_TYPE_FLOAT => "float",
-                        frame_def::VALUE_TYPE_BOOL => "bool",
-                        _ => "unsigned",
-                    };
-                    sig_entry.insert("value_type", toml_edit::Item::Value(vt.into()));
-                    if let Some(quantity) = toml_schema::quantity_to_toml(sig.quantity) {
-                        sig_entry.insert("quantity", toml_edit::Item::Value(quantity.into()));
-                    }
-                    sig_entry.insert("scale", toml_edit::Item::Value(f64::from(sig.scale).into()));
-                    sig_entry.insert(
-                        "offset",
-                        toml_edit::Item::Value(f64::from(sig.offset).into()),
-                    );
-
-                    sigs_table.insert(&sig_key, toml_edit::Item::Table(sig_entry));
-                }
-                entry.insert("signals", toml_edit::Item::Table(sigs_table));
-            }
-
-            fd_table[&key] = toml_edit::Item::Table(entry);
+            fd_table[&key] = toml_edit::Item::Table(editable::frame_def_table(
+                &editable::frame_def_from_device(fdef),
+            ));
 
             let header_desc = match &fdef.header {
                 frame_def::FrameHeader::Can { can_id, dlc, .. } => {
@@ -615,6 +522,44 @@ mod tests {
         assert!(quantities.contains(&None), "{quantities:?}");
     }
 
+    #[test]
+    fn sync_frame_defs_names_every_value_type_and_byte_order() {
+        let mut doc = empty_doc();
+        let signals = frame_def::VALUE_TYPE_NAMES
+            .iter()
+            .enumerate()
+            .map(|(i, &(value_type, _))| frame_def::FrameSignalDef {
+                signal_id: i as u16,
+                start_bit: 0,
+                bit_length: 8,
+                byte_order: frame_def::BYTE_ORDER_BE,
+                value_type,
+                quantity: types::QTY_RAW,
+                scale: 1.0,
+                offset: 0.0,
+            })
+            .collect();
+        sync_frame_defs(
+            &mut doc,
+            &[frame_def::FrameDefInfo {
+                frame_def_id: 0x0001,
+                interface_type: frame_def::IFACE_TYPE_CAN,
+                header: frame_def::FrameHeader::Can {
+                    can_id: 0x100,
+                    dlc: 8,
+                    flags: 0,
+                },
+                signals,
+            }],
+        );
+        let written = doc["frame_defs"]["0x0001"]["signals"].as_table().unwrap();
+        for (i, &(_, name)) in frame_def::VALUE_TYPE_NAMES.iter().enumerate() {
+            let sig = &written[&format!("0x{i:04X}")];
+            assert_eq!(sig["value_type"].as_str(), Some(name));
+            assert_eq!(sig["byte_order"].as_str(), Some("be"));
+        }
+    }
+
     fn synced_can_flag_labels(flags: u8) -> Vec<String> {
         let mut doc = empty_doc();
         let fds = [frame_def::FrameDefInfo {
@@ -668,7 +613,16 @@ mod tests {
             | frame_def::CAN_FLAG_MATCH_ANY;
         assert_eq!(
             synced_can_flag_labels(all),
-            ["extended", "fd", "brs", "rtr"]
+            ["extended", "fd", "brs", "rtr", "match_any"]
+        );
+    }
+
+    #[test]
+    fn an_unlabelled_can_flag_is_written_as_hex_not_dropped() {
+        const UNLABELLED: u8 = 0x20;
+        assert_eq!(
+            synced_can_flag_labels(frame_def::CAN_FLAG_EXTENDED | UNLABELLED),
+            ["extended", "0x20"]
         );
     }
 

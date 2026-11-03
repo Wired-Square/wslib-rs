@@ -1,6 +1,6 @@
 [package]
 name = "wslib-framelink-board"
-version = "0.3.1"
+version = "0.3.2"
 description = "FrameLink board definitions: the TOML schema, its parser and editor, display names, scaffolding from a live device, LED discovery and the embedded boards."
 readme = "README.md"
 edition.workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "wslib-mcumgr"
-version = "0.1.0"
+version = "0.1.1"
 description = "An SMP (mcumgr) client: the frame codec, image upload, test and confirm, reset and file transfer, over UDP, BLE or a transport of your own."
 readme = "README.md"
 edition.workspace = true

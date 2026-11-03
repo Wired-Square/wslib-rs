@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- tokio's floor is 1.53.3, where it meets wslib-serial-console.
+
 ## 0.1.0
 
 - An SMP (mcumgr) client, its codec written to Zephyr's SMP Protocol

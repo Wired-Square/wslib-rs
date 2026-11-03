@@ -2,7 +2,8 @@
 //! when a private key sits where a certificate goes.
 
 use rustls_pki_types::pem::PemObject;
-use rustls_pki_types::{CertificateDer, PrivateKeyDer};
+use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use zeroize::Zeroizing;
 
 use crate::Error;
 
@@ -11,6 +12,7 @@ pub const MAX_LEN: usize = 256 * 1024;
 
 pub const CERTIFICATE: &str = "CERTIFICATE";
 pub const PRIVATE_KEY: &str = "PRIVATE KEY";
+pub const PUBLIC_KEY: &str = "PUBLIC KEY";
 
 /// Every section of `pem`, each line trimmed and ending in LF, with nothing between them.
 ///
@@ -72,8 +74,42 @@ pub fn private_key(pem: &str) -> Result<PrivateKeyDer<'static>, Error> {
 
 /// PEM text for `der` under `label`, with LF line endings on every platform.
 pub fn encode(label: &str, der: &[u8]) -> String {
-    let config = ::pem::EncodeConfig::new().set_line_ending(::pem::LineEnding::LF);
-    ::pem::encode_config(&::pem::Pem::new(label, der), config)
+    const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const BYTES_PER_LINE: usize = 48;
+    let base64_len = der.len().div_ceil(3) * 4;
+    let lines = der.len().div_ceil(BYTES_PER_LINE);
+    let capacity =
+        "-----BEGIN -----\n-----END -----\n".len() + 2 * label.len() + base64_len + lines;
+    // Sized exactly, so a private key is never left behind in a reallocated buffer.
+    let mut out = String::with_capacity(capacity);
+    out.push_str("-----BEGIN ");
+    out.push_str(label);
+    out.push_str("-----\n");
+    for line in der.chunks(BYTES_PER_LINE) {
+        for group in line.chunks(3) {
+            let bits = group.iter().enumerate().fold(0u32, |bits, (i, byte)| {
+                bits | u32::from(*byte) << (16 - 8 * i)
+            });
+            for i in 0..4 {
+                out.push(if i <= group.len() {
+                    char::from(BASE64[((bits >> (18 - 6 * i)) & 0x3f) as usize])
+                } else {
+                    '='
+                });
+            }
+        }
+        out.push('\n');
+    }
+    out.push_str("-----END ");
+    out.push_str(label);
+    out.push_str("-----\n");
+    debug_assert_eq!(out.capacity(), capacity);
+    out
+}
+
+/// A PKCS#8 key as `PRIVATE KEY` PEM, wiped on drop.
+pub fn encode_private_key(key: &PrivatePkcs8KeyDer<'_>) -> Zeroizing<String> {
+    Zeroizing::new(encode(PRIVATE_KEY, key.secret_pkcs8_der()))
 }
 
 fn within_length(pem: &str) -> Result<(), Error> {
@@ -157,6 +193,7 @@ fn ends(line: &str) -> Option<&str> {
 mod tests {
     use super::*;
     use crate::testing::{certificate, key_pem};
+    use std::sync::Arc;
 
     #[test]
     fn a_key_pasted_where_a_certificate_goes_is_named_for_what_it_is() {
@@ -315,5 +352,37 @@ mod tests {
         assert_eq!(read.len(), 2);
         assert_eq!(read[0], certificates(&leaf).unwrap()[0]);
         assert_eq!(normalise(&chain).expect("tidies"), chain);
+    }
+
+    #[test]
+    fn encoding_matches_the_pem_crate_it_replaced_at_every_remainder() {
+        let fixture = include_str!("../testdata/lengths.pem");
+        let encoded: String = [0usize, 1, 2, 3, 4, 47, 48, 49, 50, 96, 97, 144, 145]
+            .into_iter()
+            .map(|n| {
+                let der: Vec<u8> = (0..n).map(|i| (i * 37 + 11) as u8).collect();
+                encode("TEST", &der)
+            })
+            .collect();
+        assert_eq!(encoded, fixture);
+    }
+
+    #[test]
+    fn a_public_key_encodes_as_openssl_ec_pubout_writes_it() {
+        let key =
+            PrivateKeyDer::from_pem_slice(include_bytes!("../testdata/p256.sec1.pem")).unwrap();
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let signer = wslib_crypto::Signer::new(provider, &key).unwrap();
+        assert_eq!(
+            encode(PUBLIC_KEY, signer.spki()),
+            include_str!("../testdata/p256.spki.pem")
+        );
+    }
+
+    #[test]
+    fn an_encoded_private_key_reads_back_as_the_same_key() {
+        let key = wslib_crypto::KeyAlgorithm::EcP384.generate().unwrap();
+        let pem = encode_private_key(&key);
+        assert_eq!(private_key(&pem), Ok(PrivateKeyDer::Pkcs8(key.clone_key())));
     }
 }

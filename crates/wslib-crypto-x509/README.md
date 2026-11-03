@@ -15,7 +15,7 @@ let key = KeyAlgorithm::EcP256.generate()?;
 let signer = Signer::new(provider.clone(), &key.clone_key().into())?;
 let names: Vec<SubjectAltName> = vec!["widget-01.local".parse()?, "127.0.0.1".parse()?];
 let cert_pem = pem::encode(pem::CERTIFICATE, &mint(&signer, &names)?);
-let key_pem = pem::encode(pem::PRIVATE_KEY, key.secret_pkcs8_der());
+let key_pem = pem::encode_private_key(&key);
 
 // One somebody pasted:
 let report = examine(inspect_pem(&pasted)?, Some(host), SystemTime::now());
@@ -40,7 +40,8 @@ signature::verify(&inspect(&leaf)?.spki, &algorithm_identifier, message, signed,
   verbatim with LF endings and drops what is between them, and indented
   markers read as if they were not;
   `certificate_sections` keeps only the certificates. Text over `MAX_LEN`
-  (256 KiB) is refused before parsing. `encode` writes PEM with LF endings.
+  (256 KiB) is refused before parsing. `encode` writes PEM with LF endings, and
+  `encode_private_key` writes a PKCS#8 key into a `Zeroizing<String>`.
 - **`inspect` and `inspect_pem`**: a `CertificateView` copied out of the
   certificate: subject and issuer in RFC 4514 form (`CN=R3,O=Let's
   Encrypt,C=US`), serial, subject alternative names, validity,

@@ -26,6 +26,10 @@ let signer = Signer::new(provider, &key.into())?;
   an async app. Unoptimised, it takes far longer, so a workspace whose tests
   generate RSA keys can set `[profile.dev.package.num-bigint-dig]
   opt-level = 3`.
+- **`to_pkcs8(&key)`**: a pasted key as PKCS#8: SEC1 P-256 and P-384 are
+  converted, PKCS#1 RSA-2048 and RSA-4096 wrapped, PKCS#8 copied. The
+  result implements `Zeroize`, as `generate`'s does, so wrap it in
+  `zeroize::Zeroizing` to wipe it on drop.
 - **`Signer::new(provider, &key)`**: a key loaded through the provider, as
   rcgen's `SigningKey` and `PublicKeyData`. The algorithm is read from the
   key, and the signer offers its one scheme only. The public key is the

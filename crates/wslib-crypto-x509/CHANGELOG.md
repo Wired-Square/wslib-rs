@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.6
+
+- `pem::encode_private_key`: a PKCS#8 key as `PRIVATE KEY` PEM, in a
+  `Zeroizing<String>` that is wiped on drop.
+- `pem::PUBLIC_KEY`, the label for a SubjectPublicKeyInfo; `encode` writes
+  it byte for byte as `openssl ec -pubout` does.
+- `pem::encode` is written here, into a buffer sized up front, and the
+  `pem` dependency is gone. Its output is unchanged.
+
 ## 0.1.5
 
 - `mint`: valid from 1975-01-01, not 2026-07-01. Safari and SecTrust refuse

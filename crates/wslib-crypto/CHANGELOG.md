@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.3
+
+- `to_pkcs8`: a private key as PKCS#8. A SEC1 P-256 or P-384 key is
+  converted, and a two-prime PKCS#1 RSA-2048 or RSA-4096 key is wrapped as
+  it is; a PKCS#8 key is copied. Another curve or size is
+  `Error::Unsupported`, and DER that does not parse is the new
+  `Error::Malformed`. No unwiped copy of the key is left behind.
+
 ## 0.1.2
 
 - `Fingerprint` from its 32 digest bytes, as `From<[u8; 32]>`.

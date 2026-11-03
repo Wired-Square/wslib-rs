@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- tokio's floor is 1.53.3.
+
 ## 0.1.2
 
 - Dependency floor raised to match the crates it shares a graph with:

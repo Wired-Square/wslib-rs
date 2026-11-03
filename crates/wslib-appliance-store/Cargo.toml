@@ -1,6 +1,6 @@
 [package]
 name = "wslib-appliance-store"
-version = "0.1.1"
+version = "0.1.2"
 description = "An appliance's database: the tables every appliance has, in one SQLite file a product's own tables share."
 readme = "README.md"
 edition.workspace = true

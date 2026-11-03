@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- The README says when a host flattens `ApplianceArgs`. No code change.
+
 ## 0.1.1
 
 - Dependency floor: `wslib-http-scaffold` 0.1.3 (was 0.1.1), the floor the

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.3
+
+- sha2's floor is 0.10.9.
+
 ## 0.5.2
 
 - `Flattened::missing_from`: the `pass` netblocks a tree authorises that

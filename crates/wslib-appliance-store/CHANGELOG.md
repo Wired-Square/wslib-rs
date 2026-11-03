@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- The README says why a product with migrations declares sqlx itself. No
+  code change.
+
 ## 0.1.1
 
 - Dependency floors: `wslib-secret` and `wslib-appliance-types` 0.1.1 (were

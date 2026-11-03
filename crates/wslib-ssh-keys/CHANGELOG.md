@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- chrono's floor is 0.4.39.
+
 ## 0.1.0
 
 - `Key::parse` reads one `authorized_keys` line as sshd does: leading

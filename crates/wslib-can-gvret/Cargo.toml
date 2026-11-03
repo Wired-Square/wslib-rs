@@ -1,6 +1,6 @@
 [package]
 name = "wslib-can-gvret"
-version = "0.1.0"
+version = "0.1.1"
 description = "GVRET, both ends of the codec in the dialect the field speaks, and a CAN task on a GVRET device over TCP or a serial port."
 readme = "README.md"
 edition.workspace = true

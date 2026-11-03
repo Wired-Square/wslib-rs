@@ -11,6 +11,9 @@ pub const SESSION_LIFETIME: TimeDelta = TimeDelta::hours(12);
 /// How recently a session must have proved its credentials again for a sensitive action.
 pub const REAUTHENTICATION_WINDOW: TimeDelta = TimeDelta::minutes(5);
 
+/// How many bound secrets a session keeps; binding another drops the oldest.
+pub const BOUND_SECRETS_KEPT: usize = 16;
+
 /// A signed-in browser, as its store row holds it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Session<U> {
@@ -77,6 +80,25 @@ pub trait SessionStore: Send + Sync {
         &self,
         now: DateTime<Utc>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+}
+
+/// A [`SessionStore`] that also keeps secrets bound to a session, keyed by its
+/// [`TokenHash`]. Every removal of a session row removes its secrets with it.
+pub trait BoundSecretStore: SessionStore {
+    /// Stores `secret` for the session under `session` if it expires after
+    /// `at`, keeping its newest `keep`; false if there is no such session.
+    fn bind_secret(
+        &self,
+        session: &TokenHash,
+        secret: &TokenHash,
+        at: DateTime<Utc>,
+        keep: usize,
+    ) -> impl Future<Output = Result<bool, Self::Error>> + Send;
+
+    fn bound_secrets(
+        &self,
+        session: &TokenHash,
+    ) -> impl Future<Output = Result<Vec<TokenHash>, Self::Error>> + Send;
 }
 
 /// The instant a credential check began, taken before the check so a session
@@ -193,6 +215,40 @@ impl<S: SessionStore> Sessions<S> {
 
     pub async fn purge_expired(&self) -> Result<(), SessionError<S::Error>> {
         Ok(self.store.remove_expired(now()).await?)
+    }
+}
+
+impl<S: BoundSecretStore> Sessions<S> {
+    /// A new secret bound to `token`'s unexpired session, which
+    /// [`lookup_bound`](Self::lookup_bound) then asks for; `None` if there is no
+    /// session. The session keeps its newest [`BOUND_SECRETS_KEPT`].
+    pub async fn bind(
+        &self,
+        token: &SessionToken,
+    ) -> Result<Option<SessionToken>, SessionError<S::Error>> {
+        let secret = SessionToken::generate().map_err(SessionError::Random)?;
+        let bound = self
+            .store
+            .bind_secret(&token.hash(), &secret.hash(), now(), BOUND_SECRETS_KEPT)
+            .await?;
+        Ok(bound.then_some(secret))
+    }
+
+    /// [`lookup`](Self::lookup), but `None` when the session has a bound secret
+    /// and `secret` is not one of them. A session with none is found as before.
+    pub async fn lookup_bound(
+        &self,
+        token: &SessionToken,
+        secret: Option<&SessionToken>,
+    ) -> Result<Option<Session<S::UserId>>, SessionError<S::Error>> {
+        let hash = token.hash();
+        let Some(session) = self.store.find(&hash, now()).await? else {
+            return Ok(None);
+        };
+        let bound = self.store.bound_secrets(&hash).await?;
+        let admitted =
+            bound.is_empty() || secret.is_some_and(|secret| bound.contains(&secret.hash()));
+        Ok(admitted.then_some(session))
     }
 }
 

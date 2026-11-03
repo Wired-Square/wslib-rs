@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.3
+
+- Secrets bound to a session: `Sessions::bind` mints one beside the cookie's
+  token, and `Sessions::lookup_bound` refuses a session that has any unless
+  it is given one of them. A session keeps its newest `BOUND_SECRETS_KEPT`
+  (16); a session with none is found as by `lookup`. Kept by a new
+  `BoundSecretStore` trait over `SessionStore`, so a store of your own is
+  unchanged until it binds.
+- `SqlSessionStore::with_bound_secrets` names the secrets' table, which
+  cascades from the sessions table; the README carries its DDL.
+
 ## 0.1.2
 
 - chrono's floor is 0.4.39.

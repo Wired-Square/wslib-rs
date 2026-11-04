@@ -202,8 +202,9 @@ impl BoundQueries {
                  WHERE token_hash = $1 AND expires_at > $3"
             ),
             prune: format!(
-                "DELETE FROM {name} WHERE session_hash = $1 AND secret_hash NOT IN \
-                 (SELECT secret_hash FROM {name} WHERE session_hash = $1 \
+                "DELETE FROM {name} WHERE session_hash = $1 AND secret_hash <> $3 \
+                 AND secret_hash NOT IN (SELECT secret_hash FROM {name} \
+                 WHERE session_hash = $1 AND secret_hash <> $3 \
                  ORDER BY issued_at DESC, secret_hash DESC LIMIT $2)"
             ),
             select: format!("SELECT secret_hash FROM {name} WHERE session_hash = $1"),
@@ -373,7 +374,8 @@ macro_rules! session_store_for {
                 };
                 sqlx::query(&queries.prune)
                     .bind(session.as_str())
-                    .bind(i64::try_from(keep).unwrap_or(i64::MAX))
+                    .bind(i64::try_from(keep.saturating_sub(1)).unwrap_or(i64::MAX))
+                    .bind(secret.as_str())
                     .execute(&mut *tx)
                     .await?;
                 tx.commit().await?;

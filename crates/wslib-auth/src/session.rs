@@ -86,7 +86,8 @@ pub trait SessionStore: Send + Sync {
 /// [`TokenHash`]. Every removal of a session row removes its secrets with it.
 pub trait BoundSecretStore: SessionStore {
     /// Stores `secret` for the session under `session` if it expires after
-    /// `at`, keeping its newest `keep`; false if there is no such session.
+    /// `at`, keeping it and the newest of the rest, `keep` in all; false if
+    /// there is no such session.
     fn bind_secret(
         &self,
         session: &TokenHash,

@@ -270,6 +270,30 @@ macro_rules! store_tests {
                 assert_eq!(secret_rows(&sessions).await, 17);
             }
 
+            fn a_secret_bound_after_the_clock_steps_back_is_kept(db) {
+                let sessions = bound_sessions(&db).await;
+                let token = issue(&sessions, "u1").await;
+                for _ in 0..crate::BOUND_SECRETS_KEPT {
+                    bind(&sessions, &token).await;
+                }
+                let secret = SessionToken::generate().unwrap();
+                let stepped_back = crate::now() - TimeDelta::minutes(1);
+                assert!(
+                    sessions
+                        .store()
+                        .bind_secret(
+                            &token.hash(),
+                            &secret.hash(),
+                            stepped_back,
+                            crate::BOUND_SECRETS_KEPT
+                        )
+                        .await
+                        .unwrap()
+                );
+                assert!(admitted(&sessions, &token, Some(&secret)).await);
+                assert_eq!(secret_rows(&sessions).await, 16);
+            }
+
             fn nothing_binds_to_an_unknown_or_expired_session(db) {
                 let sessions = bound_sessions(&db).await.with_lifetime(TimeDelta::zero());
                 let expired = issue(&sessions, "u1").await;

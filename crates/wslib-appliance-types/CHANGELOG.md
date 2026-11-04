@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.4
+
+- `ConsoleIdentity::reauthenticated_within(window, now)`: whether the
+  header's `reauth` falls within `window` before `now`; false with none.
+
 ## 0.1.3
 
 - `account::EnabledChange` carries `proof`, defaulted when absent, so

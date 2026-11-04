@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.9
+
+- Pins `wslib-appliance-types` at 0.1.4.
+
 ## 0.1.8
 
 - Pins `wslib-appliance-auth` at 0.1.3.

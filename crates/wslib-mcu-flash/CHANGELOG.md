@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.0
+
+- `identity::Mac` is a MAC address. It parses from twelve hex digits in
+  either case, with `:` or `-` anywhere between them, prints lower-case with
+  colons and, with `serde`, serialises as that string.
+  `identity::mac_matches` is gone.
+- `esp`: `EspFlashOptions.expected_mac` is an `Option<Mac>`, so a malformed
+  expected MAC is refused where it is parsed, before a flash.
+  `FlashError::IdentityMismatch.expected` is the `Mac` and prints in its
+  canonical form; `actual` is still the chip's report, `(unknown)` when
+  unread.
+- `PortIdentity::from_parts` takes the first non-empty of a USB serial, a
+  topology name and a tty, unparsed.
+- `SerialPort::matches` says whether an identity names a port.
+- `FlashEndpoint::identities` lists every name of the ports its identity or
+  tty matches, so a USB serial brings in each interface of its device.
+
 ## 0.2.0
 
 - tokio's floor is 1.53.3 and serialport's 4.9, where it meets

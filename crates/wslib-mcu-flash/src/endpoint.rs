@@ -7,7 +7,7 @@ use crate::chip::{ChipFamily, ESPRESSIF_VID};
 use crate::error::{FlashError, Result};
 use crate::identity::PortIdentity;
 use crate::ports::{
-    SerialPort, describe_ports, describe_serials, not_attached, ports_for_identity,
+    SerialPort, describe_ports, describe_serials, identities_for, not_attached, ports_for_identity,
 };
 
 /// How the chip reaches USB from the board, if at all.
@@ -59,6 +59,28 @@ pub enum FlashEndpoint {
         identity: Option<PortIdentity>,
     },
     UsbSerial(String),
+}
+
+impl FlashEndpoint {
+    /// Every name of every port that this endpoint's identity or tty matches,
+    /// so a USB serial brings in each interface of its device.
+    pub fn identities(&self, ports: &[SerialPort]) -> Vec<PortIdentity> {
+        let named = match self {
+            Self::Tty { path, identity } => {
+                vec![identity.clone(), Some(PortIdentity::Tty(path.clone()))]
+            }
+            Self::UsbSerial(serial) => vec![Some(PortIdentity::UsbSerial(serial.clone()))],
+        };
+        let mut all: Vec<PortIdentity> = Vec::new();
+        for id in named.into_iter().flatten() {
+            for name in identities_for(&id, ports) {
+                if !all.contains(&name) {
+                    all.push(name);
+                }
+            }
+        }
+        all
+    }
 }
 
 pub fn tty(path: &str, identity: Option<&PortIdentity>) -> FlashEndpoint {
@@ -283,6 +305,37 @@ mod tests {
             vid: ESPRESSIF_VID,
             ..SerialPort::new(path, serial, Some(0))
         }
+    }
+
+    #[test]
+    fn a_tty_endpoint_is_named_by_its_identity_and_its_tty() {
+        let endpoint = tty("/dev/ttyACM2", Some(&serial(COMPOSITE)));
+        let expected = vec![
+            serial(COMPOSITE),
+            tty_id("/dev/ttyACM1"),
+            usb_path("platform-x-usb-0:3:1.1"),
+            tty_id("/dev/ttyACM2"),
+            usb_path("platform-x-usb-0:3:1.3"),
+        ];
+        assert_eq!(endpoint.identities(&composite()), expected);
+    }
+
+    #[test]
+    fn a_tty_endpoint_without_an_identity_is_named_by_its_tty() {
+        let endpoint = tty("/dev/ttyUSB1", None);
+        let expected = vec![tty_id("/dev/ttyUSB1"), usb_path(CH340_PATH)];
+        assert_eq!(endpoint.identities(&ch340()), expected);
+        assert_eq!(endpoint.identities(&[]), vec![tty_id("/dev/ttyUSB1")]);
+    }
+
+    #[test]
+    fn a_usb_serial_endpoint_is_named_by_its_serial() {
+        let endpoint = FlashEndpoint::UsbSerial(COMPOSITE.into());
+        let id = serial(COMPOSITE);
+        assert_eq!(
+            endpoint.identities(&composite()),
+            identities_for(&id, &composite())
+        );
     }
 
     #[test]

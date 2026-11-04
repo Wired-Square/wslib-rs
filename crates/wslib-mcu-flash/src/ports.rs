@@ -43,6 +43,16 @@ impl SerialPort {
             ..self
         }
     }
+
+    pub fn matches(&self, id: &PortIdentity) -> bool {
+        match id {
+            PortIdentity::UsbSerial(serial) => {
+                self.serial_number.as_deref() == Some(serial.as_str())
+            }
+            PortIdentity::UsbPath(name) => self.topology.iter().any(|n| n == name),
+            PortIdentity::Tty(path) => self.path == *path,
+        }
+    }
 }
 
 pub type Enumerator = Arc<dyn Fn() -> Vec<SerialPort> + Send + Sync>;
@@ -65,16 +75,8 @@ pub fn by_path_index(dir: &Path) -> HashMap<String, Vec<String>> {
     index
 }
 
-fn matches(port: &SerialPort, id: &PortIdentity) -> bool {
-    match id {
-        PortIdentity::UsbSerial(serial) => port.serial_number.as_deref() == Some(serial.as_str()),
-        PortIdentity::UsbPath(name) => port.topology.iter().any(|n| n == name),
-        PortIdentity::Tty(path) => port.path == *path,
-    }
-}
-
 pub fn ports_for_identity<'a>(ports: &'a [SerialPort], id: &PortIdentity) -> Vec<&'a SerialPort> {
-    let mut matched: Vec<&SerialPort> = ports.iter().filter(|p| matches(p, id)).collect();
+    let mut matched: Vec<&SerialPort> = ports.iter().filter(|p| p.matches(id)).collect();
     matched.sort_by(|a, b| {
         a.interface
             .cmp(&b.interface)
@@ -288,6 +290,24 @@ mod tests {
 
     fn ch340(path: &str, serial: Option<&str>, names: &[&str]) -> SerialPort {
         SerialPort::new(path, serial, None).with_topology(names)
+    }
+
+    #[test]
+    fn a_port_matches_every_identity_that_names_it() {
+        let port = ch340("/dev/ttyUSB1", Some("S1"), &[ALIAS_V1, ALIAS_V2]);
+        for id in [
+            serial("S1"),
+            usb_path(ALIAS_V1),
+            usb_path(ALIAS_V2),
+            tty("/dev/ttyUSB1"),
+        ] {
+            assert!(port.matches(&id), "{id}");
+        }
+        for id in [serial("S2"), usb_path(SIBLING), tty("/dev/ttyUSB0")] {
+            assert!(!port.matches(&id), "{id}");
+        }
+        let unserialed = ch340("/dev/ttyUSB1", None, &[]);
+        assert!(!unserialed.matches(&serial("S1")));
     }
 
     #[test]

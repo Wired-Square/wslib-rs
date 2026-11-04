@@ -4,22 +4,64 @@ use std::str::FromStr;
 pub const USB_SERIAL_PREFIX: &str = "usb:";
 pub const USB_PATH_PREFIX: &str = "usb-path:";
 
-const MAC_HEX_DIGITS: usize = 12;
+const MAC_OCTETS: usize = 6;
+const HEX_DIGITS_PER_OCTET: usize = 2;
+const HEX_RADIX: u32 = 16;
+const MAC_SEPARATOR: &str = ":";
 
-fn normalise_mac(mac: &str) -> Option<String> {
-    let digits: String = mac
-        .chars()
-        .filter(|c| !matches!(c, ':' | '-'))
-        .map(|c| c.to_ascii_lowercase())
-        .collect();
-    let valid = digits.len() == MAC_HEX_DIGITS && digits.chars().all(|c| c.is_ascii_hexdigit());
-    valid.then_some(digits)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "String", into = "String"))]
+pub struct Mac([u8; MAC_OCTETS]);
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{0:?} is not a MAC of six hex octets")]
+pub struct MacParseError(pub String);
+
+impl FromStr for Mac {
+    type Err = MacParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let refused = || MacParseError(s.to_string());
+        let hex: String = s.chars().filter(|c| !matches!(c, ':' | '-')).collect();
+        let well_formed = hex.len() == MAC_OCTETS * HEX_DIGITS_PER_OCTET
+            && hex.bytes().all(|b| b.is_ascii_hexdigit());
+        if !well_formed {
+            return Err(refused());
+        }
+        let mut octets = [0; MAC_OCTETS];
+        for (i, octet) in octets.iter_mut().enumerate() {
+            let at = i * HEX_DIGITS_PER_OCTET;
+            let pair = &hex[at..at + HEX_DIGITS_PER_OCTET];
+            *octet = u8::from_str_radix(pair, HEX_RADIX).map_err(|_| refused())?;
+        }
+        Ok(Self(octets))
+    }
 }
 
-pub fn mac_matches(expected: &str, actual: &str) -> bool {
-    match (normalise_mac(expected), normalise_mac(actual)) {
-        (Some(expected), Some(actual)) => expected == actual,
-        _ => false,
+impl fmt::Display for Mac {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (i, octet) in self.0.iter().enumerate() {
+            if i > 0 {
+                f.write_str(MAC_SEPARATOR)?;
+            }
+            write!(f, "{octet:02x}")?;
+        }
+        Ok(())
+    }
+}
+
+impl TryFrom<String> for Mac {
+    type Error = MacParseError;
+
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        s.parse()
+    }
+}
+
+impl From<Mac> for String {
+    fn from(mac: Mac) -> Self {
+        mac.to_string()
     }
 }
 
@@ -35,6 +77,22 @@ pub enum PortIdentity {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{0}")]
 pub struct IdentityParseError(pub String);
+
+impl PortIdentity {
+    /// The first of `usb_serial`, `usb_path` and `tty` that is present and
+    /// non-empty, taken as that kind of identity without parsing it.
+    pub fn from_parts(
+        usb_serial: Option<&str>,
+        usb_path: Option<&str>,
+        tty: Option<&str>,
+    ) -> Option<Self> {
+        let named = |part: Option<&str>| part.filter(|p| !p.is_empty()).map(str::to_string);
+        named(usb_serial)
+            .map(Self::UsbSerial)
+            .or_else(|| named(usb_path).map(Self::UsbPath))
+            .or_else(|| named(tty).map(Self::Tty))
+    }
+}
 
 impl FromStr for PortIdentity {
     type Err = IdentityParseError;
@@ -127,15 +185,60 @@ mod tests {
         }
     }
 
+    const MAC: &str = "68:09:47:1d:2f:0c";
+
+    fn mac(s: &str) -> Result<Mac, MacParseError> {
+        s.parse()
+    }
+
     #[test]
-    fn macs_match_across_separators_and_case() {
-        const MAC: &str = "68:09:47:1d:2f:0c";
-        assert!(mac_matches("68:09:47:1D:2F:0C", MAC));
-        assert!(mac_matches("680947-1d2f0c", MAC));
-        assert!(!mac_matches("68:09:47:1d:2f:0d", MAC));
-        assert!(!mac_matches("abc", MAC));
-        assert!(!mac_matches("68:09:47:1d:2f:0g", "68:09:47:1d:2f:0g"));
-        assert!(!mac_matches(MAC, "(unknown)"));
+    fn a_mac_parses_across_separators_and_case() {
+        let expected = mac(MAC);
+        assert!(expected.is_ok());
+        for s in ["68:09:47:1D:2F:0C", "680947-1d2f0c", "6809471d2f0c"] {
+            assert_eq!(mac(s), expected);
+        }
+        assert_ne!(mac("68:09:47:1d:2f:0d"), expected);
+    }
+
+    #[test]
+    fn a_mac_that_is_not_six_hex_octets_is_refused() {
+        for s in [
+            "",
+            "abc",
+            "68:09:47:1d:2f:0g",
+            "68:09:47:1d:2f",
+            "68:09:47:1d:2f:0c:00",
+            "+8:09:47:1d:2f:0c",
+            "68:09:47:1d:2f:0c ",
+            "(unknown)",
+        ] {
+            assert_eq!(mac(s), Err(MacParseError(s.into())));
+        }
+    }
+
+    #[test]
+    fn a_mac_displays_lower_case_with_colons() {
+        assert_eq!(mac("680947-1D2F0C").unwrap().to_string(), MAC);
+    }
+
+    #[test]
+    fn from_parts_takes_the_first_part_that_names_a_port() {
+        let from = PortIdentity::from_parts;
+        let serial = PortIdentity::UsbSerial("S".into());
+        let path = PortIdentity::UsbPath("P".into());
+        let tty = PortIdentity::Tty("T".into());
+        assert_eq!(from(Some("S"), Some("P"), Some("T")), Some(serial));
+        assert_eq!(from(None, Some("P"), Some("T")), Some(path));
+        assert_eq!(from(Some(""), Some(""), Some("T")), Some(tty));
+        assert_eq!(from(Some(""), None, Some("")), None);
+        assert_eq!(from(None, None, None), None);
+    }
+
+    #[test]
+    fn from_parts_does_not_parse_a_part() {
+        let tty = PortIdentity::from_parts(None, None, Some("usb:X"));
+        assert_eq!(tty, Some(PortIdentity::Tty("usb:X".into())));
     }
 
     #[cfg(feature = "serde")]
@@ -160,5 +263,25 @@ mod tests {
         let mut bad = Vec::new();
         ciborium::into_writer(&Raw { id: "usb:".into() }, &mut bad).unwrap();
         assert!(ciborium::from_reader::<Wrap, _>(bad.as_slice()).is_err());
+
+        #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+        struct WrapMac {
+            mac: Mac,
+        }
+        let wrap = WrapMac {
+            mac: mac(MAC).unwrap(),
+        };
+        let mut bytes = Vec::new();
+        ciborium::into_writer(&wrap, &mut bytes).unwrap();
+        let back: WrapMac = ciborium::from_reader(bytes.as_slice()).unwrap();
+        assert_eq!(back, wrap);
+
+        #[derive(serde::Serialize)]
+        struct RawMac {
+            mac: String,
+        }
+        let mut bad = Vec::new();
+        ciborium::into_writer(&RawMac { mac: "abc".into() }, &mut bad).unwrap();
+        assert!(ciborium::from_reader::<WrapMac, _>(bad.as_slice()).is_err());
     }
 }

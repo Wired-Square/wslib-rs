@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+- On wslib-mcu-flash 0.3, so `PortKey` is its `PortIdentity`.
+  `ws::ConsoleQuery::key` is `PortIdentity::from_parts`, with the same
+  precedence and empty-part skipping as before.
+
 ## 0.2.0
 
 - `PortKey` is wslib-mcu-flash's `PortIdentity`: `Path` is now `Tty`, a

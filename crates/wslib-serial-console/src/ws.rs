@@ -18,7 +18,6 @@ use axum::{
     routing::{MethodFilter, MethodRouter, on},
 };
 use serde::{Deserialize, Serialize};
-use wslib_mcu_flash::identity::{USB_PATH_PREFIX, USB_SERIAL_PREFIX};
 
 use crate::{
     Bounds, ConsoleAction, ConsoleEvent, Finished, Frame, Monitors, PortKey, Refusal,
@@ -105,16 +104,11 @@ pub struct ConsoleQuery {
 
 impl ConsoleQuery {
     pub fn key(&self) -> Option<PortKey> {
-        let prefixed = [
-            (USB_SERIAL_PREFIX, &self.usb_serial),
-            (USB_PATH_PREFIX, &self.usb_path),
-        ];
-        let parsed = prefixed.into_iter().find_map(|(prefix, value)| {
-            let value = value.as_ref()?;
-            format!("{prefix}{value}").parse().ok()
-        });
-        let address = self.address.clone().filter(|a| !a.is_empty());
-        parsed.or_else(|| address.map(PortKey::Tty))
+        PortKey::from_parts(
+            self.usb_serial.as_deref(),
+            self.usb_path.as_deref(),
+            self.address.as_deref(),
+        )
     }
 
     pub fn bounds(&self) -> Bounds {

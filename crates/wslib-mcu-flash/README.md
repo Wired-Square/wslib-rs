@@ -17,16 +17,20 @@ Always on, no optional dependencies:
   `ESP32-S3`), and `lookup_stm32_pid` for the AN3155 product ids.
 - **`identity`** — `PortIdentity`: a port named by USB serial (`usb:<serial>`),
   by USB topology path (`usb-path:<name in /dev/serial/by-path>`) or by tty,
-  parsed strictly from and printed as that string.
+  parsed strictly from and printed as that string, and built from separate
+  parts by `from_parts`. `Mac`, a MAC address parsed across `:` / `-` and
+  case.
 - **`ports`** — `SerialPort` (path, label, USB serial, interface number, vid/pid,
   strings, topology names), `ports_for_identity` (a device's ttys, interface
-  order), `identities_for` (every name of the ports an identity matches),
+  order), `SerialPort::matches`, `identities_for` (every name of the ports
+  an identity matches),
   `by_path_index`, `describe_ports`, and the `Enumerator` closure type the DFU
   wait polls.
 - **`endpoint`** — `UsbAccess`, `Transport`, `FlashEndpoint`, `pairing_error`
   (which (family, access, transport) triples have a backend at all) and
   `resolve_endpoint`, which turns a pinned port identity or an auto-detected
-  Espressif port into the tty or DFU serial to flash through. Pure over a
+  Espressif port into the tty or DFU serial to flash through, and
+  `FlashEndpoint::identities`, every name of the ports it reaches. Pure over a
   `&[SerialPort]` slice, so every branch is unit-tested without hardware.
 - **`image`** — Intel HEX as `WriteSpan`s (gaps preserved) or its first span,
   DFU / DfuSe unwrapping, `load_spans` / `load_flat` by extension, and

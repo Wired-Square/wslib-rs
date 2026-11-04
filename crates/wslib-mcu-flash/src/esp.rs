@@ -20,7 +20,7 @@ use serialport::UsbPortInfo;
 
 use crate::chip::ESPTOOL_DEFAULT_BAUD;
 use crate::error::{FlashError, Result};
-use crate::identity::mac_matches;
+use crate::identity::Mac;
 use crate::output;
 use crate::ports;
 use crate::progress::{FlashProgress, FlashStage, check_cancel};
@@ -39,7 +39,7 @@ pub struct EspFlashOptions {
     pub flash_mode: Option<FlashMode>,
     pub flash_freq: Option<FlashFrequency>,
     pub flash_size: Option<FlashSize>,
-    pub expected_mac: Option<String>,
+    pub expected_mac: Option<Mac>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -365,15 +365,15 @@ fn chip_info_from(flasher: &mut Flasher) -> Result<EspChipInfo> {
 }
 
 fn check_expected_mac(options: &EspFlashOptions, info: Option<&EspChipInfo>) -> Result<()> {
-    let Some(expected) = options.expected_mac.as_deref() else {
+    let Some(expected) = options.expected_mac else {
         return Ok(());
     };
     let actual = info.map_or(UNKNOWN_MAC, |i| i.mac.as_str());
-    if mac_matches(expected, actual) {
+    if actual.parse::<Mac>() == Ok(expected) {
         Ok(())
     } else {
         Err(FlashError::IdentityMismatch {
-            expected: expected.to_string(),
+            expected,
             actual: actual.to_string(),
         })
     }
@@ -620,10 +620,12 @@ mod tests {
         }
     }
 
+    const EXPECTED: &str = "68:09:47:1d:2f:0c";
+
     #[test]
     fn an_expected_mac_refuses_any_other_chip() {
         let options = EspFlashOptions {
-            expected_mac: Some("68:09:47:1d:2f:0c".into()),
+            expected_mac: Some(EXPECTED.parse().unwrap()),
             ..Default::default()
         };
         let right = chip_with_mac("68:09:47:1D:2F:0C");
@@ -636,10 +638,17 @@ mod tests {
 
         let unread = check_expected_mac(&options, None).unwrap_err();
         let mismatch = FlashError::IdentityMismatch {
-            expected: "68:09:47:1d:2f:0c".into(),
+            expected: EXPECTED.parse().unwrap(),
             actual: UNKNOWN_MAC.into(),
         };
         assert_eq!(unread, mismatch);
+
+        let garbled = check_expected_mac(&options, Some(&chip_with_mac("68:09:47"))).unwrap_err();
+        let mismatch = FlashError::IdentityMismatch {
+            expected: EXPECTED.parse().unwrap(),
+            actual: "68:09:47".into(),
+        };
+        assert_eq!(garbled, mismatch);
     }
 
     #[test]

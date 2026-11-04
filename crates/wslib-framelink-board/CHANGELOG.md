@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.3
+
+- `mcu-flash` takes wslib-mcu-flash 0.1 to 0.3.
+
 ## 0.3.2
 
 - `EditableBoardDef::put_frame_def` takes a device's frame definition and

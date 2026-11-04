@@ -1,6 +1,6 @@
 [package]
 name = "wslib-mcu-flash"
-version = "0.2.0"
+version = "0.3.0"
 description = "Chip families, USB-serial port resolution, firmware image parsing and the flash backends (esptool, dfu-util, espflash, USB DFU, STM32 AN3155, MCUboot over SMP) Wired Square tools share."
 readme = "README.md"
 edition.workspace = true

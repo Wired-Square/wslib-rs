@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::fmt;
 use std::marker::PhantomData;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use sqlx::{Database, Pool, Row};
@@ -18,7 +19,7 @@ use crate::token::TokenHash;
 pub struct SqlSessionStore<DB: Database, U> {
     pool: Pool<DB>,
     queries: Queries,
-    bound: Option<BoundQueries>,
+    bound: Option<Arc<BoundQueries>>,
     user_id: PhantomData<fn() -> U>,
 }
 
@@ -66,13 +67,16 @@ impl<DB: Database, U> SqlSessionStore<DB, U> {
     /// sessions table with `ON DELETE CASCADE`; the README carries its DDL.
     pub fn with_bound_secrets(self, table: TableName) -> Self {
         Self {
-            bound: Some(BoundQueries::for_tables(&self.queries.table, table)),
+            bound: Some(Arc::new(BoundQueries::for_tables(
+                &self.queries.table,
+                table,
+            ))),
             ..self
         }
     }
 
     fn bound_queries(&self) -> Result<&BoundQueries, sqlx::Error> {
-        self.bound.as_ref().ok_or_else(|| {
+        self.bound.as_deref().ok_or_else(|| {
             sqlx::Error::Configuration("no table for bound secrets: call with_bound_secrets".into())
         })
     }
@@ -190,6 +194,7 @@ struct BoundQueries {
     insert: String,
     prune: String,
     select: String,
+    find: String,
 }
 
 impl BoundQueries {
@@ -202,11 +207,18 @@ impl BoundQueries {
                  WHERE token_hash = $1 AND expires_at > $3"
             ),
             prune: format!(
-                "DELETE FROM {name} WHERE session_hash = $1 AND secret_hash NOT IN \
-                 (SELECT secret_hash FROM {name} WHERE session_hash = $1 \
+                "DELETE FROM {name} WHERE session_hash = $1 AND secret_hash <> $3 \
+                 AND secret_hash NOT IN (SELECT secret_hash FROM {name} \
+                 WHERE session_hash = $1 AND secret_hash <> $3 \
                  ORDER BY issued_at DESC, secret_hash DESC LIMIT $2)"
             ),
             select: format!("SELECT secret_hash FROM {name} WHERE session_hash = $1"),
+            find: format!(
+                "SELECT user_id, created_at, expires_at, proved_at, reauthenticated_at \
+                 FROM {sessions} WHERE token_hash = $1 AND expires_at > $2 \
+                 AND (NOT EXISTS (SELECT 1 FROM {name} WHERE session_hash = $1) \
+                 OR EXISTS (SELECT 1 FROM {name} WHERE session_hash = $1 AND secret_hash = $3))"
+            ),
             table,
         }
     }
@@ -373,7 +385,8 @@ macro_rules! session_store_for {
                 };
                 sqlx::query(&queries.prune)
                     .bind(session.as_str())
-                    .bind(i64::try_from(keep).unwrap_or(i64::MAX))
+                    .bind(i64::try_from(keep.saturating_sub(1)).unwrap_or(i64::MAX))
+                    .bind(secret.as_str())
                     .execute(&mut *tx)
                     .await?;
                 tx.commit().await?;
@@ -389,6 +402,22 @@ macro_rules! session_store_for {
                     .fetch_all(&self.pool)
                     .await?;
                 Ok(hashes.into_iter().map(TokenHash::from_stored).collect())
+            }
+
+            async fn find_bound(
+                &self,
+                session: &TokenHash,
+                secret: Option<&TokenHash>,
+                now: DateTime<Utc>,
+            ) -> Result<Option<Session<U>>, sqlx::Error> {
+                sqlx::query(&self.bound_queries()?.find)
+                    .bind(session.as_str())
+                    .bind(stamp(now))
+                    .bind(secret.map(TokenHash::as_str))
+                    .fetch_optional(&self.pool)
+                    .await?
+                    .map(|row| session_from(&row, &self.queries.table))
+                    .transpose()
             }
         }
     };

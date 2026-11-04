@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.8
+
+- Pins `wslib-appliance-auth` at 0.1.3.
+
 ## 0.1.7
 
 - Pins `wslib-appliance-auth` at 0.1.2, and `-backup`, `-core`, `-https`,

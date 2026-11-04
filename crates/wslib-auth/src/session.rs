@@ -86,7 +86,8 @@ pub trait SessionStore: Send + Sync {
 /// [`TokenHash`]. Every removal of a session row removes its secrets with it.
 pub trait BoundSecretStore: SessionStore {
     /// Stores `secret` for the session under `session` if it expires after
-    /// `at`, keeping its newest `keep`; false if there is no such session.
+    /// `at`, keeping it and the newest of the rest, `keep` in all; false if
+    /// there is no such session.
     fn bind_secret(
         &self,
         session: &TokenHash,
@@ -99,6 +100,25 @@ pub trait BoundSecretStore: SessionStore {
         &self,
         session: &TokenHash,
     ) -> impl Future<Output = Result<Vec<TokenHash>, Self::Error>> + Send;
+
+    /// The session under `session` if it expires after `now` and has no bound
+    /// secret or has `secret`, in one read. The default makes two, so a session
+    /// removed between them is found with no secrets; override it.
+    fn find_bound(
+        &self,
+        session: &TokenHash,
+        secret: Option<&TokenHash>,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<Option<Session<Self::UserId>>, Self::Error>> + Send {
+        async move {
+            let Some(found) = self.find(session, now).await? else {
+                return Ok(None);
+            };
+            let bound = self.bound_secrets(session).await?;
+            let admitted = bound.is_empty() || secret.is_some_and(|secret| bound.contains(secret));
+            Ok(admitted.then_some(found))
+        }
+    }
 }
 
 /// The instant a credential check began, taken before the check so a session
@@ -241,14 +261,11 @@ impl<S: BoundSecretStore> Sessions<S> {
         token: &SessionToken,
         secret: Option<&SessionToken>,
     ) -> Result<Option<Session<S::UserId>>, SessionError<S::Error>> {
-        let hash = token.hash();
-        let Some(session) = self.store.find(&hash, now()).await? else {
-            return Ok(None);
-        };
-        let bound = self.store.bound_secrets(&hash).await?;
-        let admitted =
-            bound.is_empty() || secret.is_some_and(|secret| bound.contains(&secret.hash()));
-        Ok(admitted.then_some(session))
+        let secret = secret.map(SessionToken::hash);
+        Ok(self
+            .store
+            .find_bound(&token.hash(), secret.as_ref(), now())
+            .await?)
     }
 }
 

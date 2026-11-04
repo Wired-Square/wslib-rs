@@ -102,7 +102,8 @@ impl Sessions {
 
     /// [`resolve_with_reauthenticated_at`](Self::resolve_with_reauthenticated_at),
     /// and [`AuthError::NoSession`] when the session has a bound secret and
-    /// `secret` is none of them. A session never bound resolves without one.
+    /// `secret` is none of them. A session never bound resolves without one,
+    /// so a host moving its own bound secrets here copies them first.
     pub async fn resolve_bound(
         &self,
         store: &Store,

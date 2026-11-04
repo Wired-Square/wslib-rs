@@ -3,9 +3,10 @@
 # Everyday: workspace-wide cheap gates, then per-crate checks on crates changed
 # since their last release tag plus their reverse dependencies. --tag: every crate,
 # once per clean commit. A crate whose inputs already passed in this mode is
-# skipped; --no-cache reruns it.
+# skipped; --no-cache reruns it. --postgres also runs wslib-auth's Postgres tests
+# against a throwaway Docker container.
 #
-#   scripts/ci.sh [--tag] [--no-cache] [--dry-run]
+#   scripts/ci.sh [--tag] [--no-cache] [--dry-run] [--postgres]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -24,12 +25,14 @@ check_on() {
 all=false
 cache=true
 dry_run=false
+postgres=false
 for arg; do
   case $arg in
     --tag) all=true ;;
     --no-cache) cache=false ;;
     --dry-run) dry_run=true ;;
-    *) die "usage: scripts/ci.sh [--tag] [--no-cache] [--dry-run]" ;;
+    --postgres) postgres=true ;;
+    *) die "usage: scripts/ci.sh [--tag] [--no-cache] [--dry-run] [--postgres]" ;;
   esac
 done
 mode=default
@@ -43,6 +46,7 @@ if $all && [[ -z $(git status --porcelain) ]]; then
 fi
 
 command -v cargo-hack >/dev/null || die "cargo-hack missing: cargo install cargo-hack"
+! $postgres || docker info >/dev/null 2>&1 || die "--postgres needs a running Docker"
 ! $all || cargo +nightly --version >/dev/null 2>&1 || die "nightly missing: rustup toolchain install nightly"
 win=x86_64-pc-windows-msvc
 cross_windows=false
@@ -52,7 +56,8 @@ cross_windows=false
   || die "nightly $win missing: rustup +nightly target add $win"
 msrv=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+postgres_container=
+trap 'rm -rf "$tmp"; [[ -z $postgres_container ]] || docker rm -f "$postgres_container" >/dev/null 2>&1' EXIT
 # Clippy and check need no object code, and sqlite3.c cannot be cross-compiled for msvc off Windows.
 if $cross_windows; then
   # shellcheck disable=SC2016
@@ -404,6 +409,21 @@ while read -r crate key <&3; do
   fi
   touch "$key"
 done 3<<<"$pending"
+
+if $postgres; then
+  step "wslib-auth against PostgreSQL"
+  postgres_container=wslib-ci-postgres-$$
+  password=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+  docker run -d --rm --name "$postgres_container" -e POSTGRES_PASSWORD="$password" \
+    -p 127.0.0.1::5432 postgres:17 >/dev/null
+  # The image's first start runs a socket-only server before the real one listens on TCP.
+  postgres_ready() { docker exec "$postgres_container" pg_isready -q -h 127.0.0.1 -U postgres; }
+  for _ in {1..60}; do postgres_ready && break; sleep 1; done
+  postgres_ready || die "PostgreSQL not ready in 60 s"
+  port=$(docker port "$postgres_container" 5432/tcp | sed -n '1s/.*://p')
+  WSLIB_TEST_POSTGRES_URL="postgres://postgres:$password@127.0.0.1:$port/postgres" \
+    cargo test -p wslib-auth --features postgres --locked
+fi
 
 [[ -z $stamp ]] || { mkdir -p "$(dirname "$stamp")" && touch "$stamp"; }
 printf '\nci: ok\n'

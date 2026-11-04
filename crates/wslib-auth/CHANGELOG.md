@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.4
+
+- `Sessions::bind` answers `None` when the session is removed while its
+  secret is stored, where on PostgreSQL it failed with a foreign-key error.
+
 ## 0.1.3
 
 - Secrets bound to a session: `Sessions::bind` mints one beside the cookie's

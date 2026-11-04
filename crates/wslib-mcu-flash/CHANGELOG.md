@@ -9,9 +9,11 @@
   `identity::mac_matches` is gone.
 - `esp`: `EspFlashOptions.expected_mac` is an `Option<Mac>`, so a malformed
   expected MAC is refused where it is parsed, before a flash.
-  `FlashError::IdentityMismatch.expected` is the `Mac` and prints in its
-  canonical form; `actual` is still the chip's report, `(unknown)` when
-  unread.
+  `FlashError::IdentityMismatch` carries the expected `Mac` and the chip's
+  as an `Option<Mac>`, and still prints `(unknown)` for an unread one.
+- `esp`: `EspChipInfo.mac` is an `Option<Mac>`, `None` when the chip doesn't
+  report one, as in secure download mode. With `serde` it serialises as the
+  MAC string or null, not `"(unknown)"`.
 - `PortIdentity::from_parts` takes the first non-empty of a USB serial, a
   topology name and a tty, unparsed.
 - `SerialPort::matches` says whether an identity names a port.

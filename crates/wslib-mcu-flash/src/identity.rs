@@ -8,6 +8,7 @@ const MAC_OCTETS: usize = 6;
 const HEX_DIGITS_PER_OCTET: usize = 2;
 const HEX_RADIX: u32 = 16;
 const MAC_SEPARATOR: &str = ":";
+const UNREPORTED_MAC: &str = "(unknown)";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -48,6 +49,10 @@ impl fmt::Display for Mac {
         }
         Ok(())
     }
+}
+
+pub(crate) fn reported_mac(mac: Option<&Mac>) -> String {
+    mac.map_or_else(|| UNREPORTED_MAC.to_string(), Mac::to_string)
 }
 
 impl TryFrom<String> for Mac {

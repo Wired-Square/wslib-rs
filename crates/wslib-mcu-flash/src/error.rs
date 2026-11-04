@@ -1,4 +1,4 @@
-use crate::identity::Mac;
+use crate::identity::{Mac, reported_mac};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FlashError {
@@ -6,8 +6,11 @@ pub enum FlashError {
     Message(String),
     #[error("USB device {0:?} not attached")]
     NotAttached(String),
-    #[error("connected chip reports MAC {actual}, expected {expected}; nothing was written")]
-    IdentityMismatch { expected: Mac, actual: String },
+    #[error(
+        "connected chip reports MAC {}, expected {expected}; nothing was written",
+        reported_mac(.actual.as_ref())
+    )]
+    IdentityMismatch { expected: Mac, actual: Option<Mac> },
     #[error("cancelled by user")]
     Cancelled,
 }

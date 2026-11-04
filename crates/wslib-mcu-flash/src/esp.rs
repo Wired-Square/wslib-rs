@@ -20,7 +20,7 @@ use serialport::UsbPortInfo;
 
 use crate::chip::ESPTOOL_DEFAULT_BAUD;
 use crate::error::{FlashError, Result};
-use crate::identity::Mac;
+use crate::identity::{Mac, reported_mac};
 use crate::output;
 use crate::ports;
 use crate::progress::{FlashProgress, FlashStage, check_cancel};
@@ -29,7 +29,6 @@ const READ_CHUNK_SIZE: u32 = 64 * 1024;
 const READ_BLOCK_SIZE: u32 = 1024;
 const READ_MAX_IN_FLIGHT: u32 = 64;
 const ESP_IMAGE_MAGIC: u8 = 0xE9;
-const UNKNOWN_MAC: &str = "(unknown)";
 
 /// Flasher tuning; `None` leaves espflash's own default in place.
 #[derive(Debug, Clone, Default)]
@@ -47,7 +46,7 @@ pub struct EspFlashOptions {
 pub struct EspChipInfo {
     pub chip: String,
     pub features: Vec<String>,
-    pub mac: String,
+    pub mac: Option<Mac>,
     pub flash_size_bytes: Option<u64>,
 }
 
@@ -143,7 +142,7 @@ fn connect_for_write(
         progress.on_progress(&format!(
             "Connected: {} · MAC {} · {}",
             info.chip,
-            info.mac,
+            reported_mac(info.mac.as_ref()),
             info.flash_size_bytes
                 .map(|b| format!("{} MB flash", b / (1024 * 1024)))
                 .unwrap_or_else(|| "flash size unknown".to_string()),
@@ -356,10 +355,7 @@ fn chip_info_from(flasher: &mut Flasher) -> Result<EspChipInfo> {
     Ok(EspChipInfo {
         chip: info.chip.to_string(),
         features: info.features.clone(),
-        mac: info
-            .mac_address
-            .clone()
-            .unwrap_or_else(|| UNKNOWN_MAC.to_string()),
+        mac: info.mac_address.as_deref().and_then(|m| m.parse().ok()),
         flash_size_bytes: Some(info.flash_size.size() as u64),
     })
 }
@@ -368,14 +364,11 @@ fn check_expected_mac(options: &EspFlashOptions, info: Option<&EspChipInfo>) -> 
     let Some(expected) = options.expected_mac else {
         return Ok(());
     };
-    let actual = info.map_or(UNKNOWN_MAC, |i| i.mac.as_str());
-    if actual.parse::<Mac>() == Ok(expected) {
+    let actual = info.and_then(|i| i.mac);
+    if actual == Some(expected) {
         Ok(())
     } else {
-        Err(FlashError::IdentityMismatch {
-            expected,
-            actual: actual.to_string(),
-        })
+        Err(FlashError::IdentityMismatch { expected, actual })
     }
 }
 
@@ -611,52 +604,95 @@ pub fn parse_flash_freq(s: Option<&str>) -> Result<Option<FlashFrequency>> {
 mod tests {
     use super::*;
 
-    fn chip_with_mac(mac: &str) -> EspChipInfo {
+    const EXPECTED: &str = "68:09:47:1d:2f:0c";
+
+    fn mac(s: &str) -> Mac {
+        s.parse().unwrap()
+    }
+
+    fn chip_with_mac(mac: Option<Mac>) -> EspChipInfo {
         EspChipInfo {
             chip: "esp32".into(),
             features: Vec::new(),
-            mac: mac.into(),
+            mac,
             flash_size_bytes: None,
         }
     }
 
-    const EXPECTED: &str = "68:09:47:1d:2f:0c";
+    fn expecting(expected: &str) -> EspFlashOptions {
+        EspFlashOptions {
+            expected_mac: Some(mac(expected)),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn an_expected_mac_accepts_the_chip_that_reports_it() {
+        let right = chip_with_mac(Some(mac("68:09:47:1D:2F:0C")));
+        assert_eq!(
+            check_expected_mac(&expecting(EXPECTED), Some(&right)),
+            Ok(())
+        );
+    }
 
     #[test]
     fn an_expected_mac_refuses_any_other_chip() {
-        let options = EspFlashOptions {
-            expected_mac: Some(EXPECTED.parse().unwrap()),
-            ..Default::default()
-        };
-        let right = chip_with_mac("68:09:47:1D:2F:0C");
-        assert_eq!(check_expected_mac(&options, Some(&right)), Ok(()));
-
-        let err = check_expected_mac(&options, Some(&chip_with_mac("00:00:00:00:00:01")));
+        let other = chip_with_mac(Some(mac("00:00:00:00:00:01")));
+        let err = check_expected_mac(&expecting(EXPECTED), Some(&other)).unwrap_err();
         let expected = "connected chip reports MAC 00:00:00:00:00:01, expected \
                         68:09:47:1d:2f:0c; nothing was written";
-        assert_eq!(err.unwrap_err().to_string(), expected);
+        assert_eq!(err.to_string(), expected);
+    }
 
-        let unread = check_expected_mac(&options, None).unwrap_err();
+    #[test]
+    fn an_expected_mac_refuses_a_chip_whose_mac_is_unread() {
         let mismatch = FlashError::IdentityMismatch {
-            expected: EXPECTED.parse().unwrap(),
-            actual: UNKNOWN_MAC.into(),
+            expected: mac(EXPECTED),
+            actual: None,
         };
-        assert_eq!(unread, mismatch);
-
-        let garbled = check_expected_mac(&options, Some(&chip_with_mac("68:09:47"))).unwrap_err();
-        let mismatch = FlashError::IdentityMismatch {
-            expected: EXPECTED.parse().unwrap(),
-            actual: "68:09:47".into(),
-        };
-        assert_eq!(garbled, mismatch);
+        let options = expecting(EXPECTED);
+        assert_eq!(check_expected_mac(&options, None), Err(mismatch.clone()));
+        let silent = chip_with_mac(None);
+        assert_eq!(
+            check_expected_mac(&options, Some(&silent)),
+            Err(mismatch.clone())
+        );
+        let expected = "connected chip reports MAC (unknown), expected \
+                        68:09:47:1d:2f:0c; nothing was written";
+        assert_eq!(mismatch.to_string(), expected);
     }
 
     #[test]
     fn no_expected_mac_accepts_any_chip_or_none() {
         let options = EspFlashOptions::default();
         assert_eq!(check_expected_mac(&options, None), Ok(()));
-        let any = chip_with_mac("00:00:00:00:00:01");
+        let any = chip_with_mac(Some(mac("00:00:00:00:00:01")));
         assert_eq!(check_expected_mac(&options, Some(&any)), Ok(()));
+        assert_eq!(
+            check_expected_mac(&options, Some(&chip_with_mac(None))),
+            Ok(())
+        );
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn chip_info_serialises_its_mac_as_a_string_or_null() {
+        #[derive(serde::Deserialize)]
+        struct Raw {
+            mac: Option<String>,
+        }
+        let raw = |info: &EspChipInfo| {
+            let mut bytes = Vec::new();
+            ciborium::into_writer(info, &mut bytes).unwrap();
+            ciborium::from_reader::<Raw, _>(bytes.as_slice())
+                .unwrap()
+                .mac
+        };
+        assert_eq!(raw(&chip_with_mac(None)), None);
+        assert_eq!(
+            raw(&chip_with_mac(Some(mac(EXPECTED)))).as_deref(),
+            Some(EXPECTED)
+        );
     }
 
     #[test]

@@ -58,7 +58,7 @@ mod tests {
         let esp = Detected::Esp(EspChipInfo {
             chip: "esp32s3".into(),
             features: vec![],
-            mac: "aa".into(),
+            mac: None,
             flash_size_bytes: Some(8 * 1024 * 1024),
         });
         assert_eq!(esp.family(), ChipFamily::Esp32);

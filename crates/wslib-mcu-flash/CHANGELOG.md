@@ -4,7 +4,8 @@
 
 - `identity::Mac` is a MAC address. It parses from twelve hex digits in
   either case, with `:` or `-` anywhere between them, prints lower-case with
-  colons and, with `serde`, serialises as that string.
+  colons and, with `serde`, serialises as that string; parsing fails with
+  `MacParseError`.
   `identity::mac_matches` is gone.
 - `esp`: `EspFlashOptions.expected_mac` is an `Option<Mac>`, so a malformed
   expected MAC is refused where it is parsed, before a flash.

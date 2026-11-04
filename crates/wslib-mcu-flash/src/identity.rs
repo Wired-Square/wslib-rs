@@ -22,18 +22,17 @@ impl FromStr for Mac {
     type Err = MacParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let refused = || MacParseError(s.to_string());
-        let hex: String = s.chars().filter(|c| !matches!(c, ':' | '-')).collect();
-        let well_formed = hex.len() == MAC_OCTETS * HEX_DIGITS_PER_OCTET
-            && hex.bytes().all(|b| b.is_ascii_hexdigit());
-        if !well_formed {
-            return Err(refused());
-        }
+        let nibbles: Vec<u32> = s
+            .chars()
+            .filter(|c| !matches!(c, ':' | '-'))
+            .map(|c| c.to_digit(HEX_RADIX))
+            .collect::<Option<_>>()
+            .filter(|n: &Vec<u32>| n.len() == MAC_OCTETS * HEX_DIGITS_PER_OCTET)
+            .ok_or_else(|| MacParseError(s.to_string()))?;
         let mut octets = [0; MAC_OCTETS];
-        for (i, octet) in octets.iter_mut().enumerate() {
-            let at = i * HEX_DIGITS_PER_OCTET;
-            let pair = &hex[at..at + HEX_DIGITS_PER_OCTET];
-            *octet = u8::from_str_radix(pair, HEX_RADIX).map_err(|_| refused())?;
+        let (pairs, _) = nibbles.as_chunks::<HEX_DIGITS_PER_OCTET>();
+        for (octet, [high, low]) in octets.iter_mut().zip(pairs) {
+            *octet = (high * HEX_RADIX + low) as u8;
         }
         Ok(Self(octets))
     }

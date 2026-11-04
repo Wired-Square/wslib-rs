@@ -2,7 +2,8 @@
 
 ## 0.3.3
 
-- `mcu-flash` takes wslib-mcu-flash 0.1 to 0.3.
+- `mcu-flash` takes wslib-mcu-flash 0.1 to 0.3; `UsbAccess` is the same in
+  all three.
 
 ## 0.3.2
 

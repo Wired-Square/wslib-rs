@@ -331,11 +331,14 @@ mod tests {
     #[test]
     fn a_usb_serial_endpoint_is_named_by_its_serial() {
         let endpoint = FlashEndpoint::UsbSerial(COMPOSITE.into());
-        let id = serial(COMPOSITE);
-        assert_eq!(
-            endpoint.identities(&composite()),
-            identities_for(&id, &composite())
-        );
+        let expected = vec![
+            serial(COMPOSITE),
+            tty_id("/dev/ttyACM1"),
+            usb_path("platform-x-usb-0:3:1.1"),
+            tty_id("/dev/ttyACM2"),
+            usb_path("platform-x-usb-0:3:1.3"),
+        ];
+        assert_eq!(endpoint.identities(&composite()), expected);
     }
 
     #[test]

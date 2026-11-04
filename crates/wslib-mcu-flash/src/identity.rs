@@ -51,8 +51,8 @@ impl fmt::Display for Mac {
     }
 }
 
-pub(crate) fn reported_mac(mac: Option<&Mac>) -> String {
-    mac.map_or_else(|| UNREPORTED_MAC.to_string(), Mac::to_string)
+pub(crate) fn reported_mac(mac: Option<Mac>) -> String {
+    mac.map_or_else(|| UNREPORTED_MAC.to_string(), String::from)
 }
 
 impl TryFrom<String> for Mac {

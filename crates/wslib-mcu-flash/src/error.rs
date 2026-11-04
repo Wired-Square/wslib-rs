@@ -8,7 +8,7 @@ pub enum FlashError {
     NotAttached(String),
     #[error(
         "connected chip reports MAC {}, expected {expected}; nothing was written",
-        reported_mac(.actual.as_ref())
+        reported_mac(*.actual)
     )]
     IdentityMismatch { expected: Mac, actual: Option<Mac> },
     #[error("cancelled by user")]

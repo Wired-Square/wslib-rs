@@ -142,7 +142,7 @@ fn connect_for_write(
         progress.on_progress(&format!(
             "Connected: {} · MAC {} · {}",
             info.chip,
-            reported_mac(info.mac.as_ref()),
+            reported_mac(info.mac),
             info.flash_size_bytes
                 .map(|b| format!("{} MB flash", b / (1024 * 1024)))
                 .unwrap_or_else(|| "flash size unknown".to_string()),
@@ -677,22 +677,17 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn chip_info_serialises_its_mac_as_a_string_or_null() {
-        #[derive(serde::Deserialize)]
-        struct Raw {
-            mac: Option<String>,
-        }
-        let raw = |info: &EspChipInfo| {
-            let mut bytes = Vec::new();
-            ciborium::into_writer(info, &mut bytes).unwrap();
-            ciborium::from_reader::<Raw, _>(bytes.as_slice())
-                .unwrap()
-                .mac
+        let mac_field = |info: &EspChipInfo| {
+            let value = ciborium::Value::serialized(info).unwrap();
+            let fields = value.into_map().unwrap();
+            fields
+                .into_iter()
+                .find(|(key, _)| key.as_text() == Some("mac"))
+                .map(|(_, value)| value)
         };
-        assert_eq!(raw(&chip_with_mac(None)), None);
-        assert_eq!(
-            raw(&chip_with_mac(Some(mac(EXPECTED)))).as_deref(),
-            Some(EXPECTED)
-        );
+        assert_eq!(mac_field(&chip_with_mac(None)), Some(ciborium::Value::Null));
+        let reported = mac_field(&chip_with_mac(Some(mac(EXPECTED))));
+        assert_eq!(reported, Some(ciborium::Value::Text(EXPECTED.into())));
     }
 
     #[test]

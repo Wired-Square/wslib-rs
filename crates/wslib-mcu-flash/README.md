@@ -59,7 +59,7 @@ Behind features:
 From the `wired-square` registry (see the workspace README for its setup):
 
 ```toml
-wslib-mcu-flash = { version = "0.2", registry = "wired-square", features = ["ports", "esptool"] }
+wslib-mcu-flash = { version = "0.3", registry = "wired-square", features = ["ports", "esptool"] }
 ```
 
 On Linux, `ports`, and so `espflash` and `stm32-uart`, needs `libudev-dev`

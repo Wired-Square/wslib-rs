@@ -29,5 +29,5 @@ let name = board.signal_name(&parse_signal_key("interface.0.config.datarate")?);
 - `compress`: a board TOML gzipped for storing on a device.
 
 ```toml
-wslib-framelink-board = { version = "0.1", registry = "wired-square" }
+wslib-framelink-board = { version = "0.3", registry = "wired-square" }
 ```

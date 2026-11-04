@@ -105,8 +105,8 @@ num_peripherals(u8)  [ index(u8) kind(u8) num_meta(u8) meta... ]...
 A meta entry is `id(u8) quantity(u8) len(u8) value(len)`. The value is an
 integer when `len` is 1, 2 or 4 and the quantity is not STRING; otherwise it
 is bytes, as is `SUPPORTED_FUNCTIONS` (`0x0D`), a list of function ids.
-`types::META_*` lists the ids; `MAX_FILE_CHUNK` (`0x20`) absent means the
-device has no file transfer, and `RULE_FORMAT` (`0x16`) is 2.
+`types::META_*` lists the ids; `MAX_FILE_CHUNK` (`0x20`) absent or 0 means
+the device has no file transfer, and `RULE_FORMAT` (`0x16`) is 2.
 
 Interface types: CAN `0x01`, CAN FD `0x02`, RS-485 `0x03`, RS-232 `0x04`,
 LIN `0x05`. Peripheral kinds say dataflow only: sensor `0x01`, actuator

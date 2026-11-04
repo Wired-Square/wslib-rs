@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.2
+
+- `FrameLinkSession::upload_file` refuses a device that advertises a file
+  chunk size of 0, as it refuses one that advertises none, before
+  `FILE_BEGIN`. It had begun the file and sent an empty `FILE_DATA`, which
+  the device refuses, leaving the device's file session open; a device that
+  accepted it was sent empty `FILE_DATA` frames without end.
+- `upload_file` caps a chunk at what one frame carries, 65 531 bytes. A
+  larger advertised chunk had overflowed the frame's 16-bit length.
+
 ## 0.3.1
 
 - tokio's floor is 1.53.3, where it meets wslib-mcumgr.

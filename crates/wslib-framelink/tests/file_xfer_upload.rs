@@ -4,11 +4,17 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::net::tcp::OwnedWriteHalf;
 use wslib_framelink::{FileUploadOutcome, FrameLinkSession, SessionConfig};
-use wslib_framelink_protocol::file_xfer::{FileAction, parse_begin, parse_data, parse_end};
+use wslib_framelink_protocol::file_xfer::{
+    DATA_OFFSET_LEN, FileAction, parse_begin, parse_data, parse_end,
+};
 use wslib_framelink_protocol::frame::{build_frame, parse_frame};
 use wslib_framelink_protocol::types::*;
 
 const DEVICE_CHUNK: u32 = 64;
+
+const OVERSIZED_CHUNK: u32 = 1 << 20;
+
+const LARGER_THAN_ONE_FRAME: usize = 70_000;
 
 const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(300);
 
@@ -33,6 +39,9 @@ enum Fault {
     SessionExpiresOnce,
     RelocksOnce,
     SessionAlwaysExpires,
+    NoFileChunk,
+    ZeroFileChunk,
+    OversizedFileChunk,
 }
 
 #[derive(Default)]
@@ -138,7 +147,7 @@ impl FakeDevice {
                 MSG_CAPABILITIES_RESP,
                 FLAG_RESPONSE,
                 seq,
-                &capabilities_payload(),
+                &capabilities_payload(fault),
             ));
         }
         if fault == Fault::UnknownTarget && frame.msg_type == MSG_FILE_BEGIN {
@@ -330,12 +339,18 @@ async fn stream_frames(writer: Arc<tokio::sync::Mutex<OwnedWriteHalf>>) {
     }
 }
 
-fn capabilities_payload() -> Vec<u8> {
+fn capabilities_payload(fault: Fault) -> Vec<u8> {
+    let chunk = match fault {
+        Fault::NoFileChunk => return vec![0, 0, 0],
+        Fault::ZeroFileChunk => 0,
+        Fault::OversizedFileChunk => OVERSIZED_CHUNK,
+        _ => DEVICE_CHUNK,
+    };
     let mut payload = vec![1];
     payload.push(META_MAX_FILE_CHUNK);
     payload.push(QTY_COUNT);
     payload.push(4);
-    payload.extend_from_slice(&DEVICE_CHUNK.to_le_bytes());
+    payload.extend_from_slice(&chunk.to_le_bytes());
     payload.push(0);
     payload.push(0);
     payload
@@ -706,4 +721,43 @@ async fn a_commit_refused_as_locked_is_never_reported_as_unknown() {
         "the device refused the commit, so a dead unlock must not read as an unanswered commit: {result:?}"
     );
     assert_eq!(state.lock().unwrap().commits, 0);
+}
+
+#[tokio::test]
+async fn upload_refuses_a_device_with_no_file_chunk_or_a_zero_one_before_beginning() {
+    for fault in [Fault::NoFileChunk, Fault::ZeroFileChunk] {
+        let (addr, state) = FakeDevice::spawn(fault).await;
+        let session = session_for(addr).await;
+        let result =
+            tokio::time::timeout(TEST_DEADLINE, session.upload_file(0, &test_file(300), None))
+                .await
+                .expect("upload must refuse at once");
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("no file transfer"), "{err}");
+        let state = state.lock().unwrap();
+        assert_eq!(state.begins, 0);
+        assert!(state.data_frames.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn upload_caps_an_advertised_chunk_at_what_one_frame_carries() {
+    let (addr, state) = FakeDevice::spawn(Fault::OversizedFileChunk).await;
+    let session = session_for(addr).await;
+    let file = test_file(LARGER_THAN_ONE_FRAME);
+
+    let outcome = tokio::time::timeout(TEST_DEADLINE, session.upload_file(0, &file, None))
+        .await
+        .expect("upload must finish")
+        .unwrap();
+
+    assert_eq!(outcome, FileUploadOutcome::Committed);
+    let state = state.lock().unwrap();
+    assert_eq!(state.committed_file, file);
+    let frame_capacity = usize::from(u16::MAX) - DATA_OFFSET_LEN;
+    assert!(
+        state.largest_chunk <= frame_capacity,
+        "sent a {}-byte chunk, more than one frame carries",
+        state.largest_chunk
+    );
 }

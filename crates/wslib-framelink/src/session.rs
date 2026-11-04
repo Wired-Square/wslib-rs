@@ -53,6 +53,9 @@ const FILE_STEP_RESENDS: usize = 3;
 
 const FILE_RESTARTS: usize = 2;
 
+const MAX_FILE_DATA_CHUNK: usize =
+    u16::MAX as usize - wslib_framelink_protocol::file_xfer::DATA_OFFSET_LEN;
+
 const UNLOCK_ATTEMPTS: usize = 3;
 
 #[derive(Clone, Copy)]
@@ -404,12 +407,19 @@ impl FrameLinkSession {
     ) -> Result<FileUploadOutcome, Error> {
         use wslib_framelink_protocol::file_xfer::{FileBegin, file_crc32, pack_begin};
 
-        let chunk_size = self.capabilities().await?.max_file_chunk().ok_or_else(|| {
-            Error::Protocol(
-                "device does not advertise a file chunk size, so it has no file transfer"
-                    .to_string(),
-            )
-        })? as usize;
+        let chunk_size = self
+            .capabilities()
+            .await?
+            .max_file_chunk()
+            .filter(|&chunk| chunk > 0)
+            .ok_or_else(|| {
+                Error::Protocol(
+                    "device advertises no file chunk size, so it has no file transfer".to_string(),
+                )
+            })?;
+        let chunk_size = usize::try_from(chunk_size)
+            .unwrap_or(MAX_FILE_DATA_CHUNK)
+            .min(MAX_FILE_DATA_CHUNK);
 
         let begin = pack_begin(&FileBegin {
             target,

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.3
+
+- `Sessions::resolve_bound` documents that a session never bound resolves
+  without a secret, so a host moving its own bound secrets here copies them
+  first.
+- Floor: `wslib-auth` 0.1.5, whose bound secrets survive a clock step back
+  and are read with their session in one query.
+
 ## 0.1.2
 
 - `Sessions::bind` mints a secret bound to a session that resolves, kept in

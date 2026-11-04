@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.5
+
+- `Sessions::bind` keeps the secret it mints when the clock has stepped back
+  past the session's other secrets, where the prune deleted it.
+- `Sessions::lookup_bound` reads the session and its secrets in one query,
+  through a new `BoundSecretStore::find_bound` the sqlx stores answer. A
+  session removed while it was read was found with no secrets and admitted.
+  The default makes the two reads as before, so override it in a store of
+  your own.
+
 ## 0.1.4
 
 - `Sessions::bind` answers `None` when the session is removed while its

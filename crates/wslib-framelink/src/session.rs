@@ -56,6 +56,14 @@ const FILE_RESTARTS: usize = 2;
 const MAX_FILE_DATA_CHUNK: usize =
     u16::MAX as usize - wslib_framelink_protocol::file_xfer::DATA_OFFSET_LEN;
 
+fn declared_file_size(len: usize) -> Result<u32, Error> {
+    u32::try_from(len).map_err(|_| {
+        Error::Protocol(format!(
+            "a {len}-byte file is larger than FILE_BEGIN can declare"
+        ))
+    })
+}
+
 const UNLOCK_ATTEMPTS: usize = 3;
 
 #[derive(Clone, Copy)]
@@ -407,12 +415,7 @@ impl FrameLinkSession {
     ) -> Result<FileUploadOutcome, Error> {
         use wslib_framelink_protocol::file_xfer::{FileBegin, file_crc32, pack_begin};
 
-        let size = u32::try_from(data.len()).map_err(|_| {
-            Error::Protocol(format!(
-                "a {}-byte file is larger than FILE_BEGIN can declare",
-                data.len()
-            ))
-        })?;
+        let size = declared_file_size(data.len())?;
         let chunk_size = self
             .capabilities()
             .await?
@@ -1094,4 +1097,24 @@ async fn transmit_pipeline(
         acked: sent,
         nacked: 0,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_file_declares_its_size_up_to_what_file_begin_holds() {
+        let largest = usize::try_from(u32::MAX).unwrap();
+        assert_eq!(declared_file_size(0).unwrap(), 0);
+        assert_eq!(declared_file_size(largest).unwrap(), u32::MAX);
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn a_file_larger_than_file_begin_holds_is_refused() {
+        let too_large = usize::try_from(u32::MAX).unwrap() + 1;
+        let err = declared_file_size(too_large).unwrap_err();
+        assert!(err.to_string().contains("larger than FILE_BEGIN"), "{err}");
+    }
 }

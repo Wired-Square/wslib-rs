@@ -8,7 +8,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 
 use crate::{Role, unreserved};
 
@@ -41,6 +41,16 @@ impl MalformedIdentity {
     #[doc(hidden)]
     pub fn because(why: &'static str) -> Self {
         Self(why)
+    }
+}
+
+impl ConsoleIdentity {
+    /// Whether the account proved its password no longer than `window` before `now`, and not after it.
+    pub fn reauthenticated_within(&self, window: TimeDelta, now: DateTime<Utc>) -> bool {
+        self.reauthenticated_at.is_some_and(|at| {
+            let age = now - at;
+            age >= TimeDelta::zero() && age <= window
+        })
     }
 }
 
@@ -275,6 +285,22 @@ mod tests {
         let read: ConsoleIdentity = written.parse().unwrap();
         assert_eq!(read.reauthenticated_at, None);
         assert_eq!(read.to_string(), written);
+    }
+
+    #[test]
+    fn the_reauthentication_window_is_recent_and_never_in_the_future() {
+        let at = identity().reauthenticated_at.unwrap();
+        let window = TimeDelta::minutes(5);
+        let within = |now| identity().reauthenticated_within(window, now);
+        assert!(within(at));
+        assert!(within(at + window));
+        assert!(!within(at + window + TimeDelta::seconds(1)));
+        assert!(!within(at - TimeDelta::seconds(1)));
+        let never = ConsoleIdentity {
+            reauthenticated_at: None,
+            ..identity()
+        };
+        assert!(!never.reauthenticated_within(window, at));
     }
 
     #[test]

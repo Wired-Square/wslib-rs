@@ -407,6 +407,12 @@ impl FrameLinkSession {
     ) -> Result<FileUploadOutcome, Error> {
         use wslib_framelink_protocol::file_xfer::{FileBegin, file_crc32, pack_begin};
 
+        let size = u32::try_from(data.len()).map_err(|_| {
+            Error::Protocol(format!(
+                "a {}-byte file is larger than FILE_BEGIN can declare",
+                data.len()
+            ))
+        })?;
         let chunk_size = self
             .capabilities()
             .await?
@@ -423,7 +429,7 @@ impl FrameLinkSession {
 
         let begin = pack_begin(&FileBegin {
             target,
-            size: data.len() as u32,
+            size,
             crc32: file_crc32(data),
         });
 

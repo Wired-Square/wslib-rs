@@ -9,6 +9,8 @@
   accepted it was sent empty `FILE_DATA` frames without end.
 - `upload_file` caps a chunk at what one frame carries, 65 531 bytes. A
   larger advertised chunk had overflowed the frame's 16-bit length.
+- `upload_file` refuses a file over 4 GiB, whose size `FILE_BEGIN`'s 32-bit
+  field cannot hold, before it asks the device anything.
 
 ## 0.3.1
 

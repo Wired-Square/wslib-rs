@@ -8030,7 +8030,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "wslib-appliance-auth",
  "wslib-appliance-backup",
@@ -8261,7 +8261,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-types"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "chrono",
  "serde",

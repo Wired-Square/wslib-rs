@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.5
+
+- `AppManifest::options` and `AppLabel::options`: the `AppOption`s an app
+  reads, each a `String`, `Integer`, `Boolean` or `Strings` `AppOptionKind`,
+  required or with an optional default. `MANIFEST_SCHEMA` is 3; a manifest
+  declaring options is written at schema 3.
+- `AppManifest::check_options(values)`: fills defaults, and in
+  `CheckedOptions` lists the keys it dropped for naming no option and the
+  required options missing; a value of the wrong kind is
+  `OptionsError::WrongKind`.
+- `serde_json` is a dependency, no longer a dev-dependency.
+
 ## 0.1.4
 
 - `ConsoleIdentity::reauthenticated_within(window, now)`: whether the

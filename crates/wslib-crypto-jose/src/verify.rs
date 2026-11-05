@@ -11,20 +11,14 @@ pub(crate) fn signature(
     signature: &[u8],
     algorithms: &[&dyn SignatureVerificationAlgorithm],
 ) -> Result<(), Error> {
-    let (public_key, signature) = match (alg, &key.0) {
-        (_, Key::Ec { curve, x, y }) if curve.algorithm() == alg => {
-            (ec_point(x, y), ecdsa_sig_value(signature, x.len())?)
-        }
-        (Algorithm::Rs256, Key::Rsa { n, e }) => {
-            let bits = n.len() * 8 - n[0].leading_zeros() as usize;
-            if bits < 2048 {
-                return Err(Error::RsaTooSmall(bits));
-            }
-            (sequence(&[integer(n), integer(e)]), signature.to_vec())
-        }
-        (Algorithm::EdDsa, Key::Ed25519(x)) => (x.to_vec(), signature.to_vec()),
-        _ => return Err(Error::KeyMismatch(alg)),
+    if key.algorithm() != alg {
+        return Err(Error::KeyMismatch(alg));
+    }
+    let signature = match &key.0 {
+        Key::Ec { x, .. } => ecdsa_sig_value(signature, x.len())?,
+        _ => signature.to_vec(),
     };
+    let public_key = public_key(key);
     let (key_id, signature_id) = ids(alg);
     let mut matching = algorithms
         .iter()
@@ -47,6 +41,23 @@ pub(crate) fn signature(
     }
 }
 
+pub(crate) fn subject_public_key_info(key: &Jwk) -> Vec<u8> {
+    let (key_id, _) = ids(key.algorithm());
+    sequence(&[
+        tlv(0x30, key_id.as_ref()),
+        tlv(0x03, &[&[0][..], &public_key(key)].concat()),
+    ])
+}
+
+/// The key as a SubjectPublicKeyInfo's BIT STRING holds it.
+fn public_key(key: &Jwk) -> Vec<u8> {
+    match &key.0 {
+        Key::Ec { x, y, .. } => [&[0x04][..], x, y].concat(),
+        Key::Rsa { n, e } => sequence(&[integer(n), integer(e)]),
+        Key::Ed25519(x) => x.to_vec(),
+    }
+}
+
 fn ids(alg: Algorithm) -> (AlgorithmIdentifier, AlgorithmIdentifier) {
     match alg {
         Algorithm::Es256 => (alg_id::ECDSA_P256, alg_id::ECDSA_SHA256),
@@ -54,10 +65,6 @@ fn ids(alg: Algorithm) -> (AlgorithmIdentifier, AlgorithmIdentifier) {
         Algorithm::Rs256 => (alg_id::RSA_ENCRYPTION, alg_id::RSA_PKCS1_SHA256),
         Algorithm::EdDsa => (alg_id::ED25519, alg_id::ED25519),
     }
-}
-
-fn ec_point(x: &[u8], y: &[u8]) -> Vec<u8> {
-    [&[0x04][..], x, y].concat()
 }
 
 /// RFC 7518 §3.4's R || S as RFC 3279's ECDSA-Sig-Value.

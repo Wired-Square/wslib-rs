@@ -3,7 +3,35 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::base64url::encode;
-use crate::{Algorithm, Error, Members, base64url_member, object, string};
+use crate::{Algorithm, Fault, Members, base64url_member, object, string, verify};
+
+/// Why a JWK was refused; an ACME server answers each with badPublicKey.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum JwkError {
+    #[error("the JWK is not JSON")]
+    Json(#[source] serde_json::Error),
+    #[error("the JWK's {0} is malformed")]
+    Malformed(&'static str),
+    #[error("the JWK's {0} member is missing")]
+    Missing(&'static str),
+    #[error("the JWK carries private key members")]
+    PrivateKey,
+    #[error("the key type {0:?} is not supported")]
+    Unsupported(String),
+    #[error("the RSA key has {0} bits; 2048 is the least")]
+    RsaTooSmall(usize),
+}
+
+impl From<Fault> for JwkError {
+    fn from(fault: Fault) -> Self {
+        match fault {
+            Fault::NotJson(_, source) => Self::Json(source),
+            Fault::Missing(name) => Self::Missing(name),
+            Fault::Malformed(name) => Self::Malformed(name),
+        }
+    }
+}
 
 /// A public JSON Web Key: EC P-256 or P-384, RSA, or OKP Ed25519, equal by its RFC 7638 members.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -37,7 +65,7 @@ impl Curve {
         }
     }
 
-    pub(crate) fn algorithm(self) -> Algorithm {
+    fn algorithm(self) -> Algorithm {
         match self {
             Self::P256 => Algorithm::Es256,
             Self::P384 => Algorithm::Es384,
@@ -55,34 +83,34 @@ impl Curve {
 const PRIVATE_MEMBERS: [&str; 8] = ["d", "p", "q", "dp", "dq", "qi", "oth", "k"];
 
 impl Jwk {
-    /// Parses a public key, ignoring optional members such as `kid` and `use`.
-    pub fn from_json(json: &str) -> Result<Self, Error> {
+    /// Parses a public key, ignoring optional members such as `kid` and `use`; RSA needs 2048 bits or more.
+    pub fn from_json(json: &str) -> Result<Self, JwkError> {
         Self::from_members(&object(json.as_bytes(), "JWK")?)
     }
 
-    pub(crate) fn from_value(value: &Value) -> Result<Self, Error> {
-        Self::from_members(value.as_object().ok_or(Error::Malformed("JWK"))?)
+    pub(crate) fn from_value(value: &Value) -> Result<Self, JwkError> {
+        Self::from_members(value.as_object().ok_or(JwkError::Malformed("JWK"))?)
     }
 
-    fn from_members(members: &Members) -> Result<Self, Error> {
+    fn from_members(members: &Members) -> Result<Self, JwkError> {
         if PRIVATE_MEMBERS
             .iter()
             .any(|name| members.contains_key(*name))
         {
-            return Err(Error::PrivateKey);
+            return Err(JwkError::PrivateKey);
         }
         let key = match string(members, "kty")? {
             "EC" => {
                 let curve = match string(members, "crv")? {
                     "P-256" => Curve::P256,
                     "P-384" => Curve::P384,
-                    other => return Err(Error::UnsupportedKey(format!("EC {other}"))),
+                    other => return Err(JwkError::Unsupported(format!("EC {other}"))),
                 };
                 let coordinate = |name| {
                     let bytes = base64url_member(members, name)?;
                     (bytes.len() == curve.coordinate_len())
                         .then_some(bytes)
-                        .ok_or(Error::Malformed(name))
+                        .ok_or(JwkError::Malformed(name))
                 };
                 Key::Ec {
                     curve,
@@ -97,10 +125,15 @@ impl Jwk {
                         .first()
                         .is_some_and(|&first| first != 0)
                         .then_some(bytes)
-                        .ok_or(Error::Malformed(name))
+                        .ok_or(JwkError::Malformed(name))
                 };
+                let n = integer("n")?;
+                let bits = n.len() * 8 - n[0].leading_zeros() as usize;
+                if bits < 2048 {
+                    return Err(JwkError::RsaTooSmall(bits));
+                }
                 Key::Rsa {
-                    n: integer("n")?,
+                    n,
                     e: integer("e")?,
                 }
             }
@@ -108,13 +141,27 @@ impl Jwk {
                 "Ed25519" => Key::Ed25519(
                     base64url_member(members, "x")?
                         .try_into()
-                        .map_err(|_| Error::Malformed("x"))?,
+                        .map_err(|_| JwkError::Malformed("x"))?,
                 ),
-                other => return Err(Error::UnsupportedKey(format!("OKP {other}"))),
+                other => return Err(JwkError::Unsupported(format!("OKP {other}"))),
             },
-            other => return Err(Error::UnsupportedKey(other.to_owned())),
+            other => return Err(JwkError::Unsupported(other.to_owned())),
         };
         Ok(Self(key))
+    }
+
+    /// The one algorithm that suits the key (RFC 8555 §6.2).
+    pub fn algorithm(&self) -> Algorithm {
+        match &self.0 {
+            Key::Ec { curve, .. } => curve.algorithm(),
+            Key::Rsa { .. } => Algorithm::Rs256,
+            Key::Ed25519(_) => Algorithm::EdDsa,
+        }
+    }
+
+    /// The RFC 5280 SubjectPublicKeyInfo DER, to compare with a CSR's key.
+    pub fn subject_public_key_info(&self) -> Vec<u8> {
+        verify::subject_public_key_info(self)
     }
 
     /// The RFC 7638 form: required members only, in lexicographic order, no whitespace; also the form to store.

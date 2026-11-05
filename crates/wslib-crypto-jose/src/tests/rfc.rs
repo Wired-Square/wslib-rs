@@ -1,5 +1,5 @@
 use super::providers;
-use crate::{Algorithm, Error, FlattenedJws, Jwk, base64url, verify};
+use crate::{Algorithm, Error, FlattenedJws, Jwk, JwkError, base64url, verify};
 
 const RFC_7515_PAYLOAD: &str = concat!(
     "eyJpc3MiOiJqb2UiLA0KICJleHAiOjEzMDA4MTkzODAsDQogImh0dHA6Ly9leGFt",
@@ -110,7 +110,7 @@ fn rfc_7515_vectors_fail_over_another_input() {
 #[test]
 fn rfc_7515_a2_private_jwk_is_refused() {
     let json = format!(r#"{{"kty":"RSA","n":"{RFC_7515_A2_N}","e":"AQAB","d":"AQAB"}}"#);
-    assert!(matches!(Jwk::from_json(&json), Err(Error::PrivateKey)));
+    assert!(matches!(Jwk::from_json(&json), Err(JwkError::PrivateKey)));
 }
 
 #[test]
@@ -147,7 +147,7 @@ fn rfc_7515_a4_es512_is_unsupported() {
     );
     assert!(matches!(
         Jwk::from_json(p521),
-        Err(Error::UnsupportedKey(kty)) if kty == "EC P-521"
+        Err(JwkError::Unsupported(kty)) if kty == "EC P-521"
     ));
 }
 
@@ -179,7 +179,7 @@ fn rfc_8037_a1_private_key_is_refused() {
     let json = r#"{"kty":"OKP","crv":"Ed25519",
         "d":"nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A",
         "x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}"#;
-    assert!(matches!(Jwk::from_json(json), Err(Error::PrivateKey)));
+    assert!(matches!(Jwk::from_json(json), Err(JwkError::PrivateKey)));
 }
 
 #[test]

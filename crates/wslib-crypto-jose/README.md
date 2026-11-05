@@ -27,18 +27,29 @@ let thumbprint = key.thumbprint(); // for key authorisations
 - **`ProtectedHeader`**: `alg` (ES256, ES384, RS256 or EdDSA; `none`, HMAC
   and the rest are refused), `url`, an optional `nonce`, and exactly one of
   `jwk` or `kid`. A `crit` member is refused; other members are ignored.
-  Which requests need a nonce or a `jwk`, and the key change's inner JWS
-  rules (§7.3.5), are the caller's.
+  Which requests need a nonce or a `jwk` is the caller's rule.
 - **`FlattenedJws::verify`**: the `alg` must suit the key (ES256 with P-256,
-  ES384 with P-384, RS256 with RSA of 2048 bits or more, EdDSA with
-  Ed25519), then the signature verifies with the provider's
-  `signature_verification_algorithms`. A provider without the algorithm is
-  `Error::NoVerifier`, not a bad signature.
+  ES384 with P-384, RS256 with RSA, EdDSA with Ed25519), then the signature
+  verifies with the provider's `signature_verification_algorithms`.
+  `into_parts` gives up the header and payload.
+- **`FlattenedJws::key_change`**: on the outer JWS of a key change (§7.3.5),
+  verified with the account's key, checks the inner JWS: a `jwk`, no
+  nonce, the outer `url`, its own signature, and an `oldKey` that is the
+  account's. It returns the new key and the `account`; whether that is the
+  outer `kid`'s account and the new key is unused are the caller's checks.
+- **`Error::kind`**: the ACME error type to answer with: `Malformed`,
+  `BadSignatureAlgorithm` (an unsupported `alg`, or one that does not suit
+  the key; `Algorithm::ALL` is the list to offer), `BadPublicKey` (any
+  `JwkError`, or a key change's wrong `oldKey`), `BadSignature`, or
+  `ServerConfiguration` when the provider lacks an algorithm this crate
+  accepts.
 - **`Jwk`**: a public key, from JSON or through serde; a private member
-  (`d`, `p`, `k`, …) is refused, and optional ones (`kid`, `use`, `alg`)
-  are ignored. `to_canonical_json` is the RFC 7638 form, the one to store,
-  and `thumbprint` its SHA-256. Keys are equal when their canonical forms
-  are.
+  (`d`, `p`, `k`, …) or RSA under 2048 bits is refused, and optional
+  members (`kid`, `use`, `alg`) are ignored. `to_canonical_json` is the
+  RFC 7638 form, the one to store, and `thumbprint` its SHA-256. Keys are
+  equal when their canonical forms are. `algorithm` is the one `alg` that
+  suits it, and `subject_public_key_info` its DER, to compare with a CSR's
+  key (§11.1).
 
 Not here: signing, JWE, compact serialisation, JWT claims, and HS256, so an
 external account binding's MAC is the caller's.

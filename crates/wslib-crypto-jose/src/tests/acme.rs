@@ -10,7 +10,7 @@ use wslib_crypto::KeyAlgorithm;
 use super::providers;
 use super::rfc::{RFC_8037_A4_SIGNATURE, RFC_8037_A4_SIGNING_INPUT};
 use crate::base64url::{decode, encode};
-use crate::{Algorithm, Error, FlattenedJws, Jwk, KeyRef};
+use crate::{Algorithm, Error, ErrorKind, FlattenedJws, Jwk, JwkError, KeyChange, KeyRef};
 
 const ALGORITHMS: [Algorithm; 4] = [
     Algorithm::Es256,
@@ -52,6 +52,7 @@ struct TestKey {
     alg: Algorithm,
     signer: Box<dyn Signer>,
     jwk: Jwk,
+    spki: Vec<u8>,
 }
 
 impl TestKey {
@@ -66,9 +67,11 @@ impl TestKey {
             Algorithm::Rs256 => SignatureScheme::RSA_PKCS1_SHA256,
             _ => SignatureScheme::ED25519,
         };
+        let spki = signing.public_key().unwrap().to_vec();
         Self {
             alg,
-            jwk: jwk_of_spki(alg, &signing.public_key().unwrap()),
+            jwk: jwk_of_spki(alg, &spki),
+            spki,
             signer: signing.choose_scheme(&[scheme]).unwrap(),
         }
     }
@@ -247,14 +250,9 @@ fn an_rsa_key_under_2048_bits_is_refused() {
         let header = format!(
             r#"{{"alg":"RS256","url":"{URL}","jwk":{{"kty":"RSA","n":"{n}","e":"AQAB"}}}}"#
         );
-        let jws = parse_with_header(&header).unwrap();
-        let KeyRef::Jwk(key) = &jws.header().key else {
-            unreachable!()
-        };
-        assert!(matches!(
-            jws.verify(key, &ring::default_provider()),
-            Err(Error::RsaTooSmall(found)) if found == bits
-        ));
+        let error = parse_with_header(&header).unwrap_err();
+        assert!(matches!(error, Error::Key(JwkError::RsaTooSmall(found)) if found == bits));
+        assert_eq!(error.kind(), ErrorKind::BadPublicKey);
     }
 }
 
@@ -398,7 +396,10 @@ fn an_unprotected_header_or_general_serialisation_is_refused() {
 fn a_private_key_in_the_header_is_refused() {
     let jwk = r#"{"kty":"OKP","crv":"Ed25519","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo","d":"nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A"}"#;
     let header = format!(r#"{{"alg":"EdDSA","url":"{URL}","jwk":{jwk}}}"#);
-    assert!(matches!(parse_with_header(&header), Err(Error::PrivateKey)));
+    assert!(matches!(
+        parse_with_header(&header),
+        Err(Error::Key(JwkError::PrivateKey))
+    ));
 }
 
 #[test]
@@ -434,7 +435,10 @@ fn malformed_key_members_are_refused() {
             "x",
         ),
         (r#"{"kty":"RSA","n":"AAEB","e":"AQAB"}"#.to_owned(), "n"),
-        (r#"{"kty":"RSA","n":"AQAB","e":""}"#.to_owned(), "e"),
+        (
+            format!(r#"{{"kty":"RSA","n":"{}","e":""}}"#, encode(&[0xc0; 256])),
+            "e",
+        ),
         (
             format!(r#"{{"kty":"OKP","crv":"Ed25519","x":"{x31}"}}"#),
             "x",
@@ -442,16 +446,209 @@ fn malformed_key_members_are_refused() {
         (r#"{"kty":"OKP","crv":"Ed25519","x":7}"#.to_owned(), "x"),
     ] {
         assert!(
-            matches!(Jwk::from_json(&json), Err(Error::Malformed(found)) if found == member),
+            matches!(Jwk::from_json(&json), Err(JwkError::Malformed(found)) if found == member),
             "{json}"
         );
     }
     assert!(matches!(
         Jwk::from_json(r#"{"kty":"oct"}"#),
-        Err(Error::UnsupportedKey(_))
+        Err(JwkError::Unsupported(_))
     ));
     assert!(matches!(
         Jwk::from_json(r#"{"kty":"OKP","crv":"Ed448","x":""}"#),
-        Err(Error::UnsupportedKey(_))
+        Err(JwkError::Unsupported(_))
     ));
+}
+
+#[test]
+fn the_spki_and_algorithm_are_those_the_providers_give() {
+    for (name, provider) in providers() {
+        for alg in ALGORITHMS {
+            let key = TestKey::new(alg, &provider);
+            assert_eq!(
+                key.jwk.subject_public_key_info(),
+                key.spki,
+                "{alg} by {name}"
+            );
+            assert_eq!(key.jwk.algorithm(), alg);
+        }
+    }
+}
+
+#[test]
+fn all_algorithms_are_listed_by_their_alg_names() {
+    assert_eq!(
+        Algorithm::ALL.map(Algorithm::as_str),
+        ["ES256", "ES384", "RS256", "EdDSA"]
+    );
+}
+
+#[test]
+fn each_error_has_its_acme_kind() {
+    for (error, kind) in [
+        (Error::Malformed("payload"), ErrorKind::Malformed),
+        (Error::Missing("url"), ErrorKind::Malformed),
+        (Error::Critical, ErrorKind::Malformed),
+        (Error::BothJwkAndKid, ErrorKind::Malformed),
+        (Error::UrlMismatch, ErrorKind::Malformed),
+        (
+            Error::UnsupportedAlgorithm("none".into()),
+            ErrorKind::BadSignatureAlgorithm,
+        ),
+        (
+            Error::KeyMismatch(Algorithm::Es256),
+            ErrorKind::BadSignatureAlgorithm,
+        ),
+        (
+            Error::Key(JwkError::Malformed("x")),
+            ErrorKind::BadPublicKey,
+        ),
+        (
+            Error::Key(JwkError::Unsupported("oct".into())),
+            ErrorKind::BadPublicKey,
+        ),
+        (Error::OldKeyMismatch, ErrorKind::BadPublicKey),
+        (Error::BadSignature, ErrorKind::BadSignature),
+        (
+            Error::NoVerifier(Algorithm::Rs256),
+            ErrorKind::ServerConfiguration,
+        ),
+    ] {
+        assert_eq!(error.kind(), kind, "{error}");
+    }
+}
+
+const KEY_CHANGE_URL: &str = "https://ca.test/acme/key-change";
+const ACCOUNT: &str = "https://ca.test/acme/acct/1";
+
+fn inner_header(new: &TestKey) -> String {
+    format!(
+        r#"{{"alg":"{}","url":"{KEY_CHANGE_URL}","jwk":{}}}"#,
+        new.alg,
+        new.jwk.to_canonical_json()
+    )
+}
+
+fn key_change_payload(old_key: &Jwk) -> String {
+    format!(
+        r#"{{"account":"{ACCOUNT}","oldKey":{}}}"#,
+        old_key.to_canonical_json()
+    )
+}
+
+fn outer(old: &TestKey, inner: &str) -> FlattenedJws {
+    let header = format!(
+        r#"{{"alg":"{}","nonce":"bm9uY2U","url":"{KEY_CHANGE_URL}","kid":"{ACCOUNT}"}}"#,
+        old.alg
+    );
+    FlattenedJws::parse(old.jws(&header, inner.as_bytes()).as_bytes()).unwrap()
+}
+
+#[test]
+fn a_key_change_gives_the_new_key_and_account() {
+    for (_, provider) in providers() {
+        for (old_alg, new_alg) in [
+            (Algorithm::Es256, Algorithm::EdDsa),
+            (Algorithm::Rs256, Algorithm::Es384),
+        ] {
+            let (old, new) = (
+                TestKey::new(old_alg, &provider),
+                TestKey::new(new_alg, &provider),
+            );
+            let inner = new.jws(&inner_header(&new), key_change_payload(&old.jwk).as_bytes());
+            let outer = outer(&old, &inner);
+            outer.verify(&old.jwk, &provider).unwrap();
+            let KeyChange { new_key, account } = outer.key_change(&old.jwk, &provider).unwrap();
+            assert_eq!((new_key, account.as_str()), (new.jwk.clone(), ACCOUNT));
+            let (header, payload) = outer.into_parts();
+            assert_eq!(
+                (header.url.as_str(), payload),
+                (KEY_CHANGE_URL, inner.into_bytes())
+            );
+        }
+    }
+}
+
+#[test]
+fn a_key_change_refuses_each_broken_rule() {
+    let provider = ring::default_provider();
+    let (old, new) = (
+        TestKey::new(Algorithm::Es256, &provider),
+        TestKey::new(Algorithm::EdDsa, &provider),
+    );
+    let stranger = TestKey::new(Algorithm::Es384, &provider).jwk;
+    let header = inner_header(&new);
+    let payload = key_change_payload(&old.jwk);
+    let mut flipped = new.parts(&header, payload.as_bytes());
+    flipped[2] = encode(
+        &decode(&flipped[2])
+            .unwrap()
+            .iter()
+            .map(|byte| byte ^ 1)
+            .collect::<Vec<_>>(),
+    );
+    let private_old_key = payload.replacen(r#""kty""#, r#""d":"AQAB","kty""#, 1);
+    let cases: [(String, Error, ErrorKind); 9] = [
+        (
+            new.jws(
+                &header.replacen('{', r#"{"nonce":"bm9uY2U","#, 1),
+                payload.as_bytes(),
+            ),
+            Error::InnerNonce,
+            ErrorKind::Malformed,
+        ),
+        (
+            new.jws(
+                &format!(r#"{{"alg":"EdDSA","url":"{KEY_CHANGE_URL}","kid":"{ACCOUNT}"}}"#),
+                payload.as_bytes(),
+            ),
+            Error::InnerKid,
+            ErrorKind::Malformed,
+        ),
+        (
+            new.jws(
+                &header.replace("key-change", "new-order"),
+                payload.as_bytes(),
+            ),
+            Error::UrlMismatch,
+            ErrorKind::Malformed,
+        ),
+        (
+            assemble(&flipped),
+            Error::BadSignature,
+            ErrorKind::BadSignature,
+        ),
+        (
+            new.jws(&header, key_change_payload(&stranger).as_bytes()),
+            Error::OldKeyMismatch,
+            ErrorKind::BadPublicKey,
+        ),
+        (
+            new.jws(&header, private_old_key.as_bytes()),
+            Error::Key(JwkError::PrivateKey),
+            ErrorKind::BadPublicKey,
+        ),
+        (
+            new.jws(&header, br#"{"oldKey":{}}"#),
+            Error::Missing("account"),
+            ErrorKind::Malformed,
+        ),
+        (
+            new.jws(&header, format!(r#"{{"account":"{ACCOUNT}"}}"#).as_bytes()),
+            Error::Missing("oldKey"),
+            ErrorKind::Malformed,
+        ),
+        (
+            "{}".into(),
+            Error::Missing("protected"),
+            ErrorKind::Malformed,
+        ),
+    ];
+    for (inner, expected, kind) in cases {
+        let error = outer(&old, &inner)
+            .key_change(&old.jwk, &provider)
+            .unwrap_err();
+        assert_eq!(error.to_string(), expected.to_string());
+        assert_eq!(error.kind(), kind);
+    }
 }

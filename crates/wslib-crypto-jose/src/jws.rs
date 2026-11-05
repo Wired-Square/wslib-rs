@@ -15,6 +15,8 @@ pub enum Algorithm {
 }
 
 impl Algorithm {
+    pub const ALL: [Self; 4] = [Self::Es256, Self::Es384, Self::Rs256, Self::EdDsa];
+
     /// The `alg` value: `ES256`, `ES384`, `RS256` or `EdDSA`.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -26,7 +28,7 @@ impl Algorithm {
     }
 
     fn from_name(name: &str) -> Result<Self, Error> {
-        [Self::Es256, Self::Es384, Self::Rs256, Self::EdDsa]
+        Self::ALL
             .into_iter()
             .find(|algorithm| algorithm.as_str() == name)
             .ok_or_else(|| Error::UnsupportedAlgorithm(name.to_owned()))
@@ -79,6 +81,14 @@ impl ProtectedHeader {
     }
 }
 
+/// What a key change asks (RFC 8555 §7.3.5); the caller checks `account` is the outer `kid`'s and `new_key` is no account's yet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct KeyChange {
+    pub new_key: Jwk,
+    pub account: String,
+}
+
 /// A JWS in flattened JSON serialisation as RFC 8555 §6.2 allows it: one signature, no unprotected header.
 #[derive(Clone, Debug)]
 pub struct FlattenedJws {
@@ -116,6 +126,10 @@ impl FlattenedJws {
         &self.payload
     }
 
+    pub fn into_parts(self) -> (ProtectedHeader, Vec<u8>) {
+        (self.header, self.payload)
+    }
+
     /// Checks the header's `alg` suits `key` (RFC 8555 §6.2), then the signature, with the provider's verifiers.
     pub fn verify(&self, key: &Jwk, provider: &CryptoProvider) -> Result<(), Error> {
         verify::signature(
@@ -125,5 +139,31 @@ impl FlattenedJws {
             &self.signature,
             provider.signature_verification_algorithms.all,
         )
+    }
+
+    /// Reads a key change from this outer JWS, already verified with `old_key`, the account's key.
+    pub fn key_change(&self, old_key: &Jwk, provider: &CryptoProvider) -> Result<KeyChange, Error> {
+        let inner = Self::parse(&self.payload)?;
+        let KeyRef::Jwk(new_key) = &inner.header.key else {
+            return Err(Error::InnerKid);
+        };
+        if inner.header.nonce.is_some() {
+            return Err(Error::InnerNonce);
+        }
+        if inner.header.url != self.header.url {
+            return Err(Error::UrlMismatch);
+        }
+        inner.verify(new_key, provider)?;
+        let members = object(&inner.payload, "keyChange")?;
+        let account = string(&members, "account")?.to_owned();
+        let stated_old_key =
+            Jwk::from_value(members.get("oldKey").ok_or(Error::Missing("oldKey"))?)?;
+        if stated_old_key != *old_key {
+            return Err(Error::OldKeyMismatch);
+        }
+        Ok(KeyChange {
+            new_key: new_key.clone(),
+            account,
+        })
     }
 }

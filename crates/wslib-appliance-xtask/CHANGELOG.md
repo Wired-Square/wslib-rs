@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.4
+
+- `manifest.json` may declare `options`, at schema 3, with
+  `wslib-appliance-types` 0.1.5.
+
 ## 0.2.3
 
 - Renders for `wslib-appliance-store` 0.1.3 and `wslib-appliance-server`

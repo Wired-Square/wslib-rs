@@ -1,0 +1,23 @@
+[package]
+name = "wslib-crypto-jose"
+version = "0.1.0"
+description = "JWS in flattened JSON as an ACME server receives it: protected header rules, public JWKs with RFC 7638 thumbprints, and verification through the caller's rustls CryptoProvider."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[dependencies]
+# No provider: the caller's verifies.
+rustls = { version = "0.23.27", default-features = false }
+serde = "1.0.225"
+serde_json = "1.0.85"
+sha2 = "0.10.9"
+thiserror = "2.0.20"
+
+[dev-dependencies]
+rustls = { version = "0.23.27", default-features = false, features = ["aws_lc_rs", "ring", "std"] }
+wslib-crypto = { version = "0.1", path = "../wslib-crypto", registry = "wired-square" }

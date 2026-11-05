@@ -8496,6 +8496,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-crypto-jose"
+version = "0.1.0"
+dependencies = [
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.21",
+ "wslib-crypto",
+]
+
+[[package]]
 name = "wslib-crypto-x509"
 version = "0.1.7"
 dependencies = [

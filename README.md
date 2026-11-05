@@ -36,6 +36,7 @@ appliance chassis and every app beside it.
 | `wslib-cli`              | Tables or JSON, exit codes and config lookup                  |
 | `wslib-crypto`           | Keys via a rustls provider: generate, sign, fingerprint       |
 | `wslib-crypto-ca`        | A CA: requests, issuing under a profile, revocation lists     |
+| `wslib-crypto-jose`      | ACME's JWS: flattened JSON, JWK thumbprints, verify only      |
 | `wslib-crypto-x509`      | Certificates read, examined, chain-checked and self-signed    |
 | `wslib-db-sqlite`        | One SQLite database: WAL, migration chains, settings          |
 | `wslib-dns`              | DNS lookups that keep NXDOMAIN, NODATA and failures apart     |

@@ -8277,7 +8277,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-xtask"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "chrono",
  "clap",

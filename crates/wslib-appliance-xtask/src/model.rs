@@ -1590,6 +1590,22 @@ mod tests {
     }
 
     #[test]
+    fn a_label_declaring_options_needs_schema_3() {
+        let mut json: serde_json::Value = serde_json::from_str(LABEL).unwrap();
+        json["schema"] = 2.into();
+        json["options"] = serde_json::json!([{"name": "port", "kind": "integer", "default": 8080}]);
+        let problems = |json: &serde_json::Value| {
+            inspect_with(&with_docker(EXAMPLE), &json.to_string()).problems
+        };
+        assert_eq!(
+            problems(&json),
+            [format!("manifest.json: {}", ManifestError::OldSchema)]
+        );
+        json["schema"] = 3.into();
+        assert!(problems(&json).is_empty(), "{:#?}", problems(&json));
+    }
+
+    #[test]
     fn a_volume_at_under_or_above_what_the_image_ships_or_under_a_0700_dir_is_refused() {
         let binary = format!("/usr/bin/{}", checked(EXAMPLE).appliance.binary);
         let ui = wslib_appliance_config::default_ui_dir("myappliance");

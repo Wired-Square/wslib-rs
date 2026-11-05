@@ -507,8 +507,8 @@ fn each_error_has_its_acme_kind() {
             Error::Key(JwkError::Unsupported("oct".into())),
             ErrorKind::BadPublicKey,
         ),
-        (Error::OldKeyMismatch, ErrorKind::BadPublicKey),
-        (Error::BadSignature, ErrorKind::BadSignature),
+        (Error::OldKeyMismatch, ErrorKind::Malformed),
+        (Error::BadSignature, ErrorKind::Malformed),
         (
             Error::NoVerifier(Algorithm::Rs256),
             ErrorKind::ServerConfiguration,
@@ -616,12 +616,12 @@ fn a_key_change_refuses_each_broken_rule() {
         (
             assemble(&flipped),
             Error::BadSignature,
-            ErrorKind::BadSignature,
+            ErrorKind::Malformed,
         ),
         (
             new.jws(&header, key_change_payload(&stranger).as_bytes()),
             Error::OldKeyMismatch,
-            ErrorKind::BadPublicKey,
+            ErrorKind::Malformed,
         ),
         (
             new.jws(&header, private_old_key.as_bytes()),

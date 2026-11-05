@@ -57,14 +57,14 @@ pub enum Error {
     OldKeyMismatch,
 }
 
-/// The RFC 8555 §6.7 error type a refusal answers with, short of its `urn:ietf:params:acme:error:` prefix.
+/// The RFC 8555 §6.7 error type that answers a refusal, short of its `urn:ietf:params:acme:error:` prefix.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ErrorKind {
+    /// Also a signature that does not verify, which §6.7 gives no type of its own.
     Malformed,
     BadSignatureAlgorithm,
     BadPublicKey,
-    BadSignature,
     /// No ACME error type: the server is misconfigured and answers 500.
     ServerConfiguration,
 }
@@ -75,8 +75,7 @@ impl Error {
             Self::UnsupportedAlgorithm(_) | Self::KeyMismatch(_) => {
                 ErrorKind::BadSignatureAlgorithm
             }
-            Self::Key(_) | Self::OldKeyMismatch => ErrorKind::BadPublicKey,
-            Self::BadSignature => ErrorKind::BadSignature,
+            Self::Key(_) => ErrorKind::BadPublicKey,
             Self::NoVerifier(_) => ErrorKind::ServerConfiguration,
             Self::Json { .. }
             | Self::Malformed(_)
@@ -87,7 +86,9 @@ impl Error {
             | Self::NeitherJwkNorKid
             | Self::InnerNonce
             | Self::InnerKid
-            | Self::UrlMismatch => ErrorKind::Malformed,
+            | Self::UrlMismatch
+            | Self::OldKeyMismatch
+            | Self::BadSignature => ErrorKind::Malformed,
         }
     }
 }

@@ -4,15 +4,19 @@
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::{Map, Value};
 
 use crate::{MAX_APP_LEN, is_app_name, is_segment};
 
 /// The newest manifest schema this build reads, raised by every field or variant
 /// added; a manifest is written at its [`AppManifest::oldest_schema`].
-pub const MANIFEST_SCHEMA: u32 = 2;
+pub const MANIFEST_SCHEMA: u32 = 3;
 
 const MAX_VOLUMES: usize = 32;
 const MAX_LISTENERS: usize = 64;
+const MAX_OPTIONS: usize = 32;
+const MAX_OPTION_LABEL_LEN: usize = 64;
+const MAX_OPTION_DESCRIPTION_LEN: usize = 1024;
 const MAX_START_TIMEOUT_S: u32 = 3600;
 const MAX_VERSION_LEN: usize = 64;
 const MAX_REPOSITORY_LEN: usize = 255;
@@ -53,6 +57,8 @@ pub struct AppManifest {
     pub health: AppHealth,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub devices: Vec<AppDevice>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<AppOption>,
 }
 
 /// The OCI label a product's image carries its [`AppLabel`] in, as compact JSON.
@@ -81,6 +87,8 @@ pub struct AppLabel {
     pub health: AppHealth,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub devices: Vec<AppDevice>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<AppOption>,
 }
 
 /// An image pinned by digest, never by tag.
@@ -217,6 +225,62 @@ pub enum DeviceClass {
     Bluetooth,
 }
 
+/// A setting the app reads, its value given by the console.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(deny_unknown_fields)]
+#[non_exhaustive]
+pub struct AppOption {
+    pub name: String,
+    pub kind: AppOptionKind,
+    /// Must be given a value, so takes no default.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum AppOptionKind {
+    String,
+    /// A JSON number that fits an `i64`.
+    Integer,
+    Boolean,
+    /// A list of strings.
+    Strings,
+}
+
+/// Option values checked against a manifest's [`AppOption`]s.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[non_exhaustive]
+pub struct CheckedOptions {
+    /// Each value given or defaulted, by option name.
+    pub values: Map<String, Value>,
+    /// Required options with no value.
+    pub missing: Vec<String>,
+    /// Keys given that name no option, left out of `values`.
+    pub dropped: Vec<String>,
+}
+
+/// Why option values are refused; never names the value.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum OptionsError {
+    #[error("the value of option {option} is not of its kind")]
+    WrongKind { option: String },
+}
+
 /// A USB vendor ID, 4 hex digits, read in lowercase.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -291,6 +355,26 @@ pub enum ManifestError {
     VendorIdNotUsb,
     #[error("a device class is named twice")]
     RepeatedDevice,
+    #[error("the manifest declares more than {} options", MAX_OPTIONS)]
+    TooManyOptions,
+    #[error(
+        "an option's name is not one path segment of at most {} bytes",
+        MAX_APP_LEN
+    )]
+    OptionName,
+    #[error("an option's default is not of its kind")]
+    OptionDefault,
+    #[error("an option is both required and given a default")]
+    RequiredOptionDefault,
+    #[error("an option's label is longer than {} bytes", MAX_OPTION_LABEL_LEN)]
+    OptionLabel,
+    #[error(
+        "an option's description is longer than {} bytes",
+        MAX_OPTION_DESCRIPTION_LEN
+    )]
+    OptionDescription,
+    #[error("two options share a name")]
+    RepeatedOption,
 }
 
 impl AppManifest {
@@ -314,6 +398,7 @@ impl AppManifest {
             listeners: Vec::new(),
             health: AppHealth::default(),
             devices: Vec::new(),
+            options: Vec::new(),
         }
     }
 
@@ -332,6 +417,7 @@ impl AppManifest {
             listeners,
             health,
             devices,
+            options,
         } = label;
         Self {
             schema,
@@ -346,6 +432,7 @@ impl AppManifest {
             listeners,
             health,
             devices,
+            options,
         }
     }
 
@@ -389,7 +476,13 @@ impl AppManifest {
     /// The oldest schema that carries everything this manifest declares, so an
     /// older console still runs one that declares nothing newer.
     pub fn oldest_schema(&self) -> u32 {
-        if self.devices.is_empty() { 1 } else { 2 }
+        if !self.options.is_empty() {
+            3
+        } else if !self.devices.is_empty() {
+            2
+        } else {
+            1
+        }
     }
 
     /// The first rule this manifest breaks, if any. The supervisor still checks
@@ -397,7 +490,8 @@ impl AppManifest {
     /// clashes, the Docker names it derives, and the digest against `arches`.
     pub fn validate(&self) -> Result<(), ManifestError> {
         use ManifestError::*;
-        let (volumes, listeners, devices) = (&self.volumes, &self.listeners, &self.devices);
+        let (volumes, listeners, devices, options) =
+            (&self.volumes, &self.listeners, &self.devices, &self.options);
         // One at a time, in order: the caps bound every quadratic rule after them.
         require(self.schema <= MANIFEST_SCHEMA, NewerSchema)?;
         require(self.schema > 0, NoSchema)?;
@@ -446,7 +540,88 @@ impl AppManifest {
             VendorIdNotUsb,
         )?;
         // Quadratic, but a repeat turns up within one entry more than there are classes.
-        require(distinct(devices.iter().map(|d| d.class)), RepeatedDevice)
+        require(distinct(devices.iter().map(|d| d.class)), RepeatedDevice)?;
+        require(options.len() <= MAX_OPTIONS, TooManyOptions)?;
+        require(options.iter().all(|o| is_app_name(&o.name)), OptionName)?;
+        require(
+            options
+                .iter()
+                .all(|o| o.default.as_ref().is_none_or(|d| o.kind.admits(d))),
+            OptionDefault,
+        )?;
+        require(
+            options.iter().all(|o| !(o.required && o.default.is_some())),
+            RequiredOptionDefault,
+        )?;
+        require(
+            options
+                .iter()
+                .all(|o| has_at_most(&o.label, MAX_OPTION_LABEL_LEN)),
+            OptionLabel,
+        )?;
+        require(
+            options
+                .iter()
+                .all(|o| has_at_most(&o.description, MAX_OPTION_DESCRIPTION_LEN)),
+            OptionDescription,
+        )?;
+        require(distinct(options.iter().map(|o| &o.name)), RepeatedOption)
+    }
+
+    /// `values` with each absent option's default filled in and keys naming no
+    /// option dropped; a required option still absent is listed, not refused.
+    pub fn check_options(
+        &self,
+        values: &Map<String, Value>,
+    ) -> Result<CheckedOptions, OptionsError> {
+        let mut checked = CheckedOptions::default();
+        for option in &self.options {
+            match values.get(&option.name).or(option.default.as_ref()) {
+                Some(value) if option.kind.admits(value) => {
+                    checked.values.insert(option.name.clone(), value.clone());
+                }
+                Some(_) => {
+                    return Err(OptionsError::WrongKind {
+                        option: option.name.clone(),
+                    });
+                }
+                None if option.required => checked.missing.push(option.name.clone()),
+                None => {}
+            }
+        }
+        checked.dropped = values
+            .keys()
+            .filter(|key| !self.options.iter().any(|o| &o.name == *key))
+            .cloned()
+            .collect();
+        Ok(checked)
+    }
+}
+
+impl AppOption {
+    /// An optional option with no default, label or description.
+    pub fn new(name: impl Into<String>, kind: AppOptionKind) -> Self {
+        Self {
+            name: name.into(),
+            kind,
+            required: false,
+            default: None,
+            label: None,
+            description: None,
+        }
+    }
+}
+
+impl AppOptionKind {
+    fn admits(self, value: &Value) -> bool {
+        match self {
+            Self::String => value.is_string(),
+            Self::Integer => value.is_i64(),
+            Self::Boolean => value.is_boolean(),
+            Self::Strings => value
+                .as_array()
+                .is_some_and(|items| items.iter().all(Value::is_string)),
+        }
     }
 }
 
@@ -490,6 +665,14 @@ impl<'de> Deserialize<'de> for UsbVendorId {
 
 fn require(holds: bool, refusal: ManifestError) -> Result<(), ManifestError> {
     if holds { Ok(()) } else { Err(refusal) }
+}
+
+fn is_false(b: &bool) -> bool {
+    !b
+}
+
+fn has_at_most(text: &Option<String>, max_len: usize) -> bool {
+    text.as_ref().is_none_or(|t| t.len() <= max_len)
 }
 
 fn distinct<T: PartialEq>(items: impl IntoIterator<Item = T>) -> bool {
@@ -726,9 +909,9 @@ mod tests {
 
     #[test]
     fn a_newer_manifest_reads_its_schema_and_nothing_else() {
-        let newer = r#"{"schema":3,"new":1}"#;
+        let newer = r#"{"schema":4,"new":1}"#;
         let read: ManifestSchema = serde_json::from_str(newer).unwrap();
-        assert_eq!(read.schema, 3);
+        assert_eq!(read.schema, 4);
         assert!(serde_json::from_str::<AppManifest>(newer).is_err());
         assert!(serde_json::from_str::<ManifestSchema>("{}").is_err());
     }
@@ -1130,5 +1313,277 @@ mod tests {
             device(DeviceClass::UsbSerial, &["303a"]),
         ]);
         assert_eq!(manifest.validate(), Err(ManifestError::RepeatedDevice));
+    }
+
+    fn with_options(options: Vec<AppOption>) -> AppManifest {
+        let mut manifest = declared();
+        manifest.options = options;
+        manifest.schema = manifest.oldest_schema();
+        manifest
+    }
+
+    fn options_refusal(change: impl FnOnce(&mut AppOption)) -> Result<(), ManifestError> {
+        let mut option = AppOption::new("o", AppOptionKind::String);
+        change(&mut option);
+        with_options(vec![option]).validate()
+    }
+
+    fn values(json: serde_json::Value) -> Map<String, Value> {
+        json.as_object().unwrap().clone()
+    }
+
+    fn settings() -> AppManifest {
+        let mut port = AppOption::new("port", AppOptionKind::Integer);
+        port.default = Some(8080.into());
+        let mut token = AppOption::new("token", AppOptionKind::String);
+        token.required = true;
+        with_options(vec![
+            port,
+            token,
+            AppOption::new("verbose", AppOptionKind::Boolean),
+            AppOption::new("hosts", AppOptionKind::Strings),
+        ])
+    }
+
+    #[test]
+    fn options_have_a_snake_case_kind_and_omit_what_they_leave_unset_on_the_wire() {
+        let mut json = serde_json::to_value(declared()).unwrap();
+        json["schema"] = 3.into();
+        json["options"] = serde_json::json!([
+            {"name": "port", "kind": "integer", "default": 8080},
+            {
+                "name": "token", "kind": "string", "required": true,
+                "label": "Token", "description": "The upstream's API token."
+            },
+            {"name": "verbose", "kind": "boolean"},
+            {"name": "hosts", "kind": "strings", "default": ["a", "b"]},
+        ]);
+        let read: AppManifest = serde_json::from_value(json.clone()).unwrap();
+        let mut token = AppOption::new("token", AppOptionKind::String);
+        token.required = true;
+        token.label = Some("Token".to_string());
+        token.description = Some("The upstream's API token.".to_string());
+        let mut port = AppOption::new("port", AppOptionKind::Integer);
+        port.default = Some(8080.into());
+        let mut hosts = AppOption::new("hosts", AppOptionKind::Strings);
+        hosts.default = Some(serde_json::json!(["a", "b"]));
+        let expected = with_options(vec![
+            port,
+            token,
+            AppOption::new("verbose", AppOptionKind::Boolean),
+            hosts,
+        ]);
+        assert_eq!(read, expected);
+        assert_eq!(read.validate(), Ok(()));
+        assert_eq!(serde_json::to_value(&read).unwrap(), json);
+    }
+
+    #[test]
+    fn a_label_carries_its_options_to_the_manifest() {
+        let manifest = settings();
+        let mut json = serde_json::to_value(&manifest).unwrap();
+        json.as_object_mut().unwrap().remove("image");
+        let label: AppLabel = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&label).unwrap(), json);
+        assert_eq!(
+            AppManifest::from_label(label, manifest.image.clone()),
+            manifest
+        );
+    }
+
+    #[test]
+    fn a_manifest_with_options_needs_schema_3() {
+        let manifest = settings();
+        assert_eq!(manifest.schema, 3);
+        assert_eq!(manifest.validate(), Ok(()));
+        let mut both = with_devices(vec![device(DeviceClass::Video, &[])]);
+        both.options = manifest.options.clone();
+        assert_eq!(both.oldest_schema(), 3);
+        for schema in [1, 2] {
+            assert_eq!(
+                refusal(|m| {
+                    m.options = manifest.options.clone();
+                    m.schema = schema;
+                }),
+                Err(ManifestError::OldSchema)
+            );
+        }
+    }
+
+    #[test]
+    fn a_manifest_without_options_keeps_its_schema_and_has_no_options_key() {
+        assert_eq!(declared().oldest_schema(), 1);
+        assert!(
+            serde_json::to_value(declared())
+                .unwrap()
+                .get("options")
+                .is_none()
+        );
+        assert_eq!(
+            with_devices(vec![device(DeviceClass::Video, &[])]).oldest_schema(),
+            2
+        );
+        assert_eq!(refusal(|m| m.schema = 3), Ok(()));
+    }
+
+    #[test]
+    fn an_option_is_named_like_a_listener() {
+        for name in ["", "a b", "a/b", "..", &"a".repeat(MAX_APP_LEN + 1)] {
+            assert_eq!(
+                options_refusal(|o| o.name = name.to_string()),
+                Err(ManifestError::OptionName),
+                "{name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_option_is_named_once() {
+        let manifest = with_options(vec![
+            AppOption::new("o", AppOptionKind::String),
+            AppOption::new("o", AppOptionKind::Integer),
+        ]);
+        assert_eq!(manifest.validate(), Err(ManifestError::RepeatedOption));
+    }
+
+    #[test]
+    fn options_are_capped_before_their_repeat_check() {
+        let options = |n: usize| {
+            (0..n)
+                .map(|i| AppOption::new(format!("o{i}"), AppOptionKind::String))
+                .collect()
+        };
+        assert_eq!(with_options(options(MAX_OPTIONS)).validate(), Ok(()));
+        assert_eq!(
+            with_options(options(MAX_OPTIONS + 1)).validate(),
+            Err(ManifestError::TooManyOptions)
+        );
+        let started = std::time::Instant::now();
+        assert_eq!(
+            with_options(options(MAX_OPTIONS * 1000)).validate(),
+            Err(ManifestError::TooManyOptions)
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    fn an_options_default_is_of_its_kind() {
+        use AppOptionKind::*;
+        use serde_json::json;
+        for (kind, default) in [
+            (String, json!(1)),
+            (String, json!(null)),
+            (Integer, json!("1")),
+            (Integer, json!(1.5)),
+            (Integer, json!(u64::MAX)),
+            (Boolean, json!("true")),
+            (Strings, json!("a")),
+            (Strings, json!(["a", 1])),
+        ] {
+            assert_eq!(
+                options_refusal(|o| {
+                    o.kind = kind;
+                    o.default = Some(default.clone());
+                }),
+                Err(ManifestError::OptionDefault),
+                "{kind:?} {default}"
+            );
+        }
+        for (kind, default) in [
+            (String, json!("")),
+            (Integer, json!(i64::MIN)),
+            (Boolean, json!(false)),
+            (Strings, json!([])),
+        ] {
+            assert_eq!(
+                options_refusal(|o| {
+                    o.kind = kind;
+                    o.default = Some(default.clone());
+                }),
+                Ok(()),
+                "{kind:?} {default}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_required_option_takes_no_default() {
+        assert_eq!(
+            options_refusal(|o| {
+                o.required = true;
+                o.default = Some("x".into());
+            }),
+            Err(ManifestError::RequiredOptionDefault)
+        );
+    }
+
+    #[test]
+    fn an_options_label_and_description_are_capped() {
+        let text = |len: usize| Some("a".repeat(len));
+        assert_eq!(
+            options_refusal(|o| o.label = text(MAX_OPTION_LABEL_LEN)),
+            Ok(())
+        );
+        assert_eq!(
+            options_refusal(|o| o.label = text(MAX_OPTION_LABEL_LEN + 1)),
+            Err(ManifestError::OptionLabel)
+        );
+        assert_eq!(
+            options_refusal(|o| o.description = text(MAX_OPTION_DESCRIPTION_LEN)),
+            Ok(())
+        );
+        assert_eq!(
+            options_refusal(|o| o.description = text(MAX_OPTION_DESCRIPTION_LEN + 1)),
+            Err(ManifestError::OptionDescription)
+        );
+    }
+
+    #[test]
+    fn checking_options_fills_defaults_and_lists_dropped_keys_and_missing_required_ones() {
+        let checked = settings()
+            .check_options(&values(
+                serde_json::json!({"verbose": true, "colour": "red"}),
+            ))
+            .unwrap();
+        assert_eq!(
+            checked.values,
+            values(serde_json::json!({"port": 8080, "verbose": true}))
+        );
+        assert_eq!(checked.missing, ["token"]);
+        assert_eq!(checked.dropped, ["colour"]);
+    }
+
+    #[test]
+    fn checking_options_accepts_a_value_of_each_kind_over_the_default() {
+        let given = values(serde_json::json!({
+            "port": -1, "token": "t", "verbose": false, "hosts": ["a"]
+        }));
+        let checked = settings().check_options(&given).unwrap();
+        assert_eq!(checked.values, given);
+        assert!(checked.missing.is_empty() && checked.dropped.is_empty());
+    }
+
+    #[test]
+    fn checking_options_refuses_a_value_of_the_wrong_kind_naming_the_option() {
+        for given in [
+            serde_json::json!({"port": "80"}),
+            serde_json::json!({"port": null}),
+            serde_json::json!({"hosts": [1]}),
+        ] {
+            let refused = settings()
+                .check_options(&values(given.clone()))
+                .unwrap_err();
+            let option = given.as_object().unwrap().keys().next().unwrap().clone();
+            assert_eq!(
+                refused,
+                OptionsError::WrongKind {
+                    option: option.clone()
+                }
+            );
+            assert_eq!(
+                refused.to_string(),
+                format!("the value of option {option} is not of its kind")
+            );
+        }
     }
 }

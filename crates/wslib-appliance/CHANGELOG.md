@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.10
+
+- Pins `wslib-appliance-types` at 0.1.5.
+
 ## 0.1.9
 
 - Pins `wslib-appliance-types` at 0.1.4.

@@ -1641,7 +1641,10 @@ impl Sections for Reporting {
             label: name.to_uppercase(),
         };
         [
-            ("gauges".to_string(), vec![item("g1"), item("g2")]),
+            (
+                "gauges".to_string(),
+                vec![item("g1"), item("g2"), item("opca.acme"), item("x~y")],
+            ),
             ("dials".to_string(), vec![item("d1")]),
         ]
         .into()
@@ -1839,7 +1842,9 @@ async fn inspect_reports_a_products_items_only_for_the_sections_the_bundle_carri
         seen["items"],
         json!({ "gauges": [
             { "name": "g1", "label": "G1" },
-            { "name": "g2", "label": "G2" }
+            { "name": "g2", "label": "G2" },
+            { "name": "opca.acme", "label": "OPCA.ACME" },
+            { "name": "x~y", "label": "X~Y" }
         ] })
     );
 }
@@ -1966,6 +1971,74 @@ async fn a_blocked_section_is_named_at_inspect_and_refused_before_the_proof_on_e
 }
 
 #[tokio::test]
+async fn an_item_named_as_an_app_is_with_a_dot_or_a_tilde_restores() {
+    let sections = Reporting::default();
+    let (app, admin) = session_over(sections.clone()).await;
+    let bundle = take(&app, &admin).await;
+    let chosen = json!({ "app": ["gauges"], "items": { "gauges": ["opca.acme", "x~y"] } });
+    let restored = restore_chosen(&app, &admin, &bundle, chosen).await;
+    assert_eq!(restored.status(), StatusCode::OK);
+    let chosen = sections.restored.lock().unwrap().take().expect("ran");
+    assert_eq!(
+        chosen.items["gauges"],
+        ["opca.acme".to_string(), "x~y".to_string()].into()
+    );
+}
+
+#[tokio::test]
+async fn an_item_the_product_does_not_list_for_its_section_is_refused_by_name() {
+    let sections = Reporting::default();
+    let (app, admin) = session_over(sections.clone()).await;
+    let bundle = take(&app, &admin).await;
+    let chosen = json!({ "app": ["gauges"], "items": { "gauges": ["g1", "nope"] } });
+    let refused = restore_chosen(&app, &admin, &bundle, chosen).await;
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    assert!(body_text(refused).await.contains("“nope”"));
+    assert!(sections.restored.lock().unwrap().is_none());
+
+    let installed = Installed::default();
+    let (app, admin) = session_over(installed.clone()).await;
+    installed.now(&["dials"]);
+    let bundle = take(&app, &admin).await;
+    let chosen = json!({ "app": ["dials"], "items": { "dials": ["a1"] } });
+    let refused = restore_chosen(&app, &admin, &bundle, chosen).await;
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    assert!(body_text(refused).await.contains("“a1”"));
+}
+
+/// Choices every restore route refuses: an item outside a chosen section, too
+/// many, or one not named as an item is.
+pub(crate) fn bad_item_choices() -> [serde_json::Value; 3] {
+    let named = |count: usize| (0..count).map(|i| format!("i{i}")).collect::<Vec<_>>();
+    [
+        json!({ "app": ["gauges"], "items": { "dials": ["d1"] } }),
+        json!({ "app": ["gauges", "dials"], "items": {
+            "gauges": named(MOST_ITEMS_CHOSEN), "dials": ["d1"]
+        } }),
+        json!({ "app": ["gauges"], "items": { "gauges": ["an item"] } }),
+    ]
+}
+
+#[tokio::test]
+async fn a_first_run_restore_refuses_a_bad_item_choice_and_claims_nothing() {
+    let (app, admin) = session_over(Reporting::default()).await;
+    let bundle = take(&app, &admin).await;
+    let mut tx = app.store().begin().await.unwrap();
+    Store::erase_platform(&mut tx).await.unwrap();
+    tx.commit().await.unwrap();
+    for mut sections in bad_item_choices() {
+        sections["accounts"] = json!(true);
+        let refused = app
+            .post("/api/onboarding/restore")
+            .json(json!({ "passphrase": PASSPHRASE, "bundle": bundle, "sections": sections }))
+            .send()
+            .await;
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "{sections}");
+        assert_eq!(app.store().user_count().await.unwrap(), 0);
+    }
+}
+
+#[tokio::test]
 async fn a_restore_choosing_a_name_that_is_not_one_or_too_many_is_refused_before_the_proof() {
     let (app, admin) = session_over(Reporting::default()).await;
     let choosing = |names: Vec<String>| {
@@ -2008,13 +2081,7 @@ async fn a_restore_choosing_items_outside_a_chosen_section_too_many_or_not_named
     let named = |count: usize| (0..count).map(|i| format!("i{i}")).collect::<Vec<_>>();
 
     let rows = app.store().audit(100, None).await.unwrap().items.len();
-    for sections in [
-        json!({ "app": ["gauges"], "items": { "dials": ["d1"] } }),
-        json!({ "app": ["gauges", "dials"], "items": {
-            "gauges": named(MOST_ITEMS_CHOSEN), "dials": ["d1"]
-        } }),
-        json!({ "app": ["gauges"], "items": { "gauges": ["an item"] } }),
-    ] {
+    for sections in bad_item_choices() {
         assert_eq!(choosing(sections).await.status(), StatusCode::BAD_REQUEST);
     }
     assert_eq!(

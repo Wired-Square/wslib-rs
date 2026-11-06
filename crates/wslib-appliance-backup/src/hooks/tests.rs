@@ -15,7 +15,7 @@ use wslib_secret::Secret;
 use super::*;
 use crate::LocalBackups;
 use crate::routes::ROOM_BESIDE_A_BUNDLE;
-use crate::routes::tests::{BLOCKED, Hold, Named, PASSPHRASE, Padded, wait_at};
+use crate::routes::tests::{BLOCKED, Hold, Named, PASSPHRASE, Padded, bad_item_choices, wait_at};
 
 const NAME: &str = "widget-monitor";
 
@@ -392,6 +392,23 @@ async fn a_restore_outside_the_application_half_or_of_a_blob_this_build_would_no
         .await;
     assert_eq!(refused.status(), StatusCode::PAYLOAD_TOO_LARGE);
     untouched(&app, &gauges).await;
+}
+
+#[tokio::test]
+async fn a_restore_refuses_a_bad_item_choice_and_changes_nothing() {
+    let gauges = Gauges::default();
+    let app = app(gauges.clone()).await;
+    let blob = captured_then_changed(&app).await;
+    for mut chosen in bad_item_choices() {
+        chosen["trusted_cas"] = json!(true);
+        let refused = app
+            .hook("POST", "/v1/backup/restore")
+            .json(json!({ "chosen": chosen, "sections": blob }))
+            .send()
+            .await;
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "{chosen}");
+        untouched(&app, &gauges).await;
+    }
 }
 
 #[tokio::test]

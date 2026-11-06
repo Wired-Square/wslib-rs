@@ -65,7 +65,8 @@ pub trait Sections: Clone + Send + Sync + 'static {
     }
 
     /// The items within each section of `from` a restore may choose among,
-    /// shown at inspect; a section absent has none to choose.
+    /// shown at inspect; a section absent has none to choose. A restore
+    /// refuses an item not named as an app is.
     fn items(&self, _from: &Bundle) -> BTreeMap<String, Vec<SectionItem>> {
         BTreeMap::new()
     }

@@ -23,7 +23,7 @@ use axum::response::Response;
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
-use wslib_appliance_core::backend::{self, HookCaller, serves_tls};
+use wslib_appliance_core::backend::{self, HookCaller, is_app_name as is_item_name, serves_tls};
 use wslib_appliance_core::tls::TlsError;
 use wslib_appliance_core::{
     Actor, Admin, ApiError, ApplianceState, Identity, Mount, Reached, SessionAdmin, Unclaimed,
@@ -406,6 +406,19 @@ impl<S: Sections, H: HostHalf> Engine<S, H> {
             .into_iter()
             .partition(|name| ours.contains(name));
         applied.items.retain(|name, _| applied.app.contains(name));
+        let offered = self.items(&bundle, ours);
+        let unoffered = applied.items.iter().find_map(|(section, items)| {
+            let listed = offered.get(section).map_or(&[][..], Vec::as_slice);
+            items
+                .iter()
+                .find(|item| !listed.iter().any(|o| &o.name == *item))
+                .map(|item| (section, item))
+        });
+        if let Some((section, item)) = unoffered {
+            return Err(ApiError::BadRequest(format!(
+                "this backup's “{section}” has no item “{item}” to choose"
+            )));
+        }
         if !applied.any() {
             return Err(ApiError::BadRequest(
                 "choose at least one section this backup carries".to_string(),
@@ -935,6 +948,27 @@ async fn inspect<S: Sections, H: HostHalf, R: Caller>(
     }))
 }
 
+/// Refuses too many sections or items, a misnamed one, or an item outside a
+/// chosen section.
+pub(crate) fn check_chosen(chosen: &Chosen) -> Result<(), ApiError> {
+    let sections = &chosen.app;
+    if sections.len() > MOST_SECTIONS_CHOSEN || !sections.iter().all(|name| is_section_name(name)) {
+        return Err(ApiError::BadRequest(format!(
+            "choose at most {MOST_SECTIONS_CHOSEN} of this app's sections, each by its name"
+        )));
+    }
+    let items = &chosen.items;
+    if !items.keys().all(|name| sections.contains(name))
+        || items.values().map(BTreeSet::len).sum::<usize>() > MOST_ITEMS_CHOSEN
+        || !items.values().flatten().all(|name| is_item_name(name))
+    {
+        return Err(ApiError::BadRequest(format!(
+            "choose at most {MOST_ITEMS_CHOSEN} items, each by its name and within a section chosen"
+        )));
+    }
+    Ok(())
+}
+
 /// A restore of the accounts ends every session, the caller's too, and the
 /// report says so. A bad section choice or a blocked section is refused before
 /// the proof, which it does not spend; any refusal after it has spent it.
@@ -945,23 +979,11 @@ async fn restore<S: Sections, H: HostHalf, R: Caller, T: Holds>(
     reached: Reached,
     Json(body): Json<RestoreBundle>,
 ) -> Result<Json<RestoreReport>, ApiError> {
-    let chosen = &body.sections.app;
-    if chosen.len() > MOST_SECTIONS_CHOSEN || !chosen.iter().all(|name| is_section_name(name)) {
-        return Err(ApiError::BadRequest(format!(
-            "choose at most {MOST_SECTIONS_CHOSEN} of this app's sections, each by its name"
-        )));
-    }
-    let items = &body.sections.items;
-    if !items.keys().all(|name| chosen.contains(name))
-        || items.values().map(BTreeSet::len).sum::<usize>() > MOST_ITEMS_CHOSEN
-        || !items.values().flatten().all(|name| is_section_name(name))
-    {
-        return Err(ApiError::BadRequest(format!(
-            "choose at most {MOST_ITEMS_CHOSEN} items, each by its name and within a section chosen"
-        )));
-    }
+    check_chosen(&body.sections)?;
     let ours = backups.sections.names().await?;
-    backups.refuse_blocked(&app.store, chosen).await?;
+    backups
+        .refuse_blocked(&app.store, &body.sections.app)
+        .await?;
     caller.prove(&app, &reached, body.proof, "restore").await?;
     let open = OpenBundle {
         passphrase: body.passphrase,
@@ -994,6 +1016,7 @@ async fn restore_unclaimed<S: Sections, H: HostHalf>(
     State(app): State<ApplianceState>,
     Json(body): Json<RestoreUnclaimed>,
 ) -> Result<Json<RestoreReport>, ApiError> {
+    body.sections.as_ref().map(check_chosen).transpose()?;
     let open = OpenBundle {
         passphrase: body.passphrase,
         bundle: body.bundle,

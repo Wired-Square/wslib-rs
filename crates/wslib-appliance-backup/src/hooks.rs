@@ -26,7 +26,7 @@ use wslib_appliance_types::backup::{MAX_BUNDLE_LEN, RestoreReport};
 use wslib_appliance_types::hooks::{AppInspection, AppRestore};
 use wslib_appliance_types::{TrustedCa, TrustedCert};
 
-use crate::routes::{Engine, Restorer, Turn, bundle_sized, to_completion, try_take};
+use crate::routes::{Engine, Restorer, Turn, bundle_sized, check_chosen, to_completion, try_take};
 use crate::{BackupError, Bundle, Sections, Snapshot};
 
 pub(crate) const APP_SECTIONS: &str = "appliance-app-sections";
@@ -211,6 +211,7 @@ async fn restore<S: Sections>(
                 .to_string(),
         ));
     }
+    check_chosen(&body.chosen)?;
     let bundle = hooked.opened(body.sections)?;
     let ours = hooked.engine.sections.names().await?;
     let carried = body.chosen.carried_by(&bundle.header().contains).app;

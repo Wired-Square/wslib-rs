@@ -90,8 +90,8 @@ use wslib_homeassistant::ingress::Peers;
 /// The handle a consumer's tasks stop on. See [`Server::shutdown`].
 pub use wslib_appliance_core::CancellationToken;
 pub use wslib_appliance_core::{
-    About, Actor, Admin, ApiError, ApplianceState, BackupHooks, Clock, HostAdmin, INGRESS_SOURCE,
-    Identity, LOCAL_ACTOR, Logs, Mount, Notes, Operator, Principal, ProductAbout,
+    About, Actor, Admin, ApiError, ApplianceState, BackupHooks, Clock, HookCaller, HostAdmin,
+    INGRESS_SOURCE, Identity, LOCAL_ACTOR, Logs, Mount, Notes, Operator, Principal, ProductAbout,
     REAUTHENTICATION_WINDOW, Reached, Reconciled, RequestBase, ResolveCaller, ServeError,
     SessionAdmin, TaskTable, Unclaimed, Viewer, audit, boottime, box_id, clean_name, daemon, feed,
     host_admin_only, hostname, logs, reauthenticate, spawn_sweeper, sse, tls,

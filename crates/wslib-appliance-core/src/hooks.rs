@@ -102,16 +102,28 @@ impl std::fmt::Debug for Hooks {
 #[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) struct HookArrival;
 
-/// Backup routes, nested under `/v1/backup`, on a state of the product's own.
+impl BackupHooks {
+    /// Backup routes, nested under `/v1/backup`, on the state `state` makes from the chassis's.
+    pub fn routes<S, F>(routes: Router<S>, state: F) -> Self
+    where
+        ApplianceState: FromRef<S>,
+        S: Clone + Send + Sync + 'static,
+        F: Fn(ApplianceState) -> S + Send + Sync + 'static,
+    {
+        Self(Arc::new(move |chassis| {
+            routes.clone().with_state(state(chassis))
+        }))
+    }
+}
+
+/// [`BackupHooks::routes`], by its earlier name.
 pub fn backup_hooks<S, F>(routes: Router<S>, state: F) -> BackupHooks
 where
     ApplianceState: FromRef<S>,
     S: Clone + Send + Sync + 'static,
     F: Fn(ApplianceState) -> S + Send + Sync + 'static,
 {
-    BackupHooks(Arc::new(move |chassis| {
-        routes.clone().with_state(state(chassis))
-    }))
+    BackupHooks::routes(routes, state)
 }
 
 pub fn hooks(state: &ApplianceState) -> Router {

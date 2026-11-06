@@ -8,12 +8,13 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{post, put};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
-use wslib_appliance_core::backend::{self, SESSION_COOKIE, prove_password, sessions, signed_in};
-use wslib_appliance_core::{HostSessions, Proof, password_proved, prove_caller};
+use wslib_appliance_core::backend::{prove_password, sessions, signed_in};
+use wslib_appliance_core::{
+    HostSessions, Proof, issue_session, password_proved, prove_caller, session_cookie,
+};
 use wslib_appliance_store::Account;
 use wslib_appliance_types::User;
 use wslib_appliance_types::session::{PasswordChange, SignIn};
-use wslib_auth::SessionCookie;
 
 use crate::routes::users::{clean_username, hash};
 use crate::{ApiError, ApplianceState, Reached, Viewer, audit};
@@ -55,19 +56,8 @@ impl HostSessions for Cookies {
         account: &Account,
         proof: Proof,
     ) -> Result<HeaderValue, ApiError> {
-        issue_cookie(app, &account.user, account.sessions_valid_from, proof).await
+        issue_session(app, &account.user, account.sessions_valid_from, proof).await
     }
-}
-
-async fn issue_cookie(
-    app: &ApplianceState,
-    user: &User,
-    valid_from: DateTime<Utc>,
-    proof: Proof,
-) -> Result<HeaderValue, ApiError> {
-    let sessions = sessions(app)?;
-    let token = sessions.issue(&app.store, user, valid_from, proof).await?;
-    Ok(session_cookie(app).set(&token))
 }
 
 /// Public, so a dead cookie can still be cleared, and not audited. The removal
@@ -149,16 +139,8 @@ pub(crate) async fn issued_after_writing(
     user: &User,
     valid_from: DateTime<Utc>,
 ) -> Result<SetCookie, ApiError> {
-    let cookie = issue_cookie(app, user, valid_from, Proof::begin()).await?;
+    let cookie = issue_session(app, user, valid_from, Proof::begin()).await?;
     Ok(set_cookie(cookie))
-}
-
-/// `Secure`, `HttpOnly`, `SameSite=Strict`, no `Max-Age` (the row expires), and
-/// `Path` the base path. A plaintext proxy in front drops it silently. Two
-/// appliances on one origin whose base paths are equal or nest are not
-/// supported: the inner one is sent both values and answers 401.
-fn session_cookie(app: &ApplianceState) -> SessionCookie {
-    SessionCookie::new(SESSION_COOKIE).path(backend::base_path(app).to_string())
 }
 
 pub(crate) type SetCookie = [(HeaderName, HeaderValue); 1];
@@ -171,6 +153,7 @@ fn set_cookie(value: HeaderValue) -> SetCookie {
 mod tests {
     use super::*;
     use crate::testing::{Harness, body_json};
+    use wslib_appliance_core::backend::SESSION_COOKIE;
     use wslib_appliance_types::Role;
 
     fn password_route() -> String {
@@ -239,6 +222,35 @@ mod tests {
             !set.contains("Max-Age") && !set.contains("Expires"),
             "the row's own expiry is the deadline, and a second one would drift: {set}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_host_issuing_its_own_session_hands_out_a_cookie_the_backend_accepts() {
+        let app = Harness::builder()
+            .base_path("/apps/x/".parse().unwrap())
+            .build()
+            .await;
+        app.create("ann", Role::Viewer).await;
+        let account = app.store().accounts().await.unwrap().remove(0);
+
+        let issued = crate::issue_session(
+            app.state(),
+            &account.user,
+            account.sessions_valid_from,
+            Proof::begin(),
+        )
+        .await
+        .unwrap();
+        let set = issued.to_str().unwrap();
+        assert!(
+            set.ends_with("; Path=/apps/x/; HttpOnly; SameSite=Strict; Secure"),
+            "{set}"
+        );
+
+        let token = Harness::session_from(&set_cookie(issued).into_response()).unwrap();
+        let who = app.get("/apps/x/api/session").cookie(&token).send().await;
+        assert_eq!(who.status(), StatusCode::OK);
+        assert_eq!(body_json(who).await["username"], "ann");
     }
 
     #[tokio::test]

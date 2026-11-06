@@ -10,7 +10,7 @@ use crate::{MAX_APP_LEN, is_app_name, is_segment};
 
 /// The newest manifest schema this build reads, raised by every field or variant
 /// added; a manifest is written at its [`AppManifest::oldest_schema`].
-pub const MANIFEST_SCHEMA: u32 = 3;
+pub const MANIFEST_SCHEMA: u32 = 4;
 
 const MAX_VOLUMES: usize = 32;
 const MAX_LISTENERS: usize = 64;
@@ -59,6 +59,9 @@ pub struct AppManifest {
     pub devices: Vec<AppDevice>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<AppOption>,
+    /// The oldest ApplianceOS release that runs the app, `MAJOR.MINOR.PATCH`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_applianceos: Option<String>,
 }
 
 /// The OCI label a product's image carries its [`AppLabel`] in, as compact JSON.
@@ -89,6 +92,8 @@ pub struct AppLabel {
     pub devices: Vec<AppDevice>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<AppOption>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_applianceos: Option<String>,
 }
 
 /// An image pinned by digest, never by tag.
@@ -308,6 +313,8 @@ pub enum ManifestError {
         MAX_VERSION_LEN
     )]
     Version,
+    #[error("the minimum ApplianceOS release is not a plain MAJOR.MINOR.PATCH")]
+    MinApplianceos,
     #[error("the image's repository is not a lowercase repository with no tag or digest")]
     Repository,
     #[error("the image's digest is not sha256: and 64 lowercase hex digits")]
@@ -399,6 +406,7 @@ impl AppManifest {
             health: AppHealth::default(),
             devices: Vec::new(),
             options: Vec::new(),
+            min_applianceos: None,
         }
     }
 
@@ -418,6 +426,7 @@ impl AppManifest {
             health,
             devices,
             options,
+            min_applianceos,
         } = label;
         Self {
             schema,
@@ -433,6 +442,7 @@ impl AppManifest {
             health,
             devices,
             options,
+            min_applianceos,
         }
     }
 
@@ -476,7 +486,9 @@ impl AppManifest {
     /// The oldest schema that carries everything this manifest declares, so an
     /// older console still runs one that declares nothing newer.
     pub fn oldest_schema(&self) -> u32 {
-        if !self.options.is_empty() {
+        if self.min_applianceos.is_some() {
+            4
+        } else if !self.options.is_empty() {
             3
         } else if !self.devices.is_empty() {
             2
@@ -498,6 +510,12 @@ impl AppManifest {
         require(self.schema >= self.oldest_schema(), OldSchema)?;
         require(is_app_name(&self.name), Name)?;
         require(is_version(&self.version), Version)?;
+        require(
+            self.min_applianceos
+                .as_deref()
+                .is_none_or(|r| release(r).is_some()),
+            MinApplianceos,
+        )?;
         require(is_repository(&self.image.repository), Repository)?;
         require(is_digest(&self.image.digest), Digest)?;
         require(!self.arches.is_empty(), NoArch)?;
@@ -596,6 +614,20 @@ impl AppManifest {
             .collect();
         Ok(checked)
     }
+
+    /// The minimum ApplianceOS release, when a host running `running` is older
+    /// or either release does not parse.
+    pub fn needs_newer_host(&self, running: &str) -> Option<&str> {
+        let required = self.min_applianceos.as_deref()?;
+        let running = running.split_once('+').map_or(running, |(r, _)| r);
+        let (running, pre) = running
+            .split_once('-')
+            .map_or((running, false), |(r, _)| (r, true));
+        match (release(required), release(running)) {
+            (Some(min), Some(at)) if at > min || (at == min && !pre) => None,
+            _ => Some(required),
+        }
+    }
 }
 
 impl AppOption {
@@ -689,6 +721,15 @@ fn is_version(version: &str) -> bool {
         && version
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b".+_~-".contains(&b))
+}
+
+fn release(text: &str) -> Option<(u64, u64, u64)> {
+    let mut numbers = text.split('.').map(|n| {
+        let plain = n.bytes().all(|b| b.is_ascii_digit()) && (n == "0" || !n.starts_with('0'));
+        n.parse().ok().filter(|_| plain)
+    });
+    let triple = (numbers.next()??, numbers.next()??, numbers.next()??);
+    numbers.next().is_none().then_some(triple)
 }
 
 fn is_repository(repository: &str) -> bool {
@@ -909,9 +950,9 @@ mod tests {
 
     #[test]
     fn a_newer_manifest_reads_its_schema_and_nothing_else() {
-        let newer = r#"{"schema":4,"new":1}"#;
+        let newer = r#"{"schema":5,"new":1}"#;
         let read: ManifestSchema = serde_json::from_str(newer).unwrap();
-        assert_eq!(read.schema, 4);
+        assert_eq!(read.schema, 5);
         assert!(serde_json::from_str::<AppManifest>(newer).is_err());
         assert!(serde_json::from_str::<ManifestSchema>("{}").is_err());
     }
@@ -1584,6 +1625,125 @@ mod tests {
                 refused.to_string(),
                 format!("the value of option {option} is not of its kind")
             );
+        }
+    }
+
+    fn needing(release: &str) -> AppManifest {
+        let mut manifest = declared();
+        manifest.min_applianceos = Some(release.to_string());
+        manifest.schema = manifest.oldest_schema();
+        manifest
+    }
+
+    #[test]
+    fn a_manifest_with_a_minimum_release_needs_schema_4() {
+        let manifest = needing("0.1.12");
+        assert_eq!(manifest.schema, 4);
+        assert_eq!(manifest.validate(), Ok(()));
+        let mut json = serde_json::to_value(&manifest).unwrap();
+        assert_eq!(json["min_applianceos"], "0.1.12");
+        json["schema"] = 3.into();
+        let older: AppManifest = serde_json::from_value(json).unwrap();
+        assert_eq!(older.validate(), Err(ManifestError::OldSchema));
+    }
+
+    #[test]
+    fn a_manifest_without_a_minimum_release_keeps_its_schema_and_has_no_key() {
+        assert_eq!(settings().oldest_schema(), 3);
+        assert!(
+            serde_json::to_value(declared())
+                .unwrap()
+                .get("min_applianceos")
+                .is_none()
+        );
+        assert_eq!(refusal(|m| m.schema = 4), Ok(()));
+    }
+
+    #[test]
+    fn a_label_carries_its_minimum_release_to_the_manifest() {
+        let manifest = needing("0.1.12");
+        let mut json = serde_json::to_value(&manifest).unwrap();
+        json.as_object_mut().unwrap().remove("image");
+        let label: AppLabel = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&label).unwrap(), json);
+        assert_eq!(
+            AppManifest::from_label(label, manifest.image.clone()),
+            manifest
+        );
+    }
+
+    #[test]
+    fn the_minimum_release_is_a_plain_major_minor_patch() {
+        let overflowing = format!("1.{}0.0", u64::MAX);
+        for release in [
+            "",
+            "1.2",
+            "01.2.3",
+            "1.02.3",
+            "1.2.3-rc.1",
+            "1.2.3+b",
+            "v1.2.3",
+            "1.2.3.4",
+            "1..3",
+            "1.2.-3",
+            &overflowing,
+        ] {
+            assert_eq!(
+                needing(release).validate(),
+                Err(ManifestError::MinApplianceos),
+                "{release:?}"
+            );
+        }
+        for release in ["0.1.12", "0.0.0", "10.20.30"] {
+            assert_eq!(needing(release).validate(), Ok(()), "{release:?}");
+        }
+    }
+
+    #[test]
+    fn a_host_older_than_the_minimum_release_needs_a_newer_one() {
+        let manifest = needing("0.1.12");
+        for running in [
+            "0.1.11",
+            "0.1.9",
+            "0.0.99",
+            "0.1.12-rc.1",
+            "0.1.12-rc.1+abc",
+        ] {
+            assert_eq!(
+                manifest.needs_newer_host(running),
+                Some("0.1.12"),
+                "{running}"
+            );
+        }
+        for running in [
+            "0.1.12",
+            "0.1.13",
+            "0.2.0",
+            "1.0.0",
+            "0.1.12+abc",
+            "0.1.13-rc.1",
+        ] {
+            assert_eq!(manifest.needs_newer_host(running), None, "{running}");
+        }
+    }
+
+    #[test]
+    fn a_host_release_that_does_not_parse_needs_a_newer_one() {
+        let manifest = needing("0.1.12");
+        for running in ["", "0.1", "v0.1.12", "0.1.12.1", "unknown"] {
+            assert_eq!(
+                manifest.needs_newer_host(running),
+                Some("0.1.12"),
+                "{running:?}"
+            );
+        }
+        assert_eq!(needing("0.1").needs_newer_host("9.9.9"), Some("0.1"));
+    }
+
+    #[test]
+    fn a_manifest_without_a_minimum_release_runs_on_any_host() {
+        for running in ["0.0.0", "0.1.12", "unknown"] {
+            assert_eq!(declared().needs_newer_host(running), None, "{running:?}");
         }
     }
 }

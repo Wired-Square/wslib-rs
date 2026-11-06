@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.6
+
+- `AppManifest::min_applianceos` and `AppLabel::min_applianceos`: the oldest
+  ApplianceOS release that runs the app, a plain `MAJOR.MINOR.PATCH`, else
+  `ManifestError::MinApplianceos`. `MANIFEST_SCHEMA` is 4; a manifest setting
+  it is written at schema 4.
+- `AppManifest::needs_newer_host(running)`: the minimum release when a host
+  running `running` is older, by semver precedence, or either does not parse.
+
 ## 0.1.5
 
 - `AppManifest::options` and `AppLabel::options`: the `AppOption`s an app

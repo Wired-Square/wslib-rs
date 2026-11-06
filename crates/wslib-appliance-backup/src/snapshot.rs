@@ -509,6 +509,11 @@ impl Bundle {
             .any(|a| a.user.enabled && a.user.role.allows(Role::Admin))
     }
 
+    /// Whether a restore of this bundle's accounts would seat an enabled host admin.
+    pub fn carries_enabled_host_admin(&self) -> bool {
+        self.host_admins().1
+    }
+
     /// Whether this bundle carries a host admin, and whether an enabled one.
     pub(crate) fn host_admins(&self) -> (bool, bool) {
         let host_admins = || {
@@ -1040,6 +1045,7 @@ mod tests {
             !bundle.has_enabled_admin(),
             "restoring this over HTTPS would lock the browser out for good"
         );
+        assert!(!bundle.carries_enabled_host_admin());
 
         empty
             .create_user("owner", "$argon2id$v=19$fake$hash", Role::HostAdmin)
@@ -1051,6 +1057,7 @@ mod tests {
             "a host admin is an administrator"
         );
         assert_eq!(bundle.host_admins(), (true, true));
+        assert!(bundle.carries_enabled_host_admin());
     }
 
     #[tokio::test]

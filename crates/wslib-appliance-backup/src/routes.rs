@@ -164,7 +164,7 @@ impl<S: Sections> Engine<S, ()> {
 
 impl<S: Sections, H: HostHalf> Engine<S, H> {
     /// The appliance's rung: `SessionAdmin`, the caller's own proof again, and
-    /// the first-run restore.
+    /// the first-run inspect and restore.
     pub fn session(
         name: &str,
         version: &str,
@@ -205,6 +205,10 @@ impl<S: Sections, H: HostHalf> Engine<S, H> {
             Rung::Session => self
                 .host
                 .gate(at::<S, H, SessionAdmin>().merge(beside))
+                .route(
+                    "/onboarding/inspect",
+                    post(inspect_unclaimed).layer(bundle_sized()),
+                )
                 .route(
                     "/onboarding/restore",
                     post(restore_unclaimed).layer(bundle_sized()),
@@ -347,6 +351,25 @@ impl<S: Sections, H: HostHalf> Engine<S, H> {
         let carried = &bundle.header().contains.app;
         items.retain(|name, _| carried.contains_key(name) && ours.contains(name));
         items
+    }
+
+    async fn inspection(
+        &self,
+        store: &Store,
+        bundle: &Bundle,
+        warned: impl IntoIterator<Item = String>,
+    ) -> Result<Inspection, ApiError> {
+        let ours = self.sections.names().await?;
+        let mut warnings = self.warnings(bundle, &ours);
+        warnings.extend(warned);
+        Ok(Inspection {
+            header: bundle.header().clone(),
+            warnings,
+            blocked: self
+                .blocked(store, bundle.header().contains.app.keys())
+                .await,
+            items: self.items(bundle, &ours),
+        })
     }
 
     pub(crate) async fn blocked<'a>(
@@ -848,15 +871,22 @@ impl Restorer<'_> {
                 "this backup has no enabled administrator in it, so restoring its accounts \
                  would leave nobody able to sign in — untick the accounts to restore the rest"
             }
-            Self::Nobody(_) if bundle.header().contains.accounts == 0 => {
-                "this backup carries no accounts, so it cannot give this box its first \
-                 administrator — make the first account, then restore this backup from \
-                 Settings, where what it does carry applies"
-            }
-            Self::Nobody(_) => {
-                "this backup has no enabled administrator in it, so this box would still have \
-                 nobody able to sign in — make the first account instead"
-            }
+            Self::Nobody(_) => cannot_claim(bundle),
+        }
+    }
+}
+
+/// Why a first-run restore refuses a bundle with no enabled administrator.
+fn cannot_claim(bundle: &Bundle) -> &'static str {
+    match bundle.header().contains.accounts {
+        0 => {
+            "this backup carries no accounts, so it cannot give this box its first \
+             administrator — make the first account, then restore this backup from \
+             Settings, where what it does carry applies"
+        }
+        _ => {
+            "this backup has no enabled administrator in it, so this box would still have \
+             nobody able to sign in — make the first account instead"
         }
     }
 }
@@ -925,27 +955,37 @@ async fn inspect<S: Sections, H: HostHalf, R: Caller>(
     Json(body): Json<OpenBundle>,
 ) -> Result<Json<Inspection>, ApiError> {
     let bundle = backups.open(&app, body, Bundle::open, true).await?;
-    let ours = backups.sections.names().await?;
-    let mut warnings = backups.warnings(&bundle, &ours);
-    if backups.rung.carries_appliance_half()
+    let untick = (backups.rung.carries_appliance_half()
         && bundle.header().contains.accounts > 0
-        && !bundle.has_enabled_admin()
-    {
-        warnings.push(
-            "This backup has no enabled administrator, so it cannot be restored with its \
-             accounts selected — untick Accounts to restore the rest of it."
-                .to_string(),
-        );
-    }
-    let blocked = backups
-        .blocked(&app.store, bundle.header().contains.app.keys())
-        .await;
-    Ok(Json(Inspection {
-        header: bundle.header().clone(),
-        warnings,
-        blocked,
-        items: backups.items(&bundle, &ours),
-    }))
+        && !bundle.has_enabled_admin())
+    .then(|| {
+        "This backup has no enabled administrator, so it cannot be restored with its \
+         accounts selected — untick Accounts to restore the rest of it."
+            .to_string()
+    });
+    Ok(Json(backups.inspection(&app.store, &bundle, untick).await?))
+}
+
+/// What a first-run restore of the bundle would meet, writing nothing.
+async fn inspect_unclaimed<S: Sections, H: HostHalf>(
+    State(backups): State<Engine<S, H>>,
+    _: Unclaimed,
+    State(app): State<ApplianceState>,
+    Json(body): Json<OpenBundle>,
+) -> Result<Json<Inspection>, ApiError> {
+    let bundle = backups
+        .open(&app, body, Bundle::open_unauthenticated, false)
+        .await?;
+    let unclaimable = (!bundle.has_enabled_admin()).then(|| {
+        let why = cannot_claim(&bundle);
+        format!("{}{}.", why[..1].to_uppercase(), &why[1..])
+    });
+    let refused = unclaimable
+        .into_iter()
+        .chain(backups.sections.refuses_first_run(&bundle));
+    Ok(Json(
+        backups.inspection(&app.store, &bundle, refused).await?,
+    ))
 }
 
 /// Refuses too many sections or items, a misnamed one, or an item outside a
@@ -1024,6 +1064,9 @@ async fn restore_unclaimed<S: Sections, H: HostHalf>(
     let bundle = backups
         .open(&app, open, Bundle::open_unauthenticated, false)
         .await?;
+    if let Some(why) = backups.sections.refuses_first_run(&bundle) {
+        return Err(ApiError::BadRequest(why));
+    }
     let chosen = body
         .sections
         .unwrap_or_else(|| Chosen::everything_in(&bundle.header().contains));

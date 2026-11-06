@@ -832,6 +832,7 @@ async fn every_route_refuses_the_control_socket() {
         ("DELETE", "/api/backup/schedule/passphrase"),
         ("GET", "/api/backup/files/x.json"),
         ("DELETE", "/api/backup/files/x.json"),
+        ("POST", "/api/onboarding/inspect"),
         ("POST", "/api/onboarding/restore"),
     ] {
         let response = app
@@ -1572,6 +1573,157 @@ async fn the_first_run_restore_refuses_a_bundle_priced_above_its_ceiling() {
     assert_eq!(fresh.store().user_count().await.unwrap(), 0);
 }
 
+/// `/api/onboarding/{route}`, opening `bundle` under `passphrase`.
+async fn first_run(app: &Harness, route: &str, passphrase: &str, bundle: &str) -> Response {
+    app.post(&format!("/api/onboarding/{route}"))
+        .json(json!({ "passphrase": passphrase, "bundle": bundle }))
+        .send()
+        .await
+}
+
+/// The first-run inspect's refusal, asserted the same as the first-run restore's.
+async fn refused_as_the_first_run_restore_is(
+    app: &Harness,
+    passphrase: &str,
+    bundle: &str,
+) -> StatusCode {
+    let seen = first_run(app, "inspect", passphrase, bundle).await;
+    let restored = first_run(app, "restore", passphrase, bundle).await;
+    let status = seen.status();
+    assert_eq!(status, restored.status());
+    assert_eq!(body_text(seen).await, body_text(restored).await);
+    status
+}
+
+#[tokio::test]
+async fn an_unclaimed_box_inspects_a_bundle_as_a_signed_in_one_does() {
+    let (app, admin) = session_over(Reporting::blocking()).await;
+    let bundle = take(&app, &admin).await;
+    let signed_in = body_json(inspection(&app, &admin, &bundle).await).await;
+    let mut tx = app.store().begin().await.unwrap();
+    Store::erase_platform(&mut tx).await.unwrap();
+    tx.commit().await.unwrap();
+
+    let seen = first_run(&app, "inspect", PASSPHRASE, &bundle).await;
+    assert_eq!(seen.status(), StatusCode::OK);
+    let seen = body_json(seen).await;
+    assert_eq!(seen["header"], signed_in["header"]);
+    assert_eq!(seen["warnings"], json!(["Inspect said this first."]));
+    assert_eq!(seen["blocked"], json!({ "gauges": BLOCKED }));
+    assert_eq!(seen["items"], signed_in["items"]);
+    assert_eq!(seen["items"]["gauges"][0]["name"], "g1");
+}
+
+#[tokio::test]
+async fn the_first_run_inspect_is_refused_once_the_box_is_claimed() {
+    let Rig { app, .. } = rig().await;
+    let admin = account(&app, "admin", Role::Admin).await;
+    let bundle = take(&app, &admin).await;
+    assert_eq!(
+        refused_as_the_first_run_restore_is(&app, PASSPHRASE, &bundle).await,
+        StatusCode::CONFLICT
+    );
+}
+
+#[tokio::test]
+async fn the_first_run_inspect_refuses_what_the_first_run_restore_cannot_open() {
+    let Rig { app: source, .. } = rig().await;
+    let admin = account(&source, "admin", Role::Admin).await;
+    let bundle = take(&source, &admin).await;
+    let mut envelope: serde_json::Value = serde_json::from_str(&bundle).unwrap();
+    envelope["kdf"]["m_cost"] = json!(3 * 64 * 1024);
+    let dear = envelope.to_string();
+
+    let Rig { app, .. } = rig().await;
+    assert_eq!(
+        refused_as_the_first_run_restore_is(&app, PASSPHRASE, &dear).await,
+        StatusCode::FORBIDDEN
+    );
+    let wrong = "another passphrase long enough to be one";
+    assert_eq!(
+        refused_as_the_first_run_restore_is(&app, wrong, &bundle).await,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(app.store().user_count().await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn the_first_run_inspect_warns_in_the_words_the_restore_refuses_with() {
+    let Rig { app, .. } = rig().await;
+    let settings_only = Store::open_in_memory(None).await.unwrap();
+    settings_only
+        .set_setting("branding.app_name", "Carried")
+        .await
+        .unwrap();
+    let accountless = Snapshot::capture(&settings_only)
+        .await
+        .unwrap()
+        .seal(&Secret::new(PASSPHRASE), &provenance())
+        .unwrap();
+    for bundle in [
+        sealed_with(&[("operator", Role::Operator)]).await,
+        accountless,
+    ] {
+        let refused = first_run(&app, "restore", PASSPHRASE, &bundle).await;
+        assert_eq!(refused.status(), StatusCode::CONFLICT);
+        let why = body_json(refused).await["error"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let seen = first_run(&app, "inspect", PASSPHRASE, &bundle).await;
+        assert_eq!(seen.status(), StatusCode::OK);
+        let seen = body_json(seen).await;
+        assert_eq!(warnings(&seen).len(), 1, "{seen}");
+        assert_eq!(warnings(&seen)[0][1..], format!("{}.", &why[1..]));
+        assert_sentences(warnings(&seen));
+    }
+}
+
+#[tokio::test]
+async fn the_first_run_inspect_leaves_the_box_as_it_was() {
+    let Rig { app: source, .. } = rig().await;
+    let admin = account(&source, "admin", Role::Admin).await;
+    let bundle = take(&source, &admin).await;
+
+    let Rig { app, .. } = rig().await;
+    let rows = app.store().audit(100, None).await.unwrap().items.len();
+    let seen = first_run(&app, "inspect", PASSPHRASE, &bundle).await;
+    assert_eq!(seen.status(), StatusCode::OK);
+    assert_eq!(app.store().user_count().await.unwrap(), 0);
+    assert_eq!(
+        app.store().audit(100, None).await.unwrap().items.len(),
+        rows
+    );
+    assert_eq!(first_run_restore(&app, &bundle).await, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_products_first_run_refusal_is_a_first_run_inspect_warning_and_nothing_signed_in() {
+    let (app, admin) = session_over(Reporting::refusing_first_run()).await;
+    let bundle = take(&app, &admin).await;
+    let seen = body_json(inspection(&app, &admin, &bundle).await).await;
+    assert_eq!(seen["warnings"], json!(["Inspect said this first."]));
+    let restored = restore_chosen(&app, &admin, &bundle, json!({ "app": ["gauges"] })).await;
+    assert_eq!(restored.status(), StatusCode::OK);
+
+    let mut tx = app.store().begin().await.unwrap();
+    Store::erase_platform(&mut tx).await.unwrap();
+    tx.commit().await.unwrap();
+    let seen = first_run(&app, "inspect", PASSPHRASE, &bundle).await;
+    assert_eq!(seen.status(), StatusCode::OK);
+    let seen = body_json(seen).await;
+    assert_eq!(
+        seen["warnings"],
+        json!(["Inspect said this first.", NOT_AT_FIRST_RUN])
+    );
+    assert_sentences(warnings(&seen));
+    let refused = first_run(&app, "restore", PASSPHRASE, &bundle).await;
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(refused).await["error"], NOT_AT_FIRST_RUN);
+    assert_eq!(app.store().user_count().await.unwrap(), 0);
+}
+
 /// A product whose sections are one row, kept in memory, that says what it
 /// did at each step, records what `restore` and `after_restore` were handed,
 /// and may hold its restore part-way.
@@ -1581,16 +1733,28 @@ pub(crate) struct Reporting {
     after: Arc<std::sync::Mutex<Option<(Chosen, usize)>>>,
     held: Option<Hold>,
     blocked: bool,
+    refuses_first_run: bool,
 }
 
 /// What a blocked section's product says of it.
 pub(crate) const BLOCKED: &str = "The gauges' app is not running.";
+
+/// What a product refusing a first-run restore of its gauges says.
+const NOT_AT_FIRST_RUN: &str = "Gauges restore only onto a box already set up.";
 
 impl Reporting {
     /// One of which no section asked about can be restored right now.
     pub(crate) fn blocking() -> Self {
         Self {
             blocked: true,
+            ..Self::default()
+        }
+    }
+
+    /// One that refuses a first-run restore of a bundle carrying its gauges.
+    fn refusing_first_run() -> Self {
+        Self {
+            refuses_first_run: true,
             ..Self::default()
         }
     }
@@ -1656,6 +1820,11 @@ impl Sections for Reporting {
             .filter(|_| self.blocked)
             .map(|name| (name.clone(), BLOCKED.to_string()))
             .collect()
+    }
+
+    fn refuses_first_run(&self, from: &Bundle) -> Option<String> {
+        (self.refuses_first_run && from.header().contains.app.contains_key("gauges"))
+            .then(|| NOT_AT_FIRST_RUN.to_string())
     }
 
     async fn after_restore(&self, _: &Store, from: &Bundle, applied: &Chosen) -> Vec<String> {

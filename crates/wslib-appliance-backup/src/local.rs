@@ -249,7 +249,11 @@ mod tests {
                 "{method} {path}"
             );
         }
-        for path in ["/api/onboarding/restore", "/api/factory-reset"] {
+        for path in [
+            "/api/onboarding/inspect",
+            "/api/onboarding/restore",
+            "/api/factory-reset",
+        ] {
             let response = local.admin("POST", path).json(json!({})).send().await;
             assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
         }

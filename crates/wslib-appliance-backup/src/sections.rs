@@ -86,6 +86,12 @@ pub trait Sections: Clone + Send + Sync + 'static {
         async { BTreeMap::new() }
     }
 
+    /// A sentence saying why a first-run restore of `from` is refused, asked
+    /// before anything is written, and a warning at the first-run inspect.
+    fn refuses_first_run(&self, _from: &Bundle) -> Option<String> {
+        None
+    }
+
     /// Once a restore has committed and the pair and key files have been tried:
     /// write the sections in `applied.app` that are not rows, and restart what
     /// ran against rows now gone. Awaited before the restore answers; what

@@ -6,9 +6,9 @@ use std::time::Duration;
 
 use wslib_networkmanager::testing::{FakeAccessPoint, FakeDevice, FakeNetworkManager};
 use wslib_networkmanager::{
-    Client, Device, DeviceKind, DeviceState, Ipv4, Ipv4Method, Objects, Profile, ProfileIpv4,
-    RollbackResult, Security, Settings, WifiRadio, checkpoint, connection_type, group, interface,
-    reason, set_ipv4,
+    Client, Device, DeviceKind, DeviceState, Group, Ipv4, Ipv4Method, Objects, Profile,
+    ProfileIpv4, RollbackResult, Security, Settings, WifiRadio, checkpoint, connection_type, group,
+    interface, reason, set_ipv4,
 };
 use zbus::zvariant::{OwnedObjectPath, Value};
 
@@ -529,6 +529,120 @@ async fn a_profile_deleted_while_listing_is_left_out_of_saved() {
         nm.saved().await.is_err(),
         "any other error still fails the call"
     );
+}
+
+const WIFI_SECURITY: &str = "802-11-wireless-security";
+
+fn saved_wifi(ssid: &str, security: Option<Group>) -> Settings {
+    let mut settings = Settings::from([
+        (
+            "connection".to_string(),
+            group([
+                ("id", Value::from(ssid)),
+                ("type", Value::from("802-11-wireless")),
+                ("autoconnect", Value::from(true)),
+            ]),
+        ),
+        (
+            "802-11-wireless".to_string(),
+            group([("ssid", Value::from(ssid.as_bytes().to_vec()))]),
+        ),
+    ]);
+    settings.extend(security.map(|s| (WIFI_SECURITY.to_string(), s)));
+    settings
+}
+
+fn psk_of(secrets: &Settings) -> Option<String> {
+    Some(String::try_from(secrets.get(WIFI_SECURITY)?.get("psk")?.clone()).unwrap())
+}
+
+#[tokio::test]
+async fn a_saved_network_moves_to_another_box_with_its_passphrase() {
+    let secured = group([
+        ("key-mgmt", Value::from("wpa-psk")),
+        ("psk", Value::from("correct horse")),
+    ]);
+    let old_box = FakeNetworkManager::new().saved(saved_wifi("Ops", Some(secured)));
+    let (old, _old_served) = serve(&old_box).await;
+    let profile = old.saved().await.unwrap().remove(0).path;
+
+    let mut settings = old.settings(&profile).await.unwrap();
+    assert_eq!(psk_of(&settings), None, "settings leave the secrets out");
+    let secrets = old.secrets(&profile, WIFI_SECURITY).await.unwrap();
+    assert_eq!(psk_of(&secrets).as_deref(), Some("correct horse"));
+    for (name, group) in secrets {
+        settings.entry(name).or_default().extend(group);
+    }
+
+    let new_box = FakeNetworkManager::new().with(FakeDevice::wifi("wlan0").access_point(ops(70)));
+    let (new, _new_served) = serve(&new_box).await;
+    let added = new.add_profile(settings).await.unwrap();
+    let saved = new.saved().await.unwrap();
+    assert_eq!(
+        saved
+            .iter()
+            .map(|p| (&p.path, p.ssid.as_deref()))
+            .collect::<Vec<_>>(),
+        [(&added, Some(&b"Ops"[..]))]
+    );
+    assert_eq!(
+        psk_of(&new.secrets(&added, WIFI_SECURITY).await.unwrap()).as_deref(),
+        Some("correct horse")
+    );
+    let wlan0 = device(&new, "wlan0").await;
+    assert_eq!(
+        (wlan0.state, wlan0.profile),
+        (DeviceState::Disconnected, None)
+    );
+    assert_eq!(new_box.heard(), ["AddConnection2 Ops 0x1"]);
+}
+
+#[tokio::test]
+async fn a_joined_network_serves_its_passphrase() {
+    let fake = FakeNetworkManager::new().with(FakeDevice::wifi("wlan0").access_point(ops(70)));
+    let (nm, _served) = serve(&fake).await;
+    let wlan0 = device(&nm, "wlan0").await;
+    let joined = nm
+        .add_and_activate(
+            wlan0.wifi_profile(b"Ops", Some("correct horse")).unwrap(),
+            &wlan0.path,
+        )
+        .await
+        .unwrap();
+    let secrets = nm.secrets(&joined.profile, WIFI_SECURITY).await.unwrap();
+    assert_eq!(psk_of(&secrets).as_deref(), Some("correct horse"));
+}
+
+#[tokio::test]
+async fn a_network_without_a_passphrase_has_no_secrets() {
+    let owe = group([("key-mgmt", Value::from("owe"))]);
+    let fake = FakeNetworkManager::new()
+        .saved(saved_wifi("Lobby", None))
+        .saved(saved_wifi("Cafe", Some(owe)));
+    let (nm, _served) = serve(&fake).await;
+    let profiles = nm.profiles().await.unwrap();
+
+    let open = nm.secrets(&profiles[0], WIFI_SECURITY).await.unwrap();
+    assert!(open.is_empty(), "a group the profile lacks: {open:?}");
+    let owe = nm.secrets(&profiles[1], WIFI_SECURITY).await.unwrap();
+    assert_eq!(
+        owe,
+        Settings::from([(WIFI_SECURITY.to_string(), Group::new())])
+    );
+}
+
+#[tokio::test]
+async fn refused_secrets_and_additions_are_errors() {
+    let fake = FakeNetworkManager::new().saved(wired_profile());
+    let (nm, _served) = serve(&fake).await;
+    let profile = nm.profiles().await.unwrap().remove(0);
+
+    fake.refuse("GetSecrets");
+    let refused = nm.secrets(&profile, "802-3-ethernet").await.unwrap_err();
+    assert_eq!(method_error(refused), "org.freedesktop.DBus.Error.Failed");
+    fake.refuse("AddConnection2");
+    assert!(nm.add_profile(wired_profile()).await.is_err());
+    assert_eq!(nm.profiles().await.unwrap(), [profile]);
 }
 
 #[tokio::test]

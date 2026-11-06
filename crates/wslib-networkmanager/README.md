@@ -72,9 +72,12 @@ nm.destroy_checkpoint(&undo).await?;
 - **`saved`** reads each profile into a `Profile`: path, UUID, name, type
   and, for Wi-Fi, the SSID, skipping one deleted mid-read; `Profile::read`
   does the same for one.
-- **Profiles**: `profiles`, `settings` (secrets left out), `update_profile`
-  (written to disk), `delete_profile`, and `apply`: `Reapply` in place, or
-  activation when NetworkManager cannot change it in place.
+- **Profiles**: `profiles`, `settings` (secrets left out), `secrets` for one
+  setting group's (merge them into `settings` for the whole profile; empty
+  for a group the profile lacks), `add_profile` (written to disk, not
+  activated), `update_profile` (written to disk), `delete_profile`, and
+  `apply`: `Reapply` in place, or activation when NetworkManager cannot
+  change it in place.
 - **`Ipv4`** writes a whole `ipv4` group, `set_ipv4` puts it in a profile's
   settings. No gateway is an absent key, never `""`, which NetworkManager
   refuses; resolvers are packed in host byte order with `ignore-auto-dns`;
@@ -92,7 +95,8 @@ nm.destroy_checkpoint(&undo).await?;
   over a socket pair. A join succeeds with the access point's passphrase and
   otherwise leaves the device `Failed`; checkpoints roll back as NetworkManager's do, and
   `expire_checkpoints` plays the timer. Profiles get a `connection.uuid` and
-  `connection.id` where they lack one, and a scan moves the device's `LastScan`. It answers `GetNameOwner`, and
+  `connection.id` where they lack one, keep their Wi-Fi secrets for
+  `GetSecrets` only, and a scan moves the device's `LastScan`. It answers `GetNameOwner`, and
   `restart` gives it a new owner and drops its checkpoints. It records each call that changes
   something and can be told to refuse a method.
 

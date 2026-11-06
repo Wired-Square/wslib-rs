@@ -896,6 +896,29 @@ impl Profiles {
         }
         Ok(listed)
     }
+
+    #[zbus(name = "AddConnection2")]
+    async fn add_connection2(
+        &self,
+        settings: Settings,
+        flags: u32,
+        _args: HashMap<String, OwnedValue>,
+        #[zbus(object_server)] server: &ObjectServer,
+    ) -> fdo::Result<(OwnedObjectPath, HashMap<String, OwnedValue>)> {
+        let profile = {
+            let mut state = self.0.state();
+            state.hear(
+                "AddConnection2",
+                format!(
+                    "{} {flags:#x}",
+                    String::from_utf8_lossy(&ssid_of(&settings))
+                ),
+            )?;
+            state.hold(settings)
+        };
+        self.0.serve_new_profiles(server).await?;
+        Ok((profile_path(profile), HashMap::new()))
+    }
 }
 
 struct DeviceObject(FakeNetworkManager, usize);
@@ -959,6 +982,35 @@ impl WirelessObject {
     }
 }
 
+#[derive(Debug, zbus::DBusError)]
+#[zbus(prefix = "org.freedesktop")]
+enum ProfileError {
+    #[zbus(name = "DBus.Error.UnknownObject")]
+    UnknownObject(String),
+    #[zbus(name = "DBus.Error.Failed")]
+    Failed(String),
+    #[zbus(name = "NetworkManager.Settings.Connection.SettingNotFound")]
+    SettingNotFound(String),
+}
+
+impl From<fdo::Error> for ProfileError {
+    fn from(e: fdo::Error) -> Self {
+        match e {
+            fdo::Error::UnknownObject(m) => Self::UnknownObject(m),
+            fdo::Error::Failed(m) => Self::Failed(m),
+            other => Self::Failed(other.to_string()),
+        }
+    }
+}
+
+fn is_secret(setting: &str, key: &str) -> bool {
+    setting == "802-11-wireless-security"
+        && matches!(
+            key,
+            "psk" | "wep-key0" | "wep-key1" | "wep-key2" | "wep-key3" | "leap-password"
+        )
+}
+
 struct ProfileObject(FakeNetworkManager, usize);
 
 impl ProfileObject {
@@ -975,10 +1027,28 @@ impl ProfileObject {
         self.held(&state)?;
         state.refused("GetSettings")?;
         let mut settings = state.profiles[self.1].clone().unwrap_or_default();
-        if let Some(secured) = settings.get_mut("802-11-wireless-security") {
-            secured.remove("psk");
+        for (name, group) in &mut settings {
+            group.retain(|key, _| !is_secret(name, key));
         }
         Ok(settings)
+    }
+
+    #[zbus(name = "GetSecrets")]
+    fn get_secrets(&self, setting_name: String) -> Result<Settings, ProfileError> {
+        let state = self.0.state();
+        self.held(&state)?;
+        state.refused("GetSecrets")?;
+        let mut group = state.profiles[self.1]
+            .as_ref()
+            .and_then(|p| p.get(&setting_name))
+            .cloned()
+            .ok_or_else(|| {
+                ProfileError::SettingNotFound(format!(
+                    "requested setting '{setting_name}' not in connection"
+                ))
+            })?;
+        group.retain(|key, _| is_secret(&setting_name, key));
+        Ok(Settings::from([(setting_name, group)]))
     }
 
     #[zbus(name = "Update2")]

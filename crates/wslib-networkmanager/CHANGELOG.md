@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.2
+
+- `secrets` reads one setting group's secrets over `GetSecrets`, to merge
+  into `settings`: `802-11-wireless-security` gives `psk`. A group the
+  profile lacks, which NetworkManager answers with `SettingNotFound`, is an
+  empty `Settings`.
+- `add_profile` saves a profile to disk over `AddConnection2` without
+  activating it; its `connection.autoconnect` decides what happens next.
+- Proxies: `ProfileProxy::get_secrets` and `NmSettingsProxy::add_connection2`.
+- The fake answers both. It keeps a profile's Wi-Fi secrets (`psk`,
+  `wep-key0` to `wep-key3`, `leap-password`) out of `GetSettings` and serves
+  them from `GetSecrets`, whether the profile was `saved`, joined or added.
+  `refuse` covers both, and `heard` records `AddConnection2`.
+
 ## 0.1.1
 
 - `disconnect` drops a device's active connection and keeps its profile,

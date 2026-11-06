@@ -1573,10 +1573,11 @@ async fn the_first_run_restore_refuses_a_bundle_priced_above_its_ceiling() {
 }
 
 /// A product whose sections are one row, kept in memory, that says what it
-/// did at each step, records what `after_restore` was handed, and may hold its
-/// restore part-way.
+/// did at each step, records what `restore` and `after_restore` were handed,
+/// and may hold its restore part-way.
 #[derive(Clone, Default)]
 pub(crate) struct Reporting {
+    restored: Arc<std::sync::Mutex<Option<Chosen>>>,
     after: Arc<std::sync::Mutex<Option<(Chosen, usize)>>>,
     held: Option<Hold>,
     blocked: bool,
@@ -1618,18 +1619,35 @@ impl Sections for Reporting {
         &self,
         _: &mut wslib_appliance_store::sqlx::Transaction<'_, wslib_appliance_store::sqlx::Sqlite>,
         from: &Bundle,
-        chosen: &std::collections::BTreeSet<String>,
+        chosen: &Chosen,
     ) -> Result<Vec<String>, BackupError> {
         wait_at(&self.held).await;
+        *self.restored.lock().unwrap() = Some(chosen.clone());
         let rows: Vec<serde_json::Value> = from.take("gauges")?.unwrap_or_default();
         Ok(vec![format!(
-            "Restore wrote {} gauges for {chosen:?}.",
-            rows.len()
+            "Restore wrote {} gauges for {:?}.",
+            rows.len(),
+            chosen.app
         )])
     }
 
     fn warnings(&self, _: &Bundle) -> Vec<String> {
         vec!["Inspect said this first.".to_string()]
+    }
+
+    fn items(&self, _: &Bundle) -> BTreeMap<String, Vec<SectionItem>> {
+        let item = |name: &str| SectionItem {
+            name: name.to_string(),
+            label: name.to_uppercase(),
+        };
+        [
+            (
+                "gauges".to_string(),
+                vec![item("g1"), item("g2"), item("opca.acme"), item("x~y")],
+            ),
+            ("dials".to_string(), vec![item("d1")]),
+        ]
+        .into()
     }
 
     async fn blocked(&self, _: &Store, names: &BTreeSet<String>) -> BTreeMap<String, String> {
@@ -1674,7 +1692,7 @@ impl Sections for Named {
         &self,
         _: &mut wslib_appliance_store::sqlx::Transaction<'_, wslib_appliance_store::sqlx::Sqlite>,
         _: &Bundle,
-        _: &std::collections::BTreeSet<String>,
+        _: &Chosen,
     ) -> Result<Vec<String>, BackupError> {
         Ok(Vec::new())
     }
@@ -1741,7 +1759,7 @@ impl Sections for Installed {
         &self,
         _: &mut wslib_appliance_store::sqlx::Transaction<'_, wslib_appliance_store::sqlx::Sqlite>,
         _: &Bundle,
-        _: &BTreeSet<String>,
+        _: &Chosen,
     ) -> Result<Vec<String>, BackupError> {
         Ok(Vec::new())
     }
@@ -1815,6 +1833,46 @@ async fn an_uninstalled_apps_section_is_asked_about_and_shown_blocked() {
     assert_eq!(body_json(refused).await["error"], not_installed("dials"));
 }
 
+#[tokio::test]
+async fn inspect_reports_a_products_items_only_for_the_sections_the_bundle_carries() {
+    let (app, admin) = session_over(Reporting::default()).await;
+    let bundle = take(&app, &admin).await;
+    let seen = body_json(inspection(&app, &admin, &bundle).await).await;
+    assert_eq!(
+        seen["items"],
+        json!({ "gauges": [
+            { "name": "g1", "label": "G1" },
+            { "name": "g2", "label": "G2" },
+            { "name": "opca.acme", "label": "OPCA.ACME" },
+            { "name": "x~y", "label": "X~Y" }
+        ] })
+    );
+}
+
+#[tokio::test]
+async fn a_restore_choosing_some_items_hands_restore_exactly_those() {
+    let sections = Reporting::default();
+    let (app, admin) = session_over(sections.clone()).await;
+    let bundle = take(&app, &admin).await;
+    let restored = restore_chosen(
+        &app,
+        &admin,
+        &bundle,
+        json!({ "app": ["gauges", "dials"], "items": { "gauges": ["g2"], "dials": ["d1"] } }),
+    )
+    .await;
+    assert_eq!(restored.status(), StatusCode::OK);
+    let chosen = sections.restored.lock().unwrap().take().expect("ran");
+    assert_eq!(
+        chosen.items,
+        [("gauges".to_string(), ["g2".to_string()].into())].into()
+    );
+    assert_eq!(
+        body_json(restored).await["applied"]["items"],
+        json!({ "gauges": ["g2"] })
+    );
+}
+
 /// A product that says its gauges and dials are blocked, whatever it is asked.
 #[derive(Clone)]
 struct Overanswering;
@@ -1832,7 +1890,7 @@ impl Sections for Overanswering {
         &self,
         _: &mut wslib_appliance_store::sqlx::Transaction<'_, wslib_appliance_store::sqlx::Sqlite>,
         _: &Bundle,
-        _: &BTreeSet<String>,
+        _: &Chosen,
     ) -> Result<Vec<String>, BackupError> {
         Ok(Vec::new())
     }
@@ -1913,6 +1971,74 @@ async fn a_blocked_section_is_named_at_inspect_and_refused_before_the_proof_on_e
 }
 
 #[tokio::test]
+async fn an_item_named_as_an_app_is_with_a_dot_or_a_tilde_restores() {
+    let sections = Reporting::default();
+    let (app, admin) = session_over(sections.clone()).await;
+    let bundle = take(&app, &admin).await;
+    let chosen = json!({ "app": ["gauges"], "items": { "gauges": ["opca.acme", "x~y"] } });
+    let restored = restore_chosen(&app, &admin, &bundle, chosen).await;
+    assert_eq!(restored.status(), StatusCode::OK);
+    let chosen = sections.restored.lock().unwrap().take().expect("ran");
+    assert_eq!(
+        chosen.items["gauges"],
+        ["opca.acme".to_string(), "x~y".to_string()].into()
+    );
+}
+
+#[tokio::test]
+async fn an_item_the_product_does_not_list_for_its_section_is_refused_by_name() {
+    let sections = Reporting::default();
+    let (app, admin) = session_over(sections.clone()).await;
+    let bundle = take(&app, &admin).await;
+    let chosen = json!({ "app": ["gauges"], "items": { "gauges": ["g1", "nope"] } });
+    let refused = restore_chosen(&app, &admin, &bundle, chosen).await;
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    assert!(body_text(refused).await.contains("“nope”"));
+    assert!(sections.restored.lock().unwrap().is_none());
+
+    let installed = Installed::default();
+    let (app, admin) = session_over(installed.clone()).await;
+    installed.now(&["dials"]);
+    let bundle = take(&app, &admin).await;
+    let chosen = json!({ "app": ["dials"], "items": { "dials": ["a1"] } });
+    let refused = restore_chosen(&app, &admin, &bundle, chosen).await;
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    assert!(body_text(refused).await.contains("“a1”"));
+}
+
+/// Choices every restore route refuses: an item outside a chosen section, too
+/// many, or one not named as an item is.
+pub(crate) fn bad_item_choices() -> [serde_json::Value; 3] {
+    let named = |count: usize| (0..count).map(|i| format!("i{i}")).collect::<Vec<_>>();
+    [
+        json!({ "app": ["gauges"], "items": { "dials": ["d1"] } }),
+        json!({ "app": ["gauges", "dials"], "items": {
+            "gauges": named(MOST_ITEMS_CHOSEN), "dials": ["d1"]
+        } }),
+        json!({ "app": ["gauges"], "items": { "gauges": ["an item"] } }),
+    ]
+}
+
+#[tokio::test]
+async fn a_first_run_restore_refuses_a_bad_item_choice_and_claims_nothing() {
+    let (app, admin) = session_over(Reporting::default()).await;
+    let bundle = take(&app, &admin).await;
+    let mut tx = app.store().begin().await.unwrap();
+    Store::erase_platform(&mut tx).await.unwrap();
+    tx.commit().await.unwrap();
+    for mut sections in bad_item_choices() {
+        sections["accounts"] = json!(true);
+        let refused = app
+            .post("/api/onboarding/restore")
+            .json(json!({ "passphrase": PASSPHRASE, "bundle": bundle, "sections": sections }))
+            .send()
+            .await;
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "{sections}");
+        assert_eq!(app.store().user_count().await.unwrap(), 0);
+    }
+}
+
+#[tokio::test]
 async fn a_restore_choosing_a_name_that_is_not_one_or_too_many_is_refused_before_the_proof() {
     let (app, admin) = session_over(Reporting::default()).await;
     let choosing = |names: Vec<String>| {
@@ -1936,6 +2062,37 @@ async fn a_restore_choosing_a_name_that_is_not_one_or_too_many_is_refused_before
         "no proof was judged"
     );
     let judged = choosing(named(MOST_SECTIONS_CHOSEN)).await;
+    assert_ne!(judged.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn a_restore_choosing_items_outside_a_chosen_section_too_many_or_not_named_is_refused_before_the_proof()
+ {
+    let (app, admin) = session_over(Reporting::default()).await;
+    let choosing = |sections: serde_json::Value| {
+        app.post("/api/backup/restore")
+            .header(ACCOUNT, &admin)
+            .json(json!({
+                "passphrase": PASSPHRASE, "bundle": "", "password": "not the password",
+                "sections": sections
+            }))
+            .send()
+    };
+    let named = |count: usize| (0..count).map(|i| format!("i{i}")).collect::<Vec<_>>();
+
+    let rows = app.store().audit(100, None).await.unwrap().items.len();
+    for sections in bad_item_choices() {
+        assert_eq!(choosing(sections).await.status(), StatusCode::BAD_REQUEST);
+    }
+    assert_eq!(
+        app.store().audit(100, None).await.unwrap().items.len(),
+        rows,
+        "no proof was judged"
+    );
+    let judged = choosing(json!({
+        "app": ["gauges"], "items": { "gauges": named(MOST_ITEMS_CHOSEN) }
+    }))
+    .await;
     assert_ne!(judged.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -2481,7 +2638,7 @@ impl Sections for Padded {
         &self,
         _: &mut wslib_appliance_store::sqlx::Transaction<'_, wslib_appliance_store::sqlx::Sqlite>,
         _: &Bundle,
-        _: &BTreeSet<String>,
+        _: &Chosen,
     ) -> Result<Vec<String>, BackupError> {
         Ok(Vec::new())
     }

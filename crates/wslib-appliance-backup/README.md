@@ -28,10 +28,10 @@ impl Sections for MySections {
     async fn capture(&self, store: &Store, into: &mut Snapshot) -> Result<(), BackupError> {
         into.put("devices", &my_devices(store).await?)
     }
-    async fn restore(&self, tx: &mut Transaction<'_, Sqlite>, from: &Bundle, chosen: &BTreeSet<String>)
+    async fn restore(&self, tx: &mut Transaction<'_, Sqlite>, from: &Bundle, chosen: &Chosen)
         -> Result<Vec<String>, BackupError>
     {
-        if chosen.contains("devices") {
+        if chosen.app.contains("devices") {
             write_my_devices(tx, &from.take("devices")?.unwrap_or_default()).await?;
         }
         Ok(Vec::new())
@@ -54,6 +54,8 @@ let service = service
 
 - **`names`** lists every section `capture` may put and `restore` reads, a
   renamed section's old name too; a restore applies only these.
+- **`items`** lists the items within a section a restore may choose alone;
+  `restore` writes only those `chosen.restores_item(section, item)` answers.
 - **`erase`** is a factory reset's half for the product's tables, in the
   same transaction as `Store::erase_platform`. The commit catches a table
   left full only if it references `users` with no `ON DELETE` action or with

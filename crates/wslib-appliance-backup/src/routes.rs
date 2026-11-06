@@ -23,7 +23,7 @@ use axum::response::Response;
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
-use wslib_appliance_core::backend::{self, HookCaller, serves_tls};
+use wslib_appliance_core::backend::{self, HookCaller, is_app_name as is_item_name, serves_tls};
 use wslib_appliance_core::tls::TlsError;
 use wslib_appliance_core::{
     Actor, Admin, ApiError, ApplianceState, Identity, Mount, Reached, SessionAdmin, Unclaimed,
@@ -32,7 +32,7 @@ use wslib_appliance_core::{
 use wslib_appliance_store::{Store, StoreError};
 use wslib_appliance_types::backup::{
     BackupSchedule, BackupState, Chosen, Inspection, MAX_BUNDLE_LEN, OpenBundle, RestoreBundle,
-    RestoreReport, RestoreUnclaimed, ScheduleUpdate, ScheduleView, TakeBackup,
+    RestoreReport, RestoreUnclaimed, ScheduleUpdate, ScheduleView, SectionItem, TakeBackup,
 };
 use wslib_appliance_types::host::{HostSection, SshKeyFile};
 use wslib_appliance_types::tls::ServingPair;
@@ -55,6 +55,7 @@ pub const PASSPHRASE_SECRET: &str = "backup.schedule_passphrase";
 pub(crate) const ROOM_BESIDE_A_BUNDLE: usize = 64 * 1024;
 
 const MOST_SECTIONS_CHOSEN: usize = 256;
+const MOST_ITEMS_CHOSEN: usize = 512;
 
 const NOT_RUN: &str = "this backend does not run the backup schedule";
 const APPLIANCE_HALF_LEFT_OUT: &str = "This backup also carries an appliance's own half — \
@@ -336,6 +337,18 @@ impl<S: Sections, H: HostHalf> Engine<S, H> {
         warnings
     }
 
+    /// The product's choosable items, for the sections `bundle` carries and `ours` names.
+    pub(crate) fn items(
+        &self,
+        bundle: &Bundle,
+        ours: &BTreeSet<String>,
+    ) -> BTreeMap<String, Vec<SectionItem>> {
+        let mut items = self.sections.items(bundle);
+        let carried = &bundle.header().contains.app;
+        items.retain(|name, _| carried.contains_key(name) && ours.contains(name));
+        items
+    }
+
     pub(crate) async fn blocked<'a>(
         &self,
         store: &Store,
@@ -392,6 +405,20 @@ impl<S: Sections, H: HostHalf> Engine<S, H> {
         (applied.app, left_out) = std::mem::take(&mut applied.app)
             .into_iter()
             .partition(|name| ours.contains(name));
+        applied.items.retain(|name, _| applied.app.contains(name));
+        let offered = self.items(&bundle, ours);
+        let unoffered = applied.items.iter().find_map(|(section, items)| {
+            let listed = offered.get(section).map_or(&[][..], Vec::as_slice);
+            items
+                .iter()
+                .find(|item| !listed.iter().any(|o| &o.name == *item))
+                .map(|item| (section, item))
+        });
+        if let Some((section, item)) = unoffered {
+            return Err(ApiError::BadRequest(format!(
+                "this backup's “{section}” has no item “{item}” to choose"
+            )));
+        }
         if !applied.any() {
             return Err(ApiError::BadRequest(
                 "choose at least one section this backup carries".to_string(),
@@ -459,11 +486,7 @@ impl<S: Sections, H: HostHalf> Engine<S, H> {
         bundle
             .restore_platform(&app.store, &mut tx, &applied)
             .await?;
-        warnings.extend(
-            self.sections
-                .restore(&mut tx, &bundle, &applied.app)
-                .await?,
-        );
+        warnings.extend(self.sections.restore(&mut tx, &bundle, &applied).await?);
         tx.commit().await.map_err(StoreError::from)?;
         if applied.settings {
             app.store.settings_replaced();
@@ -921,7 +944,29 @@ async fn inspect<S: Sections, H: HostHalf, R: Caller>(
         header: bundle.header().clone(),
         warnings,
         blocked,
+        items: backups.items(&bundle, &ours),
     }))
+}
+
+/// Refuses too many sections or items, a misnamed one, or an item outside a
+/// chosen section.
+pub(crate) fn check_chosen(chosen: &Chosen) -> Result<(), ApiError> {
+    let sections = &chosen.app;
+    if sections.len() > MOST_SECTIONS_CHOSEN || !sections.iter().all(|name| is_section_name(name)) {
+        return Err(ApiError::BadRequest(format!(
+            "choose at most {MOST_SECTIONS_CHOSEN} of this app's sections, each by its name"
+        )));
+    }
+    let items = &chosen.items;
+    if !items.keys().all(|name| sections.contains(name))
+        || items.values().map(BTreeSet::len).sum::<usize>() > MOST_ITEMS_CHOSEN
+        || !items.values().flatten().all(|name| is_item_name(name))
+    {
+        return Err(ApiError::BadRequest(format!(
+            "choose at most {MOST_ITEMS_CHOSEN} items, each by its name and within a section chosen"
+        )));
+    }
+    Ok(())
 }
 
 /// A restore of the accounts ends every session, the caller's too, and the
@@ -934,14 +979,11 @@ async fn restore<S: Sections, H: HostHalf, R: Caller, T: Holds>(
     reached: Reached,
     Json(body): Json<RestoreBundle>,
 ) -> Result<Json<RestoreReport>, ApiError> {
-    let chosen = &body.sections.app;
-    if chosen.len() > MOST_SECTIONS_CHOSEN || !chosen.iter().all(|name| is_section_name(name)) {
-        return Err(ApiError::BadRequest(format!(
-            "choose at most {MOST_SECTIONS_CHOSEN} of this app's sections, each by its name"
-        )));
-    }
+    check_chosen(&body.sections)?;
     let ours = backups.sections.names().await?;
-    backups.refuse_blocked(&app.store, chosen).await?;
+    backups
+        .refuse_blocked(&app.store, &body.sections.app)
+        .await?;
     caller.prove(&app, &reached, body.proof, "restore").await?;
     let open = OpenBundle {
         passphrase: body.passphrase,
@@ -974,6 +1016,7 @@ async fn restore_unclaimed<S: Sections, H: HostHalf>(
     State(app): State<ApplianceState>,
     Json(body): Json<RestoreUnclaimed>,
 ) -> Result<Json<RestoreReport>, ApiError> {
+    body.sections.as_ref().map(check_chosen).transpose()?;
     let open = OpenBundle {
         passphrase: body.passphrase,
         bundle: body.bundle,

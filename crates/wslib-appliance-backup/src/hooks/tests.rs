@@ -7,7 +7,7 @@ use serde_json::json;
 use wslib_appliance_server::testing::{Harness, Req, body_json, body_text};
 use wslib_appliance_store::Store;
 use wslib_appliance_store::sqlx::{Sqlite, Transaction};
-use wslib_appliance_types::backup::Chosen;
+use wslib_appliance_types::backup::{Chosen, SectionItem};
 use wslib_appliance_types::console::{ConsoleIdentity, IDENTITY_HEADER};
 use wslib_appliance_types::{Role, STALE_PROOF};
 use wslib_secret::Secret;
@@ -15,7 +15,7 @@ use wslib_secret::Secret;
 use super::*;
 use crate::LocalBackups;
 use crate::routes::ROOM_BESIDE_A_BUNDLE;
-use crate::routes::tests::{BLOCKED, Hold, Named, PASSPHRASE, Padded, wait_at};
+use crate::routes::tests::{BLOCKED, Hold, Named, PASSPHRASE, Padded, bad_item_choices, wait_at};
 
 const NAME: &str = "widget-monitor";
 
@@ -46,14 +46,14 @@ impl Sections for Gauges {
         &self,
         _: &mut Transaction<'_, Sqlite>,
         from: &Bundle,
-        chosen: &BTreeSet<String>,
+        chosen: &Chosen,
     ) -> Result<Vec<String>, BackupError> {
         wait_at(&self.held_restoring).await;
         assert!(!self.panics, "a gauge's dial came off");
         if self.fail {
             return Err(BackupError::malformed("a gauge's dial is missing"));
         }
-        if chosen.contains("gauges") {
+        if chosen.app.contains("gauges") {
             *self.restored.lock().unwrap() = from.take("gauges")?;
         }
         Ok(Vec::new())
@@ -61,6 +61,14 @@ impl Sections for Gauges {
 
     fn warnings(&self, _: &Bundle) -> Vec<String> {
         vec!["Two gauges share a dial.".to_string()]
+    }
+
+    fn items(&self, _: &Bundle) -> BTreeMap<String, Vec<SectionItem>> {
+        let g1 = SectionItem {
+            name: "g1".to_string(),
+            label: "Gauge one".to_string(),
+        };
+        [("gauges".to_string(), vec![g1])].into()
     }
 
     async fn blocked(&self, _: &Store, names: &BTreeSet<String>) -> BTreeMap<String, String> {
@@ -212,7 +220,7 @@ async fn a_capture_carries_the_application_half_and_nothing_of_the_appliances() 
 }
 
 #[tokio::test]
-async fn inspect_says_what_a_blob_holds_and_what_this_build_says_about_it() {
+async fn inspect_says_what_a_blob_holds_what_this_build_says_about_it_and_its_items() {
     let app = app(Gauges::default()).await;
     furnish(app.store()).await;
     let blob = capture(&app).await;
@@ -231,7 +239,8 @@ async fn inspect_says_what_a_blob_holds_and_what_this_build_says_about_it() {
                 "app": { "gauges": 1 }
             },
             "warnings": ["Two gauges share a dial."],
-            "blocked": {}
+            "blocked": {},
+            "items": { "gauges": [{ "name": "g1", "label": "Gauge one" }] }
         })
     );
 }
@@ -383,6 +392,23 @@ async fn a_restore_outside_the_application_half_or_of_a_blob_this_build_would_no
         .await;
     assert_eq!(refused.status(), StatusCode::PAYLOAD_TOO_LARGE);
     untouched(&app, &gauges).await;
+}
+
+#[tokio::test]
+async fn a_restore_refuses_a_bad_item_choice_and_changes_nothing() {
+    let gauges = Gauges::default();
+    let app = app(gauges.clone()).await;
+    let blob = captured_then_changed(&app).await;
+    for mut chosen in bad_item_choices() {
+        chosen["trusted_cas"] = json!(true);
+        let refused = app
+            .hook("POST", "/v1/backup/restore")
+            .json(json!({ "chosen": chosen, "sections": blob }))
+            .send()
+            .await;
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "{chosen}");
+        untouched(&app, &gauges).await;
+    }
 }
 
 #[tokio::test]

@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::about::{Fact, Subsystem};
-use crate::backup::{Chosen, Contains};
+use crate::backup::{Chosen, Contains, SectionItem};
 use crate::host::AddressConfig;
 
 /// `GET /v1`: which optional hooks this app serves. About is always served.
@@ -62,6 +62,8 @@ pub struct AppInspection {
     pub warnings: Vec<String>,
     /// As [`Inspection::blocked`](crate::backup::Inspection::blocked).
     pub blocked: BTreeMap<String, String>,
+    /// As [`Inspection::items`](crate::backup::Inspection::items).
+    pub items: BTreeMap<String, Vec<SectionItem>>,
 }
 
 /// The body `POST /v1/backup/restore` takes: a capture's blob, unchanged,

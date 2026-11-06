@@ -853,6 +853,7 @@ async fn behind_a_console_there_is_no_schedule_no_files_and_no_first_run_restore
         ("DELETE", "/api/backup/schedule/passphrase"),
         ("GET", "/api/backup/files/x.json"),
         ("DELETE", "/api/backup/files/x.json"),
+        ("POST", "/api/onboarding/inspect"),
         ("POST", "/api/onboarding/restore"),
     ] {
         let response = app

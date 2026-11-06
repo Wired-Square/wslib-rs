@@ -1,6 +1,6 @@
 [package]
 name = "wslib-appliance-backup"
-version = "0.2.1"
+version = "0.2.2"
 description = "An appliance backup's sealed file, its sections, its routes and its schedule, on any of the appliance backends."
 readme = "README.md"
 edition.workspace = true

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2
+
+- `POST /api/onboarding/inspect`: a box with no accounts inspects a bundle
+  under the first-run restore's gate and ceiling, and is warned when that
+  restore would refuse it for want of an administrator. It writes nothing.
+
 ## 0.2.1
 
 - Pins `wslib-appliance-core` at 0.1.4.

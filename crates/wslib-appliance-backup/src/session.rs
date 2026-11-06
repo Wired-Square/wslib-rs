@@ -12,12 +12,11 @@ use crate::routes::Engine;
 /// The backup routes and the schedule on a backend whose callers are its own
 /// accounts, over a product's [`Sections`].
 ///
-/// Every route of [`routes()`](Self::routes) but the first-run restore is
-/// [`SessionAdmin`](wslib_appliance_core::SessionAdmin), and a take, a restore
-/// and a new schedule passphrase want the caller's own proof again, as
-/// `prove_caller` asks it. A bundle carries
-/// the accounts, the settings and the serving pair beside the application half,
-/// and a box with no accounts may restore one in place of making its first.
+/// Every route of [`routes()`](Self::routes) but the first-run inspect and
+/// restore is [`SessionAdmin`](wslib_appliance_core::SessionAdmin), and a
+/// take, a restore and a new schedule passphrase want the caller's own proof
+/// again, as `prove_caller` asks it. A bundle carries the accounts, the
+/// settings and the serving pair beside the application half, and a box with no accounts may restore one in place of making its first.
 #[derive(Debug, Clone)]
 pub struct SessionBackups<S>(Engine<S, ()>);
 
@@ -28,7 +27,7 @@ impl<S: Sections> SessionBackups<S> {
         Self(Engine::session(name, version, state_dir, (), sections))
     }
 
-    /// Every route, the first-run restore among them, for `Server::api`.
+    /// Every route, the first-run inspect and restore among them, for `Server::api`.
     pub fn routes(&self) -> Mount {
         self.0.routes(Router::new())
     }
@@ -82,13 +81,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_first_run_restore_is_served() {
+    async fn the_first_run_inspect_and_restore_are_served() {
         let app = served().await;
-        let refused = app
-            .post("/api/onboarding/restore")
-            .json(json!({ "passphrase": PASSPHRASE, "bundle": "not a bundle" }))
-            .send()
-            .await;
-        assert_ne!(refused.status(), StatusCode::NOT_FOUND);
+        for path in ["/api/onboarding/inspect", "/api/onboarding/restore"] {
+            let refused = app
+                .post(path)
+                .json(json!({ "passphrase": PASSPHRASE, "bundle": "not a bundle" }))
+                .send()
+                .await;
+            assert_ne!(refused.status(), StatusCode::NOT_FOUND, "{path}");
+        }
     }
 }

@@ -14,7 +14,7 @@ use wslib_crypto_ca::{
 };
 use wslib_crypto_x509::chain::{self, Purpose};
 use wslib_crypto_x509::{ExtendedKeyUsage, KeyUsage, NameConstraints, NameSubtree, inspect, pem};
-use x509_parser::prelude::{FromDer, X509Certificate};
+use x509_parser::prelude::{FromDer, GeneralName, X509Certificate};
 
 const CRL_URL: &str = "http://crl.example.com/ca.crl";
 const CA_URL: &str = "http://ca.example.com/ca.crt";
@@ -351,6 +351,96 @@ fn an_openssl_csrs_subject_and_odd_sized_key_are_copied_byte_for_byte() {
         let (_, issued) = X509Certificate::from_der(&leaf).unwrap();
         assert_eq!(issued.subject().as_raw(), csr.subject());
         assert_eq!(issued.public_key().raw, csr.spki());
+    }
+}
+
+#[test]
+fn a_chosen_subject_replaces_the_requests() {
+    let (_, provider) = &providers()[0];
+    let ca = root(signer(provider, KeyAlgorithm::EcP256));
+    let csr = request(&Signer::new(provider.clone(), &another_key()).unwrap());
+    let chosen = Subject::new("www.example.com").to_der().unwrap();
+    let leaf = ca
+        .issue_with_subject(
+            &csr,
+            &chosen,
+            &leaf_profile("web-server", false),
+            &serial(2),
+            a_year(),
+        )
+        .unwrap();
+    let (_, issued) = X509Certificate::from_der(&leaf).unwrap();
+    assert_ne!(csr.subject(), chosen);
+    assert_eq!(issued.subject().as_raw(), chosen);
+    assert_eq!(issued.public_key().raw, csr.spki());
+}
+
+/// The DNS names of a leaf issued for `subject` to a request for `csr.example.com` and `www.example.com`, and whether they are critical.
+fn names_issued_for(subject: &[u8], kind: &str) -> (Vec<String>, bool) {
+    let (_, provider) = &providers()[0];
+    let ca = root(signer(provider, KeyAlgorithm::EcP256));
+    let key = Signer::new(provider.clone(), &another_key()).unwrap();
+    let csr = csr_for(&key, "csr.example.com", &["www.example.com"]);
+    let leaf = ca
+        .issue_with_subject(
+            &csr,
+            subject,
+            &leaf_profile(kind, false),
+            &serial(2),
+            a_year(),
+        )
+        .unwrap();
+    let (_, issued) = X509Certificate::from_der(&leaf).unwrap();
+    let san = issued.subject_alternative_name().unwrap().unwrap();
+    let names = san
+        .value
+        .general_names
+        .iter()
+        .map(|name| match name {
+            GeneralName::DNSName(dns) => dns.to_string(),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    (names, san.critical)
+}
+
+#[test]
+fn an_empty_chosen_subject_makes_the_names_critical() {
+    let www = || vec!["www.example.com".to_string()];
+    assert_eq!(names_issued_for(&[0x30, 0], "vpn-client"), (www(), true));
+    let chosen = Subject::new("chosen.example.com").to_der().unwrap();
+    assert_eq!(names_issued_for(&chosen, "vpn-client"), (www(), false));
+}
+
+#[test]
+fn a_chosen_common_name_leads_the_names_as_a_requested_one_would() {
+    let chosen = Subject::new("chosen.example.com").to_der().unwrap();
+    assert_eq!(
+        names_issued_for(&chosen, "device"),
+        (
+            vec!["chosen.example.com".into(), "www.example.com".into()],
+            false
+        )
+    );
+    assert_eq!(
+        names_issued_for(&[0x30, 0], "device"),
+        (vec!["www.example.com".into()], true)
+    );
+}
+
+#[test]
+fn a_chosen_subject_must_be_a_der_name() {
+    let (_, provider) = &providers()[0];
+    let ca = root(signer(provider, KeyAlgorithm::EcP256));
+    let csr = request(&Signer::new(provider.clone(), &another_key()).unwrap());
+    for subject in [&[][..], &[0x30, 1], &[0x30, 0, 0], &[0x04, 0]] {
+        assert!(
+            matches!(
+                ca.issue_with_subject(&csr, subject, &Profile::default(), &serial(2), a_year()),
+                Err(Error::Malformed(_))
+            ),
+            "{subject:02x?}"
+        );
     }
 }
 

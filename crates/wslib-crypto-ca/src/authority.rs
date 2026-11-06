@@ -285,10 +285,23 @@ impl Authority {
         serial: &Serial,
         validity: Validity,
     ) -> Result<CertificateDer<'static>, Error> {
+        self.issue_with_subject(csr, csr.subject(), profile, serial, validity)
+    }
+
+    /// As [`issue`](Self::issue), but for a DER `subject` the caller chooses; `[0x30, 0x00]` is the empty name.
+    pub fn issue_with_subject(
+        &self,
+        csr: &Csr,
+        subject: &[u8],
+        profile: &Profile,
+        serial: &Serial,
+        validity: Validity,
+    ) -> Result<CertificateDer<'static>, Error> {
+        let common_name = subject_common_name(subject)?;
         let requested = Requested {
-            common_name: csr.common_name(),
+            common_name: common_name.as_deref(),
             names: csr.names(),
-            name_is_empty: is_empty_name(csr.subject()),
+            name_is_empty: is_empty_name(subject),
         };
         let extensions = profile.extensions(
             &self.method.of(csr.spki())?,
@@ -298,7 +311,7 @@ impl Authority {
         certificate(
             &self.signer,
             &self.subject,
-            csr.subject(),
+            subject,
             csr.spki(),
             serial,
             validity,
@@ -329,6 +342,13 @@ fn is_empty_name(name: &[u8]) -> bool {
     name == [0x30, 0]
 }
 
+fn subject_common_name(subject: &[u8]) -> Result<Option<String>, Error> {
+    match X509Name::from_der(subject) {
+        Ok(([], name)) => Ok(common_name(&name)),
+        _ => Err(Error::Malformed("the subject is not a DER Name".into())),
+    }
+}
+
 fn self_signed_certificate(
     signer: &Signer,
     subject: &[u8],
@@ -337,11 +357,7 @@ fn self_signed_certificate(
     serial: &Serial,
     validity: Validity,
 ) -> Result<CertificateDer<'static>, Error> {
-    let name = match X509Name::from_der(subject) {
-        Ok(([], name)) => name,
-        _ => return Err(Error::Malformed("the subject is not a DER Name".into())),
-    };
-    let common_name = common_name(&name);
+    let common_name = subject_common_name(subject)?;
     let requested = Requested {
         common_name: common_name.as_deref(),
         names: &[],

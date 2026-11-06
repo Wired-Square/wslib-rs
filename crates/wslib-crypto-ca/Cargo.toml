@@ -1,6 +1,6 @@
 [package]
 name = "wslib-crypto-ca"
-version = "0.2.0"
+version = "0.2.1"
 description = "A certificate authority on wslib-crypto-x509: CSRs parsed, verified and built, certificates issued under a profile, and CRLs built and read, through the caller's rustls CryptoProvider."
 readme = "README.md"
 edition.workspace = true

@@ -77,6 +77,14 @@ pub trait NmObjects {
 )]
 pub trait NmSettings {
     fn list_connections(&self) -> zbus::Result<Vec<OwnedObjectPath>>;
+
+    /// The new profile's path and a result NetworkManager leaves empty.
+    fn add_connection2(
+        &self,
+        settings: Settings,
+        flags: u32,
+        args: HashMap<&str, OwnedValue>,
+    ) -> zbus::Result<(OwnedObjectPath, HashMap<String, OwnedValue>)>;
 }
 
 /// One device, at its path in the tree.
@@ -115,6 +123,9 @@ pub trait Wireless {
 pub trait Profile {
     /// The settings without their secrets.
     fn get_settings(&self) -> zbus::Result<Settings>;
+
+    /// One setting group's secrets, keyed by the group.
+    fn get_secrets(&self, setting_name: &str) -> zbus::Result<Settings>;
 
     fn delete(&self) -> zbus::Result<()>;
 

@@ -21,9 +21,12 @@ pub mod checkpoint {
     pub const ALLOW_OVERLAPPING: u32 = 0x8;
 }
 
-/// `Update2`'s flag to write the profile to disk, so it survives a reboot.
+/// `Update2`'s and `AddConnection2`'s flag to write to disk, so it survives a reboot.
 const TO_DISK: u32 = 0x1;
 pub(crate) const NM: &str = "org.freedesktop.NetworkManager";
+/// What `GetSecrets` answers for a setting group the profile lacks.
+const SETTING_NOT_FOUND: &str =
+    "org.freedesktop.NetworkManager.Settings.Connection.SettingNotFound";
 const SCAN_POLL: Duration = Duration::from_millis(250);
 const SCAN_POLLS: u32 = 30;
 
@@ -236,6 +239,31 @@ impl Client {
             .await?
             .get_settings()
             .await
+    }
+
+    /// One setting group's secrets, `"802-11-wireless-security"` giving `psk`,
+    /// to merge into [`settings`](Self::settings); empty for a group the profile lacks.
+    pub async fn secrets(&self, profile: &ObjectPath<'_>, setting: &str) -> zbus::Result<Settings> {
+        let secrets = self
+            .proxy_at::<ProfileProxy<'_>>(profile)
+            .await?
+            .get_secrets(setting)
+            .await;
+        match secrets {
+            Err(zbus::Error::MethodError(name, ..)) if name.as_str() == SETTING_NOT_FOUND => {
+                Ok(Settings::new())
+            }
+            answer => answer,
+        }
+    }
+
+    /// Saves a profile to disk without activating it, answering its path.
+    pub async fn add_profile(&self, settings: Settings) -> zbus::Result<OwnedObjectPath> {
+        self.proxy::<NmSettingsProxy<'_>>()
+            .await?
+            .add_connection2(settings, TO_DISK, HashMap::new())
+            .await
+            .map(|(path, _)| path)
     }
 
     /// Replaces a profile's settings and writes it to disk; a device using it

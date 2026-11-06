@@ -65,7 +65,10 @@ CrlView::from_der(&crl)?.verify(ca.certificate(), provider.signature_verificatio
   (`Subject::to_der`, or any name). `issue(csr, profile, serial, validity)`
   writes a certificate whose issuer is the CA's subject and whose subject
   and key are the request's, each byte for byte, so chains build by exact
-  name in webpki and OpenSSL alike. `re_sign` replaces a self-signed
+  name in webpki and OpenSSL alike. `issue_with_subject` takes a DER
+  subject in place of the request's, as an ACME CA sets its own; the
+  profile's SAN policy sees that subject's common name, and an empty
+  subject marks the names critical. `re_sign` replaces a self-signed
   certificate with new validity, keeping its subject, key and key
   identifier, so certificates it issued still chain.
 - **`KeyIdentifierMethod`**: `Sha1`, RFC 5280 method 1 as OpenSSL computes

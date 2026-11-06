@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1
+
+- `Authority::issue_with_subject`: issues to a request's key and names
+  under a DER subject the caller chooses, `[0x30, 0x00]` for the empty
+  name. The profile's SAN policy sees the chosen subject's common name, and
+  an empty one marks the names critical. A subject that is not a DER Name
+  is `Error::Malformed`.
+
 ## 0.2.0
 
 - `Profile::name_constraints`: an RFC 5280 name constraints extension of

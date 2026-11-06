@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.4
+
+- Re-exports `issue_session`, `session_cookie` and `session_token_in`.
+  Sign-in, a password change and the first account issue their cookie
+  through `issue_session`.
+- Pins `wslib-appliance-core` at 0.1.4.
+
 ## 0.1.3
 
 - `PUT /api/users/{id}/enabled` and `DELETE /api/users/{id}` take the acting

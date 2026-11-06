@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.13
+
+- Pins `wslib-appliance-core`, `-https`, `-server` and `-service` at 0.1.4,
+  and `-backup` at 0.2.1.
+
 ## 0.1.12
 
 - Pins `wslib-appliance-types` at 0.1.7 and `wslib-appliance-backup` at 0.2.0.

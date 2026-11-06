@@ -174,6 +174,14 @@ pub struct Chosen {
     /// reported, never applied.
     pub host: bool,
     pub app: BTreeSet<String>,
+    /// The items chosen within a section in `app`; a chosen section missing
+    /// from it restores all of its items.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    #[cfg_attr(
+        feature = "ts",
+        ts(as = "Option<BTreeMap<String, BTreeSet<String>>>", optional)
+    )]
+    pub items: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl Chosen {
@@ -188,12 +196,19 @@ impl Chosen {
             ssh_keys: true,
             host: true,
             app: contains.app.keys().cloned().collect(),
+            items: BTreeMap::new(),
         }
         .carried_by(contains)
     }
 
     /// These, less every section `contains` says the bundle does not hold.
     pub fn carried_by(&self, contains: &Contains) -> Self {
+        let app: BTreeSet<String> = self
+            .app
+            .iter()
+            .filter(|name| contains.app.contains_key(*name))
+            .cloned()
+            .collect();
         Self {
             accounts: self.accounts && contains.accounts > 0,
             settings: self.settings && contains.settings > 0,
@@ -202,13 +217,23 @@ impl Chosen {
             serving_certificate: self.serving_certificate && contains.serving_certificate,
             ssh_keys: self.ssh_keys && contains.ssh_keys > 0,
             host: self.host && contains.host,
-            app: self
-                .app
+            items: self
+                .items
                 .iter()
-                .filter(|name| contains.app.contains_key(*name))
-                .cloned()
+                .filter(|(name, _)| app.contains(*name))
+                .map(|(name, items)| (name.clone(), items.clone()))
                 .collect(),
+            app,
         }
+    }
+
+    /// Whether a restore with these writes `item` of `section`.
+    pub fn restores_item(&self, section: &str, item: &str) -> bool {
+        self.app.contains(section)
+            && self
+                .items
+                .get(section)
+                .is_none_or(|items| items.contains(item))
     }
 
     /// Whether a restore with these would write anything at all.
@@ -227,11 +252,13 @@ impl Chosen {
             ssh_keys: _,
             host: _,
             app,
+            items,
         } = self;
         Self {
             trusted_certs: *trusted_certs,
             trusted_cas: *trusted_cas,
             app: app.clone(),
+            items: items.clone(),
             ..Self::default()
         }
     }
@@ -248,6 +275,20 @@ pub struct Inspection {
     /// The product's sections a restore may not choose now, each with why.
     #[serde(default)]
     pub blocked: BTreeMap<String, String>,
+    /// Each product section's items a restore may choose among; a section
+    /// absent has none to choose.
+    #[serde(default)]
+    pub items: BTreeMap<String, Vec<SectionItem>>,
+}
+
+/// One item within a product's section that a restore may choose alone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+pub struct SectionItem {
+    /// What [`Chosen::items`] names it by.
+    pub name: String,
+    pub label: String,
 }
 
 /// What a restore did.
@@ -379,6 +420,73 @@ mod tests {
         });
         let header: BundleHeader = serde_json::from_value(bare).expect("parse");
         assert_eq!(header.contains, Contains::default());
+    }
+
+    fn section_items(pairs: &[(&str, &[&str])]) -> BTreeMap<String, BTreeSet<String>> {
+        pairs
+            .iter()
+            .map(|(name, items)| {
+                (
+                    name.to_string(),
+                    items.iter().map(|i| i.to_string()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_choice_without_items_reads_as_before() {
+        let chosen: Chosen =
+            serde_json::from_value(serde_json::json!({ "app": ["widgets"] })).expect("parse");
+        assert!(chosen.items.is_empty());
+        assert!(chosen.restores_item("widgets", "anything"));
+    }
+
+    #[test]
+    fn carried_by_drops_the_items_of_sections_not_carried() {
+        let contains = Contains {
+            app: [("widgets".to_string(), 2)].into(),
+            ..Contains::default()
+        };
+        let chosen = Chosen {
+            app: ["widgets".to_string(), "gadgets".to_string()].into(),
+            items: section_items(&[("widgets", &["a"]), ("gadgets", &["b"])]),
+            ..Chosen::default()
+        };
+        assert_eq!(
+            chosen.carried_by(&contains).items,
+            section_items(&[("widgets", &["a"])])
+        );
+
+        let only_items = Chosen {
+            items: section_items(&[("widgets", &["a"])]),
+            ..Chosen::default()
+        };
+        assert!(!only_items.carried_by(&contains).any());
+    }
+
+    #[test]
+    fn a_section_without_an_items_entry_restores_all_of_them() {
+        let chosen = Chosen {
+            app: ["widgets".to_string(), "gadgets".to_string()].into(),
+            items: section_items(&[("widgets", &["a"])]),
+            ..Chosen::default()
+        };
+        assert!(chosen.restores_item("gadgets", "anything"));
+        assert!(chosen.restores_item("widgets", "a"));
+        assert!(!chosen.restores_item("widgets", "b"));
+        assert!(!chosen.restores_item("gizmos", "a"));
+    }
+
+    #[test]
+    fn the_application_half_keeps_the_items() {
+        let chosen = Chosen {
+            accounts: true,
+            app: ["widgets".to_string()].into(),
+            items: section_items(&[("widgets", &["a"])]),
+            ..Chosen::default()
+        };
+        assert_eq!(chosen.application_half().items, chosen.items);
     }
 
     #[test]

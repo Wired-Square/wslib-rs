@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.7
+
+- `Chosen::items`: the items chosen within a section in `app`; a chosen
+  section missing from it restores all of its items, so a choice without
+  `items` reads as before. `carried_by` keeps only the items of sections it
+  keeps, and `Chosen::restores_item(section, item)` answers the rule.
+- `Inspection::items` and `AppInspection::items`: each section's choosable
+  `SectionItem`s, a `name` and a `label`; a section absent has none.
+
 ## 0.1.6
 
 - `AppManifest::min_applianceos` and `AppLabel::min_applianceos`: the oldest

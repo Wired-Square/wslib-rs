@@ -190,6 +190,7 @@ async fn inspect<S: Sections>(
     inspection.contains = bundle.header().contains.clone();
     let ours = hooked.engine.sections.names().await?;
     inspection.warnings = hooked.engine.warnings(&bundle, &ours);
+    inspection.items = hooked.engine.items(&bundle, &ours);
     inspection.blocked = hooked
         .engine
         .blocked(&hooked.app.store, inspection.contains.app.keys())

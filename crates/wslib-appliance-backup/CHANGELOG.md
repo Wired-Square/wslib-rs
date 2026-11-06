@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0
+
+- Breaking: `Sections::restore` takes `chosen: &Chosen`, was the chosen
+  section names; an implementer reads `chosen.app` where it read `chosen`,
+  and may honour `chosen.items` through `Chosen::restores_item`.
+- `Sections::items(from)`: the items within each section a restore may
+  choose among, empty by default. Inspect, at both routes and the console's
+  hook, reports them for the sections the bundle carries and `names` answers.
+- A restore hands `restore` the chosen items of the sections it applies. The
+  session and local routes refuse, before the proof, an item outside a chosen
+  section, more than 512 items, or an item not named as a section is.
+- Raises `wslib-appliance-types` to 0.1.7.
+
 ## 0.1.3
 
 - Pins `wslib-appliance-core` 0.1.3.

@@ -22,7 +22,7 @@ use std::future::Future;
 
 use wslib_appliance_store::Store;
 use wslib_appliance_store::sqlx::{Sqlite, Transaction};
-use wslib_appliance_types::backup::Chosen;
+use wslib_appliance_types::backup::{Chosen, SectionItem};
 
 use crate::{BackupError, Bundle, Snapshot};
 
@@ -46,21 +46,28 @@ pub trait Sections: Clone + Send + Sync + 'static {
         into: &mut Snapshot,
     ) -> impl Future<Output = Result<(), BackupError>> + Send;
 
-    /// Write the sections named in `chosen` from `from` with [`Bundle::take`],
-    /// inside `tx`, after the platform's half; one not chosen is left as it is.
-    /// `chosen` names only sections `from` carries. The sentences are warnings
-    /// for the report. An `Err` rolls the whole restore back.
+    /// Write the sections in `chosen.app` from `from` with [`Bundle::take`],
+    /// inside `tx`, after the platform's half, only the items
+    /// [`Chosen::restores_item`] answers within each; one not chosen is left as
+    /// it is. `chosen` names only sections `from` carries. The sentences are
+    /// warnings for the report. An `Err` rolls the whole restore back.
     fn restore(
         &self,
         tx: &mut Transaction<'_, Sqlite>,
         from: &Bundle,
-        chosen: &BTreeSet<String>,
+        chosen: &Chosen,
     ) -> impl Future<Output = Result<Vec<String>, BackupError>> + Send;
 
     /// What this build would not understand about the rows `from` carries, shown
     /// at inspect and carried in the restore's report. Warnings, never refusals.
     fn warnings(&self, _from: &Bundle) -> Vec<String> {
         Vec::new()
+    }
+
+    /// The items within each section of `from` a restore may choose among,
+    /// shown at inspect; a section absent has none to choose.
+    fn items(&self, _from: &Bundle) -> BTreeMap<String, Vec<SectionItem>> {
+        BTreeMap::new()
     }
 
     /// Which of `names` cannot be restored right now, each with a sentence
@@ -124,7 +131,7 @@ impl Sections for () {
         &self,
         _: &mut Transaction<'_, Sqlite>,
         _: &Bundle,
-        _: &BTreeSet<String>,
+        _: &Chosen,
     ) -> Result<Vec<String>, BackupError> {
         Ok(Vec::new())
     }

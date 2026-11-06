@@ -278,12 +278,8 @@ async fn unclamped(parts: &Parts, app: &ApplianceState) -> Result<Identity, ApiE
 
 #[cfg(feature = "sessions")]
 async fn session_user(parts: &Parts, app: &ApplianceState) -> Result<User, ApiError> {
-    const COOKIE: wslib_auth::SessionCookie = wslib_auth::SessionCookie::new(SESSION_COOKIE);
-
     let sessions = app.sessions.get().ok_or(ApiError::Unauthenticated)?;
-    let token = COOKIE
-        .token_in(&parts.headers)
-        .ok_or(ApiError::Unauthenticated)?;
+    let token = crate::session_token_in(&parts.headers).ok_or(ApiError::Unauthenticated)?;
     Ok(sessions.resolve(&app.store, &token).await?)
 }
 

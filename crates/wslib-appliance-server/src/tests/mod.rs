@@ -10,6 +10,7 @@ mod ingress;
 mod proxied;
 mod reauth;
 mod routes;
+mod switcher;
 
 pub(crate) fn admin() -> wslib_appliance_types::console::ConsoleIdentity {
     crate::testing::console("admin", wslib_appliance_types::Role::Admin)

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1
+
+- Pins `wslib-appliance-core` at 0.1.4.
+
 ## 0.2.0
 
 - Breaking: `Sections::restore` takes `chosen: &Chosen`, was the chosen

@@ -13,7 +13,7 @@ cargo install wslib-appliance-xtask --registry wired-square --locked
 ```
 
 It renders for `wslib-appliance-config` 0.1.2, `wslib-appliance-store` 0.1.3
-and `wslib-appliance-server` 0.1.3: the `/usr/share/<name>` layout, the
+and `wslib-appliance-server` 0.1.4: the `/usr/share/<name>` layout, the
 `config.toml` keys and the store's directory are theirs.
 
 ## Verbs

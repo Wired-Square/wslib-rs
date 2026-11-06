@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.4
+
+- `HarnessBuilder::console_app(name, usernames)`: the harness answers
+  `GET /api/switcher` at the origin root as the console in front does, with
+  the console and then each declared app the asserted caller holds a role
+  in. A product's own router still does not answer it.
+- Re-exports `HookCaller`, for a product's own routes on
+  `BackupHooks::routes`.
+- Pins `wslib-appliance-core` at 0.1.4.
+
 ## 0.1.3
 
 - Pins `wslib-appliance-core` 0.1.3.

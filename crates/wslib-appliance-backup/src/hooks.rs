@@ -20,8 +20,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
-use wslib_appliance_core::backend::{HookCaller, backup_hooks};
-use wslib_appliance_core::{ApiError, ApplianceState, BackupHooks, audit};
+use wslib_appliance_core::{ApiError, ApplianceState, BackupHooks, HookCaller, audit};
 use wslib_appliance_types::backup::{MAX_BUNDLE_LEN, RestoreReport};
 use wslib_appliance_types::hooks::{AppInspection, AppRestore};
 use wslib_appliance_types::{TrustedCa, TrustedCert};
@@ -140,7 +139,7 @@ pub(crate) fn mount<S: Sections>(engine: Engine<S, ()>) -> BackupHooks {
             post(inspect::<S>).layer(DefaultBodyLimit::max(MAX_BUNDLE_LEN)),
         )
         .route("/restore", post(restore::<S>).layer(bundle_sized()));
-    backup_hooks(routes, move |app| Hooked {
+    BackupHooks::routes(routes, move |app| Hooked {
         app,
         engine: engine.clone(),
         inspecting: inspecting.clone(),

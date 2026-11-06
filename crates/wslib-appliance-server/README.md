@@ -46,9 +46,10 @@ The proxy must keep the base path, not strip it. In development,
 The hooks socket serves the console alone, under `/v1` rather than the base
 path: `GET /v1` (which optional hooks are served), `GET /v1/about`,
 `POST /v1/notes` from `Server::notes`, and `POST /v1/backup/capture`,
-`inspect` and `restore` from `Server::backup_hooks`. An `Appliance-Identity`
-there names the person in the audit log and grants nothing. A hook not
-served is a 404.
+`inspect` and `restore` from `Server::backup_hooks`. A product that keeps
+its own backup format mounts its routes there with `BackupHooks::routes`,
+naming the caller with `HookCaller`. An `Appliance-Identity` there names the
+person in the audit log and grants nothing. A hook not served is a 404.
 
 ## Behind Home Assistant's ingress
 
@@ -96,3 +97,6 @@ let _ = rustls::crypto::ring::default_provider().install_default();
   `.local()` sends as a control socket, which tells a `SessionAdmin` route
   from an `Admin` one. `Harness::hook` sends on the hooks socket, and
   `builder().ingress(..)` with `Req::from_peer` drives the ingress front door.
+  `builder().console_app(name, usernames)` declares an app the console in
+  front runs, so the harness answers the console's `GET /api/switcher`. It
+  lists an app for the usernames given, not by the console's own checks.

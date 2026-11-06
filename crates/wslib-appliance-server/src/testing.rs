@@ -17,17 +17,21 @@ use std::path::{Path, PathBuf};
 
 pub use wslib_appliance_core::testing::*;
 
-use axum::Router;
 use axum::body::Bytes;
+use axum::http::HeaderMap;
+use axum::routing::get;
+use axum::{Json, Router};
 use tempfile::TempDir;
 use tokio_util::sync::DropGuard;
 use wslib_appliance_core::backend;
 use wslib_appliance_core::{Built, ControlRouter};
 use wslib_appliance_store::Store;
-use wslib_appliance_types::Role;
-use wslib_appliance_types::console::ConsoleIdentity;
+use wslib_appliance_types::console::{ConsoleIdentity, IDENTITY_HEADER};
+use wslib_appliance_types::{AppLink, Role};
 
-use crate::{About, ApplianceState, BackupHooks, CancellationToken, Front, Mount, Notes, Server};
+use crate::{
+    About, ApiError, ApplianceState, BackupHooks, CancellationToken, Front, Mount, Notes, Server,
+};
 
 const LOGO: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg"/>"#;
 
@@ -68,6 +72,13 @@ pub struct HarnessBuilder {
     bootstrap: wslib_appliance_config::Bootstrap,
     routes: Vec<(&'static str, Mount)>,
     front: Front,
+    console_apps: Vec<ConsoleApp>,
+}
+
+#[derive(Clone)]
+struct ConsoleApp {
+    link: AppLink,
+    usernames: Vec<String>,
 }
 
 impl HarnessBuilder {
@@ -92,6 +103,20 @@ impl HarnessBuilder {
     /// store has an account.
     pub fn resolver_from_store(mut self, resolver: impl crate::ResolveCaller) -> Self {
         self.front = Front::Resolver(backend::Callers::resolved_from_store(resolver));
+        self
+    }
+
+    /// Answer `GET /api/switcher` at the origin root as the console in front
+    /// does, which runs `name` at `/apps/<name>/` with an app socket, and in
+    /// which each of `usernames` holds a role.
+    pub fn console_app(mut self, name: &str, usernames: &[&str]) -> Self {
+        self.console_apps.push(ConsoleApp {
+            link: AppLink {
+                name: name.to_string(),
+                href: format!("/apps/{name}/"),
+            },
+            usernames: usernames.iter().map(ToString::to_string).collect(),
+        });
         self
     }
 
@@ -232,12 +257,17 @@ impl HarnessBuilder {
             .build(std::sync::Arc::new(tls), base_path, self.front)
             .await
             .unwrap_or_else(|e| panic!("the harness assembles: {e}"));
+        let app = match peers {
+            Some(peers) => backend::gate_ingress(https, peers),
+            None => https,
+        };
         Harness {
             hooks: backend::hooks(&state),
             state,
-            app: match peers {
-                Some(peers) => backend::gate_ingress(https, peers),
-                None => https,
+            app: if self.console_apps.is_empty() {
+                app
+            } else {
+                switcher(self.console_apps).fallback_service(app)
             },
             dir: self.dir,
             local: control,
@@ -266,6 +296,7 @@ impl Harness {
             dir,
             routes: Vec::new(),
             front: Front::Console,
+            console_apps: Vec::new(),
         }
     }
 
@@ -366,6 +397,28 @@ impl Harness {
     pub async fn audit_row(&self, message: &str) -> wslib_appliance_types::AuditRecord {
         audit_row(self.store(), message).await
     }
+}
+
+fn switcher(apps: Vec<ConsoleApp>) -> Router {
+    let answer = move |headers: HeaderMap| std::future::ready(listing(&apps, &headers));
+    Router::new().route("/api/switcher", get(answer))
+}
+
+/// The console first, then the apps the asserted caller may open.
+fn listing(apps: &[ConsoleApp], headers: &HeaderMap) -> Result<Json<Vec<AppLink>>, ApiError> {
+    let who: ConsoleIdentity = headers
+        .get(IDENTITY_HEADER)
+        .and_then(|value| value.to_str().ok()?.parse().ok())
+        .ok_or(ApiError::Unauthenticated)?;
+    let console = AppLink {
+        name: "console".to_string(),
+        href: "/".to_string(),
+    };
+    let opened = apps
+        .iter()
+        .filter(|app| app.usernames.contains(&who.username))
+        .map(|app| app.link.clone());
+    Ok(Json(std::iter::once(console).chain(opened).collect()))
 }
 
 #[cfg(unix)]

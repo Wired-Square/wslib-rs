@@ -3,9 +3,8 @@
 
 use axum::Router;
 use axum::http::{StatusCode, header};
-use axum::routing::post;
+use axum::routing::any;
 use serde_json::{Value, json};
-use wslib_appliance_core::backend::{self, HookCaller};
 use wslib_appliance_store::Store;
 use wslib_appliance_types::Role;
 use wslib_appliance_types::about::Fact;
@@ -13,7 +12,7 @@ use wslib_appliance_types::console::{ConsoleIdentity, IDENTITY_HEADER};
 use wslib_appliance_types::host::AddressConfig;
 
 use crate::testing::{Harness, HarnessBuilder, Req, body_json, body_text};
-use crate::{About, Actor, ApplianceState, BackupHooks, Notes, ProductAbout};
+use crate::{About, Actor, ApplianceState, BackupHooks, HookCaller, Notes, ProductAbout};
 
 struct Uplink;
 
@@ -43,12 +42,12 @@ impl About for Rows {
 fn who_routes() -> Router<ApplianceState> {
     Router::new().route(
         "/who",
-        post(|who: HookCaller| async move { format!("{} {:?}", who.actor(), who.actor_id()) }),
+        any(|who: HookCaller| async move { format!("{} {:?}", who.actor(), who.actor_id()) }),
     )
 }
 
 fn who() -> BackupHooks {
-    backend::backup_hooks(who_routes(), |state: ApplianceState| state)
+    BackupHooks::routes(who_routes(), |state: ApplianceState| state)
 }
 
 fn hooked() -> HarnessBuilder {
@@ -285,6 +284,7 @@ mod socket {
     use std::time::Duration;
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use wslib_appliance_core::backend;
     use wslib_appliance_store::Store;
     use wslib_appliance_types::Branding;
 
@@ -320,6 +320,18 @@ mod socket {
         .await
         .expect("hung up on at once");
         assert!(answer.is_empty(), "{}", String::from_utf8_lossy(&answer));
+    }
+
+    #[tokio::test]
+    async fn a_products_own_backup_routes_are_served_on_the_hooks_socket() {
+        let app = hooked().build().await;
+        let socket = app.serve_hooks_socket(own_uid(app.dir())).await;
+        let ops = console("ops").parse().unwrap();
+        let (status, body) = over(&socket, "/v1/backup/who", Some(&ops)).await;
+        assert_eq!(
+            (status, body.as_str()),
+            (200, r#"ops Some("console:c-17")"#)
+        );
     }
 
     #[tokio::test]

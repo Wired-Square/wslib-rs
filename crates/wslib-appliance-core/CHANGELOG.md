@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.4
+
+- `issue_session(app, user, valid_from, proof)` issues a session as its
+  `Set-Cookie` value, in `session_cookie(app)`: `appliance_session` at the
+  base path, `Secure`, `HttpOnly`, `SameSite=Strict`, no `Max-Age`. A host
+  on its own sessions calls it after checking the credentials.
+  `session_token_in(headers)` reads that cookie's token without a state.
+- `BackupHooks::routes(routes, state)` mounts a product's own backup routes
+  on the hooks socket; `backend::backup_hooks` still works. `HookCaller` is
+  exported at the root.
+
 ## 0.1.3
 
 - `Tls::install_pem` renews the connections open on the listener after

@@ -30,6 +30,9 @@ current one. A session is a store row, re-checked against its account on
 every request; disabling an account or changing its password deletes its
 sessions.
 
+A host on these sessions that checks credentials of its own issues the
+session with `issue_session`, which hands back the same cookie.
+
 When a second step is owed, `POST /api/session` answers 202 and a
 `SecondStep` instead of a session: `next: "code"`, while TOTP is on, goes on
 to `POST /api/session/code`, and `next: "enrol"`, for an account an

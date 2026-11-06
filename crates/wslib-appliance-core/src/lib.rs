@@ -63,11 +63,12 @@ pub use extract::{
     Unclaimed, Viewer, host_admin_only,
 };
 pub use factors::{
-    HostSessions, ReauthenticationWindow, password_proved, prove_acting_admin, prove_caller,
-    reauthentication_route, remove_account_passkey, require_totp_enrolment, second_factor_routes,
+    HostSessions, ReauthenticationWindow, issue_session, password_proved, prove_acting_admin,
+    prove_caller, reauthentication_route, remove_account_passkey, require_totp_enrolment,
+    second_factor_routes, session_cookie, session_token_in,
 };
 pub use feed::{feed, sse};
-pub use hooks::{BackupHooks, Notes};
+pub use hooks::{BackupHooks, HookCaller, Notes};
 pub use ingress::{INGRESS_SOURCE, RequestBase};
 pub use logs::{Logs, logs};
 pub use reached::{Reached, ServingPort};

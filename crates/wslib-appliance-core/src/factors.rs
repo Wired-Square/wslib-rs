@@ -14,8 +14,8 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Extension, Json, Router};
-use wslib_appliance_auth::AuthError;
-use wslib_appliance_auth::Awaiting;
+use chrono::{DateTime, Utc};
+use wslib_appliance_auth::{AuthError, Awaiting, Sessions};
 use wslib_appliance_store::{Account, Store};
 use wslib_appliance_types::passkey::{
     AssertionCredential, CreationOptions, PasskeyHost, PasskeyRegistration, PasskeyRename,
@@ -29,11 +29,11 @@ use wslib_appliance_types::totp::{
     ClockSkew, FactorProof, RecoveryCodes, TotpConfirm, TotpEnrolment, TotpView,
 };
 use wslib_appliance_types::{Availability, User};
-use wslib_auth::Proof;
+use wslib_auth::{Proof, SessionCookie, SessionToken};
 use wslib_secret::Secret;
 
 use crate::audit::Actor;
-use crate::extract::{Identity, Vouches};
+use crate::extract::{Identity, SESSION_COOKIE, Vouches};
 use crate::reauth::wrong_password;
 use crate::{ApiError, ApplianceState, Reached, Viewer, audit, reauthenticate};
 
@@ -55,6 +55,32 @@ pub trait HostSessions: Clone + Send + Sync + 'static {
         account: &Account,
         proof: Proof,
     ) -> impl Future<Output = Result<HeaderValue, ApiError>> + Send;
+}
+
+/// The `appliance_session` cookie at the backend's base path: `Secure`, `HttpOnly`,
+/// `SameSite=Strict`, and no `Max-Age`, as the session's row expires.
+pub fn session_cookie(app: &ApplianceState) -> SessionCookie {
+    SessionCookie::new(SESSION_COOKIE).path(app.base_path.as_str().to_owned())
+}
+
+/// The token in a request's `appliance_session` cookie, for a resolver built before its state.
+pub fn session_token_in(headers: &HeaderMap) -> Option<SessionToken> {
+    const COOKIE: SessionCookie = SessionCookie::new(SESSION_COOKIE);
+    COOKIE.token_in(headers)
+}
+
+/// A session for `user`, whose cutoff read `valid_from` and whose credential check
+/// began at `proof`, as the `Set-Cookie` value [`session_cookie`] carries it in.
+pub async fn issue_session(
+    app: &ApplianceState,
+    user: &User,
+    valid_from: DateTime<Utc>,
+    proof: Proof,
+) -> Result<HeaderValue, ApiError> {
+    let token = Sessions::new(&app.store)
+        .issue(&app.store, user, valid_from, proof)
+        .await?;
+    Ok(session_cookie(app).set(&token))
 }
 
 /// The sessions of a backend whose resolver reports

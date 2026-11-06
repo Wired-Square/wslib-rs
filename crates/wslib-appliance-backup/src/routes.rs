@@ -357,7 +357,7 @@ impl<S: Sections, H: HostHalf> Engine<S, H> {
         &self,
         store: &Store,
         bundle: &Bundle,
-        warned: Option<String>,
+        warned: impl IntoIterator<Item = String>,
     ) -> Result<Inspection, ApiError> {
         let ours = self.sections.names().await?;
         let mut warnings = self.warnings(bundle, &ours);
@@ -976,10 +976,13 @@ async fn inspect_unclaimed<S: Sections, H: HostHalf>(
     let bundle = backups
         .open(&app, body, Bundle::open_unauthenticated, false)
         .await?;
-    let refused = (!bundle.has_enabled_admin()).then(|| {
+    let unclaimable = (!bundle.has_enabled_admin()).then(|| {
         let why = cannot_claim(&bundle);
         format!("{}{}.", why[..1].to_uppercase(), &why[1..])
     });
+    let refused = unclaimable
+        .into_iter()
+        .chain(backups.sections.refuses_first_run(&bundle));
     Ok(Json(
         backups.inspection(&app.store, &bundle, refused).await?,
     ))
@@ -1061,6 +1064,9 @@ async fn restore_unclaimed<S: Sections, H: HostHalf>(
     let bundle = backups
         .open(&app, open, Bundle::open_unauthenticated, false)
         .await?;
+    if let Some(why) = backups.sections.refuses_first_run(&bundle) {
+        return Err(ApiError::BadRequest(why));
+    }
     let chosen = body
         .sections
         .unwrap_or_else(|| Chosen::everything_in(&bundle.header().contains));

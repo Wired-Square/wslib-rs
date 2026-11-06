@@ -16,7 +16,8 @@ use crate::routes::Engine;
 /// restore is [`SessionAdmin`](wslib_appliance_core::SessionAdmin), and a
 /// take, a restore and a new schedule passphrase want the caller's own proof
 /// again, as `prove_caller` asks it. A bundle carries the accounts, the
-/// settings and the serving pair beside the application half, and a box with no accounts may restore one in place of making its first.
+/// settings and the serving pair beside the application half, and a box with
+/// no accounts may restore one in place of making its first.
 #[derive(Debug, Clone)]
 pub struct SessionBackups<S>(Engine<S, ()>);
 

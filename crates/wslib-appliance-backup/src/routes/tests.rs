@@ -1698,6 +1698,32 @@ async fn the_first_run_inspect_leaves_the_box_as_it_was() {
     assert_eq!(first_run_restore(&app, &bundle).await, StatusCode::OK);
 }
 
+#[tokio::test]
+async fn a_products_first_run_refusal_is_a_first_run_inspect_warning_and_nothing_signed_in() {
+    let (app, admin) = session_over(Reporting::refusing_first_run()).await;
+    let bundle = take(&app, &admin).await;
+    let seen = body_json(inspection(&app, &admin, &bundle).await).await;
+    assert_eq!(seen["warnings"], json!(["Inspect said this first."]));
+    let restored = restore_chosen(&app, &admin, &bundle, json!({ "app": ["gauges"] })).await;
+    assert_eq!(restored.status(), StatusCode::OK);
+
+    let mut tx = app.store().begin().await.unwrap();
+    Store::erase_platform(&mut tx).await.unwrap();
+    tx.commit().await.unwrap();
+    let seen = first_run(&app, "inspect", PASSPHRASE, &bundle).await;
+    assert_eq!(seen.status(), StatusCode::OK);
+    let seen = body_json(seen).await;
+    assert_eq!(
+        seen["warnings"],
+        json!(["Inspect said this first.", NOT_AT_FIRST_RUN])
+    );
+    assert_sentences(warnings(&seen));
+    let refused = first_run(&app, "restore", PASSPHRASE, &bundle).await;
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_json(refused).await["error"], NOT_AT_FIRST_RUN);
+    assert_eq!(app.store().user_count().await.unwrap(), 0);
+}
+
 /// A product whose sections are one row, kept in memory, that says what it
 /// did at each step, records what `restore` and `after_restore` were handed,
 /// and may hold its restore part-way.
@@ -1707,16 +1733,28 @@ pub(crate) struct Reporting {
     after: Arc<std::sync::Mutex<Option<(Chosen, usize)>>>,
     held: Option<Hold>,
     blocked: bool,
+    refuses_first_run: bool,
 }
 
 /// What a blocked section's product says of it.
 pub(crate) const BLOCKED: &str = "The gauges' app is not running.";
+
+/// What a product refusing a first-run restore of its gauges says.
+const NOT_AT_FIRST_RUN: &str = "Gauges restore only onto a box already set up.";
 
 impl Reporting {
     /// One of which no section asked about can be restored right now.
     pub(crate) fn blocking() -> Self {
         Self {
             blocked: true,
+            ..Self::default()
+        }
+    }
+
+    /// One that refuses a first-run restore of a bundle carrying its gauges.
+    fn refusing_first_run() -> Self {
+        Self {
+            refuses_first_run: true,
             ..Self::default()
         }
     }
@@ -1782,6 +1820,11 @@ impl Sections for Reporting {
             .filter(|_| self.blocked)
             .map(|name| (name.clone(), BLOCKED.to_string()))
             .collect()
+    }
+
+    fn refuses_first_run(&self, from: &Bundle) -> Option<String> {
+        (self.refuses_first_run && from.header().contains.app.contains_key("gauges"))
+            .then(|| NOT_AT_FIRST_RUN.to_string())
     }
 
     async fn after_restore(&self, _: &Store, from: &Bundle, applied: &Chosen) -> Vec<String> {

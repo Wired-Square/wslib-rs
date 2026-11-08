@@ -20,7 +20,9 @@ use crate::testing::{
     ENCODERS, Harness, body_bytes, body_json, console, product as product_of, varies,
 };
 
-use crate::{Admin, ApplianceState, Identity, Mount, RequestBase, Server, Viewer, logs};
+use crate::{
+    Admin, ApplianceState, Identity, Mount, RequestBase, Server, Uncompressed, Viewer, logs,
+};
 
 #[cfg(unix)]
 #[tokio::test]
@@ -904,6 +906,47 @@ async fn the_encoder_cap_holds_on_the_surface_the_product_serves() {
         gzipped().await.headers()[header::CONTENT_ENCODING],
         "gzip",
         "and take the encoders back when the bodies go"
+    );
+}
+
+#[tokio::test]
+async fn a_response_marked_uncompressed_is_sent_plain_and_holds_no_encoder() {
+    let archive = || async {
+        (
+            Uncompressed,
+            [(header::CONTENT_TYPE, "application/vnd.example.archive")],
+            "an archive already compressed, well over the floor",
+        )
+    };
+    let app = Harness::builder()
+        .api(Mount::new(
+            Router::new().route("/export", get(archive)),
+            |chassis| chassis,
+        ))
+        .build()
+        .await;
+
+    let mut held = Vec::new();
+    for _ in 0..=ENCODERS {
+        let response = app
+            .get("/api/export")
+            .header("accept-encoding", "gzip")
+            .send()
+            .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get(header::CONTENT_ENCODING).is_none());
+        held.push(response);
+    }
+
+    let gz = app
+        .get("/api/branding")
+        .header("accept-encoding", "gzip")
+        .send()
+        .await;
+    assert_eq!(
+        gz.headers()[header::CONTENT_ENCODING],
+        "gzip",
+        "the plain bodies held no encoder"
     );
 }
 

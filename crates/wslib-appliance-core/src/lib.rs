@@ -41,8 +41,6 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 pub use tokio_util::sync::CancellationToken;
 use tokio_util::sync::DropGuard;
-use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
-use tower_http::compression::{CompressionLayer, CompressionLevel};
 use wslib_appliance_config::BasePath;
 use wslib_appliance_store::Store;
 use wslib_appliance_types::Branding;
@@ -51,6 +49,7 @@ use wslib_http_scaffold::EncoderCap;
 
 pub use about::{About, ProductAbout};
 pub use audit::Actor;
+pub use compress::Uncompressed;
 
 /// What [`audit!`] expands into; not for calling directly.
 #[doc(hidden)]
@@ -664,14 +663,7 @@ impl Chassis {
         };
         let https = routed
             // After the fallback: `Router::layer` wraps only what is already registered.
-            .layer(
-                CompressionLayer::new()
-                    .quality(CompressionLevel::Fastest)
-                    .compress_when(
-                        DefaultPredicate::new()
-                            .and(NotForContentType::const_new("application/gzip")),
-                    ),
-            )
+            .layer(compress::layer())
             // Outside compression, so it edits the request first and holds its permit over the body.
             .layer(EncoderCap::default());
 

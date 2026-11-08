@@ -1,6 +1,6 @@
 [package]
 name = "wslib-appliance-core"
-version = "0.1.5"
+version = "0.1.6"
 description = "The router, the authority and the workers an appliance needs, beneath the backends that serve them behind a console, on their own TLS listener and as a desktop service."
 readme = "README.md"
 edition.workspace = true

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.7
+
+- Renders for `wslib-appliance-server` 0.1.6, so `gates` no longer warns on
+  a lock that holds it.
+
 ## 0.2.6
 
 - Renders for `wslib-appliance-server` 0.1.5, so `gates` no longer warns on

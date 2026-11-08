@@ -1,9 +1,40 @@
-//! The response half of the encoder cap, for a handler serving a body stored
-//! compressed: call `wslib_http_scaffold::restore_accept_encoding` before
-//! choosing, and pass the response through [`negotiated`].
+//! The chassis compression, and the response half of the encoder cap for a
+//! handler serving a body stored compressed: call
+//! `wslib_http_scaffold::restore_accept_encoding` before choosing, and pass
+//! the response through [`negotiated`].
 
-use axum::http::{HeaderValue, header};
-use axum::response::Response;
+use std::convert::Infallible;
+
+use axum::http::{Extensions, HeaderMap, HeaderValue, StatusCode, Version, header};
+use axum::response::{IntoResponseParts, Response, ResponseParts};
+use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
+use tower_http::compression::{CompressionLayer, CompressionLevel};
+
+/// Keeps a response out of the chassis compression, for a body already compressed.
+#[derive(Clone, Copy, Debug)]
+pub struct Uncompressed;
+
+impl IntoResponseParts for Uncompressed {
+    type Error = Infallible;
+
+    fn into_response_parts(self, mut parts: ResponseParts) -> Result<ResponseParts, Infallible> {
+        parts.extensions_mut().insert(self);
+        Ok(parts)
+    }
+}
+
+pub(crate) fn layer() -> CompressionLayer<impl Predicate> {
+    let unmarked = |_: StatusCode, _: Version, _: &HeaderMap, extensions: &Extensions| {
+        extensions.get::<Uncompressed>().is_none()
+    };
+    CompressionLayer::new()
+        .quality(CompressionLevel::Fastest)
+        .compress_when(
+            DefaultPredicate::new()
+                .and(NotForContentType::const_new("application/gzip"))
+                .and(unmarked),
+        )
+}
 
 /// A response whose encoding follows the request's `Accept-Encoding`: `Vary`
 /// names that header, and a body stored encoded holds no permit.

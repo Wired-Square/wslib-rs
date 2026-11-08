@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.6
+
+- `Uncompressed`, set on a response as a part or an extension, keeps it out
+  of the chassis compression and holds no encoder: for a body that is
+  already compressed, such as an archive download.
+
 ## 0.1.5
 
 - A refused proof answers `"proof": "refused"` beside its sentence, so a

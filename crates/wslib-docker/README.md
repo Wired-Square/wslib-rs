@@ -28,7 +28,9 @@ docker.start("hello").await?;
   already so; `stop_for_good` drops the restart policy, then stops;
   `remove` forces; `remove_image`. `load` streams a `docker save` archive
   and gives the references loaded. `pull` takes one `ImageReference`, never
-  every tag of it, and gives the reference to inspect it by. Calls wait 60 s
+  every tag of it, and gives the reference to inspect it by. `events` gives
+  the `Event`s from `since` to `until` that pass an `EventFilters` (type,
+  event, label, container), waiting until `until` comes. Calls wait 60 s
   and loads and pulls 10 min, both settable. A load's or a pull's progress
   is read whole; an error anywhere in it fails the call.
 - **`DockerError`** keeps `Unreachable` (no socket, or no permission),
@@ -65,5 +67,5 @@ docker.start("hello").await?;
 ## What isn't
 
 Typed inspection results, streaming pull progress to a caller, exec,
-logs, events, volumes, registry login, compose. Container specs are the
+logs, following events as they come, volumes, registry login, compose. Container specs are the
 caller's JSON. Windows named pipes.

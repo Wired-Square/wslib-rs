@@ -2,11 +2,11 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use serde_json::{Value, json};
 use wslib_docker::testing::FakeEngine;
-use wslib_docker::{Docker, DockerError, ImageReference};
+use wslib_docker::{Docker, DockerError, EventFilters, ImageReference};
 
 fn socket() -> PathBuf {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -224,4 +224,81 @@ async fn a_held_request_is_answered_once_released_and_a_slow_one_times_out() {
     engine.release();
     engine.docker().ping().await.unwrap();
     assert_eq!(engine.seen().len(), 2);
+}
+
+#[tokio::test]
+async fn events_are_asked_for_bounded_and_filtered() {
+    let engine = engine(|_, _| (200, String::new()));
+    let since = SystemTime::UNIX_EPOCH + Duration::new(1_700_000_000, 5);
+    let until = since + Duration::from_millis(2500);
+    let filters = EventFilters::default()
+        .kind("container")
+        .event("die")
+        .event("oom")
+        .label("app=hello world");
+    let events = engine.docker().events(since, until, &filters).await;
+    assert_eq!(events.unwrap(), []);
+    let filters = "%7B%22event%22%3A%5B%22die%22%2C%22oom%22%5D%2C%22label%22%3A%5B%22app%3Dhello%20world%22%5D%2C%22type%22%3A%5B%22container%22%5D%7D";
+    assert_eq!(
+        requests(&engine),
+        [(
+            "GET".to_string(),
+            format!(
+                "/v1.44/events?since=1700000000.000000005&until=1700000002.500000005&filters={filters}"
+            )
+        )]
+    );
+}
+
+#[tokio::test]
+async fn events_decode_back_to_back_and_line_by_line_with_fields_left_out() {
+    let engine = engine(|_, _| {
+        (
+            200,
+            concat!(
+                r#"{"Type":"container","Action":"die","Actor":{"ID":"c0ffee","Attributes":{"app":"hello","exitCode":"1"}},"time":1700000000,"timeNano":1700000000000000005,"scope":"local"}"#,
+                r#"{"Type":"network","Action":"connect"}"#,
+                "\n",
+                r#"{"Action":"start","Actor":{"Attributes":{"count":3}}}"#,
+                "\n",
+            )
+            .to_string(),
+        )
+    });
+    let now = SystemTime::now();
+    let events = engine
+        .docker()
+        .events(now, now, &EventFilters::default())
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 3);
+    let died = &events[0];
+    assert_eq!(
+        (
+            died.kind.as_str(),
+            died.action.as_str(),
+            died.time,
+            died.time_nano
+        ),
+        ("container", "die", 1_700_000_000, 1_700_000_000_000_000_005)
+    );
+    assert_eq!(died.actor.id, "c0ffee");
+    assert_eq!(died.actor.attributes["app"], "hello");
+    assert_eq!(died.actor.attributes["exitCode"], "1");
+    assert_eq!(
+        (events[1].kind.as_str(), events[1].action.as_str()),
+        ("network", "connect")
+    );
+    assert_eq!((events[2].kind.as_str(), events[2].time), ("", 0));
+    assert!(events[2].actor.attributes.is_empty());
+}
+
+#[tokio::test]
+async fn events_refused_are_an_error() {
+    let engine = engine(|_, _| (400, r#"{"message":"invalid filter"}"#.to_string()));
+    let now = SystemTime::now();
+    assert!(matches!(
+        engine.docker().events(now, now, &EventFilters::default()).await,
+        Err(DockerError::Refused { status: 400, message }) if message == "invalid filter"
+    ));
 }

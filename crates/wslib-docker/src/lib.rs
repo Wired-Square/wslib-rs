@@ -30,7 +30,7 @@ pub mod testing;
 pub mod trust;
 
 #[cfg(feature = "client")]
-pub use client::{Body, Docker, DockerError, empty, exchange};
+pub use client::{Body, Docker, DockerError, Event, EventActor, EventFilters, empty, exchange};
 #[cfg(feature = "client")]
 pub use hyper::{Method, Request, StatusCode, header};
 pub use reference::{ImageReference, Pin};

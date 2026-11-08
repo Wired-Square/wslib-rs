@@ -47,6 +47,11 @@ pub enum ApiError {
     #[error("{0}")]
     Forbidden(String),
 
+    /// A signed-in caller's proof was refused. 403, with `"proof": "refused"` in the
+    /// body, as [`WrongCode`](ApiError::WrongCode) carries too.
+    #[error("{0}")]
+    ProofRefused(String),
+
     /// 404, including the JSON one `/api/*` gets instead of the SPA.
     #[error("{0}")]
     NotFound(String),
@@ -125,7 +130,7 @@ impl ApiError {
             Self::Unauthenticated | Self::Refused | Self::PasskeyRefused => {
                 StatusCode::UNAUTHORIZED
             }
-            Self::Forbidden(_) | Self::WrongCode => StatusCode::FORBIDDEN,
+            Self::Forbidden(_) | Self::WrongCode | Self::ProofRefused(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed(_) => StatusCode::METHOD_NOT_ALLOWED,
             Self::Conflict(_) => StatusCode::CONFLICT,
@@ -151,6 +156,10 @@ impl IntoResponse for ApiError {
                 .with_field("clock_skew", serde_json::json!(skew)),
             Self::TooManyRequests { retry_after, .. } => {
                 wslib_http_error::ApiError::too_many_requests(sentence, retry_after)
+            }
+            Self::WrongCode | Self::ProofRefused(_) => {
+                wslib_http_error::ApiError::new(StatusCode::FORBIDDEN, sentence)
+                    .with_field("proof", "refused")
             }
             other => wslib_http_error::ApiError::new(other.status(), sentence),
         }
@@ -289,9 +298,13 @@ impl From<AuthError> for ApiError {
             | AuthError::NoPasskeysHere(_) => Self::Conflict(e.to_string()),
             AuthError::PasskeyRefused(Ceremony::SignIn)
             | AuthError::PasskeyCounterDidNotMove(Ceremony::SignIn) => Self::PasskeyRefused,
+            AuthError::PasskeyRefused(Ceremony::Registration)
+            | AuthError::PasskeyCounterDidNotMove(Ceremony::Registration) => {
+                Self::Forbidden(e.to_string())
+            }
             AuthError::CodeUsed
             | AuthError::PasskeyRefused(_)
-            | AuthError::PasskeyCounterDidNotMove(_) => Self::Forbidden(e.to_string()),
+            | AuthError::PasskeyCounterDidNotMove(_) => Self::ProofRefused(e.to_string()),
             AuthError::NotOnAnIpAddress | AuthError::BadHost | AuthError::PasskeyName => {
                 Self::BadRequest(e.to_string())
             }
@@ -318,6 +331,7 @@ mod tests {
             (ApiError::WrongCode, StatusCode::FORBIDDEN),
             (ApiError::PasskeyRefused, StatusCode::UNAUTHORIZED),
             (ApiError::Forbidden("no".into()), StatusCode::FORBIDDEN),
+            (ApiError::ProofRefused("no".into()), StatusCode::FORBIDDEN),
             (ApiError::NotFound("gone".into()), StatusCode::NOT_FOUND),
             (
                 ApiError::MethodNotAllowed("the PATCH method is not allowed here".into()),

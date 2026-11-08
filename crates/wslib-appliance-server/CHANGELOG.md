@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5
+
+- Pins `wslib-appliance-core` at 0.1.5.
+
 ## 0.1.4
 
 - `HarnessBuilder::console_app(name, usernames)`: the harness answers

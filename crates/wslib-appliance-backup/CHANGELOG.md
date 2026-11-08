@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.3
+
+- Pins `wslib-appliance-core` at 0.1.5.
+
 ## 0.2.2
 
 - `POST /api/onboarding/inspect`: a box with no accounts inspects a bundle

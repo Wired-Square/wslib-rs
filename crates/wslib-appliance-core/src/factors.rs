@@ -520,7 +520,9 @@ async fn reauthenticated<W: ReauthenticationWindow>(
         .await?
         .is_none()
     {
-        return Err(ApiError::Forbidden("the password is incorrect".to_string()));
+        return Err(ApiError::ProofRefused(
+            "the password is incorrect".to_string(),
+        ));
     }
     window.mark_reauthenticated(&app, &headers, began).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -580,7 +582,7 @@ async fn prove_factor_change(
             return proved_here(reauthenticate(app, who, reached, again(None), what).await?);
         }
         (None, _) => {
-            return Err(ApiError::Forbidden(
+            return Err(ApiError::ProofRefused(
                 "while TOTP is on, this needs a code from the authenticator app, a recovery \
                  code or a passkey"
                     .to_string(),

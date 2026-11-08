@@ -155,7 +155,7 @@ fn recently(principal: &Principal, what: &'static str) -> Result<(), ApiError> {
         what,
         "re-authentication refused: the password was not confirmed recently"
     );
-    Err(ApiError::Forbidden(format!(
+    Err(ApiError::ProofRefused(format!(
         "{STALE_PROOF} in the last {} minutes",
         REAUTHENTICATION_WINDOW.as_secs() / 60
     )))
@@ -171,7 +171,7 @@ pub(crate) fn wrong_password(username: &str, id: &str, what: &'static str) -> Ap
         method = "password",
         "re-authentication refused: the password is wrong"
     );
-    ApiError::Forbidden("the password is incorrect".to_string())
+    ApiError::ProofRefused("the password is incorrect".to_string())
 }
 
 /// Prove the password of the caller's own store account `id`, handing back the
@@ -240,7 +240,7 @@ mod tests {
     }
 
     fn is_wrong_password(refused: &ApiError) -> bool {
-        matches!(refused, ApiError::Forbidden(message) if message == "the password is incorrect")
+        matches!(refused, ApiError::ProofRefused(message) if message == "the password is incorrect")
     }
 
     #[tokio::test]
@@ -302,7 +302,7 @@ mod tests {
             .await
             .expect_err("stale");
         assert!(
-            matches!(&refused, ApiError::Forbidden(message) if message.contains("5 minutes")),
+            matches!(&refused, ApiError::ProofRefused(message) if message.contains("5 minutes")),
             "{refused:?}"
         );
     }
@@ -327,7 +327,7 @@ mod tests {
         ] {
             let refused = attempt(&resolved(at)).await.expect_err("not recent");
             assert!(
-                matches!(&refused, ApiError::Forbidden(message) if message.contains("5 minutes")),
+                matches!(&refused, ApiError::ProofRefused(message) if message.contains("5 minutes")),
                 "{at:?}: {refused:?}"
             );
         }
@@ -403,7 +403,7 @@ mod tests {
         ] {
             let refused = by_passkey(&store, vouches, who).await.expect_err("refused");
             assert!(
-                matches!(&refused, ApiError::Forbidden(m) if m == "the passkey was not accepted"),
+                matches!(&refused, ApiError::ProofRefused(m) if m == "the passkey was not accepted"),
                 "{refused:?}"
             );
         }
@@ -426,7 +426,7 @@ mod tests {
             .await
             .expect_err("stale");
         assert!(
-            matches!(&stale, ApiError::Forbidden(m) if m.contains("5 minutes")),
+            matches!(&stale, ApiError::ProofRefused(m) if m.contains("5 minutes")),
             "{stale:?}"
         );
         let recent = by_passkey(&store, Vouches::Console, &resolved(Some(Utc::now())))

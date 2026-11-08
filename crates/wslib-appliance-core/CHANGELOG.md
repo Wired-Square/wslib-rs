@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.5
+
+- A refused proof answers `"proof": "refused"` beside its sentence, so a
+  client tells it apart from any other 403: a wrong or used code, a wrong
+  password, a refused passkey, a stale proof, and a TOTP account asked for a
+  code. Statuses and sentences are unchanged. `ApiError::ProofRefused(sentence)`
+  is the new variant; `ApiError::WrongCode` carries the field too, and a
+  passkey refused at registration stays an unmarked `Forbidden`.
+
 ## 0.1.4
 
 - `issue_session(app, user, valid_from, proof)` issues a session as its

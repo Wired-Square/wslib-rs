@@ -1,7 +1,8 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use futures_util::TryStreamExt;
@@ -160,6 +161,31 @@ impl Docker {
         Ok(reference)
     }
 
+    /// The events from `since` to `until` that pass `filters`; the engine answers once `until` comes, so the call
+    /// waits until then and the call timeout after.
+    pub async fn events(
+        &self,
+        since: SystemTime,
+        until: SystemTime,
+        filters: &EventFilters,
+    ) -> Result<Vec<Event>, DockerError> {
+        let path = format!(
+            "/events?since={}&until={}&filters={}",
+            timestamp(since),
+            timestamp(until),
+            filters.encoded()
+        );
+        let still_to_come = until.duration_since(SystemTime::now()).unwrap_or_default();
+        let (status, body) = self
+            .call(Method::GET, path, None, still_to_come + self.call_timeout)
+            .await?;
+        let body = succeeded(status, body)?;
+        serde_json::Deserializer::from_slice(&body)
+            .into_iter::<Value>()
+            .map(|event| Ok(Event::decoded(event?)))
+            .collect()
+    }
+
     async fn call(
         &self,
         method: Method,
@@ -199,6 +225,107 @@ impl Docker {
             Ok(body) => Ok(Some(serde_json::from_slice(&body)?)),
             Err(DockerError::Refused { status: 404, .. }) => Ok(None),
             Err(e) => Err(e),
+        }
+    }
+}
+
+/// Which events [`Docker::events`] gives: one of each key's values, for every key given.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EventFilters(BTreeMap<&'static str, Vec<String>>);
+
+impl EventFilters {
+    /// Of an object type, such as `container`, `image` or `network`.
+    pub fn kind(self, kind: impl Into<String>) -> Self {
+        self.with("type", kind)
+    }
+
+    /// Of an action, such as `start` or `die`.
+    pub fn event(self, action: impl Into<String>) -> Self {
+        self.with("event", action)
+    }
+
+    /// Of an object with a label: `key` for any value, `key=value` for one.
+    pub fn label(self, label: impl Into<String>) -> Self {
+        self.with("label", label)
+    }
+
+    /// Of a container, by name or ID.
+    pub fn container(self, container: impl Into<String>) -> Self {
+        self.with("container", container)
+    }
+
+    fn with(mut self, key: &'static str, value: impl Into<String>) -> Self {
+        self.0.entry(key).or_default().push(value.into());
+        self
+    }
+
+    fn encoded(&self) -> String {
+        let json = serde_json::to_string(&self.0).expect("a map of strings serialises");
+        json.bytes()
+            .map(|b| match b {
+                b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                    char::from(b).to_string()
+                }
+                _ => format!("%{b:02X}"),
+            })
+            .collect()
+    }
+}
+
+/// One of the engine's events; a field the engine left out is empty or 0.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Event {
+    /// The object type: `container`, `image`, `network` and so on.
+    pub kind: String,
+    pub action: String,
+    /// Unix seconds.
+    pub time: i64,
+    /// Unix nanoseconds.
+    pub time_nano: i64,
+    pub actor: EventActor,
+}
+
+/// The object an event happened to.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct EventActor {
+    pub id: String,
+    /// For a container, its labels, `name` and `image`, and for a `die` its `exitCode`.
+    pub attributes: BTreeMap<String, String>,
+}
+
+impl Event {
+    fn decoded(event: Value) -> Self {
+        let text = |at: &str| {
+            event
+                .pointer(at)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
+        let number = |at: &str| {
+            event
+                .pointer(at)
+                .and_then(Value::as_i64)
+                .unwrap_or_default()
+        };
+        let attributes = event
+            .pointer("/Actor/Attributes")
+            .and_then(Value::as_object);
+        Self {
+            kind: text("/Type"),
+            action: text("/Action"),
+            time: number("/time"),
+            time_nano: number("/timeNano"),
+            actor: EventActor {
+                id: text("/Actor/ID"),
+                attributes: attributes
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_string())))
+                    .collect(),
+            },
         }
     }
 }
@@ -315,6 +442,11 @@ fn named(name: &str) -> Result<&str, DockerError> {
     named
         .then_some(name)
         .ok_or_else(|| DockerError::Name(name.to_string()))
+}
+
+fn timestamp(at: SystemTime) -> String {
+    let since = at.duration_since(UNIX_EPOCH).unwrap_or_default();
+    format!("{}.{:09}", since.as_secs(), since.subsec_nanos())
 }
 
 /// 304 is the engine's "already so", for a start or a stop.

@@ -15,7 +15,7 @@ use serde::Deserialize;
 pub const RENDERS_FOR: [(&str, &str); 3] = [
     ("wslib-appliance-config", "0.1.2"),
     ("wslib-appliance-store", "0.1.3"),
-    ("wslib-appliance-server", "0.1.4"),
+    ("wslib-appliance-server", "0.1.5"),
 ];
 
 const FORBIDDEN_NAMES: &str = "scripts/forbidden-names.txt";

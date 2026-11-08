@@ -647,6 +647,84 @@ async fn a_caller_with_totp_on_proves_itself_with_a_code_and_never_the_password_
 }
 
 #[tokio::test]
+async fn every_refused_proof_is_marked_beside_its_status_and_sentence() {
+    let probe = console_proving().await;
+    let id = account(&probe, "member").await;
+    let prove = |body: Value| post_json(&probe, "/api/prove", Some(id.as_str()), body);
+    let garbage_passkey = json!({ "passkey": {
+        "id": "AQ", "rawId": "AQ", "type": "public-key",
+        "response": { "clientDataJSON": "e30", "authenticatorData": "AA", "signature": "AA" },
+    }});
+    let mut refusals = vec![
+        (
+            prove(json!({ "password": "not it" })).await,
+            "the password is incorrect".to_string(),
+        ),
+        (
+            prove(garbage_passkey).await,
+            "the passkey was not accepted".to_string(),
+        ),
+    ];
+
+    let key = wslib_secret::Secret::new(TOTP_KEY);
+    assert!(probe.store().enrol_totp(&id, &key).await.unwrap());
+    assert!(probe.store().confirm_totp(&id, &key, 1, &[]).await.unwrap());
+    let code = code_at(TOTP_KEY, SystemTime::now());
+    let wrong = format!("{}{}", &code[..5], (code.as_bytes()[5] - b'0' + 1) % 10);
+    let by = |code: &str| json!({ "code": code, "browser_time": millis() });
+    assert_eq!(prove(by(&code)).await.status(), StatusCode::OK);
+    refusals.extend([
+        (
+            prove(json!({ "password": PASSWORD })).await,
+            "while TOTP is on, this needs a code from the authenticator app, a recovery code \
+             or a passkey"
+                .to_string(),
+        ),
+        (prove(by(&wrong)).await, "the code is incorrect".to_string()),
+        (
+            prove(by(&code)).await,
+            "that code has just been used; wait for the next one".to_string(),
+        ),
+    ]);
+
+    let stale = Some(chrono::Utc::now() - chrono::TimeDelta::minutes(6));
+    let elsewhere = Probe::resolving_hosting(Elsewhere(stale), vec![proving()]).await;
+    refusals.push((
+        post_json(&elsewhere, "/api/prove", None, json!({})).await,
+        format!(
+            "{} in the last 5 minutes",
+            wslib_appliance_types::STALE_PROOF
+        ),
+    ));
+
+    for (response, sentence) in refusals {
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{sentence}");
+        let body = body_json(response).await;
+        assert_eq!(body["error"], sentence);
+        assert_eq!(body["proof"], "refused", "{body}");
+    }
+}
+
+#[tokio::test]
+async fn a_refusal_that_is_not_of_a_proof_is_not_marked() {
+    let probe = console_with_users().await;
+    let admin = account(&probe, "admin").await;
+    probe.store().set_role(&admin, Role::Admin).await.unwrap();
+    let member = account(&probe, "member").await;
+    let proof = json!({ "password": PASSWORD });
+
+    let admins = format!("/api/users/{admin}/require-totp");
+    let own = post_json(&probe, &admins, Some(&admin), proof.clone()).await;
+    let unranked = post_json(&probe, &admins, Some(&member), proof).await;
+    let plain = ApiError::Forbidden("no".into()).into_response();
+    for refused in [own, unranked, plain] {
+        assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+        let body = body_json(refused).await;
+        assert!(body.get("proof").is_none(), "{body}");
+    }
+}
+
+#[tokio::test]
 async fn the_control_socket_has_no_factor_to_prove() {
     let probe = console_proving().await;
     let socket = probe.control.clone().with_local_authority(Role::Admin);

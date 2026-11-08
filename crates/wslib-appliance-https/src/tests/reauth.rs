@@ -57,7 +57,7 @@ async fn a_wrong_or_missing_password_is_refused_and_the_session_is_not() {
             .await
             .expect_err("no right password");
         assert!(
-            matches!(&refused, ApiError::Forbidden(message) if message == "the password is incorrect"),
+            matches!(&refused, ApiError::ProofRefused(message) if message == "the password is incorrect"),
             "{refused:?}"
         );
     }

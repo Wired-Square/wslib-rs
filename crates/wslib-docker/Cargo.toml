@@ -1,6 +1,6 @@
 [package]
 name = "wslib-docker"
-version = "0.1.1"
+version = "0.1.2"
 description = "A Docker Engine client over its Unix socket or Windows named pipe, image references as `docker pull` takes them, registry trust in certs.d, and a fake engine for tests."
 readme = "README.md"
 edition.workspace = true
@@ -16,18 +16,18 @@ client = ["dep:bytes", "dep:futures-util", "dep:http-body-util", "dep:hyper", "d
 testing = ["client", "hyper/server", "tokio/sync"]
 
 [dependencies]
-bytes = { version = "1.2", optional = true }
-futures-util = { version = "0.3.17", default-features = false, optional = true }
+bytes = { version = "1.7.1", optional = true }
+futures-util = { version = "0.3.34", default-features = false, optional = true }
 http-body-util = { version = "0.1", optional = true }
-hyper = { version = "1.4", features = ["client", "http1"], optional = true }
-hyper-util = { version = "0.1.6", features = ["tokio"], optional = true }
+hyper = { version = "1.8", features = ["client", "http1"], optional = true }
+hyper-util = { version = "0.1.18", features = ["tokio"], optional = true }
 serde_json = { version = "1.0.85", optional = true }
-tokio = { version = "1.37", default-features = false, features = ["net", "rt", "time"], optional = true }
-tokio-util = { version = "0.7.8", features = ["io"], optional = true }
+tokio = { version = "1.47", default-features = false, features = ["net", "rt", "time"], optional = true }
+tokio-util = { version = "0.7.19", features = ["io"], optional = true }
 wslib-file-atomic = { path = "../wslib-file-atomic", version = "0.1", registry = "wired-square", optional = true }
 
 [dev-dependencies]
-tokio = { version = "1.37", features = ["macros", "rt"] }
+tokio = { version = "1.47", features = ["macros", "rt"] }
 
 [[test]]
 name = "engine"

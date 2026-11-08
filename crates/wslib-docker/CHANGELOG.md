@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2
+
+- Dependency floors raised to match the crates it shares a graph with:
+  bytes 1.7.1, futures-util 0.3.34, hyper 1.8, hyper-util 0.1.18, tokio
+  1.47, tokio-util 0.7.19. No change to the API.
+
 ## 0.1.1
 
 - Builds on Windows, where `Docker` and `exchange` talk to a named pipe,

@@ -8,6 +8,9 @@
   code. Statuses and sentences are unchanged. `ApiError::ProofRefused(sentence)`
   is the new variant; `ApiError::WrongCode` carries the field too, and a
   passkey refused at registration stays an unmarked `Forbidden`.
+  A consumer that matches `ApiError::Forbidden(_)` on a proof's result, to
+  count a wrong password or code toward a limit, must match `ProofRefused`
+  instead, or the limit never trips.
 
 ## 0.1.4
 

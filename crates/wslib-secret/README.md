@@ -16,7 +16,7 @@ as its hash: a session token, a pairing code, a recovery code.
 ```rust
 use wslib_secret::{Encoding, Secret, TokenHash};
 
-let token = Secret::random::<32>(Encoding::Base64Url)?; // or Base32, for people
+let token = Secret::random::<32>(Encoding::Base64Url)?; // Base32 for people, Hex for hex stores
 store(token.hash().as_str());
 
 // Later, a token presented:
@@ -25,11 +25,13 @@ if presented.hash() == TokenHash::from_stored(stored) { /* admitted */ }
 ```
 
 - **`Secret::random::<N>(encoding)`**: `N` bytes from the OS (`getrandom`),
-  as unpadded base64url or upper-case RFC 4648 base32.
+  as unpadded base64url, upper-case RFC 4648 base32 or lower-case hex.
 - **`TokenHash`**: the SHA-256 of the token's text, as unpadded base64url.
   `Secret::hash()` or `TokenHash::of(text)`, for text normalised first;
   `from_stored` reads one back, and `==` compares in constant time. It is
-  `wslib-auth`'s session token hash, byte for byte.
+  `wslib-auth`'s session token hash, byte for byte. `hash_in(encoding)` and
+  `TokenHash::of_in(text, encoding)` write the digest in another encoding,
+  such as the lower-case hex a store already keeps.
 
 ## Stores
 

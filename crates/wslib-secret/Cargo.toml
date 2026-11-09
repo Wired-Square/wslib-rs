@@ -1,6 +1,6 @@
 [package]
 name = "wslib-secret"
-version = "0.1.5"
+version = "0.1.6"
 description = "A credential that never prints itself, loaded from the environment or a file."
 readme = "README.md"
 edition.workspace = true

@@ -7,6 +7,8 @@
   the SHA-256 in any `Encoding`; `hash_in(Encoding::Hex)` is `sha256sum`'s
   digest, for a store that already keeps hex hashes. `hash` and `of` stay
   base64url.
+- getrandom 0.4, so `Secret::random`'s error is now `getrandom` 0.4's
+  `Error`.
 
 ## 0.1.5
 

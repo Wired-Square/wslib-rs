@@ -8864,7 +8864,7 @@ dependencies = [
 name = "wslib-secret"
 version = "0.1.6"
 dependencies = [
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "secret-service",
  "security-framework",
  "serde",

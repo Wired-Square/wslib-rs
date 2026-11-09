@@ -24,7 +24,7 @@ secret-service = ["store", "dep:secret-service"]
 os = ["keychain", "credential-manager", "secret-service"]
 
 [dependencies]
-getrandom = { version = "0.3", features = ["std"], optional = true }
+getrandom = { version = "0.4", features = ["std"], optional = true }
 sha2 = { version = "0.10.9", optional = true }
 subtle = { version = "2.5", default-features = false }
 serde = { version = "1.0.225", optional = true }

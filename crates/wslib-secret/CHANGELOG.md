@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.6
+
+- `Encoding::Hex`: lower-case RFC 4648 base16, so `Secret::random::<24>(Encoding::Hex)`
+  is a 48-character hex token. `Secret::hash_in` and `TokenHash::of_in` write
+  the SHA-256 in any `Encoding`; `hash_in(Encoding::Hex)` is `sha256sum`'s
+  digest, for a store that already keeps hex hashes. `hash` and `of` stay
+  base64url.
+- getrandom 0.4, so `Secret::random`'s error is now `getrandom` 0.4's
+  `Error`.
+
 ## 0.1.5
 
 - `credential-manager` feature: `CredentialManager` keeps each secret as a

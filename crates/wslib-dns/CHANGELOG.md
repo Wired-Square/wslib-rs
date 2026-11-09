@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.3
+
+- `AuthoritativeResolver` (feature `hickory`): every query answered by the
+  zone's authoritative servers, walking from the root, with only delegations
+  cached, so a stale negative answer is never served.
+  `AuthoritativeResolver::delegation`: the NS set the parent publishes.
+  `AuthoritativeOptions` sets the timeout, attempts and a per-lookup query
+  budget.
+
 ## 0.2.2
 
 - Rust 1.99 floor.

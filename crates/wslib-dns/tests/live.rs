@@ -1,9 +1,40 @@
 //! Against the real DNS: `cargo test -p wslib-dns --features hickory -- --ignored`.
 
-use wslib_dns::{HickoryOptions, HickoryResolver, LookupError, Resolver};
+use wslib_dns::{
+    AuthoritativeOptions, AuthoritativeResolver, HickoryOptions, HickoryResolver, LookupError,
+    Resolver,
+};
 
 fn resolver() -> HickoryResolver {
     HickoryResolver::from_system(HickoryOptions::default()).unwrap()
+}
+
+#[tokio::test]
+#[ignore = "needs the network"]
+async fn authoritative_servers_answer_from_the_root_down() {
+    let dns = AuthoritativeResolver::new(AuthoritativeOptions::default());
+    let spf = dns.txt("example.com").await.unwrap();
+    assert!(
+        spf.records
+            .iter()
+            .any(|txt| txt.joined().starts_with("v=spf1"))
+    );
+    assert!(!dns.ns("example.com").await.unwrap().records.is_empty());
+    assert!(
+        !dns.delegation("example.com")
+            .await
+            .unwrap()
+            .records
+            .is_empty()
+    );
+    assert_eq!(
+        dns.txt("nothing.example.invalid").await,
+        Err(LookupError::NxDomain)
+    );
+    assert_eq!(
+        dns.delegation("www.example.com").await,
+        Err(LookupError::NoData)
+    );
 }
 
 #[tokio::test]

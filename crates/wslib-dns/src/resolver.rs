@@ -3,7 +3,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::pin::pin;
 use std::task::Poll;
 
-use crate::{Answer, Ds, Lookup, LookupError, Mx, Tlsa, Txt, normalise};
+use crate::{Answer, Ds, Lookup, LookupError, Mx, Tlsa, Txt, normalise, present};
 
 /// The hop limit [`Resolver::cname_chain`] callers use unless they have a reason
 /// not to.
@@ -45,10 +45,49 @@ pub trait Resolver: Send + Sync {
         }
     }
 
+    /// The NS set the parent zone publishes for `name`, which can differ from
+    /// the zone's own [`ns`](Self::ns). A resolver that can't ask the parent
+    /// answers [`LookupError::Other`].
+    fn delegation(&self, name: &str) -> impl Future<Output = Lookup<String>> + Send {
+        let _ = name;
+        async {
+            Err(LookupError::Other(
+                "this resolver doesn't read delegations".into(),
+            ))
+        }
+    }
+
     /// Whether answers carry a DNSSEC status, so a missing one means the
     /// query failed rather than the resolver not looking.
     fn validates(&self) -> bool {
         false
+    }
+
+    /// The first TXT string at `name` that `is_kind` accepts, `None` when the
+    /// name or type is absent, and the error when the lookup failed.
+    fn first_txt(
+        &self,
+        name: &str,
+        is_kind: impl Fn(&str) -> bool + Send,
+    ) -> impl Future<Output = Result<Option<String>, LookupError>> + Send {
+        async move {
+            Ok(present(self.txt(name).await)?
+                .iter()
+                .map(Txt::joined)
+                .find(|text| is_kind(text)))
+        }
+    }
+
+    /// Whether `name` exists at all, from one NS query: any answer but
+    /// NXDOMAIN says it does.
+    fn exists(&self, name: &str) -> impl Future<Output = Result<bool, LookupError>> + Send {
+        async move {
+            match self.ns(name).await {
+                Ok(_) | Err(LookupError::NoData) => Ok(true),
+                Err(LookupError::NxDomain) => Ok(false),
+                Err(error) => Err(error),
+            }
+        }
     }
 
     /// A and AAAA, queried together. Addresses from either side are an answer
@@ -124,6 +163,9 @@ macro_rules! delegate_resolver {
             fn ds(&self, name: &str) -> impl Future<Output = Lookup<Ds>> + Send {
                 (**self).ds(name)
             }
+            fn delegation(&self, name: &str) -> impl Future<Output = Lookup<String>> + Send {
+                (**self).delegation(name)
+            }
             fn validates(&self) -> bool {
                 (**self).validates()
             }
@@ -151,6 +193,12 @@ impl CnameChain {
     /// Whether the queried name was an alias at all.
     pub fn is_aliased(&self) -> bool {
         self.names.len() > 1
+    }
+
+    /// Whether the chain passes through `name`, whatever its case or
+    /// trailing dot.
+    pub fn reaches(&self, name: &str) -> bool {
+        self.names.contains(&normalise(name))
     }
 }
 
@@ -237,4 +285,44 @@ pub(crate) async fn join<A: Future, B: Future>(a: A, b: B) -> (A::Output, B::Out
         a_out.expect("polled to completion"),
         b_out.expect("polled to completion"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Plain;
+
+    impl Resolver for Plain {
+        async fn txt(&self, _: &str) -> Lookup<Txt> {
+            Err(LookupError::NoData)
+        }
+        async fn a(&self, _: &str) -> Lookup<Ipv4Addr> {
+            Err(LookupError::NoData)
+        }
+        async fn aaaa(&self, _: &str) -> Lookup<Ipv6Addr> {
+            Err(LookupError::NoData)
+        }
+        async fn mx(&self, _: &str) -> Lookup<Mx> {
+            Err(LookupError::NoData)
+        }
+        async fn ns(&self, _: &str) -> Lookup<String> {
+            Err(LookupError::NoData)
+        }
+        async fn cname(&self, _: &str) -> Lookup<String> {
+            Err(LookupError::NoData)
+        }
+        async fn ptr(&self, _: IpAddr) -> Lookup<String> {
+            Err(LookupError::NoData)
+        }
+    }
+
+    #[test]
+    fn a_resolver_without_a_parent_view_says_so() {
+        let outcome = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(Plain.delegation("example.com"));
+        assert!(matches!(outcome, Err(LookupError::Other(_))));
+    }
 }

@@ -60,12 +60,6 @@ impl AuthoritativeResolver {
         }
     }
 
-    /// The NS set the parent zone publishes for `name`, asked of the parent's
-    /// servers.
-    pub async fn delegation(&self, name: &str) -> Lookup<String> {
-        self.walker.delegation(&fully_qualified(name)?).await
-    }
-
     async fn query<T>(
         &self,
         name: &str,
@@ -115,6 +109,11 @@ impl Resolver for AuthoritativeResolver {
 
     async fn tlsa(&self, name: &str) -> Lookup<Tlsa> {
         self.query(name, RecordType::TLSA, extract::tlsa).await
+    }
+
+    /// Asked of the parent zone's own servers.
+    async fn delegation(&self, name: &str) -> Lookup<String> {
+        self.walker.delegation(&fully_qualified(name)?).await
     }
 }
 

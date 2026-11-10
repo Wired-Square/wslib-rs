@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.5
+
+- `present`: a lookup's records, none when the name or type is absent, and
+  the error when it couldn't tell.
+- `Resolver::first_txt`: the first TXT string at a name that a predicate
+  accepts, `None` when absent, the error on a failure.
+- `Resolver::delegation` is a trait method, defaulting to
+  `LookupError::Other` as `tlsa` and `ds` do. `AuthoritativeResolver`
+  answers it from the parent's servers as before (the trait must now be in
+  scope to call it), `FakeResolver` from its NS set, and the wrappers pass
+  it on.
+- `Resolver::exists`: whether a name exists at all, from one NS query.
+- `CnameChain::reaches`: whether the chain passes through a name, case and
+  trailing dot aside.
+- `probe_public` (feature `hickory`): asks Cloudflare, Google and Quad9
+  (`PUBLIC_RESOLVERS`) concurrently whether a name exists; `PublicProbe`
+  says whether any resolver has `seen` it or all have left it `unseen`.
+
 ## 0.2.4
 
 - `AuthoritativeResolver`: a server that answers EDNS with FORMERR, even

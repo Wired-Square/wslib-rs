@@ -8540,7 +8540,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-dns"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "hickory-resolver",
  "idna",
@@ -8552,7 +8552,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-dns-mail"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "flate2",
  "quick-xml 0.38.4",

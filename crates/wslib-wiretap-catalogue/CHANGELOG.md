@@ -9,6 +9,11 @@
   `big_endian` key reads as before (big when true, otherwise little for a
   checksum wider than a byte). The served and TS `SerialConfig.checksum` is
   now a `FrameChecksum`, with `endianness` in place of `bigEndian`.
+- `validate` checks every frame's checksum tables and `[meta.serial.checksum]`,
+  at paths such as `frame.serial.0x10.checksum[0].algorithm`: an unknown or
+  missing algorithm, a missing or malformed `start_byte`, an out-of-range byte
+  length, calculation range or byte order, and a `crc_custom` with no
+  polynomial. The parser drops such a table, which before went unreported.
 
 ## 0.2.0
 

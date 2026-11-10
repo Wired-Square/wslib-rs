@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use toml::Value;
 
 use crate::model::{Endianness, FrameChecksum, ValidationError};
-use crate::parse::{MAX_PRECISION, header_position, parse_id};
+use crate::parse::{MAX_PRECISION, header_position, parse_checksum, parse_id};
 use crate::serial_framing::FramingMode;
 
 fn err(field: impl Into<String>, message: impl Into<String>) -> ValidationError {
@@ -48,12 +48,29 @@ pub fn validate(content: &str) -> Vec<ValidationError> {
             .and_then(|f| f.get(protocol))
             .and_then(Value::as_table);
         for (key, frame) in frames.into_iter().flatten() {
-            validate_signals_in_every_section(
-                &format!("frame.{protocol}.{key}"),
-                frame,
-                &mut errors,
-            );
+            let prefix = format!("frame.{protocol}.{key}");
+            validate_signals_in_every_section(&prefix, frame, &mut errors);
+            match frame.get("checksum") {
+                Some(Value::Array(checksums)) => {
+                    for (idx, checksum) in checksums.iter().enumerate() {
+                        errors.extend(checksum_findings(
+                            &format!("{prefix}.checksum[{idx}]"),
+                            checksum,
+                        ));
+                    }
+                }
+                Some(checksum) => {
+                    errors.extend(checksum_findings(&format!("{prefix}.checksum"), checksum))
+                }
+                None => {}
+            }
         }
+    }
+    if let Some(checksum) = (table.get("meta"))
+        .and_then(|m| m.get("serial"))
+        .and_then(|s| s.get("checksum"))
+    {
+        errors.extend(checksum_findings("meta.serial.checksum", checksum));
     }
     errors.extend(modbus_frames);
     let modbus = table
@@ -139,6 +156,46 @@ fn require_finite_scale(prefix: &str, table: &Value, errors: &mut Vec<Validation
             ));
         }
     }
+}
+
+/// The parser drops a checksum table it cannot read, so a frame would otherwise
+/// go unchecked in silence. The frame's length is not known here, so positions
+/// are checked against the longest frame.
+fn checksum_findings(prefix: &str, checksum: &Value) -> Vec<ValidationError> {
+    let int_or = |key, absent| checksum.get(key).map_or(absent, Value::as_integer);
+    let text = |v: &Value| v.as_str().unwrap_or_default().to_string();
+    let start_byte = int_or("start_byte", None);
+    let input = ChecksumInput {
+        name: String::new(),
+        algorithm: checksum.get("algorithm").map(text).unwrap_or_default(),
+        start_byte,
+        byte_length: int_or("byte_length", Some(1)),
+        endianness: ["byte_order", "endianness"]
+            .into_iter()
+            .find_map(|key| checksum.get(key))
+            .map(text),
+        calc_start_byte: int_or("calc_start_byte", Some(0)),
+        calc_end_byte: int_or("calc_end_byte", start_byte),
+        frame_length: default_frame_length(),
+    };
+    let mut findings: Vec<_> = validate_checksum_fields(&input)
+        .into_iter()
+        .filter(|e| e.field != "checksum.name")
+        .map(|e| err(e.field.replacen("checksum", prefix, 1), e.message))
+        .collect();
+    let algorithm_field = format!("{prefix}.algorithm");
+    if !findings.iter().any(|e| e.field == algorithm_field)
+        && parse_checksum(checksum).is_some_and(|c| c.specification().is_none())
+    {
+        findings.push(err(
+            format!("{prefix}.polynomial"),
+            format!(
+                "{} needs a polynomial from 0 to 0xFFFF",
+                wslib_checksum::CRC_CUSTOM
+            ),
+        ));
+    }
+    findings
 }
 
 /// Serial frames require an encoding (declared in `[meta.serial]` or the legacy
@@ -1462,6 +1519,73 @@ length = 4
                     && e.message.contains("exceeds frame length")),
             "{beyond:?}"
         );
+    }
+
+    fn validate_frame_checksum(table: &str) -> Vec<ValidationError> {
+        validate(&format!(
+            "[meta]\nname = \"c\"\n[meta.serial]\nencoding = \"slip\"\n\
+             [frame.serial.0x10]\nlength = 8\nchecksum = [{{ {} }}]",
+            table.replace('\n', ", ")
+        ))
+    }
+
+    fn assert_checksum_finding(table: &str, field: &str) {
+        let errs = validate_frame_checksum(table);
+        assert!(
+            fields(&errs).contains(&format!("frame.serial.0x10.checksum[0].{field}").as_str()),
+            "{table}: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn a_frame_checksum_with_an_unknown_algorithm_is_a_finding() {
+        assert_checksum_finding("algorithm = \"made_up\"\nstart_byte = -1", "algorithm");
+    }
+
+    #[test]
+    fn a_frame_checksum_with_no_algorithm_is_a_finding() {
+        assert_checksum_finding("start_byte = -1", "algorithm");
+    }
+
+    #[test]
+    fn a_frame_checksum_with_a_malformed_start_byte_is_a_finding() {
+        assert_checksum_finding("algorithm = \"sum8\"\nstart_byte = \"last\"", "start_byte");
+    }
+
+    #[test]
+    fn a_frame_checksum_with_no_start_byte_is_a_finding() {
+        assert_checksum_finding("algorithm = \"sum8\"", "start_byte");
+    }
+
+    #[test]
+    fn a_custom_crc_with_no_polynomial_is_a_finding() {
+        assert_checksum_finding(
+            "algorithm = \"crc_custom\"\nstart_byte = -1\nreflect_in = true",
+            "polynomial",
+        );
+    }
+
+    #[test]
+    fn a_serial_level_checksum_is_validated() {
+        let errs = validate(
+            "[meta]\nname = \"c\"\n[meta.serial.checksum]\nalgorithm = \"made_up\"\nstart_byte = -1",
+        );
+        assert!(
+            fields(&errs).contains(&"meta.serial.checksum.algorithm"),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn a_well_formed_frame_checksum_is_not_a_finding() {
+        for table in [
+            "algorithm = \"crc16_modbus\"\nstart_byte = -2\nbyte_length = 2\nendianness = \"little\"",
+            "name = \"cs\"\nalgorithm = \"sum8\"\nstart_byte = 7\ncalc_start_byte = 1\ncalc_end_byte = 7\noffset = 5",
+            "algorithm = \"crc_custom\"\nstart_byte = -1\npolynomial = 0x07",
+        ] {
+            let errs = validate_frame_checksum(table);
+            assert!(errs.is_empty(), "{table}: {errs:?}");
+        }
     }
 
     /// A declaration, with only the fields a test actually varies.

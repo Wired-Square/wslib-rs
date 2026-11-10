@@ -37,6 +37,13 @@ match dns.txt("_dmarc.example.com").await {
   Queries are sent fully qualified, so search domains never apply. EDNS0 is
   always on, whatever resolv.conf says, so large TXT sets fit in one UDP
   answer.
+- **`AuthoritativeResolver`** (feature `hickory`): asks each zone's own
+  authoritative servers, walking down from the root, so a record just
+  published is seen at once and a recursive resolver's cached NXDOMAIN (up to
+  the SOA minimum, a day on Route 53) never is. Only delegations are cached,
+  never answers or absence. `delegation(name)` answers the NS set the parent
+  publishes, which can differ from the zone's own `ns(name)`. Answers carry no
+  DNSSEC status. UDP with EDNS0, TCP when truncated.
 - **Internationalised names** are converted to A-labels before every query, in
   every resolver here, so `txt("bücher.example")` asks for
   `xn--bcher-kva.example`.
@@ -69,7 +76,7 @@ match dns.txt("_dmarc.example.com").await {
 
 | Feature   | Adds                                                      |
 | --------- | --------------------------------------------------------- |
-| `hickory` | `HickoryResolver`, over hickory-resolver with tokio       |
+| `hickory` | `HickoryResolver` and `AuthoritativeResolver`, with tokio |
 | `dnssec-ring` | `HickoryOptions::validate`, with ring                 |
 | `dnssec-aws-lc-rs` | The same, with aws-lc-rs                         |
 | `testing` | `FakeResolver`                                            |

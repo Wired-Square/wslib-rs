@@ -8,7 +8,7 @@ use hickory_resolver::lookup::Lookup as HickoryLookup;
 use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use hickory_resolver::net::{DnsError, NetError, NoRecords};
 use hickory_resolver::proto::op::ResponseCode;
-use hickory_resolver::proto::rr::{Name, RData, RecordType};
+use hickory_resolver::proto::rr::{Name, RData, Record, RecordType};
 use hickory_resolver::{TokioResolver, system_conf};
 
 use crate::{Answer, Lookup, LookupError, Mx, Resolver, Tlsa, Txt, normalise};
@@ -122,7 +122,7 @@ impl HickoryResolver {
 }
 
 /// Fully qualified, so resolv.conf search domains are never appended.
-fn fully_qualified(name: &str) -> Result<Name, LookupError> {
+pub(crate) fn fully_qualified(name: &str) -> Result<Name, LookupError> {
     let mut name = crate::name::query_name(name);
     if !name.ends_with('.') {
         name.push('.');
@@ -172,16 +172,7 @@ fn answer<T>(
     extract: impl Fn(&RData) -> Option<T>,
     validating: bool,
 ) -> Lookup<T> {
-    let mut ttl = None::<u32>;
-    let records: Vec<T> = lookup
-        .answers()
-        .iter()
-        .filter_map(|record| {
-            let value = extract(&record.data)?;
-            ttl = Some(ttl.map_or(record.ttl, |t| t.min(record.ttl)));
-            Some(value)
-        })
-        .collect();
+    let (records, ttl) = collect(lookup.answers(), &extract);
     let dnssec = if validating {
         answer_status(lookup, |data| extract(data).is_some())
     } else {
@@ -204,6 +195,23 @@ fn answer<T>(
         canonical_name: canonical_name(lookup),
         dnssec,
     })
+}
+
+/// The values `extract` finds among `records`, and the smallest TTL among them.
+pub(crate) fn collect<T>(
+    records: &[Record],
+    extract: impl Fn(&RData) -> Option<T>,
+) -> (Vec<T>, Option<u32>) {
+    let mut ttl = None::<u32>;
+    let values = records
+        .iter()
+        .filter_map(|record| {
+            let value = extract(&record.data)?;
+            ttl = Some(ttl.map_or(record.ttl, |t| t.min(record.ttl)));
+            Some(value)
+        })
+        .collect();
+    (values, ttl)
 }
 
 /// Follows the answer section's CNAMEs from the queried name.
@@ -258,8 +266,90 @@ fn response_code_error(code: ResponseCode) -> LookupError {
     }
 }
 
-fn name(name: &Name) -> String {
+pub(crate) fn name(name: &Name) -> String {
     normalise(&name.to_ascii())
+}
+
+pub(crate) mod extract {
+    use super::*;
+
+    pub fn txt(data: &RData) -> Option<Txt> {
+        match data {
+            RData::TXT(txt) => Some(Txt::new(txt.txt_data.iter().map(|s| s.to_vec()).collect())),
+            _ => None,
+        }
+    }
+
+    pub fn a(data: &RData) -> Option<Ipv4Addr> {
+        match data {
+            RData::A(a) => Some(a.0),
+            _ => None,
+        }
+    }
+
+    pub fn aaaa(data: &RData) -> Option<Ipv6Addr> {
+        match data {
+            RData::AAAA(aaaa) => Some(aaaa.0),
+            _ => None,
+        }
+    }
+
+    pub fn mx(data: &RData) -> Option<Mx> {
+        match data {
+            RData::MX(mx) => Some(Mx {
+                preference: mx.preference,
+                exchange: name(&mx.exchange),
+            }),
+            _ => None,
+        }
+    }
+
+    pub fn ns(data: &RData) -> Option<String> {
+        match data {
+            RData::NS(ns) => Some(name(&ns.0)),
+            _ => None,
+        }
+    }
+
+    pub fn cname(data: &RData) -> Option<String> {
+        match data {
+            RData::CNAME(cname) => Some(name(&cname.0)),
+            _ => None,
+        }
+    }
+
+    pub fn ptr(data: &RData) -> Option<String> {
+        match data {
+            RData::PTR(ptr) => Some(name(&ptr.0)),
+            _ => None,
+        }
+    }
+
+    #[cfg(feature = "__dnssec")]
+    pub fn ds(data: &RData) -> Option<crate::Ds> {
+        use hickory_resolver::proto::dnssec::rdata::DNSSECRData;
+        match data {
+            RData::DNSSEC(DNSSECRData::DS(ds)) => Some(crate::Ds {
+                key_tag: ds.key_tag(),
+                algorithm: ds.algorithm().into(),
+                digest_type: ds.digest_type().into(),
+                digest: ds.digest().to_vec(),
+            }),
+            _ => None,
+        }
+    }
+
+    pub fn tlsa(data: &RData) -> Option<Tlsa> {
+        match data {
+            RData::TLSA(tlsa) => Some(Tlsa {
+                usage: tlsa.cert_usage.into(),
+                selector: tlsa.selector.into(),
+                matching: tlsa.matching.into(),
+                data: tlsa.cert_data.clone(),
+            }),
+            _ => None,
+        }
+    }
 }
 
 impl Resolver for HickoryResolver {
@@ -268,94 +358,41 @@ impl Resolver for HickoryResolver {
     }
 
     async fn txt(&self, name: &str) -> Lookup<Txt> {
-        self.query(name, RecordType::TXT, |data| match data {
-            RData::TXT(txt) => Some(Txt::new(txt.txt_data.iter().map(|s| s.to_vec()).collect())),
-            _ => None,
-        })
-        .await
+        self.query(name, RecordType::TXT, extract::txt).await
     }
 
     async fn a(&self, name: &str) -> Lookup<Ipv4Addr> {
-        self.query(name, RecordType::A, |data| match data {
-            RData::A(a) => Some(a.0),
-            _ => None,
-        })
-        .await
+        self.query(name, RecordType::A, extract::a).await
     }
 
     async fn aaaa(&self, name: &str) -> Lookup<Ipv6Addr> {
-        self.query(name, RecordType::AAAA, |data| match data {
-            RData::AAAA(aaaa) => Some(aaaa.0),
-            _ => None,
-        })
-        .await
+        self.query(name, RecordType::AAAA, extract::aaaa).await
     }
 
     async fn mx(&self, name: &str) -> Lookup<Mx> {
-        self.query(name, RecordType::MX, |data| match data {
-            RData::MX(mx) => Some(Mx {
-                preference: mx.preference,
-                exchange: self::name(&mx.exchange),
-            }),
-            _ => None,
-        })
-        .await
+        self.query(name, RecordType::MX, extract::mx).await
     }
 
     async fn ns(&self, name: &str) -> Lookup<String> {
-        self.query(name, RecordType::NS, |data| match data {
-            RData::NS(ns) => Some(self::name(&ns.0)),
-            _ => None,
-        })
-        .await
+        self.query(name, RecordType::NS, extract::ns).await
     }
 
     async fn cname(&self, name: &str) -> Lookup<String> {
-        self.query(name, RecordType::CNAME, |data| match data {
-            RData::CNAME(cname) => Some(self::name(&cname.0)),
-            _ => None,
-        })
-        .await
+        self.query(name, RecordType::CNAME, extract::cname).await
     }
 
     async fn ptr(&self, ip: IpAddr) -> Lookup<String> {
-        self.query(
-            &crate::reverse_name(ip),
-            RecordType::PTR,
-            |data| match data {
-                RData::PTR(ptr) => Some(self::name(&ptr.0)),
-                _ => None,
-            },
-        )
-        .await
+        self.query(&crate::reverse_name(ip), RecordType::PTR, extract::ptr)
+            .await
     }
 
     #[cfg(feature = "__dnssec")]
     async fn ds(&self, name: &str) -> Lookup<crate::Ds> {
-        use hickory_resolver::proto::dnssec::rdata::DNSSECRData;
-        self.query(name, RecordType::DS, |data| match data {
-            RData::DNSSEC(DNSSECRData::DS(ds)) => Some(crate::Ds {
-                key_tag: ds.key_tag(),
-                algorithm: ds.algorithm().into(),
-                digest_type: ds.digest_type().into(),
-                digest: ds.digest().to_vec(),
-            }),
-            _ => None,
-        })
-        .await
+        self.query(name, RecordType::DS, extract::ds).await
     }
 
     async fn tlsa(&self, name: &str) -> Lookup<Tlsa> {
-        self.query(name, RecordType::TLSA, |data| match data {
-            RData::TLSA(tlsa) => Some(Tlsa {
-                usage: tlsa.cert_usage.into(),
-                selector: tlsa.selector.into(),
-                matching: tlsa.matching.into(),
-                data: tlsa.cert_data.clone(),
-            }),
-            _ => None,
-        })
-        .await
+        self.query(name, RecordType::TLSA, extract::tlsa).await
     }
 }
 

@@ -4,8 +4,8 @@
 //! Every query answers with a [`Lookup`], which keeps NXDOMAIN, NODATA,
 //! SERVFAIL, REFUSED and a timeout apart, so "no record" is never confused with
 //! "couldn't tell". The [`Resolver`] trait is the seam: `hickory` provides
-//! [`HickoryResolver`] and `testing` an in-memory [`FakeResolver`] that counts
-//! queries.
+//! [`HickoryResolver`] and [`AuthoritativeResolver`], and `testing` an
+//! in-memory [`FakeResolver`] that counts queries.
 
 mod address;
 mod budget;
@@ -15,12 +15,16 @@ mod name;
 mod resolver;
 pub mod txt;
 
+#[cfg(feature = "hickory")]
+mod authoritative;
 #[cfg(any(test, feature = "testing"))]
 mod fake;
 #[cfg(feature = "hickory")]
 mod hickory;
 
 pub use address::{is_global, is_global_network};
+#[cfg(feature = "hickory")]
+pub use authoritative::{AuthoritativeOptions, AuthoritativeResolver};
 pub use budget::BudgetResolver;
 #[cfg(any(test, feature = "testing"))]
 pub use fake::FakeResolver;

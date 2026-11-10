@@ -1,6 +1,6 @@
 [package]
 name = "wslib-wiretap-gateway"
-version = "0.2.1"
+version = "0.2.2"
 description = "The WireTAP gateway's HTTP API as serde types: query results, the archive, events and admin endpoints, the request bodies and query strings, and a query spec with the request that asks it; an HTTP client behind the `client` feature."
 readme = "README.md"
 edition.workspace = true

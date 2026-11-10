@@ -74,7 +74,9 @@ impl Db<'_> {
         let InventoryResponse {
             mut entries,
             truncated,
+            bus,
         } = self.get(&query.inventory_path()).await?;
+        bus_echoed(query.bus, bus)?;
         let limit = query.limit.map_or(usize::MAX, |n| n as usize);
         let cut = entries.len() > limit;
         entries.truncate(limit);
@@ -94,7 +96,8 @@ impl Db<'_> {
             },
             limit: Some(limit),
         };
-        let PayloadsResponse { mut payloads } = self.post("/payloads", &body).await?;
+        let PayloadsResponse { mut payloads, bus } = self.post("/payloads", &body).await?;
+        bus_echoed(body.filter.bus, bus)?;
         payloads.reverse();
         Ok(payloads)
     }
@@ -173,5 +176,13 @@ impl Db<'_> {
                 ..query
             },
         )
+    }
+}
+
+/// A gateway that predates bus filters answers every bus's rows, with no echo.
+fn bus_echoed(asked: Option<u8>, answered: Option<u8>) -> Result<(), ClientError> {
+    match asked {
+        Some(bus) if answered != Some(bus) => Err(ClientError::BusIgnored(bus)),
+        _ => Ok(()),
     }
 }

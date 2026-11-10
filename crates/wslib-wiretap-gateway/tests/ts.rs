@@ -34,14 +34,14 @@ fn a_spec_is_tagged_by_type_with_its_window_flattened() {
             protocol: Some(Protocol::Can),
             start_us: Some(1),
             end_us: None,
+            bus: None,
         },
     };
     assert_eq!(
         serde_json::to_value(&spec).unwrap(),
         json!({ "type": "first_last", "frame_id": 256, "is_extended": null, "protocol": "can", "start_us": 1, "end_us": null })
     );
-    let window =
-        "protocol?: ArchiveProtocol | null, start_us: number | null, end_us: number | null, }";
+    let window = "protocol?: ArchiveProtocol | null, start_us: number | null, end_us: number | null, bus?: number | null, }";
     let variants = [
         r#""type": "byte_changes", frame_id: number, is_extended: boolean | null, byte_index: number, limit: number | null, "#,
         r#""type": "frame_changes", frame_id: number, is_extended: boolean | null, limit: number | null, "#,
@@ -100,7 +100,7 @@ fn a_query_body_is_its_params_untagged_with_the_filter_flattened() {
         decl::<FirstLastParams>(),
         "type FirstLastParams = { query_id: string | null, frame_id: number, \
          is_extended: boolean | null, start_time: string | null, end_time: string | null, \
-         protocol?: ArchiveProtocol | null, };"
+         protocol?: ArchiveProtocol | null, bus?: number | null, };"
     );
 }
 

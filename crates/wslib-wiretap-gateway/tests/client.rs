@@ -303,6 +303,7 @@ async fn an_inventory_is_cut_by_the_gateway_or_here() {
         end: None,
         protocol: None,
         limit,
+        bus: None,
     };
     let ids = |(entries, truncated): (Vec<InventoryEntry>, bool)| {
         (
@@ -334,6 +335,7 @@ async fn payloads_arrive_newest_first_and_are_read_oldest_first() {
         start_time: None,
         end_time: None,
         protocol: Some(Protocol::ModbusRtu),
+        bus: None,
     };
     let can = gateway.db("site", Protocol::Can);
     assert_eq!(
@@ -352,6 +354,64 @@ async fn payloads_arrive_newest_first_and_are_read_oldest_first() {
         json!({ "frame_id": 613, "is_extended": false, "start_time": null, "end_time": null, "limit": 10 })
     );
     assert_eq!(log[1].json()["protocol"], "modbus");
+}
+
+#[tokio::test]
+async fn an_inventory_for_a_bus_needs_the_bus_echoed() {
+    let (current, _) = gateway(|seen| {
+        let mut answer = entries(&[1], false);
+        if seen.path.contains("bus=1") {
+            answer["bus"] = json!(1);
+        }
+        ok(answer)
+    });
+    let (older, _) = gateway(|_| ok(entries(&[1], false)));
+    let inventory = async |base_url: &str, bus| {
+        let query = TimeRangeQuery {
+            start: None,
+            end: None,
+            protocol: None,
+            limit: None,
+            bus,
+        };
+        let db = client(base_url, "");
+        let (entries, _) = db.db("site", Protocol::Can).inventory(query).await?;
+        Ok::<_, ClientError>(entries.len())
+    };
+    assert_eq!(inventory(&current, Some(1)).await, Ok(1));
+    let ignored = inventory(&older, Some(1)).await.unwrap_err();
+    assert_eq!(ignored, ClientError::BusIgnored(1));
+    assert_eq!(
+        ignored.to_string(),
+        "the gateway ignored bus 1: it predates bus filters"
+    );
+    assert_eq!(inventory(&older, None).await, Ok(1));
+}
+
+#[tokio::test]
+async fn payloads_for_a_bus_send_it_and_need_it_echoed() {
+    let (current, log) =
+        gateway(|seen| ok(json!({ "payloads": [[1]], "bus": seen.json()["bus"] })));
+    let (older, _) = gateway(|_| ok(json!({ "payloads": [[1]] })));
+    let payloads = async |base_url: &str, bus| {
+        let filter = FrameFilter {
+            frame_id: 613,
+            is_extended: None,
+            start_time: None,
+            end_time: None,
+            protocol: None,
+            bus,
+        };
+        let db = client(base_url, "");
+        db.db("site", Protocol::Can).payloads(filter, 10).await
+    };
+    assert_eq!(payloads(&current, Some(1)).await, Ok(vec![vec![1]]));
+    assert_eq!(log.lock().unwrap()[0].json()["bus"], 1);
+    assert_eq!(
+        payloads(&older, Some(1)).await,
+        Err(ClientError::BusIgnored(1))
+    );
+    assert_eq!(payloads(&older, None).await, Ok(vec![vec![1]]));
 }
 
 #[tokio::test]
@@ -621,6 +681,7 @@ fn entry(max_dlc: u16, max_len: Option<u16>) -> InventoryEntry {
         last_us: 0,
         max_dlc,
         max_len,
+        bus: None,
     }
 }
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.2
+
+- `RowWindow::bus` asks for one bus's rows: every `QuerySpec` carries it, sent
+  as `/inventory`'s `bus` (`TimeRangeQuery::bus`) and as `bus` in every
+  `/query/*` body (`FrameFilter::bus`, `MirrorValidationParams::bus`,
+  `PatternSearchParams::bus`). `/payloads` takes it in its `FrameFilter`.
+- `InventoryEntry::bus`, absent from gateways that group every bus together.
+- `InventoryResponse::bus` and `PayloadsResponse::bus` echo the bus the
+  gateway filtered on. The client's `inventory` and `payloads` answer
+  `ClientError::BusIgnored` when a gateway does not echo the bus asked for.
+- Struct literals of `RowWindow`, `FrameFilter`, `MirrorValidationParams`,
+  `PatternSearchParams`, `TimeRangeQuery`, `InventoryEntry`,
+  `InventoryResponse` and `PayloadsResponse` gain a field,
+  and exhaustive matches on `ClientError` a variant.
+
 ## 0.2.1
 
 - serde's floor is 1.0.228.

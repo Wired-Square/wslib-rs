@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.3
+
+- `InventoryRow::bus`, the bus a row was grouped on, set by `on_bus` from a
+  `u8` or an `Option<u8>`; `null` for a row grouped across buses.
+
 ## 0.2.2
 
 - serde's floor is 1.0.228.

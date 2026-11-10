@@ -86,6 +86,7 @@ impl QuerySpec {
             start_time: start.clone(),
             end_time: end.clone(),
             protocol,
+            bus: window.bus,
         };
         let (path, body) = match self {
             Self::ByteChanges {
@@ -127,6 +128,7 @@ impl QuerySpec {
                 "/query/mirror-validation",
                 QueryBody::MirrorValidation(MirrorValidationParams {
                     protocol,
+                    bus: window.bus,
                     mirror_frame_id: *mirror_frame_id,
                     source_frame_id: *source_frame_id,
                     is_extended: *is_extended,
@@ -219,6 +221,7 @@ impl QuerySpec {
                 "/query/pattern-search",
                 QueryBody::PatternSearch(PatternSearchParams {
                     protocol,
+                    bus: window.bus,
                     pattern: pattern.clone(),
                     pattern_mask: pattern_mask.clone(),
                     start_time: start,
@@ -233,6 +236,7 @@ impl QuerySpec {
                     end,
                     protocol,
                     limit: *limit,
+                    bus: window.bus,
                 }));
             }
         };
@@ -247,6 +251,7 @@ impl TimeRangeQuery {
             end,
             protocol,
             limit,
+            bus,
         } = self;
         format!(
             "/inventory{}",
@@ -254,6 +259,7 @@ impl TimeRangeQuery {
                 ("start", start.clone()),
                 ("end", end.clone()),
                 ("protocol", protocol.map(|p| query_name(p).into())),
+                ("bus", bus.map(|b| b.to_string())),
                 ("limit", limit.map(|n| n.to_string())),
             ])
         )

@@ -33,6 +33,7 @@ pub enum ClientError {
     Decode(String),
     Request(RequestError),
     BadHex(String),
+    BusIgnored(u8),
 }
 
 impl fmt::Display for ClientError {
@@ -49,6 +50,9 @@ impl fmt::Display for ClientError {
             Self::Decode(cause) => write!(f, "API response decode failed: {cause}"),
             Self::Request(e) => e.fmt(f),
             Self::BadHex(data_hex) => write!(f, "bad data_hex '{data_hex}'"),
+            Self::BusIgnored(bus) => {
+                write!(f, "the gateway ignored bus {bus}: it predates bus filters")
+            }
         }
     }
 }

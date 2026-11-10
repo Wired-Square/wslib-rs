@@ -303,6 +303,7 @@ async fn an_inventory_is_cut_by_the_gateway_or_here() {
         end: None,
         protocol: None,
         limit,
+        bus: None,
     };
     let ids = |(entries, truncated): (Vec<InventoryEntry>, bool)| {
         (
@@ -621,6 +622,7 @@ fn entry(max_dlc: u16, max_len: Option<u16>) -> InventoryEntry {
         last_us: 0,
         max_dlc,
         max_len,
+        bus: None,
     }
 }
 

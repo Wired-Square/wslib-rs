@@ -167,6 +167,7 @@ fn a_backend_reader_refuses_another_protocols_window() {
     let spec = |protocol| QuerySpec::FrameInventory {
         window: window(protocol, None),
         limit: Some(5),
+        bus: None,
     };
     assert_eq!(
         spec(Some(Protocol::Can)).request(Protocol::ModbusRtu, None, false),
@@ -181,29 +182,46 @@ fn a_backend_reader_refuses_another_protocols_window() {
 }
 
 #[test]
-fn an_inventory_request_carries_its_bounds_protocol_and_limit() {
-    let path = |protocol, limit| {
+fn an_inventory_request_carries_its_bounds_protocol_bus_and_limit() {
+    let path = |protocol, bus, limit| {
         GatewayRequest::Inventory(TimeRangeQuery {
             start: Some("2026-01-01T00:00:00Z".into()),
             end: None,
             protocol,
             limit,
+            bus,
         })
         .path()
     };
     assert_eq!(
-        path(None, None),
+        path(None, None, None),
         "/inventory?start=2026-01-01T00%3A00%3A00Z"
     );
     assert_eq!(
-        path(Some(Protocol::ModbusRtu), Some(50)),
+        path(Some(Protocol::ModbusRtu), None, Some(50)),
         "/inventory?start=2026-01-01T00%3A00%3A00Z&protocol=modbus&limit=50"
+    );
+    assert_eq!(
+        path(Some(Protocol::ModbusRtu), Some(1), Some(50)),
+        "/inventory?start=2026-01-01T00%3A00%3A00Z&protocol=modbus&bus=1&limit=50"
     );
     let bare = TimeRangeQuery {
         start: None,
         end: None,
         protocol: None,
         limit: None,
+        bus: None,
     };
     assert_eq!(GatewayRequest::Inventory(bare).path(), "/inventory");
+}
+
+#[test]
+fn an_inventory_spec_asks_for_its_bus() {
+    let spec = QuerySpec::FrameInventory {
+        window: window(None, None),
+        limit: None,
+        bus: Some(2),
+    };
+    let request = spec.request(Protocol::Can, None, false).unwrap();
+    assert_eq!(request.path(), "/inventory?bus=2");
 }

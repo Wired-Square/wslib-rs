@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.2
+
+- `TimeRangeQuery::bus` asks `/inventory` for one bus's rows, and
+  `QuerySpec::FrameInventory` carries it; `InventoryEntry::bus` is absent from
+  gateways that group every bus together. Struct literals of `InventoryEntry`
+  and `TimeRangeQuery` gain the field.
+
 ## 0.2.1
 
 - serde's floor is 1.0.228.

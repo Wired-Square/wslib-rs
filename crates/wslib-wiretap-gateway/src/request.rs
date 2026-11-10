@@ -227,12 +227,13 @@ impl QuerySpec {
                     query_id,
                 }),
             ),
-            Self::FrameInventory { limit, .. } => {
+            Self::FrameInventory { limit, bus, .. } => {
                 return Ok(GatewayRequest::Inventory(TimeRangeQuery {
                     start,
                     end,
                     protocol,
                     limit: *limit,
+                    bus: *bus,
                 }));
             }
         };
@@ -247,6 +248,7 @@ impl TimeRangeQuery {
             end,
             protocol,
             limit,
+            bus,
         } = self;
         format!(
             "/inventory{}",
@@ -254,6 +256,7 @@ impl TimeRangeQuery {
                 ("start", start.clone()),
                 ("end", end.clone()),
                 ("protocol", protocol.map(|p| query_name(p).into())),
+                ("bus", bus.map(|b| b.to_string())),
                 ("limit", limit.map(|n| n.to_string())),
             ])
         )

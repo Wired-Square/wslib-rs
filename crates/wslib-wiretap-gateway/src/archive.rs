@@ -18,6 +18,10 @@ pub struct InventoryEntry {
     /// Absent from gateways before 0.1.4.
     #[serde(default)]
     pub max_len: Option<u16>,
+    /// Absent from gateways that group every bus together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub bus: Option<u8>,
 }
 
 #[cfg(feature = "client")]

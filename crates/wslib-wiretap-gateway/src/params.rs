@@ -142,6 +142,9 @@ pub struct TimeRangeQuery {
     /// Entries, lowest `(frame_id, is_extended)` first; a gateway may clamp it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    /// One bus's rows; none for every bus.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bus: Option<u8>,
 }
 
 /// `/frames`; `after` is the previous batch's `next_cursor`.

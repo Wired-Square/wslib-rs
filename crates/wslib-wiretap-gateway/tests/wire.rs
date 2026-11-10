@@ -128,6 +128,17 @@ fn max_len_absent_is_none() {
 }
 
 #[test]
+fn an_inventory_entrys_bus_round_trips_and_is_left_out_when_absent() {
+    let mut sample = json!({
+        "frame_id": 0, "is_extended": false, "count": 1, "first_us": 0, "last_us": 0,
+        "max_dlc": 8, "max_len": 8,
+    });
+    assert_eq!(round_trip::<InventoryEntry>(sample.clone()).bus, None);
+    sample["bus"] = json!(1);
+    assert_eq!(round_trip::<InventoryEntry>(sample).bus, Some(1));
+}
+
+#[test]
 fn an_inventory_without_truncated_is_whole() {
     assert!(!parse::<InventoryResponse>(json!({ "entries": [] })).truncated);
 }

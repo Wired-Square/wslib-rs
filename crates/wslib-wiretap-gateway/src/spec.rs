@@ -96,6 +96,8 @@ pub enum QuerySpec {
         #[serde(flatten)]
         window: RowWindow,
         limit: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bus: Option<u8>,
     },
 }
 
@@ -151,6 +153,7 @@ mod tests {
             QuerySpec::FrameInventory {
                 window: RowWindow::default(),
                 limit: None,
+                bus: None,
             }
         );
     }
@@ -193,6 +196,7 @@ mod tests {
             QuerySpec::FrameInventory {
                 window: window.clone(),
                 limit: None,
+                bus: None,
             },
         ];
         for spec in specs {

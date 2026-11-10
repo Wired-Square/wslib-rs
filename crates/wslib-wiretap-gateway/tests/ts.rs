@@ -52,7 +52,7 @@ fn a_spec_is_tagged_by_type_with_its_window_flattened() {
         r#""type": "distribution", frame_id: number, is_extended: boolean | null, byte_index: number, "#,
         r#""type": "gap_analysis", frame_id: number, is_extended: boolean | null, gap_threshold_ms: number, limit: number | null, "#,
         r#""type": "pattern_search", pattern: Array<number>, pattern_mask: Array<number>, limit: number | null, "#,
-        r#""type": "frame_inventory", limit: number | null, "#,
+        r#""type": "frame_inventory", limit: number | null, bus?: number | null, "#,
     ]
     .map(|fields| format!("{{ {fields}{window}"));
     assert_eq!(

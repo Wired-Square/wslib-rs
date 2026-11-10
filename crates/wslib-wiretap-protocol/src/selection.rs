@@ -16,6 +16,8 @@ pub struct InventoryRow {
     pub first_us: i64,
     pub last_us: i64,
     pub max_dlc: u16,
+    /// The bus the identity was grouped on; none when grouped across buses.
+    pub bus: Option<u8>,
 }
 
 impl InventoryRow {
@@ -37,6 +39,14 @@ impl InventoryRow {
             first_us,
             last_us,
             max_dlc,
+            bus: None,
+        }
+    }
+
+    pub fn on_bus(self, bus: u8) -> Self {
+        Self {
+            bus: Some(bus),
+            ..self
         }
     }
 }
@@ -245,8 +255,15 @@ mod tests {
             serde_json::to_value(&row).unwrap(),
             serde_json::json!({
                 "protocol": "can", "frame_id": 123, "frame_id_hex": "0x0000007B",
-                "is_extended": true, "count": 2, "first_us": 10, "last_us": 20, "max_dlc": 8
+                "is_extended": true, "count": 2, "first_us": 10, "last_us": 20, "max_dlc": 8,
+                "bus": null
             })
         );
+    }
+
+    #[test]
+    fn on_bus_sets_the_bus() {
+        let row = InventoryRow::new("can", 0x7B, false, 2, 10, 20, 8).on_bus(1);
+        assert_eq!(row.bus, Some(1));
     }
 }

@@ -101,6 +101,14 @@ fn query_results_parse() {
 }
 
 #[test]
+fn query_stats_bus_round_trips_and_is_left_out_when_absent() {
+    assert_eq!(round_trip::<QueryStats>(stats()).bus, None);
+    let mut sample = stats();
+    sample["bus"] = json!(1);
+    assert_eq!(round_trip::<QueryStats>(sample).bus, Some(1));
+}
+
+#[test]
 fn archive_responses_parse() {
     let inventory = round_trip::<InventoryResponse>(json!({
         "entries": [{

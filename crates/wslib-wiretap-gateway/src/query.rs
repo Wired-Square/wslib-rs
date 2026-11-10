@@ -8,7 +8,38 @@ pub struct QueryStats {
     pub rows_scanned: u64,
     pub results_count: u64,
     pub execution_time_ms: u64,
+    /// The bus the gateway filtered on; absent when it filtered none, or predates bus filters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub bus: Option<u8>,
 }
+
+/// A `/query/*` answer, by its [`QueryStats`].
+pub trait QueryAnswer {
+    fn stats(&self) -> &QueryStats;
+}
+
+macro_rules! query_answer {
+    ($($result:ty),+ $(,)?) => {$(
+        impl QueryAnswer for $result {
+            fn stats(&self) -> &QueryStats {
+                &self.stats
+            }
+        }
+    )+};
+}
+
+query_answer!(
+    ByteChangeQueryResult,
+    FrameChangeQueryResult,
+    MirrorValidationQueryResult,
+    MuxStatisticsQueryResult,
+    FirstLastQueryResult,
+    FrequencyQueryResult,
+    DistributionQueryResult,
+    GapAnalysisQueryResult,
+    PatternSearchQueryResult,
+);
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]

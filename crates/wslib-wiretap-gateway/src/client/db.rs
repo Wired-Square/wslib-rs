@@ -7,7 +7,7 @@ use crate::request::{query_name, query_string, wire};
 use crate::{
     DatabaseActivityResult, Event, EventPatch, EventsResponse, FrameFilter, FramesQuery,
     ImportResult, InventoryEntry, InventoryResponse, NewEvent, PayloadsParams, PayloadsResponse,
-    Protocol, SignalResponse, TimeBounds, TimeRangeQuery,
+    Protocol, QueryAnswer, QueryBody, SignalResponse, TimeBounds, TimeRangeQuery,
 };
 
 /// One database on the gateway, read as one protocol: every request here
@@ -59,6 +59,19 @@ impl Db<'_> {
         query_id: &str,
     ) -> Result<T, ClientError> {
         self.client.query(&self.path(path), body, query_id).await
+    }
+
+    /// [`query`](Self::query) for a [`QueryBody`], refusing an answer that does
+    /// not echo the bus asked for.
+    pub async fn answer<T: DeserializeOwned + QueryAnswer>(
+        &self,
+        path: &str,
+        body: &QueryBody,
+        query_id: &str,
+    ) -> Result<T, ClientError> {
+        let answer: T = self.query(path, body, query_id).await?;
+        bus_echoed(body.bus(), answer.stats().bus)?;
+        Ok(answer)
     }
 
     /// The entries and whether they were cut, by the gateway or here at `limit`
@@ -180,7 +193,7 @@ impl Db<'_> {
 }
 
 /// A gateway that predates bus filters answers every bus's rows, with no echo.
-fn bus_echoed(asked: Option<u8>, answered: Option<u8>) -> Result<(), ClientError> {
+pub fn bus_echoed(asked: Option<u8>, answered: Option<u8>) -> Result<(), ClientError> {
     match asked {
         Some(bus) if answered != Some(bus) => Err(ClientError::BusIgnored(bus)),
         _ => Ok(()),

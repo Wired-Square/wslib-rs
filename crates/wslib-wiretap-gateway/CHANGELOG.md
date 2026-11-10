@@ -2,10 +2,18 @@
 
 ## 0.2.2
 
-- `TimeRangeQuery::bus` asks `/inventory` for one bus's rows, and
-  `QuerySpec::FrameInventory` carries it; `InventoryEntry::bus` is absent from
-  gateways that group every bus together. Struct literals of `InventoryEntry`
-  and `TimeRangeQuery` gain the field.
+- `RowWindow::bus` asks for one bus's rows: every `QuerySpec` carries it, sent
+  as `/inventory`'s `bus` (`TimeRangeQuery::bus`) and as `bus` in every
+  `/query/*` body (`FrameFilter::bus`, `MirrorValidationParams::bus`,
+  `PatternSearchParams::bus`). `/payloads` takes it in its `FrameFilter`.
+- `InventoryEntry::bus`, absent from gateways that group every bus together.
+- `InventoryResponse::bus` and `PayloadsResponse::bus` echo the bus the
+  gateway filtered on. The client's `inventory` and `payloads` answer
+  `ClientError::BusIgnored` when a gateway does not echo the bus asked for.
+- Struct literals of `RowWindow`, `FrameFilter`, `MirrorValidationParams`,
+  `PatternSearchParams`, `TimeRangeQuery`, `InventoryEntry`,
+  `InventoryResponse` and `PayloadsResponse` gain a field,
+  and exhaustive matches on `ClientError` a variant.
 
 ## 0.2.1
 

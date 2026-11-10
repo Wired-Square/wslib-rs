@@ -108,14 +108,17 @@ fn archive_responses_parse() {
             "max_dlc": 9, "max_len": 12,
         }],
         "truncated": true,
+        "bus": 1,
     }));
     assert_eq!(inventory.entries[0].max_len, Some(12));
     assert!(inventory.truncated);
+    assert_eq!(inventory.bus, Some(1));
     round_trip::<TimeBounds>(json!({ "min_ts_us": 1, "max_ts_us": 9 }));
     round_trip::<TimeBounds>(json!({ "min_ts_us": null, "max_ts_us": null }));
     round_trip::<FrameBatch>(json!({ "frames": [frame_row()], "next_cursor": "MTo1" }));
     round_trip::<FrameBatch>(json!({ "frames": [], "next_cursor": null }));
     round_trip::<PayloadsResponse>(json!({ "payloads": [[1, 2, 3], []] }));
+    round_trip::<PayloadsResponse>(json!({ "payloads": [], "bus": 0 }));
     round_trip::<ImportResult>(json!({ "imported": 1000, "elapsed_ms": 42 }));
 }
 
@@ -277,6 +280,7 @@ fn a_can_request_leaves_protocol_out() {
             start_time: None,
             end_time: None,
             protocol: None,
+            bus: None,
         },
         query_id: None,
     };

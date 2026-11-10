@@ -6,6 +6,7 @@ fn window(protocol: Option<Protocol>, start_us: Option<i64>) -> RowWindow {
         protocol,
         start_us,
         end_us: None,
+        bus: None,
     }
 }
 
@@ -167,7 +168,6 @@ fn a_backend_reader_refuses_another_protocols_window() {
     let spec = |protocol| QuerySpec::FrameInventory {
         window: window(protocol, None),
         limit: Some(5),
-        bus: None,
     };
     assert_eq!(
         spec(Some(Protocol::Can)).request(Protocol::ModbusRtu, None, false),
@@ -215,13 +215,41 @@ fn an_inventory_request_carries_its_bounds_protocol_bus_and_limit() {
     assert_eq!(GatewayRequest::Inventory(bare).path(), "/inventory");
 }
 
+fn on_bus(bus: u8) -> RowWindow {
+    RowWindow {
+        bus: Some(bus),
+        ..RowWindow::default()
+    }
+}
+
 #[test]
-fn an_inventory_spec_asks_for_its_bus() {
+fn an_inventory_spec_asks_for_its_windows_bus() {
     let spec = QuerySpec::FrameInventory {
-        window: window(None, None),
+        window: on_bus(2),
         limit: None,
-        bus: Some(2),
     };
     let request = spec.request(Protocol::Can, None, false).unwrap();
     assert_eq!(request.path(), "/inventory?bus=2");
+}
+
+#[test]
+fn a_query_body_carries_its_windows_bus() {
+    let byte_changes = |window| QuerySpec::ByteChanges {
+        frame_id: 613,
+        is_extended: None,
+        window,
+        byte_index: 0,
+        limit: None,
+    };
+    let pattern_search = |window| QuerySpec::PatternSearch {
+        window,
+        pattern: vec![1],
+        pattern_mask: vec![0xff],
+        limit: None,
+    };
+    for spec in [byte_changes, pattern_search] {
+        let sent = |window| body(spec(window).request(Protocol::Can, None, false).unwrap()).1;
+        assert_eq!(sent(on_bus(1))["bus"], 1);
+        assert!(sent(RowWindow::default()).get("bus").is_none());
+    }
 }

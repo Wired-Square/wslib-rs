@@ -17,6 +17,8 @@ pub struct FrameFilter {
     pub end_time: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protocol: Option<Protocol>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bus: Option<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -43,6 +45,8 @@ pub struct FrameChangesParams {
 pub struct MirrorValidationParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protocol: Option<Protocol>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bus: Option<u8>,
     pub mirror_frame_id: u32,
     pub source_frame_id: u32,
     pub is_extended: Option<bool>,
@@ -107,6 +111,8 @@ pub struct GapAnalysisParams {
 pub struct PatternSearchParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protocol: Option<Protocol>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bus: Option<u8>,
     pub pattern: Vec<u8>,
     pub pattern_mask: Vec<u8>,
     pub start_time: Option<String>,

@@ -16,6 +16,9 @@ pub struct RowWindow {
     pub protocol: Option<Protocol>,
     pub start_us: Option<i64>,
     pub end_us: Option<i64>,
+    /// One bus's rows; none for every bus.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bus: Option<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -96,13 +99,11 @@ pub enum QuerySpec {
         #[serde(flatten)]
         window: RowWindow,
         limit: Option<u32>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        bus: Option<u8>,
     },
 }
 
 impl QuerySpec {
-    /// The protocol and time bounds every variant carries.
+    /// The protocol, time bounds and bus every variant carries.
     pub fn window(&self) -> &RowWindow {
         match self {
             Self::ByteChanges { window, .. }
@@ -133,13 +134,15 @@ mod tests {
                 protocol: Some(Protocol::Can),
                 start_us: Some(1_000_000),
                 end_us: None,
+                bus: Some(1),
             },
             gap_threshold_ms: 100.5,
             limit: Some(10),
         };
         let served = json!({
             "type": "gap_analysis", "frame_id": 256, "is_extended": true, "protocol": "can",
-            "start_us": 1_000_000, "end_us": null, "gap_threshold_ms": 100.5, "limit": 10,
+            "start_us": 1_000_000, "end_us": null, "bus": 1, "gap_threshold_ms": 100.5,
+            "limit": 10,
         });
         assert_eq!(serde_json::to_value(&spec).unwrap(), served);
         assert_eq!(serde_json::from_value::<QuerySpec>(served).unwrap(), spec);
@@ -153,7 +156,6 @@ mod tests {
             QuerySpec::FrameInventory {
                 window: RowWindow::default(),
                 limit: None,
-                bus: None,
             }
         );
     }
@@ -177,6 +179,7 @@ mod tests {
             protocol: Some(Protocol::ModbusRtu),
             start_us: Some(1),
             end_us: Some(9),
+            bus: Some(1),
         };
         let specs = [
             QuerySpec::Distribution {
@@ -196,7 +199,6 @@ mod tests {
             QuerySpec::FrameInventory {
                 window: window.clone(),
                 limit: None,
-                bus: None,
             },
         ];
         for spec in specs {

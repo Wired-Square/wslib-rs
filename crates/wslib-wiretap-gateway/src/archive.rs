@@ -43,6 +43,10 @@ pub struct InventoryResponse {
     /// The gateway cut `entries` at the request's `limit`; absent from older gateways.
     #[serde(default)]
     pub truncated: bool,
+    /// The bus the gateway filtered on; absent when it filtered none, or predates bus filters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub bus: Option<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -91,6 +95,10 @@ pub struct FrameBatch {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct PayloadsResponse {
     pub payloads: Vec<Vec<u8>>,
+    /// The bus the gateway filtered on; absent when it filtered none, or predates bus filters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub bus: Option<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

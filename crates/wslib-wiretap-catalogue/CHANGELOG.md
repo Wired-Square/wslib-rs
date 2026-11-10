@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0
+
+- `ChecksumConfig` is gone: `SerialConfig::checksum` is a `FrameChecksum`, so
+  a serial-level checksum goes through `verify_frame_checksum` and carries a
+  name, parameters and notes. Its byte order is `endianness`, from a
+  `byte_order` or `endianness` key; a catalogue with only the legacy
+  `big_endian` key reads as before (big when true, otherwise little for a
+  checksum wider than a byte). The served and TS `SerialConfig.checksum` is
+  now a `FrameChecksum`, with `endianness` in place of `bigEndian`.
+
 ## 0.2.0
 
 - `Signal::precision`, from a signal's `precision` key beside `unit` and

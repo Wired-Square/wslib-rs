@@ -9030,7 +9030,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-wiretap-catalogue"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "can-dbc",
  "rust_decimal",

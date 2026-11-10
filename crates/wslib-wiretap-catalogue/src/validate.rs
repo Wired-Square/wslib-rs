@@ -1817,4 +1817,45 @@ bit_length = 16
             );
         }
     }
+
+    fn serial_checksum(table: &str) -> FrameChecksum {
+        let toml = format!("[meta]\nname = \"s\"\n[meta.serial.checksum]\n{table}");
+        let catalogue = crate::model::Catalogue::parse(&toml).unwrap();
+        catalogue.serial.unwrap().checksum.unwrap()
+    }
+
+    #[test]
+    fn a_serial_checksum_with_no_byte_order_reads_little_endian() {
+        let checksum = serial_checksum(
+            "algorithm = \"crc16_modbus\"\nstart_byte = -2\nbyte_length = 2\ncalc_end_byte = -2",
+        );
+        let frames: Vec<Vec<u8>> = (0..10u8)
+            .map(|i| {
+                let mut f = vec![0x10, i, i.wrapping_mul(7)];
+                let crc = wslib_checksum::algorithms::crc16_modbus_checksum(&f);
+                f.extend(crc.to_le_bytes());
+                f
+            })
+            .collect();
+
+        assert_eq!(checksum.endianness, Some(Endianness::Little));
+        assert!(verify_frame_checksum(&checksum, &frames).unwrap().holds());
+    }
+
+    #[test]
+    fn a_serial_checksum_reads_big_endian_as_its_byte_order() {
+        let table = "algorithm = \"crc16\"\nstart_byte = -2\nbyte_length = 2";
+        for key in [
+            "big_endian = true",
+            "byte_order = \"big\"",
+            "endianness = \"big\"",
+        ] {
+            let checksum = serial_checksum(&format!("{table}\n{key}"));
+            assert_eq!(checksum.endianness, Some(Endianness::Big), "{key}");
+        }
+        assert_eq!(
+            serial_checksum("algorithm = \"xor\"\nstart_byte = -1").endianness,
+            None
+        );
+    }
 }

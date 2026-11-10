@@ -5,10 +5,10 @@
 use ts_rs::{Config, TS};
 use wslib_modbus::{LengthRule, ModbusSignal, ModbusWrite, Selector, VendorLen};
 use wslib_wiretap_catalogue::model::{
-    CanConfig, Catalogue, ChecksumConfig, ChecksumParameters, Confidence, DisplayHint,
-    EffectiveDefaults, Frame, FrameChecksum, FrameTunnel, FunctionCode, HeaderField,
-    HeaderFieldPosition, Meta, ModbusConfig, Mux, MuxCase, NodeDef, Protocol, RegisterType,
-    SerialConfig, Signal, SignalFormat, TunnelProtocol, ValidationError,
+    CanConfig, Catalogue, ChecksumParameters, Confidence, DisplayHint, EffectiveDefaults, Frame,
+    FrameChecksum, FrameTunnel, FunctionCode, HeaderField, HeaderFieldPosition, Meta, ModbusConfig,
+    Mux, MuxCase, NodeDef, Protocol, RegisterType, SerialConfig, Signal, SignalFormat,
+    TunnelProtocol, ValidationError,
 };
 use wslib_wiretap_catalogue::summary::{CaseRow, CatalogueSummary, FrameRow, MuxRow};
 use wslib_wiretap_catalogue::validate::{FrameInput, SignalInput};
@@ -84,17 +84,12 @@ fn a_serial_config_keeps_its_served_camel_case_shape() {
         decl::<SerialConfig>(),
         "type SerialConfig = { encoding?: FramingMode | null, byteOrder?: Endianness | null, \
          frameIdMask?: number | null, headerLength?: number | null, \
-         minFrameLength?: number | null, checksum?: ChecksumConfig | null, \
+         minFrameLength?: number | null, checksum?: FrameChecksum | null, \
          fields?: { [key in string]: HeaderField }, frameIdStartByte?: number | null, \
          frameIdBytes?: number | null, frameIdByteOrder?: Endianness | null, \
          sourceAddressStartByte?: number | null, sourceAddressBytes?: number | null, \
          sourceAddressByteOrder?: Endianness | null, \
          headerFields?: Array<HeaderFieldPosition>, };"
-    );
-    assert_eq!(
-        decl::<ChecksumConfig>(),
-        "type ChecksumConfig = { algorithm: string, startByte: number, byteLength: number, \
-         calcStartByte: number, calcEndByte?: number | null, bigEndian: boolean, };"
     );
     assert_eq!(
         decl::<HeaderField>(),

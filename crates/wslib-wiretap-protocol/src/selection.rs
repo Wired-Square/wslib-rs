@@ -43,9 +43,9 @@ impl InventoryRow {
         }
     }
 
-    pub fn on_bus(self, bus: u8) -> Self {
+    pub fn on_bus(self, bus: impl Into<Option<u8>>) -> Self {
         Self {
-            bus: Some(bus),
+            bus: bus.into(),
             ..self
         }
     }
@@ -262,8 +262,10 @@ mod tests {
     }
 
     #[test]
-    fn on_bus_sets_the_bus() {
-        let row = InventoryRow::new("can", 0x7B, false, 2, 10, 20, 8).on_bus(1);
-        assert_eq!(row.bus, Some(1));
+    fn on_bus_takes_a_bus_or_none() {
+        let row = || InventoryRow::new("can", 0x7B, false, 2, 10, 20, 8);
+        assert_eq!(row().on_bus(1).bus, Some(1));
+        assert_eq!(row().on_bus(Some(2)).bus, Some(2));
+        assert_eq!(row().on_bus(1).on_bus(None).bus, None);
     }
 }

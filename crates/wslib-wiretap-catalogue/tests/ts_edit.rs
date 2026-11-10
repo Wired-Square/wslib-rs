@@ -80,9 +80,12 @@ fn a_header_field_is_a_mask_or_a_position() {
     assert_eq!(decl::<Mask>(), "type Mask = number | string;");
     assert_eq!(
         decl::<SerialChecksumFields>(),
-        "type SerialChecksumFields = { algorithm: string, start_byte: number, \
-         byte_length?: number, calc_start_byte?: number, calc_end_byte?: number | null, \
-         big_endian?: boolean, };"
+        "type SerialChecksumFields = { name?: string | null, algorithm: string, \
+         start_byte: number, byte_length?: number, calc_start_byte?: number, \
+         calc_end_byte?: number | null, endianness?: Endianness | null, \
+         polynomial?: number | null, init?: number | null, xor_out?: number | null, \
+         reflect_in?: boolean | null, reflect_out?: boolean | null, offset?: number | null, \
+         notes?: string | Array<string> | null, };"
     );
 }
 

@@ -14,6 +14,10 @@
   missing algorithm, a missing or malformed `start_byte`, an out-of-range byte
   length, calculation range or byte order, and a `crc_custom` with no
   polynomial. The parser drops such a table, which before went unreported.
+- `SerialChecksumFields` takes a frame checksum's fields (`name`,
+  `endianness`, the CRC and offset parameters, `notes`) and drops `big_endian`,
+  so a solved checksum set through `SetSerialConfig` reads back unchanged. The
+  op writes `endianness` and removes a legacy `big_endian` or `byte_order`.
 
 ## 0.2.0
 

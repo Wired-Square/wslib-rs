@@ -469,7 +469,7 @@ fn muxes_cases_nodes_and_checksums() {
 #[test]
 fn configurations() {
     let serial_checksum = json!({ "algorithm": "xor", "start_byte": -1, "byte_length": 1,
-        "calc_start_byte": 0, "calc_end_byte": -1, "big_endian": false });
+        "calc_start_byte": 0, "calc_end_byte": -1 });
     check(
         "Config ops: CAN default endianness renamed, serial checksum to camelCase, Modbus passed through",
         TOML,

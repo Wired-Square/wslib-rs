@@ -47,6 +47,23 @@ pub enum QueryBody {
     PatternSearch(PatternSearchParams),
 }
 
+impl QueryBody {
+    /// The bus asked for; none for every bus.
+    pub fn bus(&self) -> Option<u8> {
+        match self {
+            Self::ByteChanges(ByteChangesParams { filter, .. })
+            | Self::FrameChanges(FrameChangesParams { filter, .. })
+            | Self::MuxStatistics(MuxStatisticsParams { filter, .. })
+            | Self::FirstLast(FirstLastParams { filter, .. })
+            | Self::Frequency(FrequencyParams { filter, .. })
+            | Self::Distribution(DistributionParams { filter, .. })
+            | Self::GapAnalysis(GapAnalysisParams { filter, .. }) => filter.bus,
+            Self::MirrorValidation(params) => params.bus,
+            Self::PatternSearch(params) => params.bus,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum GatewayRequest {
     Inventory(TimeRangeQuery),

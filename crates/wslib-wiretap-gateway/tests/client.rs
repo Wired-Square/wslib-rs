@@ -415,6 +415,49 @@ async fn payloads_for_a_bus_send_it_and_need_it_echoed() {
 }
 
 #[tokio::test]
+async fn a_query_answer_for_a_bus_needs_the_bus_echoed() {
+    let no_gaps = || {
+        json!({
+            "results": [],
+            "stats": { "rows_scanned": 1, "results_count": 0, "execution_time_ms": 1 },
+        })
+    };
+    let (current, _) = gateway(move |seen| {
+        let mut answer = no_gaps();
+        answer["stats"]["bus"] = seen.json()["bus"].clone();
+        ok(answer)
+    });
+    let (older, _) = gateway(move |_| ok(no_gaps()));
+    let answer = async |base_url: &str, bus| {
+        let body = QueryBody::GapAnalysis(GapAnalysisParams {
+            filter: FrameFilter {
+                frame_id: 613,
+                is_extended: None,
+                start_time: None,
+                end_time: None,
+                protocol: None,
+                bus,
+            },
+            gap_threshold_ms: 100.0,
+            limit: None,
+            query_id: None,
+        });
+        let db = client(base_url, "");
+        let result: GapAnalysisQueryResult = db
+            .db("site", Protocol::Can)
+            .answer("/query/gap-analysis", &body, "q1")
+            .await?;
+        Ok::<_, ClientError>(result.stats.bus)
+    };
+    assert_eq!(answer(&current, Some(1)).await, Ok(Some(1)));
+    assert_eq!(
+        answer(&older, Some(1)).await,
+        Err(ClientError::BusIgnored(1))
+    );
+    assert_eq!(answer(&older, None).await, Ok(None));
+}
+
+#[tokio::test]
 async fn time_bounds_name_the_protocol_only_when_it_is_not_can() {
     let (base_url, log) = gateway(|_| ok(json!({ "min_ts_us": 1, "max_ts_us": 2 })));
     let gateway = client(&base_url, "");

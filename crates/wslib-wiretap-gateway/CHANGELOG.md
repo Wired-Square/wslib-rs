@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.3
+
+- `QueryStats::bus` echoes the bus the gateway filtered on, on every `/query/*`
+  answer; absent from gateways that predate bus filters.
+- `QueryBody::bus`, the bus a body asks for, and `QueryAnswer`, a result's
+  `QueryStats`, on each `/query/*` result type.
+- `Db::answer` posts a `QueryBody` and answers `ClientError::BusIgnored` when
+  the gateway does not echo the bus asked for. `bus_echoed` is public.
+- Struct literals of `QueryStats` gain a field.
+
 ## 0.2.2
 
 - `RowWindow::bus` asks for one bus's rows: every `QuerySpec` carries it, sent

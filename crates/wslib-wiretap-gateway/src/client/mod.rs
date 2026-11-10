@@ -18,7 +18,7 @@ use serde::de::DeserializeOwned;
 use crate::{DatabaseList, ErrorBody, Health, RequestError};
 
 pub use admin::AssignOutcome;
-pub use db::Db;
+pub use db::{Db, bus_echoed};
 pub use frames::{ArchiveFrame, FrameCursor};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

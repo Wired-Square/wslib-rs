@@ -253,3 +253,50 @@ fn a_query_body_carries_its_windows_bus() {
         assert!(sent(RowWindow::default()).get("bus").is_none());
     }
 }
+
+#[test]
+fn a_query_body_names_the_bus_it_asks_for() {
+    let first_last = |bus| {
+        QueryBody::FirstLast(FirstLastParams {
+            filter: FrameFilter {
+                frame_id: 613,
+                is_extended: None,
+                start_time: None,
+                end_time: None,
+                protocol: None,
+                bus,
+            },
+            query_id: None,
+        })
+    };
+    let pattern_search = |bus| {
+        QueryBody::PatternSearch(PatternSearchParams {
+            protocol: None,
+            bus,
+            pattern: vec![1],
+            pattern_mask: vec![0xff],
+            start_time: None,
+            end_time: None,
+            limit: None,
+            query_id: None,
+        })
+    };
+    let mirror_validation = |bus| {
+        QueryBody::MirrorValidation(MirrorValidationParams {
+            protocol: None,
+            bus,
+            mirror_frame_id: 1,
+            source_frame_id: 2,
+            is_extended: None,
+            tolerance_ms: 10,
+            start_time: None,
+            end_time: None,
+            limit: None,
+            query_id: None,
+        })
+    };
+    for body in [first_last, pattern_search, mirror_validation] {
+        assert_eq!(body(Some(1)).bus(), Some(1));
+        assert_eq!(body(None).bus(), None);
+    }
+}

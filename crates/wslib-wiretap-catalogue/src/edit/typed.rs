@@ -225,10 +225,13 @@ impl Mask {
     }
 }
 
-/// `[meta.serial.checksum]`. The camelCase names are accepted as aliases.
+/// `[meta.serial.checksum]`, with a frame checksum's keys. The camelCase names,
+/// a served [`crate::model::FrameChecksum`]'s, are accepted as aliases.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
 pub struct SerialChecksumFields {
+    pub name: Option<String>,
     pub algorithm: String,
     #[serde(alias = "startByte")]
     pub start_byte: i32,
@@ -241,10 +244,23 @@ pub struct SerialChecksumFields {
     #[cfg_attr(feature = "ts", ts(optional = nullable))]
     #[serde(alias = "calcEndByte", default)]
     pub calc_end_byte: Option<i32>,
-    /// Not written when false.
-    #[cfg_attr(feature = "ts", ts(optional = nullable))]
-    #[serde(alias = "bigEndian", default)]
-    pub big_endian: bool,
+    #[serde(alias = "byte_order")]
+    pub endianness: Option<Endianness>,
+    pub polynomial: Option<u16>,
+    pub init: Option<u16>,
+    #[serde(alias = "xorOut")]
+    pub xor_out: Option<u16>,
+    #[serde(alias = "reflectIn")]
+    pub reflect_in: Option<bool>,
+    #[serde(alias = "reflectOut")]
+    pub reflect_out: Option<bool>,
+    pub offset: Option<u8>,
+    #[cfg_attr(
+        feature = "ts",
+        ts(optional = nullable, type = "string | Array<string> | null")
+    )]
+    #[serde(default, deserialize_with = "one_or_many")]
+    pub notes: Vec<String>,
 }
 
 fn one() -> u32 {
@@ -674,12 +690,22 @@ impl SerialConfigFields {
     pub(super) fn record(&self) -> Result<Record, String> {
         let checksum = self.checksum.as_ref().map_or(Field::Absent, |c| {
             Field::Record(vec![
+                ("name", text(&c.name)),
                 ("algorithm", val(c.algorithm.as_str())),
                 ("start_byte", val(i64::from(c.start_byte))),
                 ("byte_length", val(i64::from(c.byte_length))),
                 ("calc_start_byte", val(i64::from(c.calc_start_byte))),
                 ("calc_end_byte", opt(c.calc_end_byte.map(i64::from))),
-                ("big_endian", opt(c.big_endian.then_some(true))),
+                ("endianness", order(c.endianness)),
+                ("byte_order", Field::Absent),
+                ("big_endian", Field::Absent),
+                ("polynomial", uint(c.polynomial)),
+                ("init", uint(c.init)),
+                ("xor_out", uint(c.xor_out)),
+                ("reflect_in", opt(c.reflect_in)),
+                ("reflect_out", opt(c.reflect_out)),
+                ("offset", uint(c.offset)),
+                ("notes", note_list(&c.notes)),
             ])
         });
         Ok(vec![

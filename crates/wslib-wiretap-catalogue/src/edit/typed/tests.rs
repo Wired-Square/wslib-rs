@@ -215,14 +215,10 @@ fn a_serial_discovery_export_is_clean() {
                         },
                     ),
                 ]),
-                checksum: Some(SerialChecksumFields {
-                    algorithm: "xor".into(),
-                    start_byte: -1,
-                    byte_length: 1,
-                    calc_start_byte: 0,
-                    calc_end_byte: Some(-1),
-                    big_endian: false,
-                }),
+                checksum: serde_json::from_value(
+                    json!({ "algorithm": "xor", "start_byte": -1, "calc_end_byte": -1 }),
+                )
+                .unwrap(),
                 ..Default::default()
             },
         },
@@ -637,24 +633,16 @@ fn a_header_position_deserialises_from_either_case() {
 }
 
 #[test]
-fn a_checksum_writes_big_endian_only_when_true() {
-    let written = |big_endian| {
-        build(&[EditOp::SetSerialConfig {
-            config: SerialConfigFields {
-                checksum: Some(SerialChecksumFields {
-                    algorithm: "sum8".into(),
-                    start_byte: -1,
-                    byte_length: 1,
-                    calc_start_byte: 0,
-                    calc_end_byte: None,
-                    big_endian,
-                }),
-                ..Default::default()
-            },
-        }])
-    };
-    assert!(!written(false).contains("big_endian"));
-    assert!(written(true).contains("big_endian = true"));
+fn a_serial_checksum_writes_its_byte_order_as_endianness() {
+    let op = serde_json::from_value(json!({ "op": "SetSerialConfig", "config": {
+        "checksum": { "algorithm": "crc16", "start_byte": -2, "byte_length": 2, "endianness": "big" } } }))
+    .unwrap();
+    let text = edit(
+        "[meta.serial.checksum]\nalgorithm = \"crc16\"\nstart_byte = -2\nbyte_length = 2\nbig_endian = true\n",
+        op,
+    );
+    assert!(text.contains("endianness = \"big\""), "{text}");
+    assert!(!text.contains("big_endian"), "{text}");
 }
 
 #[test]
@@ -727,6 +715,45 @@ fn a_serial_checksum_is_snake_case_and_keeps_an_absent_calc_end_byte_absent() {
     let text = build(&ops[..1]);
     assert!(!text.contains("calc_end_byte"), "{text}");
     assert!(build(&ops).contains("start_byte = -2"));
+}
+
+#[test]
+fn a_solved_serial_checksum_round_trips_through_set_serial_config() {
+    let solved = wslib_checksum::SolvedChecksum {
+        target: wslib_checksum::SolveTarget {
+            position: -2,
+            byte_length: 2,
+            big_endian: true,
+            calc_start_byte: 1,
+            calc_end_byte: -2,
+        },
+        specification: wslib_checksum::ChecksumSpecification::Crc(wslib_checksum::CrcParameters {
+            width: 16,
+            polynomial: 0x1021,
+            reflect_in: true,
+            reflect_out: true,
+            init: 0xFFFF,
+            xor_out: 0,
+            well_known: false,
+            alternatives: vec![wslib_checksum::CrcAlternative {
+                init: 0,
+                xor_out: 0xFFFF,
+            }],
+        }),
+        sample_count: 20,
+        excluded_count: 0,
+        equivalent_ranges: Vec::new(),
+    };
+    let checksum = crate::model::FrameChecksum::from_solved(Some("CRC".into()), &solved);
+    let op = serde_json::from_value(json!({
+        "op": "SetSerialConfig",
+        "config": { "encoding": "slip", "checksum": checksum },
+    }))
+    .unwrap();
+
+    let text = edit("[meta]\nname = \"s\"\n", op);
+    let parsed = Catalogue::parse(&text).unwrap().serial.unwrap().checksum;
+    assert_eq!(parsed, Some(checksum), "{text}");
 }
 
 const COPIED: &str = r#"[meta]

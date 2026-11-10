@@ -210,9 +210,8 @@ pub struct FrameTunnel {
     pub notes: Vec<String>,
 }
 
-/// A per-frame checksum definition, one of a frame's `checksum` tables.
-/// Distinct from [`ChecksumConfig`] (the serial-level default); a frame may
-/// declare several.
+/// A checksum definition: one of a frame's `checksum` tables, or the serial-level
+/// default. A frame may declare several.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -504,7 +503,7 @@ pub struct HeaderField {
     pub format: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub endianness: Option<Endianness>,
-    /// End-relative when negative, as [`ChecksumConfig::start_byte`].
+    /// End-relative when negative, as [`FrameChecksum::start_byte`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_byte: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -568,24 +567,6 @@ pub struct CanConfig {
     pub fields: BTreeMap<String, HeaderField>,
 }
 
-/// `[meta.serial.checksum]`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[serde(rename_all = "camelCase")]
-pub struct ChecksumConfig {
-    pub algorithm: String,
-    /// End-relative when negative — see [`FrameChecksum::start_byte`].
-    pub start_byte: i32,
-    #[serde(default = "one")]
-    pub byte_length: u32,
-    #[serde(default)]
-    pub calc_start_byte: i32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub calc_end_byte: Option<i32>,
-    #[serde(default)]
-    pub big_endian: bool,
-}
-
 fn one() -> u32 {
     1
 }
@@ -608,7 +589,7 @@ pub struct SerialConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_frame_length: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub checksum: Option<ChecksumConfig>,
+    pub checksum: Option<FrameChecksum>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub fields: BTreeMap<String, HeaderField>,
     // Derived from `fields` at parse time (byte positions of named fields)

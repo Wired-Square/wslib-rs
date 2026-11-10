@@ -29,10 +29,10 @@ pub use byte_name::{byte_name, parse_byte_name};
 pub use layout::{FrameLayout, LayoutRange, RangeKind, frame_layout};
 pub use mirror::{MirrorTracker, MirrorVerdict};
 pub use model::{
-    CanConfig, Catalogue, ChecksumConfig, Confidence, DisplayHint, EffectiveDefaults, Endianness,
-    Frame, FrameTunnel, FunctionCode, HeaderField, Meta, ModbusConfig, Mux, MuxCase,
-    NAME_KEYED_FRAME_ID, Protocol, RegisterType, SerialConfig, Signal, SignalFormat,
-    TunnelProtocol, UnknownRegisterType, ValidationError, WriteBank,
+    CanConfig, Catalogue, Confidence, DisplayHint, EffectiveDefaults, Endianness, Frame,
+    FrameTunnel, FunctionCode, HeaderField, Meta, ModbusConfig, Mux, MuxCase, NAME_KEYED_FRAME_ID,
+    Protocol, RegisterType, SerialConfig, Signal, SignalFormat, TunnelProtocol,
+    UnknownRegisterType, ValidationError, WriteBank,
 };
 pub use mux_case::{CaseRange, compare_mux_case_keys, is_mux_case_key, mux_case_values};
 pub use parse::{CatalogueError, RtuRules, RtuRulesError, rtu_rules};

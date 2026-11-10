@@ -393,24 +393,38 @@ fn parse_function_codes(section: &Value) -> BTreeMap<u8, FunctionCode> {
 
 /// Parse per-frame `[[…checksum]]` (array) or `[…checksum]` (single table).
 fn parse_frame_checksums(body: &Value) -> Vec<FrameChecksum> {
-    let one_checksum = |c: &Value| -> Option<FrameChecksum> {
-        Some(FrameChecksum {
-            name: as_str(c, "name").map(str::to_string),
-            algorithm: as_str(c, "algorithm")?.to_string(),
-            start_byte: byte_offset(c, "start_byte")??,
-            byte_length: as_u32(c, "byte_length").unwrap_or(1),
-            endianness: endianness_at(c, "byte_order").or_else(|| endianness_at(c, "endianness")),
-            calc_start_byte: byte_offset(c, "calc_start_byte")?.unwrap_or(0),
-            calc_end_byte: byte_offset(c, "calc_end_byte")?,
-            parameters: parse_checksum_parameters(c),
-            notes: parse_notes(c),
-        })
-    };
     match get(body, "checksum") {
-        Some(Value::Array(a)) => a.iter().filter_map(one_checksum).collect(),
-        Some(t @ Value::Table(_)) => one_checksum(t).into_iter().collect(),
+        Some(Value::Array(a)) => a.iter().filter_map(parse_checksum).collect(),
+        Some(t @ Value::Table(_)) => parse_checksum(t).into_iter().collect(),
         _ => Vec::new(),
     }
+}
+
+pub(crate) fn parse_checksum(c: &Value) -> Option<FrameChecksum> {
+    Some(FrameChecksum {
+        name: as_str(c, "name").map(str::to_string),
+        algorithm: as_str(c, "algorithm")?.to_string(),
+        start_byte: byte_offset(c, "start_byte")??,
+        byte_length: as_u32(c, "byte_length").unwrap_or(1),
+        endianness: endianness_at(c, "byte_order").or_else(|| endianness_at(c, "endianness")),
+        calc_start_byte: byte_offset(c, "calc_start_byte")?.unwrap_or(0),
+        calc_end_byte: byte_offset(c, "calc_end_byte")?,
+        parameters: parse_checksum_parameters(c),
+        notes: parse_notes(c),
+    })
+}
+
+/// A serial checksum without a byte order keeps the legacy `big_endian` key's
+/// meaning, where absent was little.
+fn parse_serial_checksum(section: &Value) -> Option<FrameChecksum> {
+    let mut checksum = parse_checksum(section)?;
+    if checksum.endianness.is_none() {
+        checksum.endianness = match as_bool(section, "big_endian") {
+            Some(true) => Some(Endianness::Big),
+            _ => (checksum.byte_length > 1).then_some(Endianness::Little),
+        };
+    }
+    Some(checksum)
 }
 
 /// Parse the `[node]` table into ordered peer definitions.
@@ -631,7 +645,7 @@ fn parse_serial_config(root: &Value) -> Option<SerialConfig> {
 
     let encoding = as_str(section, "encoding").and_then(|e| e.parse().ok());
 
-    let checksum = get(section, "checksum").and_then(parse_checksum);
+    let checksum = get(section, "checksum").and_then(parse_serial_checksum);
     let fields = parse_header_fields(get(section, "fields"), true);
 
     // Derive byte positions once, here, so consumers and decode don't each
@@ -679,18 +693,6 @@ fn parse_serial_config(root: &Value) -> Option<SerialConfig> {
     } else {
         Some(cfg)
     }
-}
-
-fn parse_checksum(section: &Value) -> Option<ChecksumConfig> {
-    let algorithm = as_str(section, "algorithm")?.to_string();
-    Some(ChecksumConfig {
-        algorithm,
-        start_byte: byte_offset(section, "start_byte")??,
-        byte_length: as_u32(section, "byte_length").unwrap_or(1),
-        calc_start_byte: byte_offset(section, "calc_start_byte")?.unwrap_or(0),
-        calc_end_byte: byte_offset(section, "calc_end_byte")?,
-        big_endian: as_bool(section, "big_endian").unwrap_or(false),
-    })
 }
 
 fn parse_modbus_config(root: &Value) -> Option<ModbusConfig> {

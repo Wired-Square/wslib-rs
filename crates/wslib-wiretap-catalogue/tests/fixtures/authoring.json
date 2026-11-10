@@ -957,8 +957,7 @@
             "start_byte": -1,
             "byte_length": 1,
             "calc_start_byte": 0,
-            "calc_end_byte": -1,
-            "big_endian": false
+            "calc_end_byte": -1
           }
         },
         "modbus": {
@@ -1013,8 +1012,7 @@
                 "startByte": -1,
                 "byteLength": 1,
                 "calcStartByte": 0,
-                "calcEndByte": -1,
-                "bigEndian": false
+                "calcEndByte": -1
               }
             }
           },

@@ -4,6 +4,7 @@
 
 - `InventoryRow::bus`, the bus a row was grouped on, set by `on_bus` from a
   `u8` or an `Option<u8>`; `null` for a row grouped across buses.
+- Struct literals of `InventoryRow` gain a field.
 
 ## 0.2.2
 

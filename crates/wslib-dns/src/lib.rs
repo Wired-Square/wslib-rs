@@ -21,6 +21,8 @@ mod authoritative;
 mod fake;
 #[cfg(feature = "hickory")]
 mod hickory;
+#[cfg(feature = "hickory")]
+mod public;
 
 pub use address::{is_global, is_global_network};
 #[cfg(feature = "hickory")]
@@ -31,9 +33,13 @@ pub use fake::FakeResolver;
 #[cfg(feature = "hickory")]
 pub use hickory::{HickoryOptions, HickoryResolver};
 pub use logging::{LoggingResolver, QueryRecord};
-pub use lookup::{Answer, DnssecStatus, Ds, Lookup, LookupError, Mx, RecordType, Tlsa, Txt};
+pub use lookup::{
+    Answer, DnssecStatus, Ds, Lookup, LookupError, Mx, RecordType, Tlsa, Txt, present,
+};
 pub use name::{
     HostnameError, IdnaError, normalise, public_suffix, registrable_domain, reverse_name,
     reversed_labels, to_ascii, to_unicode, validate_hostname, validate_service_name,
 };
+#[cfg(feature = "hickory")]
+pub use public::{PUBLIC_RESOLVERS, PublicAnswer, PublicProbe, PublicResolver, probe_public};
 pub use resolver::{CnameChain, CnameChainError, DEFAULT_MAX_CNAME_HOPS, Resolver};

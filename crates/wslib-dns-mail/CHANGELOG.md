@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.4
+
+- `DkimDiscovery::aliased_to`: whether the selector's CNAME chain reaches
+  the host a provider asked for (`AliasVerdict`: Reaches, NotAliased or
+  Elsewhere), with a failed CNAME lookup as the error. Needs wslib-dns
+  0.2.5.
+
 ## 0.5.3
 
 - sha2's floor is 0.10.9.

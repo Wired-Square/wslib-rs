@@ -262,6 +262,11 @@ impl Resolver for FakeResolver {
         self.answer(name, RecordType::Ds, |e| e.ds.clone())
     }
 
+    /// The zone's one NS set stands in for the parent's.
+    async fn delegation(&self, name: &str) -> Lookup<String> {
+        self.ns(name).await
+    }
+
     fn validates(&self) -> bool {
         self.validating
     }
@@ -383,6 +388,75 @@ mod tests {
     }
 
     #[test]
+    fn first_txt_picks_the_first_accepted_record_and_tells_absence_from_failure() {
+        let dns = FakeResolver::new()
+            .with_txt("example.com", ["google-site-verification=x", "v=spf1 -all"])
+            .with_ip("plain.example.com", ["192.0.2.1".parse().unwrap()])
+            .with_error("broken.example.com", RecordType::Txt, LookupError::ServFail);
+        let is_spf = |text: &str| text.starts_with("v=spf1");
+        block_on(async {
+            assert_eq!(
+                dns.first_txt("example.com", is_spf).await,
+                Ok(Some("v=spf1 -all".into()))
+            );
+            assert_eq!(dns.first_txt("plain.example.com", is_spf).await, Ok(None));
+            assert_eq!(dns.first_txt("missing.example.com", is_spf).await, Ok(None));
+            assert_eq!(
+                dns.first_txt("broken.example.com", is_spf).await,
+                Err(LookupError::ServFail)
+            );
+        });
+    }
+
+    #[test]
+    fn exists_is_any_answer_but_nxdomain() {
+        let dns = FakeResolver::new()
+            .with_ns("example.com", "ns1.example.net")
+            .with_ip("www.example.com", ["192.0.2.1".parse().unwrap()])
+            .with_failure("broken.example.com", LookupError::Timeout);
+        block_on(async {
+            assert_eq!(dns.exists("example.com").await, Ok(true));
+            assert_eq!(dns.exists("www.example.com").await, Ok(true));
+            assert_eq!(dns.exists("missing.example.com").await, Ok(false));
+            assert_eq!(
+                dns.exists("broken.example.com").await,
+                Err(LookupError::Timeout)
+            );
+        });
+    }
+
+    #[test]
+    fn the_fake_answers_delegation_from_its_ns_set() {
+        let dns = FakeResolver::new().with_ns("example.com", "ns1.example.net");
+        assert_eq!(
+            block_on(dns.delegation("example.com")).unwrap().records,
+            ["ns1.example.net"]
+        );
+        assert_eq!(
+            block_on(dns.delegation("example.net")),
+            Err(LookupError::NxDomain)
+        );
+    }
+
+    #[test]
+    fn present_is_the_records_or_none_when_absent() {
+        let dns = FakeResolver::new()
+            .with_mx("example.com", 10, "mail.example.com")
+            .with_error("example.net", RecordType::Mx, LookupError::Refused);
+        block_on(async {
+            assert_eq!(
+                crate::present(dns.mx("example.com").await).unwrap().len(),
+                1
+            );
+            assert_eq!(crate::present(dns.mx("example.org").await), Ok(Vec::new()));
+            assert_eq!(
+                crate::present(dns.mx("example.net").await),
+                Err(LookupError::Refused)
+            );
+        });
+    }
+
+    #[test]
     fn cname_chain_follows_to_the_terminal_name() {
         let dns = FakeResolver::new()
             .with_cname("s1._domainkey.example.com", "s1.dkim.example.net")
@@ -393,6 +467,8 @@ mod tests {
         assert_eq!(chain.terminal(), "s1.keys.example.org");
         assert_eq!(chain.names.len(), 3);
         assert!(chain.is_aliased());
+        assert!(chain.reaches("S1.DKIM.Example.NET."));
+        assert!(!chain.reaches("s2.dkim.example.net"));
         assert_eq!(
             block_on(dns.txt("s1._domainkey.example.com"))
                 .unwrap()

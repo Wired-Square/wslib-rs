@@ -86,6 +86,16 @@ impl LookupError {
     }
 }
 
+/// The records a query found, none when the name or type is absent, and the
+/// error when it couldn't tell.
+pub fn present<T>(lookup: Lookup<T>) -> Result<Vec<T>, LookupError> {
+    match lookup {
+        Ok(answer) => Ok(answer.records),
+        Err(error) if error.is_absent() => Ok(Vec::new()),
+        Err(error) => Err(error),
+    }
+}
+
 impl fmt::Display for LookupError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

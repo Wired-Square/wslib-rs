@@ -1,4 +1,4 @@
-use wslib_dns::{CnameChain, CnameChainError, DEFAULT_MAX_CNAME_HOPS, Resolver};
+use wslib_dns::{CnameChain, CnameChainError, DEFAULT_MAX_CNAME_HOPS, LookupError, Resolver};
 
 use super::{RecordSet, ascii, join_all, txt_set};
 use crate::dkim::{DkimKeyRecord, parse};
@@ -54,6 +54,32 @@ impl DkimDiscovery {
     pub fn terminal(&self) -> Option<&str> {
         self.chain.as_ref().map(CnameChain::terminal)
     }
+
+    /// Whether the selector's aliases reach `expected`, for a provider that
+    /// has the selector CNAMEd to its own host. A failed CNAME lookup is the
+    /// error.
+    pub fn aliased_to(&self, expected: &str) -> Result<AliasVerdict, LookupError> {
+        if let Some(CnameChainError::Lookup { error, .. }) = &self.chain_error {
+            return Err(error.clone());
+        }
+        Ok(match &self.chain {
+            Some(chain) if !chain.is_aliased() => AliasVerdict::NotAliased,
+            Some(chain) if chain.reaches(expected) => AliasVerdict::Reaches,
+            _ => AliasVerdict::Elsewhere,
+        })
+    }
+}
+
+/// Where a selector's CNAME chain leads, against the host it should reach.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+pub enum AliasVerdict {
+    Reaches,
+    /// The selector's name is not an alias at all.
+    NotAliased,
+    /// An alias to somewhere else, or a chain that loops or runs too long.
+    Elsewhere,
 }
 
 /// Looks up `<selector>._domainkey.<domain>`.

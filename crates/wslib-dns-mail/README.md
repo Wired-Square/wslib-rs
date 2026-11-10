@@ -72,6 +72,8 @@ hickory and tests use `FakeResolver`. Every result says how it was found:
   external `rua`/`ruf` destination publishes
   `<policy-domain>._report._dmarc.<destination>`.
 - `dkim` follows the selector's CNAME chain and exposes the terminal name.
+  `DkimDiscovery::aliased_to` judges the chain against the host a provider
+  asked for: `Reaches`, `NotAliased` or `Elsewhere`.
   `probe_dkim` tries a list of selectors, such as `COMMON_SELECTORS`,
   concurrently.
 - `mx` inspects every exchange: aliases, addresses, the PTR of each address,

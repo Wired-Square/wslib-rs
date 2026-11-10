@@ -131,3 +131,13 @@ async fn validation_tells_signed_unsigned_and_broken_zones_apart() {
     let unvalidated = resolver().a("example.com").await.unwrap();
     assert_eq!(unvalidated.dnssec, None);
 }
+
+#[tokio::test]
+#[ignore = "needs the network"]
+async fn public_resolvers_are_probed_for_a_name() {
+    let seen = wslib_dns::probe_public("example.com", HickoryOptions::default()).await;
+    assert!(seen.seen(), "{seen:?}");
+    let unseen =
+        wslib_dns::probe_public("nothing.example.invalid", HickoryOptions::default()).await;
+    assert!(unseen.unseen(), "{unseen:?}");
+}

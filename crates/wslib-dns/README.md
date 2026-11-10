@@ -21,8 +21,15 @@ match dns.txt("_dmarc.example.com").await {
 - **`Resolver`**: an async trait with one method per record type (`txt`, `a`,
   `aaaa`, `mx`, `ns`, `cname`, `ptr`), plus `ip` (A and AAAA together) and
   `cname_chain` (follows aliases, detects loops, capped at
-  `DEFAULT_MAX_CNAME_HOPS`). Futures are `Send`, and there's no global state.
-  `&R` and `Arc<R>` are resolvers too.
+  `DEFAULT_MAX_CNAME_HOPS`; `CnameChain::reaches` asks whether it passes
+  through a name), `first_txt` (the first TXT string a predicate accepts, or
+  `None` when absent), `exists` (any answer but NXDOMAIN) and `delegation`
+  (the parent's NS set; only `AuthoritativeResolver` can ask the parent, and
+  `FakeResolver` answers from its own NS set). Futures are `Send`, and
+  there's no global state. `&R` and `Arc<R>` are resolvers too.
+- **`present`**: a lookup's records, an empty list when the name or type is
+  absent, and the error when the lookup failed, for callers that treat
+  absence as nothing published.
   Returned names are normalised: lowercase, no trailing dot. The root (a null
   MX's exchange) stays `.`.
 - **`Txt`** keeps the raw character-strings. `joined()` concatenates them with
@@ -44,6 +51,9 @@ match dns.txt("_dmarc.example.com").await {
   never answers or absence. `delegation(name)` answers the NS set the parent
   publishes, which can differ from the zone's own `ns(name)`. Answers carry no
   DNSSEC status. UDP with EDNS0, TCP when truncated.
+- **`probe_public`** (feature `hickory`): asks Cloudflare, Google and Quad9
+  (`PUBLIC_RESOLVERS`) at once whether a name exists. `PublicProbe::seen`
+  is any yes; `unseen` is every resolver answering no.
 - **Internationalised names** are converted to A-labels before every query, in
   every resolver here, so `txt("bücher.example")` asks for
   `xn--bcher-kva.example`.

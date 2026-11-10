@@ -120,6 +120,11 @@ impl<R: Resolver> Resolver for LoggingResolver<R> {
         self.logged(name, RecordType::Ds, self.inner.ds(name)).await
     }
 
+    async fn delegation(&self, name: &str) -> Lookup<String> {
+        self.logged(name, RecordType::Ns, self.inner.delegation(name))
+            .await
+    }
+
     fn validates(&self) -> bool {
         self.inner.validates()
     }

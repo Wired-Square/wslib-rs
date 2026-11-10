@@ -112,6 +112,11 @@ impl<R: Resolver> Resolver for BudgetResolver<R> {
         self.inner.ds(name).await
     }
 
+    async fn delegation(&self, name: &str) -> Lookup<String> {
+        self.admit()?;
+        self.inner.delegation(name).await
+    }
+
     fn validates(&self) -> bool {
         self.inner.validates()
     }

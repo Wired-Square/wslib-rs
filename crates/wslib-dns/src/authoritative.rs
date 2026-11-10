@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -54,10 +54,7 @@ impl Default for AuthoritativeOptions {
 
 impl AuthoritativeResolver {
     pub fn new(options: AuthoritativeOptions) -> Self {
-        let network = Network {
-            port: 53,
-            timeout: options.timeout,
-        };
+        let network = Network::new(53, options.timeout);
         Self {
             walker: Arc::new(Walker::new(network, root_hints(), options)),
         }
@@ -130,7 +127,7 @@ trait Transport: Send + Sync {
     fn exchange(
         &self,
         server: IpAddr,
-        query: &Message,
+        query: &Query,
     ) -> impl Future<Output = Result<Message, LookupError>> + Send;
 }
 
@@ -340,7 +337,7 @@ impl<T: Transport> Walker<T> {
                         return Err(self.out_of_budget());
                     }
                     call.queries_left -= 1;
-                    let response = self.transport.exchange(server, &message(query)).await;
+                    let response = self.transport.exchange(server, query).await;
                     match response.and_then(|response| step(response, &zone.zone, query.name())) {
                         Ok(step) => return Ok(step),
                         Err(error) => failures.note(error),
@@ -446,12 +443,14 @@ impl Failures {
     }
 }
 
-fn message(query: &Query) -> Message {
+fn message(query: &Query, with_edns: bool) -> Message {
     let mut message = Message::query();
     message.add_query(query.clone());
-    let mut edns = Edns::new();
-    edns.set_max_payload(EDNS_PAYLOAD);
-    message.set_edns(edns);
+    if with_edns {
+        let mut edns = Edns::new();
+        edns.set_max_payload(EDNS_PAYLOAD);
+        message.set_edns(edns);
+    }
     message
 }
 
@@ -601,14 +600,44 @@ fn root_hints() -> Delegation {
     }
 }
 
-/// UDP with EDNS, and TCP when the UDP answer comes back truncated.
+/// UDP with EDNS, and TCP when the UDP answer comes back truncated. A server
+/// that answers EDNS with FORMERR is asked again, and from then on, without
+/// it (RFC 6891 §7).
 struct Network {
     port: u16,
     timeout: Duration,
+    without_edns: Mutex<HashSet<IpAddr>>,
 }
 
 impl Transport for Network {
-    async fn exchange(&self, server: IpAddr, query: &Message) -> Result<Message, LookupError> {
+    async fn exchange(&self, server: IpAddr, query: &Query) -> Result<Message, LookupError> {
+        if !self.without_edns().contains(&server) {
+            let response = self.send(server, &message(query, true)).await?;
+            if response.metadata.response_code != ResponseCode::FormErr {
+                return Ok(response);
+            }
+            self.without_edns().insert(server);
+        }
+        self.send(server, &message(query, false)).await
+    }
+}
+
+impl Network {
+    fn new(port: u16, timeout: Duration) -> Self {
+        Self {
+            port,
+            timeout,
+            without_edns: Mutex::default(),
+        }
+    }
+
+    fn without_edns(&self) -> MutexGuard<'_, HashSet<IpAddr>> {
+        self.without_edns
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    async fn send(&self, server: IpAddr, query: &Message) -> Result<Message, LookupError> {
         let server = SocketAddr::new(server, self.port);
         let bytes = query
             .to_vec()
@@ -680,10 +709,13 @@ async fn over_tcp(
     Ok(response)
 }
 
+/// A FORMERR may come back without the question (RFC 6891 §7).
 fn answers(query: &Message, response: &Message) -> bool {
     response.metadata.id == query.metadata.id
         && response.metadata.message_type == MessageType::Response
-        && response.queries == query.queries
+        && (response.queries == query.queries
+            || response.queries.is_empty()
+                && response.metadata.response_code == ResponseCode::FormErr)
 }
 
 fn io(server: SocketAddr) -> impl Fn(std::io::Error) -> LookupError {
@@ -695,6 +727,7 @@ mod tests {
     use super::*;
     use hickory_resolver::proto::op::OpCode;
     use hickory_resolver::proto::rr::rdata::{A, CNAME, NS, TXT};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn name(name: &str) -> Name {
         fully_qualified(name).unwrap()
@@ -751,20 +784,17 @@ mod tests {
     }
 
     impl Transport for FakeNet {
-        async fn exchange(&self, server: IpAddr, query: &Message) -> Result<Message, LookupError> {
-            assert!(!query.metadata.recursion_desired);
-            assert_eq!(query.max_payload(), EDNS_PAYLOAD);
+        async fn exchange(&self, server: IpAddr, query: &Query) -> Result<Message, LookupError> {
             self.asked.lock().unwrap().push(server);
-            let question = query.queries[0].clone();
-            let mut response = Message::response(query.metadata.id, OpCode::Query);
-            response.add_query(question.clone());
+            let mut response = Message::response(0, OpCode::Query);
+            response.add_query(query.clone());
             match self.servers.get(&server) {
                 None => return Err(LookupError::Timeout),
                 Some(Server::Code(code)) => response.metadata.response_code = *code,
                 Some(Server::Refers(cut)) => {
                     response.add_authority(ns(cut, &format!("ns.{cut}")));
                 }
-                Some(Server::Zones(zones)) => serve(zones, &question, &mut response),
+                Some(Server::Zones(zones)) => serve(zones, query, &mut response),
             }
             Ok(response)
         }
@@ -1200,19 +1230,48 @@ mod tests {
         port
     }
 
+    /// Answers a query carrying EDNS with a header-only FORMERR, and one
+    /// without it in full, without RD. Returns the port and the count of
+    /// queries that carried EDNS.
+    async fn edns_refusing_server() -> (u16, Arc<AtomicUsize>) {
+        let udp = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let port = udp.local_addr().unwrap().port();
+        let with_edns = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&with_edns);
+        tokio::spawn(async move {
+            let mut buffer = [0; 512];
+            while let Ok((len, peer)) = udp.recv_from(&mut buffer).await {
+                let query = Message::from_vec(&buffer[..len]).unwrap();
+                assert!(!query.metadata.recursion_desired);
+                let response = match &query.edns {
+                    Some(edns) => {
+                        assert_eq!(edns.max_payload(), EDNS_PAYLOAD);
+                        counter.fetch_add(1, Ordering::SeqCst);
+                        Message::error_msg(query.metadata.id, OpCode::Query, ResponseCode::FormErr)
+                    }
+                    None => reply(&query, vec![a("example.com", [192, 0, 2, 7])]),
+                };
+                udp.send_to(&response.to_vec().unwrap(), peer)
+                    .await
+                    .unwrap();
+            }
+        });
+        (port, with_edns)
+    }
+
     fn local(port: u16) -> Network {
-        Network {
-            port,
-            timeout: Duration::from_millis(500),
-        }
+        Network::new(port, Duration::from_millis(500))
+    }
+
+    fn example_com(record_type: RecordType) -> Query {
+        Query::query(name("example.com"), record_type)
     }
 
     #[tokio::test]
     async fn a_truncated_udp_answer_is_asked_again_over_tcp() {
         let network = local(truncating_server().await);
-        let query = message(&Query::query(name("example.com"), RecordType::TXT));
         let response = network
-            .exchange(Ipv4Addr::LOCALHOST.into(), &query)
+            .exchange(Ipv4Addr::LOCALHOST.into(), &example_com(RecordType::TXT))
             .await
             .unwrap();
         let (records, _) = collect(&response.answers, extract::txt);
@@ -1220,10 +1279,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_server_that_refuses_edns_is_asked_without_it_from_then_on() {
+        let (port, with_edns) = edns_refusing_server().await;
+        let network = local(port);
+        for _ in 0..2 {
+            let response = network
+                .exchange(Ipv4Addr::LOCALHOST.into(), &example_com(RecordType::A))
+                .await
+                .unwrap();
+            let (records, _) = collect(&response.answers, extract::a);
+            assert_eq!(records, [Ipv4Addr::new(192, 0, 2, 7)]);
+        }
+        assert_eq!(with_edns.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn only_a_formerr_may_leave_out_the_question() {
+        let query = message(&example_com(RecordType::A), true);
+        let header_only = |code| Message::error_msg(query.metadata.id, OpCode::Query, code);
+        assert!(answers(&query, &header_only(ResponseCode::FormErr)));
+        assert!(!answers(&query, &header_only(ResponseCode::NoError)));
+    }
+
+    #[tokio::test]
     async fn silence_is_a_timeout() {
         let silent = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         let network = local(silent.local_addr().unwrap().port());
-        let query = message(&Query::query(name("example.com"), RecordType::TXT));
+        let query = example_com(RecordType::TXT);
         assert_eq!(
             network.exchange(Ipv4Addr::LOCALHOST.into(), &query).await,
             Err(LookupError::Timeout)

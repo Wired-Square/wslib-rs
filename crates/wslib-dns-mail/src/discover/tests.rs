@@ -273,6 +273,32 @@ fn dkim_exposes_the_terminal_name_of_a_delegated_selector() {
 }
 
 #[test]
+fn a_selector_is_judged_by_where_its_aliases_reach() {
+    let dns = FakeResolver::new()
+        .with_cname("via._domainkey.example.com", "via.dkim.example.org")
+        .with_cname("via.dkim.example.org", "via.dkim.provider.example")
+        .with_cname(
+            "other._domainkey.example.com",
+            "other.dkim.elsewhere.example",
+        )
+        .with_txt("own._domainkey.example.com", ["v=DKIM1; p="])
+        .with_error(
+            "broken._domainkey.example.com",
+            RecordType::Cname,
+            LookupError::ServFail,
+        );
+    let verdict = |selector: &str| {
+        block_on(dkim(&dns, selector, "example.com"))
+            .aliased_to(&format!("{selector}.DKIM.Provider.example."))
+    };
+    assert_eq!(verdict("via"), Ok(AliasVerdict::Reaches));
+    assert_eq!(verdict("other"), Ok(AliasVerdict::Elsewhere));
+    assert_eq!(verdict("own"), Ok(AliasVerdict::NotAliased));
+    assert_eq!(verdict("missing"), Ok(AliasVerdict::NotAliased));
+    assert_eq!(verdict("broken"), Err(LookupError::ServFail));
+}
+
+#[test]
 fn probing_keeps_selectors_with_a_record_or_a_failure() {
     let dns = FakeResolver::new()
         .with_txt("google._domainkey.example.com", ["v=DKIM1; p="])

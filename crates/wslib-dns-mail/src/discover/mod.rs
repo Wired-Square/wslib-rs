@@ -20,7 +20,7 @@ pub use bimi_logo::{
 };
 #[cfg(feature = "http")]
 pub use bimi_logo::{bimi_certificate, bimi_logo};
-pub use dkim::{COMMON_SELECTORS, DkimDiscovery, dkim, probe_dkim};
+pub use dkim::{AliasVerdict, COMMON_SELECTORS, DkimDiscovery, dkim, probe_dkim};
 pub use dmarc::{
     AppliedPolicy, DmarcDiscovery, DmarcDiscoveryMode, PolicyTag, ReportAuthorisation, dmarc,
     dmarc_report_authorisation,

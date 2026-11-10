@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.4
+
+- `AuthoritativeResolver`: a server that answers EDNS with FORMERR, even
+  without echoing the question, is asked again without EDNS, and without it
+  from then on (RFC 6891 §7), rather than timing out.
+
 ## 0.2.3
 
 - `AuthoritativeResolver` (feature `hickory`): every query answered by the

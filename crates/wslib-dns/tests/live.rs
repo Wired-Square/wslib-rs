@@ -39,6 +39,14 @@ async fn authoritative_servers_answer_from_the_root_down() {
 
 #[tokio::test]
 #[ignore = "needs the network"]
+async fn servers_that_refuse_edns_are_asked_without_it() {
+    let dns = AuthoritativeResolver::new(AuthoritativeOptions::default());
+    let answer = dns.a("microsoft-com.mail.protection.outlook.com").await;
+    assert!(!answer.unwrap().records.is_empty());
+}
+
+#[tokio::test]
+#[ignore = "needs the network"]
 async fn example_com_answers_and_reports_absence_precisely() {
     let dns = resolver();
     assert!(!dns.a("example.com").await.unwrap().records.is_empty());

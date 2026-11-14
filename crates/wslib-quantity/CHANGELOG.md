@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.1
+
+- `Quantity::rounded_to`: the nearest multiple of a resolution, half away
+  from zero, in the value's unit.
+- `Quantity::display_at`: rounded to a resolution, auto-scaled with carry
+  into the next unit, and shown to the step's first significant place. A
+  rounded zero shows in the unit one step scales to; a zero resolution shows
+  every digit.
+- A resolution converts by ratio only, so a temperature step in another
+  scale than the value is `Incompatible`.
+
 ## 0.2.0
 
 - `Dimension::Time` and `Unit::{Millisecond, Second, Minute, Hour, Day}`,

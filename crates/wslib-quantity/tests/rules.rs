@@ -425,3 +425,208 @@ fn display_spaces_every_unit_but_percent() {
         "1.200"
     );
 }
+
+fn assert_shown_at(cases: &[(Quantity, Quantity, &str)]) {
+    for (value, resolution, shown) in cases {
+        assert_eq!(
+            value.display_at(resolution).as_deref(),
+            Ok(*shown),
+            "{value:?} at {resolution:?}"
+        );
+    }
+}
+
+#[test]
+fn display_at_shows_to_the_steps_first_significant_place_in_the_scaled_unit() {
+    let rpm = Unit::Other("rpm".into());
+    let unitless = Unit::Other(String::new());
+    assert_shown_at(&[
+        (q(dec!(6408), Unit::W), q(dec!(1), Unit::W), "6.408 kW"),
+        (q(dec!(6400), Unit::W), q(dec!(1), Unit::W), "6.4 kW"),
+        (q(dec!(12994), Unit::W), q(dec!(10), Unit::W), "12.99 kW"),
+        (
+            q(dec!(43238300), Unit::Wh),
+            q(dec!(100), Unit::Wh),
+            "43.2383 MWh",
+        ),
+        (
+            q(dec!(66.312), Unit::Percent),
+            q(dec!(0.1), Unit::Percent),
+            "66.3%",
+        ),
+        (
+            q(dec!(21.0956), Unit::CentsPerKWh),
+            q(dec!(0.1), Unit::CentsPerKWh),
+            "21.1 c/kWh",
+        ),
+        (
+            q(dec!(121.0956), Unit::CentsPerKWh),
+            q(dec!(0.1), Unit::CentsPerKWh),
+            "1.211 $/kWh",
+        ),
+        (
+            q(dec!(21.46), Unit::Celsius),
+            q(dec!(0.1), Unit::Celsius),
+            "21.5 °C",
+        ),
+        (
+            q(dec!(21.46), Unit::Celsius),
+            q(dec!(0.5), Unit::Celsius),
+            "21.5 °C",
+        ),
+        (
+            q(dec!(21.2), Unit::Celsius),
+            q(dec!(0.5), Unit::Celsius),
+            "21 °C",
+        ),
+        (
+            q(dec!(3), unitless.clone()),
+            q(dec!(1), unitless.clone()),
+            "3",
+        ),
+        (
+            q(dec!(0.03), unitless.clone()),
+            q(dec!(0.03), unitless.clone()),
+            "0.03",
+        ),
+        (
+            q(dec!(21.25), unitless.clone()),
+            q(dec!(0.25), unitless),
+            "21.3",
+        ),
+        (q(dec!(1234.4), rpm.clone()), q(dec!(1), rpm), "1234 rpm"),
+    ]);
+}
+
+#[test]
+fn display_at_rounds_durations_half_away_from_zero_in_any_unit_of_time() {
+    assert_shown_at(&[
+        (
+            q(dec!(33194), Unit::Millisecond),
+            q(dec!(1000), Unit::Millisecond),
+            "33 s",
+        ),
+        (
+            q(dec!(33194), Unit::Millisecond),
+            q(dec!(1), Unit::Second),
+            "33 s",
+        ),
+        (
+            q(dec!(68044), Unit::Millisecond),
+            q(dec!(1000), Unit::Millisecond),
+            "1.13 min",
+        ),
+        (
+            q(dec!(3598), Unit::Second),
+            q(dec!(1), Unit::Second),
+            "59.97 min",
+        ),
+        (
+            q(dec!(500), Unit::Millisecond),
+            q(dec!(1000), Unit::Millisecond),
+            "1 s",
+        ),
+        (
+            q(dec!(-500), Unit::Millisecond),
+            q(dec!(1000), Unit::Millisecond),
+            "-1 s",
+        ),
+    ]);
+}
+
+#[test]
+fn display_at_carries_into_the_next_unit_when_rounding_reaches_it() {
+    assert_shown_at(&[
+        (q(dec!(999.6), Unit::W), q(dec!(1), Unit::W), "1 kW"),
+        (
+            q(dec!(60000), Unit::Millisecond),
+            q(dec!(1000), Unit::Millisecond),
+            "1 min",
+        ),
+        (q(dec!(3598), Unit::Second), q(dec!(7), Unit::Second), "1 h"),
+    ]);
+}
+
+#[test]
+fn display_at_shows_a_rounded_zero_in_the_unit_one_step_scales_to() {
+    assert_shown_at(&[
+        (
+            q(dec!(400), Unit::Millisecond),
+            q(dec!(1000), Unit::Millisecond),
+            "0 s",
+        ),
+        (
+            q(dec!(-400), Unit::Millisecond),
+            q(dec!(1000), Unit::Millisecond),
+            "0 s",
+        ),
+    ]);
+}
+
+#[test]
+fn display_at_leaves_days_in_days_at_the_steps_first_significant_place_there() {
+    assert_shown_at(&[
+        (q(dec!(2.26), Unit::Day), q(dec!(1), Unit::Hour), "2.25 d"),
+        (q(dec!(0.04), Unit::Day), q(dec!(1), Unit::Hour), "0.04 d"),
+    ]);
+}
+
+#[test]
+fn a_zero_resolution_shows_every_digit_and_a_negative_one_acts_as_its_magnitude() {
+    assert_shown_at(&[
+        (
+            q(dec!(6408.125), Unit::W),
+            q(dec!(0), Unit::W),
+            "6.408125 kW",
+        ),
+        (q(dec!(6408), Unit::W), q(dec!(-1), Unit::W), "6.408 kW"),
+        (q(dec!(12994), Unit::W), q(dec!(-10), Unit::W), "12.99 kW"),
+    ]);
+}
+
+#[test]
+fn a_resolution_converts_only_by_ratio_within_the_values_dimension() {
+    let incompatible = |value: Quantity, resolution: Quantity| {
+        assert_eq!(
+            value.display_at(&resolution),
+            Err(ConvertError::Incompatible {
+                from: value.unit.clone(),
+                to: resolution.unit.clone(),
+            })
+        );
+    };
+    incompatible(
+        q(dec!(21.46), Unit::Celsius),
+        q(dec!(0.1), Unit::Fahrenheit),
+    );
+    incompatible(q(dec!(6408), Unit::W), q(dec!(1), Unit::Wh));
+    incompatible(q(dec!(6408), Unit::W), q(dec!(0), Unit::Wh));
+    incompatible(
+        q(dec!(3), Unit::Other("rpm".into())),
+        q(dec!(1), Unit::Other(String::new())),
+    );
+}
+
+#[test]
+fn rounded_to_keeps_the_values_unit() {
+    let got = q(dec!(68044), Unit::Millisecond)
+        .rounded_to(&q(dec!(1), Unit::Second))
+        .unwrap();
+    assert_eq!((got.value, got.unit), (dec!(68000), Unit::Millisecond));
+    let got = q(dec!(1.2345), Unit::KiloW)
+        .rounded_to(&q(dec!(10), Unit::W))
+        .unwrap();
+    assert_eq!((got.value, got.unit), (dec!(1.23), Unit::KiloW));
+}
+
+#[test]
+fn rounded_to_out_of_range_is_overflow() {
+    assert_eq!(
+        q(Decimal::MAX, Unit::W).rounded_to(&q(dec!(0.5), Unit::W)),
+        Err(ConvertError::Overflow)
+    );
+    assert_eq!(
+        q(Decimal::MAX, Unit::MegaW).rounded_to(&q(dec!(1), Unit::W)),
+        Err(ConvertError::Overflow)
+    );
+}

@@ -69,8 +69,9 @@ impl Quantity {
                 to: unit,
             });
         }
-        let value = match (self.unit.exponent(), unit.exponent()) {
-            (Some(from), Some(to)) => shift(self.value, from - to),
+        let value = match (self.unit.smallest_units(), unit.smallest_units()) {
+            (Some(from), Some(to)) if from >= to => self.value.checked_mul((from / to).into()),
+            (Some(from), Some(to)) => self.value.checked_div((to / from).into()),
             _ => to_celsius(self.value, &self.unit).and_then(|c| from_celsius(c, &unit)),
         };
         value
@@ -79,7 +80,7 @@ impl Quantity {
     }
 
     /// The quantity in the largest unit of its kind that keeps it at or above
-    /// 1, or unchanged when its unit doesn't scale or it is zero.
+    /// 1, or unchanged when its unit isn't on a scale or it is zero.
     pub fn auto_scaled(&self) -> Quantity {
         if self.unit.dimension() == Some(Dimension::PricePerEnergy) {
             return match self.to(Unit::DollarsPerKWh) {
@@ -87,10 +88,12 @@ impl Quantity {
                 _ => self.to(Unit::CentsPerKWh).unwrap_or_else(|_| self.clone()),
             };
         }
-        if self.value.is_zero() {
+        let ladder = self.unit.ladder();
+        if self.value.is_zero() || !ladder.contains(&self.unit) {
             return self.clone();
         }
-        let scaled: Vec<Quantity> = (self.unit.ladder().iter())
+        let scaled: Vec<Quantity> = ladder
+            .iter()
             .filter_map(|unit| self.to(unit.clone()).ok())
             .collect();
         scaled
@@ -116,15 +119,6 @@ impl Quantity {
             unit @ ("%" | "°") => format!("{number}{unit}"),
             unit => format!("{number} {unit}"),
         }
-    }
-}
-
-fn shift(value: Decimal, places: i32) -> Option<Decimal> {
-    let factor = Decimal::from_i128_with_scale(10i128.pow(places.unsigned_abs()), 0);
-    if places >= 0 {
-        value.checked_mul(factor)
-    } else {
-        value.checked_div(factor)
     }
 }
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1
+
+- Takes `wslib-quantity` 0.2.0.
+
 ## 0.3.0
 
 - `ChecksumConfig` is gone: `SerialConfig::checksum` is a `FrameChecksum`, so

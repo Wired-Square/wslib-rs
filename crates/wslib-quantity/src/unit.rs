@@ -4,6 +4,7 @@ use std::str::FromStr;
 
 /// What a unit measures; units convert only within one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Dimension {
     Power,
     Energy,
@@ -16,10 +17,12 @@ pub enum Dimension {
     ReactivePower,
     Ratio,
     PricePerEnergy,
+    Time,
 }
 
 /// A unit of measure, displayed in Home Assistant's spelling.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Unit {
     W,
     KiloW,
@@ -45,6 +48,11 @@ pub enum Unit {
     KiloVar,
     CentsPerKWh,
     DollarsPerKWh,
+    Millisecond,
+    Second,
+    Minute,
+    Hour,
+    Day,
     Other(String),
 }
 
@@ -61,6 +69,11 @@ impl Unit {
             "C" => Some(Unit::Celsius),
             "F" => Some(Unit::Fahrenheit),
             "K" => Some(Unit::Kelvin),
+            "ms" => Some(Unit::Millisecond),
+            "s" => Some(Unit::Second),
+            "min" => Some(Unit::Minute),
+            "h" => Some(Unit::Hour),
+            "d" => Some(Unit::Day),
             _ => None,
         };
         exact
@@ -68,8 +81,8 @@ impl Unit {
             .unwrap_or_else(|| Unit::Other(text.to_string()))
     }
 
-    /// Spellings safe to match in any case: none of them has a milli or mega
-    /// prefix, which only case tells apart.
+    /// Spellings safe to match in any case: none is a symbol that case alone
+    /// tells apart from another, as `mW` from `MW` or `s` from siemens' `S`.
     fn parse_folded(folded: &str) -> Option<Unit> {
         Some(match folded {
             "w" | "watt" | "watts" => Unit::W,
@@ -90,6 +103,11 @@ impl Unit {
             "kvar" => Unit::KiloVar,
             "c/kwh" | "¢/kwh" | "cents/kwh" => Unit::CentsPerKWh,
             "$/kwh" | "aud/kwh" => Unit::DollarsPerKWh,
+            "millisecond" | "milliseconds" => Unit::Millisecond,
+            "sec" | "secs" | "second" | "seconds" => Unit::Second,
+            "mins" | "minute" | "minutes" => Unit::Minute,
+            "hr" | "hrs" | "hour" | "hours" => Unit::Hour,
+            "day" | "days" => Unit::Day,
             _ => return None,
         })
     }
@@ -109,28 +127,39 @@ impl Unit {
             Unit::VA | Unit::KiloVA => ApparentPower,
             Unit::Var | Unit::KiloVar => ReactivePower,
             Unit::CentsPerKWh | Unit::DollarsPerKWh => PricePerEnergy,
+            Unit::Millisecond | Unit::Second | Unit::Minute | Unit::Hour | Unit::Day => Time,
             Unit::Other(_) => return None,
         })
     }
 
-    /// The power of ten this unit is of its dimension's base; `None` for a
+    /// How many of its dimension's smallest unit this unit is; `None` for a
     /// temperature, whose scales are offset, and for `Other`.
-    pub(crate) fn exponent(&self) -> Option<i32> {
+    pub(crate) fn smallest_units(&self) -> Option<u64> {
         Some(match self {
-            Unit::MilliA | Unit::MilliV | Unit::MilliAh => -3,
             Unit::W
             | Unit::Wh
-            | Unit::A
-            | Unit::V
-            | Unit::Ah
+            | Unit::MilliA
+            | Unit::MilliV
+            | Unit::MilliAh
             | Unit::VA
             | Unit::Var
             | Unit::Percent
             | Unit::Hz
-            | Unit::CentsPerKWh => 0,
-            Unit::DollarsPerKWh => 2,
-            Unit::KiloW | Unit::KiloWh | Unit::KiloV | Unit::KiloVA | Unit::KiloVar => 3,
-            Unit::MegaW | Unit::MegaWh => 6,
+            | Unit::CentsPerKWh
+            | Unit::Millisecond => 1,
+            Unit::DollarsPerKWh => 100,
+            Unit::KiloW
+            | Unit::KiloWh
+            | Unit::A
+            | Unit::V
+            | Unit::Ah
+            | Unit::KiloVA
+            | Unit::KiloVar
+            | Unit::Second => 1000,
+            Unit::Minute => 60_000,
+            Unit::MegaW | Unit::MegaWh | Unit::KiloV => 1_000_000,
+            Unit::Hour => 3_600_000,
+            Unit::Day => 86_400_000,
             Unit::Celsius | Unit::Fahrenheit | Unit::Kelvin | Unit::Other(_) => return None,
         })
     }
@@ -144,6 +173,7 @@ impl Unit {
         static CHARGE: [Unit; 2] = [Unit::MilliAh, Unit::Ah];
         static APPARENT_POWER: [Unit; 2] = [Unit::VA, Unit::KiloVA];
         static REACTIVE_POWER: [Unit; 2] = [Unit::Var, Unit::KiloVar];
+        static TIME: [Unit; 4] = [Unit::Millisecond, Unit::Second, Unit::Minute, Unit::Hour];
         match self.dimension() {
             Some(Dimension::Power) => &POWER,
             Some(Dimension::Energy) => &ENERGY,
@@ -152,6 +182,7 @@ impl Unit {
             Some(Dimension::Charge) => &CHARGE,
             Some(Dimension::ApparentPower) => &APPARENT_POWER,
             Some(Dimension::ReactivePower) => &REACTIVE_POWER,
+            Some(Dimension::Time) => &TIME,
             _ => &[],
         }
     }
@@ -182,6 +213,11 @@ impl Unit {
             Unit::KiloVar => "kvar",
             Unit::CentsPerKWh => "c/kWh",
             Unit::DollarsPerKWh => "$/kWh",
+            Unit::Millisecond => "ms",
+            Unit::Second => "s",
+            Unit::Minute => "min",
+            Unit::Hour => "h",
+            Unit::Day => "d",
             Unit::Other(text) => text,
         }
     }
@@ -198,5 +234,49 @@ impl FromStr for Unit {
 
     fn from_str(text: &str) -> Result<Unit, Infallible> {
         Ok(Unit::parse(text))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Unit::{self, *};
+
+    const SCALED: [Unit; 26] = [
+        W,
+        KiloW,
+        MegaW,
+        Wh,
+        KiloWh,
+        MegaWh,
+        A,
+        MilliA,
+        V,
+        MilliV,
+        KiloV,
+        Ah,
+        MilliAh,
+        Percent,
+        Hz,
+        VA,
+        KiloVA,
+        Var,
+        KiloVar,
+        CentsPerKWh,
+        DollarsPerKWh,
+        Millisecond,
+        Second,
+        Minute,
+        Hour,
+        Day,
+    ];
+
+    #[test]
+    fn every_larger_unit_is_a_whole_multiple_of_every_smaller_one_in_its_dimension() {
+        for a in &SCALED {
+            for b in SCALED.iter().filter(|b| b.dimension() == a.dimension()) {
+                let (a_size, b_size) = (a.smallest_units().unwrap(), b.smallest_units().unwrap());
+                assert_eq!(a_size.max(b_size) % a_size.min(b_size), 0, "{a} and {b}");
+            }
+        }
     }
 }

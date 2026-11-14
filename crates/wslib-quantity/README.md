@@ -45,6 +45,7 @@ test against.
 | ------------------------ | ------------------------------------------------ |
 | W, Wh, VA, var, A, V, Ah | the largest prefix keeping \|v\| ≥ 1, else the smallest |
 | c/kWh, $/kWh             | $/kWh when \|$\| > 1, else c/kWh                 |
-| temperature, %, Hz, other | unchanged                                       |
+| ms, s, min, h            | the largest of them keeping \|v\| ≥ 1, else ms   |
+| temperature, %, Hz, d, other | unchanged                                    |
 
-A zero power, energy, current, voltage or charge stays in its unit; a zero price is c/kWh.
+A zero power, energy, current, voltage, charge or duration stays in its unit; a zero price is c/kWh.

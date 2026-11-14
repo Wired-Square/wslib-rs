@@ -125,6 +125,26 @@ fn units_parse_from_canonical_and_unambiguous_tolerant_spellings() {
         ("cents/kWh", Unit::CentsPerKWh),
         ("$/kWh", Unit::DollarsPerKWh),
         ("AUD/kWh", Unit::DollarsPerKWh),
+        ("ms", Unit::Millisecond),
+        ("millisecond", Unit::Millisecond),
+        ("Milliseconds", Unit::Millisecond),
+        ("s", Unit::Second),
+        ("sec", Unit::Second),
+        ("secs", Unit::Second),
+        ("second", Unit::Second),
+        ("Seconds", Unit::Second),
+        ("min", Unit::Minute),
+        ("mins", Unit::Minute),
+        ("MINUTE", Unit::Minute),
+        ("minutes", Unit::Minute),
+        ("h", Unit::Hour),
+        ("hr", Unit::Hour),
+        ("Hrs", Unit::Hour),
+        ("hour", Unit::Hour),
+        ("hours", Unit::Hour),
+        ("d", Unit::Day),
+        ("day", Unit::Day),
+        ("Days", Unit::Day),
         (" kW ", Unit::KiloW),
     ];
     for (text, unit) in table {
@@ -136,7 +156,8 @@ fn units_parse_from_canonical_and_unambiguous_tolerant_spellings() {
 #[test]
 fn ambiguous_or_unknown_spellings_are_other_and_display_unchanged() {
     for text in [
-        "deg", "mw", "Mw", "mW", "mwh", "MWH", "ma", "c", "k", "Module #", "rpm", "",
+        "deg", "mw", "Mw", "mW", "mwh", "MWH", "ma", "c", "k", "S", "H", "MS", "Min", "D", "m",
+        "Module #", "rpm", "",
     ] {
         let unit = Unit::parse(text);
         assert_eq!(unit, Unit::Other(text.to_string()), "{text:?}");
@@ -155,6 +176,11 @@ fn units_display_in_home_assistant_spelling() {
         (Unit::CentsPerKWh, "c/kWh"),
         (Unit::DollarsPerKWh, "$/kWh"),
         (Unit::MilliAh, "mAh"),
+        (Unit::Millisecond, "ms"),
+        (Unit::Second, "s"),
+        (Unit::Minute, "min"),
+        (Unit::Hour, "h"),
+        (Unit::Day, "d"),
     ];
     for (unit, text) in table {
         assert_eq!(unit.to_string(), text);
@@ -171,6 +197,7 @@ fn units_know_their_dimension() {
         Unit::CentsPerKWh.dimension(),
         Some(Dimension::PricePerEnergy)
     );
+    assert_eq!(Unit::Day.dimension(), Some(Dimension::Time));
 }
 
 #[test]
@@ -230,11 +257,22 @@ fn conversion_within_a_dimension_is_exact() {
             Unit::CentsPerKWh,
             dec!(120),
         ),
+        (q(dec!(90), Unit::Minute), Unit::Second, dec!(5400)),
+        (q(dec!(1), Unit::Day), Unit::Hour, dec!(24)),
+        (q(dec!(1), Unit::Hour), Unit::Millisecond, dec!(3600000)),
+        (q(dec!(90), Unit::Second), Unit::Minute, dec!(1.5)),
     ];
     for (from, to, value) in cases {
         let got = from.to(to.clone()).unwrap();
         assert_eq!((got.value, got.unit), (value, to), "{from:?}");
     }
+}
+
+#[test]
+fn conversion_that_does_not_terminate_rounds_rather_than_failing() {
+    let got = q(dec!(100), Unit::Second).to(Unit::Minute).unwrap();
+    assert_eq!(got.unit, Unit::Minute);
+    assert_eq!(got.format(Precision::Fixed(4)), "1.6667");
 }
 
 #[test]
@@ -256,6 +294,13 @@ fn conversion_across_dimensions_or_from_other_is_incompatible() {
         q(dec!(1), Unit::Other("x".into())).to(Unit::Other("y".into())),
         Err(ConvertError::Incompatible { .. })
     ));
+    assert_eq!(
+        q(dec!(1), Unit::Millisecond).to(Unit::W),
+        Err(ConvertError::Incompatible {
+            from: Unit::Millisecond,
+            to: Unit::W
+        })
+    );
 }
 
 #[test]
@@ -266,6 +311,10 @@ fn conversion_out_of_range_is_overflow() {
     );
     assert_eq!(
         q(Decimal::MAX, Unit::Fahrenheit).to(Unit::Celsius),
+        Err(ConvertError::Overflow)
+    );
+    assert_eq!(
+        q(Decimal::MAX, Unit::Day).to(Unit::Millisecond),
         Err(ConvertError::Overflow)
     );
 }
@@ -298,6 +347,25 @@ fn auto_scale_takes_the_largest_prefix_keeping_at_least_one() {
 }
 
 #[test]
+fn auto_scale_moves_time_between_ms_s_min_and_h() {
+    let cases = [
+        ("60000", "ms", "1 min"),
+        ("600000", "ms", "10 min"),
+        ("1500", "ms", "1.5 s"),
+        ("24000", "ms", "24 s"),
+        ("500", "ms", "500 ms"),
+        ("3600000", "ms", "1 h"),
+        ("90000000", "ms", "25 h"),
+        ("90", "min", "1.5 h"),
+        ("0.5", "s", "500 ms"),
+    ];
+    for (state, unit, shown) in cases {
+        let scaled = Quantity::parse(state, Some(unit)).unwrap().auto_scaled();
+        assert_eq!(scaled.display(Precision::Exact), shown, "{state} {unit}");
+    }
+}
+
+#[test]
 fn auto_scale_shows_dollars_only_above_one() {
     let dollars = q(dec!(150), Unit::CentsPerKWh).auto_scaled();
     assert_eq!(
@@ -313,9 +381,12 @@ fn auto_scale_shows_dollars_only_above_one() {
 }
 
 #[test]
-fn auto_scale_leaves_temperature_ratio_frequency_other_and_zero_alone() {
+fn auto_scale_leaves_temperature_ratio_frequency_days_other_and_zero_alone() {
     for unchanged in [
         q(dec!(1500), Unit::Celsius),
+        q(dec!(2), Unit::Day),
+        q(dec!(0.5), Unit::Day),
+        q(dec!(0), Unit::Second),
         q(dec!(1500), Unit::Kelvin),
         q(dec!(1500), Unit::Percent),
         q(dec!(1500), Unit::Hz),

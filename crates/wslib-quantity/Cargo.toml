@@ -1,6 +1,6 @@
 [package]
 name = "wslib-quantity"
-version = "0.1.0"
+version = "0.2.0"
 description = "A measured value and its unit: tolerant unit parsing, exact conversion, auto-scaling and display precision, in rust_decimal."
 readme = "README.md"
 edition.workspace = true

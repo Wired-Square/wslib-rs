@@ -40,7 +40,7 @@ pub fn format_decimal(value: Decimal, precision: Precision) -> String {
     pad(shown.to_string(), places.into())
 }
 
-fn round(value: Decimal, places: u8) -> Decimal {
+pub(crate) fn round(value: Decimal, places: u8) -> Decimal {
     value.round_dp_with_strategy(places.into(), RoundingStrategy::MidpointAwayFromZero)
 }
 

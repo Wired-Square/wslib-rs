@@ -6,6 +6,7 @@ mod unit;
 
 use std::fmt;
 
+use format::round;
 pub use format::{Precision, format_decimal};
 use rust_decimal::Decimal;
 pub use unit::{Dimension, Unit};
@@ -17,7 +18,7 @@ pub struct Quantity {
     pub unit: Unit,
 }
 
-/// Why [`Quantity::to`] could not convert.
+/// Why a quantity could not convert to another unit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConvertError {
     Incompatible { from: Unit, to: Unit },
@@ -60,23 +61,85 @@ impl Quantity {
 
     /// The same quantity in `unit`, which must measure the same dimension.
     pub fn to(&self, unit: Unit) -> Result<Quantity, ConvertError> {
+        let temperature = Some(Dimension::Temperature);
+        if self.unit != unit
+            && self.unit.dimension() == temperature
+            && unit.dimension() == temperature
+        {
+            return to_celsius(self.value, &self.unit)
+                .and_then(|celsius| from_celsius(celsius, &unit))
+                .map(|value| Quantity::new(value, unit))
+                .ok_or(ConvertError::Overflow);
+        }
+        self.to_by_ratio(unit)
+    }
+
+    fn to_by_ratio(&self, unit: Unit) -> Result<Quantity, ConvertError> {
         if self.unit == unit {
             return Ok(self.clone());
         }
-        if self.unit.dimension().is_none() || self.unit.dimension() != unit.dimension() {
+        let (true, Some(from), Some(to)) = (
+            self.unit.dimension() == unit.dimension(),
+            self.unit.smallest_units(),
+            unit.smallest_units(),
+        ) else {
             return Err(ConvertError::Incompatible {
                 from: self.unit.clone(),
                 to: unit,
             });
-        }
-        let value = match (self.unit.smallest_units(), unit.smallest_units()) {
-            (Some(from), Some(to)) if from >= to => self.value.checked_mul((from / to).into()),
-            (Some(from), Some(to)) => self.value.checked_div((to / from).into()),
-            _ => to_celsius(self.value, &self.unit).and_then(|c| from_celsius(c, &unit)),
+        };
+        let value = if from >= to {
+            self.value.checked_mul((from / to).into())
+        } else {
+            self.value.checked_div((to / from).into())
         };
         value
             .map(|value| Quantity::new(value, unit))
             .ok_or(ConvertError::Overflow)
+    }
+
+    /// The nearest multiple of `resolution`'s magnitude, half away from zero,
+    /// in this quantity's unit; a zero resolution leaves it as it is. A
+    /// resolution converts by ratio only, never by a temperature offset.
+    pub fn rounded_to(&self, resolution: &Quantity) -> Result<Quantity, ConvertError> {
+        let step = resolution.value.abs();
+        if step.is_zero() {
+            return Quantity::new(Decimal::ZERO, self.unit.clone())
+                .to_by_ratio(resolution.unit.clone())
+                .map(|_| self.clone());
+        }
+        let value = self.to_by_ratio(resolution.unit.clone())?.value;
+        let rounded = value
+            .checked_div(step)
+            .and_then(|steps| round(steps, 0).checked_mul(step))
+            .ok_or(ConvertError::Overflow)?;
+        Quantity::new(rounded, resolution.unit.clone()).to_by_ratio(self.unit.clone())
+    }
+
+    /// Rounded to `resolution`, auto-scaled (carrying into the next unit when
+    /// rounding reaches it) and shown to the step's first significant place, so
+    /// `3598 s` at `7 s` is `1 h`. A rounded zero shows in the unit one step
+    /// scales to.
+    pub fn display_at(&self, resolution: &Quantity) -> Result<String, ConvertError> {
+        let rounded = self.rounded_to(resolution)?;
+        let step = Quantity::new(resolution.value.abs(), resolution.unit.clone());
+        if step.value.is_zero() {
+            return Ok(rounded.auto_scaled().display(Precision::Exact));
+        }
+        let mut shown = if rounded.value.is_zero() {
+            Quantity::new(Decimal::ZERO, step.auto_scaled().unit)
+        } else {
+            rounded.auto_scaled()
+        };
+        loop {
+            let places = first_significant_place(step.to_by_ratio(shown.unit.clone())?.value);
+            let carried =
+                Quantity::new(round(shown.value, places), shown.unit.clone()).auto_scaled();
+            if carried.unit == shown.unit {
+                return Ok(shown.display(Precision::AtMost(places)));
+            }
+            shown = carried;
+        }
     }
 
     /// The quantity in the largest unit of its kind that keeps it at or above
@@ -120,6 +183,12 @@ impl Quantity {
             unit => format!("{number} {unit}"),
         }
     }
+}
+
+fn first_significant_place(step: Decimal) -> u8 {
+    (0..28)
+        .take_while(|&places| Decimal::new(1, places) > step)
+        .count() as u8
 }
 
 const KELVIN_AT_ZERO_CELSIUS: Decimal = Decimal::from_parts(27315, 0, 0, false, 2);

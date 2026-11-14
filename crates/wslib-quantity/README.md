@@ -49,3 +49,25 @@ test against.
 | temperature, %, Hz, d, other | unchanged                                    |
 
 A zero power, energy, current, voltage, charge or duration stays in its unit; a zero price is c/kWh.
+
+## Resolution
+
+`display_at` rounds to the nearest step, half away from zero, auto-scales,
+and shows at most the places down to the step's first significant figure in
+the unit shown: ⌈−log₁₀ step⌉, from 0 to 28. A step that is not a power of
+ten is shown to its first significant figure, so `21.25` at `0.25` shows
+`21.3`.
+
+| Value            | Resolution  | `display_at`  |
+| ---------------- | ----------- | ------------- |
+| `6408 W`         | `1 W`       | `6.408 kW`    |
+| `12994 W`        | `10 W`      | `12.99 kW`    |
+| `21.46 °C`       | `0.5 °C`    | `21.5 °C`     |
+| `68044 ms`       | `1 s`       | `1.13 min`    |
+| `3598 s`         | `7 s`       | `1 h`         |
+| `400 ms`         | `1000 ms`   | `0 s`         |
+| `121.0956 c/kWh` | `0.1 c/kWh` | `1.211 $/kWh` |
+
+A rounding that reaches the next unit carries into it, and a rounded zero
+shows in the unit one step scales to. A step converts by ratio only, so a
+temperature step must share the value's scale. A zero step shows every digit.

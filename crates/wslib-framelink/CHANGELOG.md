@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0
+
+- `SessionConfig::can_bus: BusConfig` replaces `can_bitrate`.
+  `BusConfig::classic(bitrate)` is the old setting.
+- `BusConfig::fd(bitrate, data_bitrate)` opens the CAN adapter for CAN FD, so
+  a session can share a bus where other nodes send FD frames. FrameLink's own
+  frames stay classic.
+- `BusConfig` and `CanMode` are re-exported from wslib-can-bus 0.2 beside
+  `CanBus`, in every build.
+
 ## 0.4.0
 
 - `FrameLinkSession::addr` returns a `Peer` by value, not a `SocketAddr`.

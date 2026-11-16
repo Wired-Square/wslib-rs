@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+
+- On wslib-can-bus 0.2, whose `CanBus` it re-exports at `wiredreflow::bus`.
+  A WiredReflow bus still opens as classic CAN at its own rate.
+- `wiredreflow::device_id_text` and `wiredreflow::DEVICE_ID_DIGITS` write a
+  WiredReflow device id as its URI does, re-exported from
+  wslib-framelink-protocol's `can_id`.
+
 ## 0.3.0
 
 - `wiredreflow::bus::CanBus`'s parse fails with wslib-can-bus'

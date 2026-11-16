@@ -14,6 +14,11 @@ pub enum OpenError {
     Unreachable(CanBus),
     /// The bus's adapter sets the bus's rate, and no bitrate was given.
     NoBitrate(CanBus),
+    /// CAN FD was asked of an adapter that sets the bus's rates, and no data
+    /// rate was given.
+    NoDataBitrate(CanBus),
+    /// CAN FD was asked of a GVRET device, which has none.
+    NoFd(CanBus),
     /// Finding the adapter, or opening it, failed.
     Open { bus: CanBus, source: io::Error },
 }
@@ -23,8 +28,10 @@ impl OpenError {
     /// own kind.
     pub fn kind(&self) -> io::ErrorKind {
         match self {
-            OpenError::FeatureOff(_) | OpenError::Unreachable(_) => io::ErrorKind::Unsupported,
-            OpenError::NoBitrate(_) => io::ErrorKind::InvalidInput,
+            OpenError::FeatureOff(_) | OpenError::Unreachable(_) | OpenError::NoFd(_) => {
+                io::ErrorKind::Unsupported
+            }
+            OpenError::NoBitrate(_) | OpenError::NoDataBitrate(_) => io::ErrorKind::InvalidInput,
             OpenError::Open { source, .. } => source.kind(),
         }
     }
@@ -48,6 +55,10 @@ impl OpenError {
             OpenError::NoBitrate(bus) => {
                 format!("{bus}: this adapter sets the bus's rate; give the bus's bitrate")
             }
+            OpenError::NoDataBitrate(bus) => {
+                format!("{bus}: this adapter sets the bus's rates; give CAN FD's data bitrate")
+            }
+            OpenError::NoFd(bus) => format!("{bus}: a GVRET device has no CAN FD"),
             OpenError::Open { bus, source } => format!("{bus}: {source}"),
         }
     }
@@ -63,7 +74,11 @@ impl Error for OpenError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             OpenError::Open { source, .. } => Some(source),
-            OpenError::FeatureOff(_) | OpenError::Unreachable(_) | OpenError::NoBitrate(_) => None,
+            OpenError::FeatureOff(_)
+            | OpenError::Unreachable(_)
+            | OpenError::NoBitrate(_)
+            | OpenError::NoDataBitrate(_)
+            | OpenError::NoFd(_) => None,
         }
     }
 }

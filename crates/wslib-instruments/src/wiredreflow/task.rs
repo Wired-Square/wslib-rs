@@ -100,9 +100,13 @@ async fn open_task(bus: &CanBus) -> io::Result<CanTask> {
     if !opens(bus) {
         return Err(refused(bus));
     }
-    wslib_can_bus::open(bus, Some(BITRATE), options())
-        .await
-        .map_err(failed)
+    wslib_can_bus::open(
+        bus,
+        wslib_can_bus::BusConfig::classic(Some(BITRATE)),
+        options(),
+    )
+    .await
+    .map_err(failed)
 }
 
 /// Opens the bus on a thread of its own running its own runtime, so a caller

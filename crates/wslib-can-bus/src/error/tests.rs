@@ -131,3 +131,27 @@ fn a_missing_bitrate_asks_for_the_buses_rate() {
     );
     assert!(error.source().is_none());
 }
+
+#[test]
+fn a_missing_data_bitrate_asks_for_can_fds_data_rate() {
+    let bus = CanBus::GsUsb { serial: None };
+    let error = OpenError::NoDataBitrate(bus.clone());
+    assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+    assert_eq!(
+        error.to_string(),
+        format!("{bus}: this adapter sets the bus's rates; give CAN FD's data bitrate")
+    );
+    assert!(error.source().is_none());
+}
+
+#[test]
+fn fd_on_gvret_says_it_has_none() {
+    let bus: CanBus = "gvret=127.0.0.1".parse().unwrap();
+    let error = OpenError::NoFd(bus.clone());
+    assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+    assert_eq!(
+        error.to_string(),
+        format!("{bus}: a GVRET device has no CAN FD")
+    );
+    assert!(error.source().is_none());
+}

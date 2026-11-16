@@ -6,10 +6,10 @@ grammar.
 
 ```rust
 use wslib_can::CanOptions;
-use wslib_can_bus::{CanBus, open};
+use wslib_can_bus::{BusConfig, CanBus, open};
 
 let bus: CanBus = "slcan=ttyACM0".parse()?;
-let task = open(&bus, Some(500_000), CanOptions::default()).await?;
+let task = open(&bus, BusConfig::classic(Some(500_000)), CanOptions::default()).await?;
 ```
 
 | Bus                                 | Feature     | Where                            |
@@ -25,10 +25,15 @@ let task = open(&bus, Some(500_000), CanOptions::default()).await?;
   A gs_usb or PEAK bus without a serial takes the one adapter attached.
 - A bus contains no `/` or `@`, so `@` can follow it, e.g. to start a device
   id. An IPv6 GVRET host is written in brackets.
-- `open` runs an SLCAN, gs_usb or PEAK adapter at the bitrate given. Without
-  one it fails with `OpenError::NoBitrate`. A SocketCAN interface and a GVRET
-  device keep their own bitrate and ignore the one given.
+- `open` runs an SLCAN, gs_usb or PEAK adapter at `BusConfig`'s bitrate.
+  Without one it fails with `OpenError::NoBitrate`. A SocketCAN interface and
+  a GVRET device keep their own bitrate and ignore the one given.
   `BusKind::sets_bitrate` says which kinds take one.
+- `BusConfig::fd` opens the adapter for CAN FD. SLCAN, gs_usb and PEAK need
+  its data bitrate too, or fail with `OpenError::NoDataBitrate`. SocketCAN
+  opens an FD socket at the interface's own rates. GVRET has no CAN FD and
+  fails with `OpenError::NoFd`. An adapter without CAN FD refuses it as
+  `OpenError::Open`.
 - A bus this build doesn't open still parses. `open` fails with
   `OpenError::FeatureOff` when its feature is off, and with
   `OpenError::Unreachable` when this platform reaches its adapter another

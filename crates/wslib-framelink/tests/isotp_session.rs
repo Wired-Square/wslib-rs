@@ -11,8 +11,8 @@ use wslib_can::{
 };
 use wslib_can_bus::OpenError;
 use wslib_framelink::{
-    CanBus, CanDeviceId, Error, FileProgress, FileUploadOutcome, FrameLinkSession, FramingStats,
-    Peer, SessionConfig, can_link_config,
+    BusConfig, CanBus, CanDeviceId, Error, FileProgress, FileUploadOutcome, FrameLinkSession,
+    FramingStats, Peer, SessionConfig, can_link_config,
 };
 use wslib_framelink_protocol::file_xfer::{
     FileAction, file_crc32, parse_begin, parse_data, parse_end,
@@ -470,7 +470,7 @@ fn the_link_config_follows_framelinks_can_id_scheme() {
 async fn a_gsusb_bus_that_is_refused_or_absent_is_can_open() {
     let bus: CanBus = ABSENT_GSUSB_BUS.parse().unwrap();
     let config = SessionConfig {
-        can_bitrate: Some(BITRATE),
+        can_bus: BusConfig::classic(Some(BITRATE)),
         ..SessionConfig::default()
     };
     let refused = FrameLinkSession::connect_can(&bus, device_id(), config).await;
@@ -582,7 +582,7 @@ async fn connect_can_opens_at_the_configured_bitrate() {
         refused.err()
     );
     let config = SessionConfig {
-        can_bitrate: Some(BITRATE),
+        can_bus: BusConfig::classic(Some(BITRATE)),
         ..SessionConfig::default()
     };
     let refused = FrameLinkSession::connect_can(&bus, device_id(), config).await;
@@ -620,7 +620,7 @@ async fn a_peer_on_another_protocol_version_fails_capabilities_at_once() {
 }
 
 #[tokio::test]
-async fn connect_peer_passes_its_can_bitrate_on() {
+async fn connect_peer_passes_its_can_bus_config_on() {
     let peer: Peer = PEER_ON_SLCAN.parse().unwrap();
     let refused = FrameLinkSession::connect_peer(&peer, SessionConfig::default()).await;
     assert!(
@@ -629,7 +629,17 @@ async fn connect_peer_passes_its_can_bitrate_on() {
         refused.err()
     );
     let config = SessionConfig {
-        can_bitrate: Some(BITRATE),
+        can_bus: BusConfig::fd(Some(BITRATE), None),
+        ..SessionConfig::default()
+    };
+    let refused = FrameLinkSession::connect_peer(&peer, config).await;
+    assert!(
+        matches!(refused, Err(Error::CanOpen(OpenError::NoDataBitrate(_)))),
+        "{:?}",
+        refused.err()
+    );
+    let config = SessionConfig {
+        can_bus: BusConfig::classic(Some(BITRATE)),
         ..SessionConfig::default()
     };
     let refused = FrameLinkSession::connect_peer(&peer, config).await;

@@ -62,9 +62,11 @@ None is on by default.
     opened. `can_link_config` gives the link's ids for a `CanDeviceId`.
   - `connect_can` opens the adapter with wslib-can-bus' `open`, and ends the
     session when the adapter goes.
-  - `SessionConfig::can_bitrate` sets the bus's rate for an SLCAN, gs_usb or
+  - `SessionConfig::can_bus` sets the bus's rate for an SLCAN, gs_usb or
     PEAK adapter, which needs one. It has no default, because FrameLink CAN
-    buses run at different rates.
+    buses run at different rates. `BusConfig::fd` opens the adapter for CAN
+    FD, so it can share a bus where other nodes send FD frames. FrameLink's
+    own frames stay classic.
   - A failed send is counted in `send_failures`. The request then waits for
     its timeout or a file step's resend, as after a lost reply on TCP.
   - A message received with the session's queue full is counted in

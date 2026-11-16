@@ -35,7 +35,7 @@ pub use probe::{Probe, probe, probe_version};
 pub use session::{
     FileProgress, FileUploadOutcome, FrameLinkSession, SessionConfig, TransmitStats,
 };
-pub use wslib_can_bus::CanBus;
+pub use wslib_can_bus::{BusConfig, CanBus, CanMode};
 pub use wslib_framelink_protocol::can_id::{
     DeviceId as CanDeviceId, DeviceIdError as CanDeviceIdError,
 };

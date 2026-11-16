@@ -22,6 +22,7 @@ use wslib_framelink_protocol::{bridge, capabilities, dsig, frame_def, generator,
 
 use crate::client::{FrameLinkClient, FrameSender, FramingCounters, FramingStats, Received};
 use crate::{Error, Peer};
+use wslib_can_bus::BusConfig;
 #[cfg(feature = "can")]
 use {
     wslib_can_bus::CanBus,
@@ -152,11 +153,14 @@ pub struct SessionConfig {
     pub connect_timeout: Duration,
     /// How long one reply may take; 15 seconds by default.
     pub command_timeout: Duration,
-    /// The CAN bus's bitrate, for an adapter that sets the bus's rate; `None`
-    /// by default. There is no default rate: a FrameLink CAN link runs at
-    /// its bus's rate, which differs between products. A SocketCAN interface
-    /// and a GVRET device keep their own rate, and TCP ignores it.
-    pub can_bitrate: Option<u32>,
+    /// How the CAN adapter meets the bus: its rates, for an adapter that sets
+    /// them, and classic CAN or CAN FD. Classic with no rate by default. There
+    /// is no default rate: a FrameLink CAN link runs at its bus's rate, which
+    /// differs between products. FrameLink's own frames stay classic; CAN FD
+    /// only lets the adapter share a bus where other nodes send FD frames. A
+    /// SocketCAN interface and a GVRET device keep their own rate, and TCP
+    /// ignores it.
+    pub can_bus: BusConfig,
 }
 
 impl Default for SessionConfig {
@@ -164,7 +168,7 @@ impl Default for SessionConfig {
         Self {
             connect_timeout: Duration::from_secs(5),
             command_timeout: Duration::from_secs(15),
-            can_bitrate: None,
+            can_bus: BusConfig::default(),
         }
     }
 }
@@ -222,10 +226,10 @@ impl FrameLinkSession {
     /// device `device` on it.
     ///
     /// It opens the adapter with wslib-can-bus' `open` at
-    /// `config.can_bitrate`, so only through the wslib-can-bus adapter
+    /// `config.can_bus`, so only through the wslib-can-bus adapter
     /// features the build turns on. It fails with [`Error::CanOpen`] if the
     /// adapter doesn't open, which includes an adapter that sets the bus's
-    /// rate given no `can_bitrate`. It fails with [`Error::Timeout`] after
+    /// rate given none in `can_bus`. It fails with [`Error::Timeout`] after
     /// `config.connect_timeout`. The adapter is never reopened: the session
     /// ends when it goes.
     #[cfg(feature = "can")]
@@ -235,7 +239,7 @@ impl FrameLinkSession {
         config: SessionConfig,
     ) -> Result<Arc<Self>, Error> {
         let (client, response_rx) =
-            FrameLinkClient::can(bus, device, config.can_bitrate, config.connect_timeout).await?;
+            FrameLinkClient::can(bus, device, config.can_bus, config.connect_timeout).await?;
         Ok(Self::start(client, response_rx, config.command_timeout))
     }
 

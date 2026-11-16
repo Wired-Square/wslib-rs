@@ -4,32 +4,42 @@ use wslib_can::{CanError, CanOptions, CanTask};
 
 use crate::{
     bus::CanBus,
+    config::{BusConfig, CanMode},
     error::{OpenError, refusal, refused},
 };
 
 /// Opens a wslib-can task on `bus`.
 ///
-/// An SLCAN, gs_usb or PEAK adapter runs at `bitrate`, and fails with
-/// [`OpenError::NoBitrate`] without one. A SocketCAN interface or a GVRET
-/// device keeps its own bitrate and ignores `bitrate`. A gs_usb or PEAK bus
-/// without a serial takes the one adapter attached. A bus this build doesn't
-/// open fails at once with its [`refusal`](crate::refusal).
+/// An SLCAN, gs_usb or PEAK adapter runs at `config`'s rates. It fails with
+/// [`OpenError::NoBitrate`] without a nominal rate, and in CAN FD with
+/// [`OpenError::NoDataBitrate`] without a data rate. A SocketCAN interface
+/// keeps its own rates and opens for CAN FD when `config` asks. A GVRET device
+/// keeps its own rate and fails CAN FD with [`OpenError::NoFd`].
+///
+/// An adapter that can't run CAN FD refuses it as [`OpenError::Open`]: a
+/// classic PCAN-USB, a PEAK adapter held by PEAK's Windows driver, a gs_usb
+/// device without FD or that reports no clock, and SLCAN without the Elmue
+/// firmware. A gs_usb or PEAK bus without a serial takes the one adapter
+/// attached. A bus this build doesn't open fails at once with its
+/// [`refusal`](crate::refusal).
 #[cfg_attr(
     not(any(
         feature = "slcan",
+        all(feature = "socketcan", target_os = "linux"),
         all(
             any(feature = "gsusb", feature = "pcan"),
             any(target_os = "macos", target_os = "windows")
-        )
+        ),
+        feature = "gvret"
     )),
     allow(
         unused_variables,
-        reason = "only SLCAN, gs_usb and PEAK adapters take a bitrate"
+        reason = "only an adapter this platform reaches reads the config"
     )
 )]
 pub async fn open(
     bus: &CanBus,
-    bitrate: Option<u32>,
+    config: BusConfig,
     options: CanOptions,
 ) -> Result<CanTask, OpenError> {
     if let Some(why) = refusal(bus) {
@@ -39,7 +49,7 @@ pub async fn open(
         #[cfg(feature = "slcan")]
         CanBus::Slcan { port } => {
             use wslib_serial::{LineSettings, Parity};
-            let bitrate = bitrate_for(bus, bitrate)?;
+            let (bitrate, data_bitrate) = rates(bus, config)?;
             const LINE: LineSettings = LineSettings {
                 baud: 115_200,
                 data_bits: 8,
@@ -50,7 +60,7 @@ pub async fn open(
                 path: port.path(),
                 line: LINE,
                 bitrate,
-                data_bitrate: None,
+                data_bitrate,
             };
             named(bus, wslib_can_slcan::open(slcan, options).await)
         }
@@ -58,42 +68,41 @@ pub async fn open(
         CanBus::SocketCan { interface } => {
             let socketcan = wslib_can_socketcan::SocketCanOptions {
                 interface: interface.clone(),
-                fd: false,
+                fd: config.mode.is_fd(),
             };
             named(bus, wslib_can_socketcan::open(socketcan, options).await)
         }
         #[cfg(all(feature = "gsusb", any(target_os = "macos", target_os = "windows")))]
         CanBus::GsUsb { serial } => {
-            let bitrate = bitrate_for(bus, bitrate)?;
+            let (bitrate, data_bitrate) = rates(bus, config)?;
             let device = crate::usb::only_adapter(
                 bus,
                 wslib_can_gsusb::devices(),
                 serial.as_deref(),
                 |device| device.serial.as_deref(),
             )?;
-            named(
-                bus,
-                wslib_can_gsusb::open(wslib_can_gsusb::GsUsbOptions::new(device, bitrate), options)
-                    .await,
-            )
+            let mut gsusb = wslib_can_gsusb::GsUsbOptions::new(device, bitrate);
+            gsusb.data = data_bitrate.map(|rate| (rate, None));
+            named(bus, wslib_can_gsusb::open(gsusb, options).await)
         }
         #[cfg(all(feature = "pcan", any(target_os = "macos", target_os = "windows")))]
         CanBus::Pcan { serial } => {
-            let bitrate = bitrate_for(bus, bitrate)?;
+            let (bitrate, data_bitrate) = rates(bus, config)?;
             let device = crate::usb::only_adapter(
                 bus,
                 wslib_can_pcan::devices(),
                 serial.as_deref(),
                 |device| device.serial.as_deref(),
             )?;
-            named(
-                bus,
-                wslib_can_pcan::open(wslib_can_pcan::PcanOptions::new(device, bitrate), options)
-                    .await,
-            )
+            let mut pcan = wslib_can_pcan::PcanOptions::new(device, bitrate);
+            pcan.data = data_bitrate.map(|rate| (rate, None));
+            named(bus, wslib_can_pcan::open(pcan, options).await)
         }
         #[cfg(feature = "gvret")]
         CanBus::Gvret { host, port } => {
+            if config.mode.is_fd() {
+                return Err(OpenError::NoFd(bus.clone()));
+            }
             const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
             let link = wslib_can_gvret::Link::Tcp {
                 endpoint: wslib_can_gvret::tcp_endpoint(host, *port),
@@ -122,8 +131,14 @@ pub async fn open(
         reason = "only SLCAN, gs_usb and PEAK adapters take a bitrate"
     )
 )]
-fn bitrate_for(bus: &CanBus, bitrate: Option<u32>) -> Result<u32, OpenError> {
-    bitrate.ok_or_else(|| OpenError::NoBitrate(bus.clone()))
+fn rates(bus: &CanBus, config: BusConfig) -> Result<(u32, Option<u32>), OpenError> {
+    let bitrate = config
+        .bitrate
+        .ok_or_else(|| OpenError::NoBitrate(bus.clone()))?;
+    match config.mode {
+        CanMode::Fd { data_bitrate: None } => Err(OpenError::NoDataBitrate(bus.clone())),
+        mode => Ok((bitrate, mode.data_bitrate())),
+    }
 }
 
 #[cfg_attr(

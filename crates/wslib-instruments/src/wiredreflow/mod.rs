@@ -1,3 +1,5 @@
+pub use wslib_framelink_protocol::can_id::{DEVICE_ID_DIGITS, device_id_text};
+
 pub mod bus;
 pub mod frame;
 pub mod link;

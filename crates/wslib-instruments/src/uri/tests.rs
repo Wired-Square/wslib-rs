@@ -1,4 +1,6 @@
-use wslib_framelink_protocol::can_id::{DEVICE_ID_MAX, device_id_text};
+use wslib_framelink_protocol::can_id::DEVICE_ID_MAX;
+
+use crate::wiredreflow::{DEVICE_ID_DIGITS, device_id_text};
 
 use crate::{
     gw121::{
@@ -342,6 +344,7 @@ fn a_device_id_is_hex_digits_only_and_a_refusal_states_the_limit() {
 #[test]
 fn a_device_id_reads_as_six_hex_digits_everywhere() {
     assert_eq!(device_id_text(BENCH_DEVICE), "028F08");
+    assert_eq!(device_id_text(BENCH_DEVICE).len(), DEVICE_ID_DIGITS);
     assert_eq!(
         parsed("wiredreflow:can0@28f08").to_string(),
         format!("wiredreflow:can0@{}", device_id_text(BENCH_DEVICE))

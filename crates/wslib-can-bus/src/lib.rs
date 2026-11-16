@@ -15,6 +15,7 @@
 )]
 
 mod bus;
+mod config;
 mod error;
 #[cfg(feature = "task")]
 mod open;
@@ -32,6 +33,7 @@ pub use bus::{
     PATH_SEPARATOR, PortDirectory, SLCAN_PREFIX, SerialPort, form_count, forms_of, name_the_bus,
     port_forms,
 };
+pub use config::{BusConfig, CanMode};
 pub use error::{OpenError, refusal};
 #[cfg(feature = "task")]
 pub use open::open;

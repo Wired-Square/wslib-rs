@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0
+
+- `open` takes a `BusConfig` in place of `bitrate: Option<u32>`.
+  `BusConfig::classic(bitrate)` opens as before.
+- `BusConfig::fd(bitrate, data_bitrate)` opens the adapter for CAN FD:
+  SocketCAN with an FD socket, and SLCAN, gs_usb and PEAK at the data
+  bitrate given, at the adapter's default sample point. Without a data
+  bitrate those three fail with `OpenError::NoDataBitrate`. GVRET has no CAN
+  FD and fails with `OpenError::NoFd`.
+- `BusConfig` and `CanMode` need no feature, so a build without `task` can
+  name them.
+
 ## 0.1.0
 
 - `CanBus` and `SerialPort` parse and write a CAN adapter's address: `can0`,

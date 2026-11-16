@@ -1,6 +1,6 @@
 [package]
 name = "wslib-can-bus"
-version = "0.1.0"
+version = "0.2.0"
 description = "A CAN adapter's address, as SocketCAN, SLCAN, gs_usb, PEAK or GVRET, and a wslib-can task opened on it."
 readme = "README.md"
 edition.workspace = true

@@ -19,7 +19,7 @@ use wslib_framing::cobs::{self, CobsDecoder};
 #[cfg(feature = "can")]
 use {
     wslib_can::{CanOptions, CanTask},
-    wslib_can_bus::CanBus,
+    wslib_can_bus::{BusConfig, CanBus},
     wslib_framelink_protocol::can_id::{
         DEVICE_ID_SHIFT, DeviceId as CanDeviceId, SLOT_ISOTP_D2H, SLOT_ISOTP_H2D, can_id,
     },
@@ -296,10 +296,10 @@ impl FrameLinkClient {
     pub(crate) async fn can(
         bus: &CanBus,
         device: CanDeviceId,
-        bitrate: Option<u32>,
+        config: BusConfig,
         timeout: Duration,
     ) -> Result<Opened, Error> {
-        let opening = wslib_can_bus::open(bus, bitrate, can_options());
+        let opening = wslib_can_bus::open(bus, config, can_options());
         let task = tokio::time::timeout(timeout, opening)
             .await
             .map_err(|_| Error::Timeout(timeout))??;

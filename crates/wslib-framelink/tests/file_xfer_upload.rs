@@ -9,6 +9,7 @@ use wslib_framelink_protocol::file_xfer::{
 };
 use wslib_framelink_protocol::frame::{build_frame, parse_frame};
 use wslib_framelink_protocol::types::*;
+use wslib_framing::cobs;
 
 const DEVICE_CHUNK: u32 = 64;
 
@@ -19,6 +20,8 @@ const LARGER_THAN_ONE_FRAME: usize = 70_000;
 const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(300);
 
 const STREAM_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+
+const V3_NACK: [u8; 7] = [0x36, 0x06, 0x0E, 0x02, 0x00, 0x00, 0x0C];
 
 const TEST_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -31,6 +34,16 @@ enum Fault {
     DropFinalDataAck,
     DropFirstEndAck,
     RebootOnCommit,
+    RebootsLockedOnCommit,
+    RebootsLockedOnCommitStillBooting,
+    RebootsLockedOnCommitAndRelocks,
+    EndRefusedOnce,
+    RelocksAtCommitThenRebootsOnCommit,
+    RebootsOnCommitThenRefusesPayload,
+    RebootsIntoAnotherVersionOnCommit,
+    CommitsAndAnswersOnAnotherVersion,
+    AbortLostThenLocked,
+    AbortLostThenLockedStillBooting,
     LinkDropsOnCommit,
     UnknownTarget,
     UnlockRefused,
@@ -64,6 +77,8 @@ struct DeviceState {
     relocked: bool,
     expired: bool,
     data_frames: Vec<Vec<u8>>,
+    rebooted: bool,
+    ends_refused: usize,
 }
 
 struct FakeDevice {
@@ -156,9 +171,20 @@ impl FakeDevice {
 
         let mut state = self.state.lock().unwrap();
 
+        if fault == Fault::RebootsIntoAnotherVersionOnCommit && state.rebooted {
+            return Some(cobs::encode(&V3_NACK));
+        }
+
         if frame.msg_type == MSG_WRITE_CHALLENGE {
             if fault == Fault::RelocksAtCommitThenIgnoresChallenges && state.relocked {
                 return None;
+            }
+            let booting = matches!(
+                fault,
+                Fault::RebootsLockedOnCommitStillBooting | Fault::AbortLostThenLockedStillBooting
+            );
+            if booting && state.rebooted {
+                return nack(ERR_INVALID_STATE);
             }
             state.nonce = state.nonce.wrapping_add(0x5EED_1234).max(1);
             let nonce = state.nonce;
@@ -176,7 +202,7 @@ impl FakeDevice {
             if frame.payload != state.nonce.to_le_bytes() {
                 return nack(ERR_WRITE_LOCKED);
             }
-            state.locked = false;
+            state.locked = fault == Fault::RebootsLockedOnCommitAndRelocks && state.rebooted;
             return ack();
         }
         if state.locked
@@ -197,6 +223,7 @@ impl FakeDevice {
                     return nack(ERR_INVALID_PAYLOAD);
                 }
                 let carried = (state.begins + 1, state.nonce, state.relocked, state.expired);
+                let ends_refused = state.ends_refused;
                 *state = DeviceState {
                     declared_size: begin.size,
                     declared_crc: begin.crc32,
@@ -206,6 +233,7 @@ impl FakeDevice {
                     nonce: carried.1,
                     relocked: carried.2,
                     expired: carried.3,
+                    ends_refused,
                     ..DeviceState::default()
                 };
                 ack()
@@ -277,17 +305,43 @@ impl FakeDevice {
                         if fault == Fault::SilentOnAbort {
                             return None;
                         }
+                        let loses_abort = matches!(
+                            fault,
+                            Fault::AbortLostThenLocked | Fault::AbortLostThenLockedStillBooting
+                        );
+                        if loses_abort && !state.rebooted {
+                            state.receiving = false;
+                            state.locked = true;
+                            state.rebooted = true;
+                            return None;
+                        }
+                        if loses_abort {
+                            return nack(ERR_INVALID_STATE);
+                        }
                         state.receiving = false;
                         ack()
                     }
                     FileAction::Commit => {
-                        if fault == Fault::RelocksAtCommitThenIgnoresChallenges && !state.relocked {
+                        if fault == Fault::RebootsOnCommitThenRefusesPayload && state.rebooted {
+                            return nack(ERR_INVALID_PAYLOAD);
+                        }
+                        let relocks = matches!(
+                            fault,
+                            Fault::RelocksAtCommitThenIgnoresChallenges
+                                | Fault::RelocksAtCommitThenRebootsOnCommit
+                        );
+                        if relocks && !state.relocked {
                             state.relocked = true;
                             state.locked = true;
                             return nack(ERR_WRITE_LOCKED);
                         }
                         if state.committed {
                             return ack();
+                        }
+                        if fault == Fault::EndRefusedOnce && state.ends_refused == 0 {
+                            state.ends_refused += 1;
+                            state.receiving = false;
+                            return nack(ERR_INVALID_STATE);
                         }
                         if !state.receiving {
                             return nack(ERR_INVALID_STATE);
@@ -305,10 +359,34 @@ impl FakeDevice {
                         state.committed = true;
                         state.commits += 1;
                         state.committed_file = state.file.clone();
-                        if fault == Fault::RebootOnCommit {
+                        if fault == Fault::CommitsAndAnswersOnAnotherVersion {
+                            state.rebooted = true;
+                            return Some(cobs::encode(&V3_NACK));
+                        }
+                        if matches!(
+                            fault,
+                            Fault::RebootOnCommit
+                                | Fault::RelocksAtCommitThenRebootsOnCommit
+                                | Fault::RebootsOnCommitThenRefusesPayload
+                                | Fault::RebootsIntoAnotherVersionOnCommit
+                        ) {
                             state.committed = false;
                             state.last_chunk = None;
                             state.file.clear();
+                            state.rebooted = true;
+                            return None;
+                        }
+                        if matches!(
+                            fault,
+                            Fault::RebootsLockedOnCommit
+                                | Fault::RebootsLockedOnCommitStillBooting
+                                | Fault::RebootsLockedOnCommitAndRelocks
+                        ) {
+                            state.committed = false;
+                            state.last_chunk = None;
+                            state.file.clear();
+                            state.locked = true;
+                            state.rebooted = true;
                             return None;
                         }
                         if fault == Fault::LinkDropsOnCommit {
@@ -760,4 +838,102 @@ async fn upload_caps_an_advertised_chunk_at_what_one_frame_carries() {
         "sent a {}-byte chunk, more than one frame carries",
         state.largest_chunk
     );
+}
+
+async fn upload_whose_commit_may_have_happened(fault: Fault) {
+    let (addr, state) = FakeDevice::spawn(fault).await;
+    let session = session_for(addr).await;
+    let file = test_file(300);
+
+    let outcome = tokio::time::timeout(TEST_DEADLINE, session.upload_file(0, &file, None))
+        .await
+        .expect("in time")
+        .unwrap();
+
+    assert_eq!(outcome, FileUploadOutcome::Unknown);
+    let state = state.lock().unwrap();
+    assert_eq!(state.commits, 1);
+    assert_eq!(state.committed_file, file);
+    assert_eq!(
+        state.begins, 1,
+        "a commit that may have happened is never begun again"
+    );
+}
+
+#[tokio::test]
+async fn a_resent_commit_refused_as_locked_then_invalid_after_the_unlock_is_unknown() {
+    upload_whose_commit_may_have_happened(Fault::RebootsLockedOnCommit).await;
+}
+
+#[tokio::test]
+async fn a_resent_commit_whose_unlock_fails_is_unknown() {
+    upload_whose_commit_may_have_happened(Fault::RebootsLockedOnCommitStillBooting).await;
+}
+
+#[tokio::test]
+async fn a_resent_commit_locked_again_after_the_unlock_is_unknown() {
+    upload_whose_commit_may_have_happened(Fault::RebootsLockedOnCommitAndRelocks).await;
+}
+
+#[tokio::test]
+async fn a_commit_sent_once_and_refused_as_invalid_state_begins_again() {
+    let (addr, state) = FakeDevice::spawn(Fault::EndRefusedOnce).await;
+    let session = session_for(addr).await;
+    let file = test_file(300);
+
+    let outcome = session.upload_file(0, &file, None).await.unwrap();
+
+    assert_eq!(outcome, FileUploadOutcome::Committed);
+    let state = state.lock().unwrap();
+    assert_eq!(
+        state.begins, 2,
+        "the session was lost, so the upload begins again"
+    );
+    assert_eq!(state.commits, 1);
+    assert_eq!(state.committed_file, file);
+}
+
+#[tokio::test]
+async fn a_retried_commit_resent_after_an_unlock_is_unknown() {
+    upload_whose_commit_may_have_happened(Fault::RelocksAtCommitThenRebootsOnCommit).await;
+}
+
+#[tokio::test]
+async fn a_resent_commit_refused_with_any_code_is_unknown() {
+    upload_whose_commit_may_have_happened(Fault::RebootsOnCommitThenRefusesPayload).await;
+}
+
+#[tokio::test]
+async fn a_resent_commit_answered_on_another_protocol_version_is_unknown() {
+    upload_whose_commit_may_have_happened(Fault::RebootsIntoAnotherVersionOnCommit).await;
+}
+
+#[tokio::test]
+async fn a_resent_abort_refused_as_locked_then_invalid_has_ended_the_session() {
+    let (addr, state) = FakeDevice::spawn(Fault::AbortLostThenLocked).await;
+    let session = session_for(addr).await;
+
+    session.abort_file().await.unwrap();
+
+    let state = state.lock().unwrap();
+    assert!(!state.locked, "the abort was retried after an unlock");
+    assert_eq!(state.commits, 0);
+}
+
+#[tokio::test]
+async fn a_resent_abort_whose_unlock_fails_is_write_locked() {
+    let (addr, _state) = FakeDevice::spawn(Fault::AbortLostThenLockedStillBooting).await;
+    let session = session_for(addr).await;
+
+    let result = session.abort_file().await;
+
+    assert!(
+        matches!(result, Err(wslib_framelink::Error::WriteLocked(_))),
+        "{result:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_commit_sent_once_and_answered_on_another_protocol_version_is_unknown() {
+    upload_whose_commit_may_have_happened(Fault::CommitsAndAnswersOnAnotherVersion).await;
 }

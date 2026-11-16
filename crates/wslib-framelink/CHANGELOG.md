@@ -1,5 +1,67 @@
 # Changelog
 
+## 0.4.0
+
+- `FrameLinkSession::addr` returns a `Peer` by value, not a `SocketAddr`.
+  `Peer::Tcp` holds the address it returned before, and `Peer::Can` a
+  `CanBus` and a `CanDeviceId`.
+- A `Peer` is written and parsed as a `SocketAddr`, or as
+  `can:<bus>@<device-id>` with the device id in hex, e.g.
+  `can:slcan=ttyACM0@028F08`. It is `Hash`.
+- `PeerParseError` says why text is not a `Peer`. A bus that doesn't parse,
+  including an empty one, is `Bus`, whose message names the buses
+  wslib-can-bus opens. A device id over 0FFFFF is `DeviceIdTooLarge`.
+- `PeerParseError::Unrecognised` is text that doesn't start with `can:` and
+  isn't a socket address. That rule is stable, so a caller may fall back to a
+  name lookup on it.
+- `FrameLinkSession::connect_peer` connects to a `Peer` of either kind. A
+  build without `can` refuses a CAN peer with `Error::NoCanTransport`.
+- `CanBus` is re-exported from wslib-can-bus, now a public dependency, so a
+  breaking wslib-can-bus release breaks wslib-framelink too.
+- `CanDeviceId` and `CanDeviceIdError` re-export wslib-framelink-protocol's
+  `can_id::DeviceId` and `DeviceIdError`, named apart from discovery's
+  `DeviceId`. A caller needs no protocol dependency.
+- `FramingStats` gains `send_failures`, the frames an ISO-TP link failed to
+  send, and `messages_dropped`, the ISO-TP messages dropped with the
+  session's queue full. Both stay 0 on TCP.
+- `FramingStats` is `#[non_exhaustive]`, so a caller can no longer build one.
+  Read its fields, or compare with `FramingStats::default()`.
+- `can`: a session over ISO-TP on CAN, one frame per ISO-TP message.
+  `FrameLinkSession::connect_isotp` takes an open wslib-isotp link and the
+  bus and `CanDeviceId` it reaches, which `addr` reports unchecked.
+  `can_link_config` gives a device's link ids from FrameLink's CAN id scheme.
+- `connect_can` opens the adapter with wslib-can-bus' `open`, through the
+  wslib-can-bus adapter features the build turns on. It never reopens the
+  adapter, so the session ends when the adapter goes. An adapter that doesn't
+  open is `Error::CanOpen`.
+- `SessionConfig::can_bitrate` is the bus's bitrate, `None` by default.
+  There is no default rate, because FrameLink CAN buses run at different
+  rates. An SLCAN, gs_usb or PEAK adapter needs it. SocketCAN, GVRET and TCP
+  ignore it.
+- The new field breaks a `SessionConfig { .. }` literal written for 0.3. A
+  literal must name `can_bitrate`, or end with `..SessionConfig::default()`.
+- Over CAN a failed send is counted and the request sees silence, so a file
+  step's resend or the request's timeout follows. The session ends when the
+  link does.
+- `SessionConfig::connect_timeout` also bounds a CAN adapter's opening.
+- A frame on another FrameLink protocol version fails the request waiting
+  for a reply at once, with `Error::PeerVersion`. It used to be dropped, and
+  the request timed out. Each request is still sent, so a peer updated to
+  this version answers the next one. `transmit_stream` fails the same way if
+  such a frame arrives while it sends. This holds over TCP and CAN.
+- `FramingStats` counts the frames that unstuff but don't parse.
+  `other_version_frames` and `last_other_version` cover those on another
+  protocol version, and `unparsed_frames` the rest.
+- `upload_file` reports `FileUploadOutcome::Unknown` when a commit may have
+  happened. A commit that was resent and then got anything but an ACK may
+  have: any NACK, a failed unlock, a reply on another protocol version, or a
+  timeout. A resend before or after an unlock both count. A commit answered
+  on another protocol version may have too, even if it was sent once. The
+  upload used to begin again on a device that may already run the new image.
+  Otherwise a commit sent once, and begin, data and abort, keep their rules.
+  A resent abort that meets WRITE_LOCKED or INVALID_STATE still ends the
+  session, and one whose unlock fails is still `Error::WriteLocked`.
+
 ## 0.3.2
 
 - `FrameLinkSession::upload_file` refuses a device that advertises a file

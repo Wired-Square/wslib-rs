@@ -25,7 +25,8 @@ let reply = frame::parse_frame(&wire[1..wire.len() - 1])?;
   key, `semantic_signal_name` a display name derived from it.
 - `capabilities`, `stream`, `frame_def`, `bridge`, `xform`, `generator`,
   `counter`, `persist`, `file_xfer`, `board_def`, `can_id`: each message's
-  builders and parsers.
+  builders and parsers. `can_id` also writes and reads a device id as six
+  hex digits, up to `DEVICE_ID_MAX`.
 - `manufacturer_data`: the six bytes a device advertises over BLE.
 
 `PROTOCOL_VERSION`, `RULE_FORMAT` and `SCHEMA_VERSION_MAX` are the formats

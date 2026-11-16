@@ -1,3 +1,5 @@
+use wslib_framelink_protocol::can_id::{DEVICE_ID_MAX, device_id_text};
+
 use crate::{
     gw121::{
         Target,
@@ -7,8 +9,8 @@ use crate::{
     uri::{BUS_FORMS, ProbeUri, ProbeUriError, value_text},
     value::Value,
     wiredreflow::{
-        bus::{CanBus, PortDirectory, SerialPort},
-        frame::{CJ1, DEVICE_ID_MAX, TC1, device_text},
+        bus::{CanBus, PortDirectory, SerialPort, name_the_bus},
+        frame::{CJ1, TC1},
     },
 };
 
@@ -162,10 +164,8 @@ fn an_slcan_port_is_a_bus_too() {
         uri,
         ProbeUri::WiredReflow {
             bus: CanBus::Slcan {
-                port: SerialPort {
-                    directory: PortDirectory::Devices,
-                    name: "cu.usbmodem2101".into()
-                }
+                port: SerialPort::at(&format!("{}cu.usbmodem2101", PortDirectory::Devices.path()))
+                    .unwrap()
             },
             device: Some(BENCH_DEVICE),
             selected: vec![]
@@ -204,16 +204,6 @@ fn a_gs_usb_or_peak_adapter_is_a_bus_named_by_its_serial_or_alone() {
         );
         assert_eq!(uri.to_string(), text);
     }
-}
-
-#[test]
-fn an_interface_merely_starting_with_an_adapter_name_stays_socketcan() {
-    assert_eq!(
-        "gsusb0".parse::<CanBus>(),
-        Ok(CanBus::SocketCan {
-            interface: "gsusb0".into()
-        })
-    );
 }
 
 #[test]
@@ -291,6 +281,19 @@ fn bare_wiredreflow_is_refused_naming_the_buses_this_build_opens() {
 }
 
 #[test]
+fn an_empty_bus_is_refused_naming_only_the_buses_this_crate_opens() {
+    for bad in ["wiredreflow:", "wiredreflow:@028F08", "wiredreflow:/TC1"] {
+        let error = bad.parse::<ProbeUri>().unwrap_err();
+        let ProbeUriError::Target(why) = &error else {
+            panic!("{bad}: {error}");
+        };
+        assert_eq!(why, &name_the_bus("the CAN bus"), "{bad}");
+        #[cfg(not(feature = "can-gvret"))]
+        assert!(!why.contains("gvret="), "{bad}: {why}");
+    }
+}
+
+#[test]
 fn an_empty_signal_after_a_slash_is_refused() {
     for bad in [
         "121gw:121GW/",
@@ -338,10 +341,10 @@ fn a_device_id_is_hex_digits_only_and_a_refusal_states_the_limit() {
 
 #[test]
 fn a_device_id_reads_as_six_hex_digits_everywhere() {
-    assert_eq!(device_text(BENCH_DEVICE), "028F08");
+    assert_eq!(device_id_text(BENCH_DEVICE), "028F08");
     assert_eq!(
         parsed("wiredreflow:can0@28f08").to_string(),
-        format!("wiredreflow:can0@{}", device_text(BENCH_DEVICE))
+        format!("wiredreflow:can0@{}", device_id_text(BENCH_DEVICE))
     );
 }
 
@@ -377,10 +380,7 @@ fn an_slcan_port_written_as_a_dev_path_is_refused_quoting_the_corrected_uri() {
 fn an_slcan_port_named_by_id_opens_under_dev_serial_by_id_and_round_trips() {
     let text = format!("wiredreflow:slcan=by-id:{CANABLE2_BY_ID}@028F08/TC1");
     let uri = parsed(&text);
-    let port = SerialPort {
-        directory: PortDirectory::ById,
-        name: CANABLE2_BY_ID.into(),
-    };
+    let port = SerialPort::at(&format!("{}{CANABLE2_BY_ID}", PortDirectory::ById.path())).unwrap();
     assert_eq!(port.path(), format!("/dev/serial/by-id/{CANABLE2_BY_ID}"));
     assert_eq!(
         uri,
@@ -404,7 +404,8 @@ fn an_slcan_port_named_by_id_opens_under_dev_serial_by_id_and_round_trips() {
 fn a_port_name_containing_an_at_sign_is_refused_because_at_starts_the_device_id() {
     let why = "slcan=by-id:usb-Foo@Bar_X-if00"
         .parse::<CanBus>()
-        .unwrap_err();
+        .unwrap_err()
+        .to_string();
     assert!(why.contains("can't contain '@'"), "{why}");
     let why = refusal("wiredreflow:slcan=by-id:usb-Foo@Bar_X-if00@028F08");
     assert!(

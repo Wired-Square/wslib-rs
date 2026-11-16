@@ -24,9 +24,9 @@ mod task;
 mod task {
     use std::io;
 
-    use super::bus::{Bus, CanBus, refusal};
+    use super::bus::{Bus, CanBus, refused};
 
     pub(crate) fn open_bus(bus: &CanBus) -> io::Result<Box<dyn Bus>> {
-        Err(refusal(bus))
+        Err(refused(bus))
     }
 }

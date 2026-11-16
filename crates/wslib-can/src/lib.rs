@@ -1,11 +1,13 @@
-//! CAN: the frame as it is on the bus, the data length code table, bit timing,
-//! the candump and SavvyCAN text formats, and with `task` the task every CAN
-//! transport runs.
+//! CAN: the frame as it is on the bus, the data length code table, bit timing
+//! and the candump and SavvyCAN text formats. `task` adds the task every CAN
+//! transport runs, and `testing` an in-memory bus for tests.
 
 pub mod bittiming;
 pub mod candump;
 pub mod dlc;
 mod frame;
+#[cfg(feature = "testing")]
+pub mod loopback;
 pub mod savvycan;
 #[cfg(feature = "task")]
 mod task;

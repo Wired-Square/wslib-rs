@@ -10,9 +10,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+use wslib_framelink_protocol::can_id::device_id_text;
+
 use super::{
     bus::{Bus, BusError, CanBus, open_bus},
-    frame::{self, Decoder, RawFrame, SLOT_THERMOCOUPLES, device_of, device_text, known_slot},
+    frame::{self, Decoder, RawFrame, SLOT_THERMOCOUPLES, device_of, known_slot},
 };
 use crate::{
     probe::{Probe, ProbeError},
@@ -77,7 +79,7 @@ pub(crate) fn discover(bus: &mut dyn Bus, on: &CanBus, window: Duration) -> io::
             let ids: Vec<String> = [first, second]
                 .into_iter()
                 .chain(devices)
-                .map(device_text)
+                .map(device_id_text)
                 .collect();
             Err(io::Error::new(
                 io::ErrorKind::InvalidInput,

@@ -2,12 +2,14 @@
 //! and a device identified from its replies. The device is a loopback fake.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use wslib_framelink::{
-    DEFAULT_TX_QUEUE_DEPTH, Error, FrameLinkSession, FramingStats, SessionConfig,
+    DEFAULT_TX_QUEUE_DEPTH, Error, FrameLinkSession, FramingStats, Peer, SessionConfig,
 };
 use wslib_framelink_protocol::frame::{Frame, HEADER_SIZE, build_frame, parse_unstuffed};
 use wslib_framelink_protocol::stream::{FrameMetadata, build_frame_rx_entry};
@@ -61,13 +63,15 @@ async fn an_oversized_and_a_malformed_block_are_counted_and_the_link_carries_on(
 
     assert_eq!(pong.msg_type, MSG_PONG);
     assert_eq!(pong.payload, expected, "the longest frame fits the cap");
+    let stats = session.framing_stats();
     assert_eq!(
-        session.framing_stats(),
-        FramingStats {
-            abandoned_frames: 1,
-            malformed_frames: 1,
-            stream_dropped: 0,
-        }
+        (
+            stats.abandoned_frames,
+            stats.malformed_frames,
+            stats.stream_dropped,
+            stats.send_failures
+        ),
+        (1, 1, 0, 0)
     );
 }
 
@@ -373,5 +377,141 @@ async fn a_reply_of_the_wrong_type_is_named() {
             }
         ),
         "{err}"
+    );
+}
+
+#[tokio::test]
+async fn connect_peer_connects_a_tcp_peer_as_connect_does() {
+    let addr = device(|request| reply(request, MSG_PONG, &[])).await;
+    let peer = Peer::Tcp(addr);
+    let session = FrameLinkSession::connect_peer(&peer, SessionConfig::default())
+        .await
+        .unwrap();
+    assert_eq!(session.addr(), peer);
+    let pong = session.request(MSG_PING, FLAG_ACK_REQ, &[]).await.unwrap();
+    assert_eq!(pong.msg_type, MSG_PONG);
+}
+
+const V3_NACK: [u8; 7] = [0x36, 0x06, 0x0E, 0x02, 0x00, 0x00, 0x0C];
+const PEER_V3: u8 = 3;
+const LONG_TIMEOUT: Duration = Duration::from_secs(30);
+const SHORT_TIMEOUT: Duration = Duration::from_millis(200);
+const TOO_SHORT: [u8; 2] = [0x40, MSG_PONG];
+const FIRST: usize = 0;
+const ROUNDS: usize = 2;
+
+fn patient() -> SessionConfig {
+    SessionConfig {
+        command_timeout: LONG_TIMEOUT,
+        ..SessionConfig::default()
+    }
+}
+
+#[tokio::test]
+async fn a_peer_on_another_protocol_version_fails_the_request_at_once() {
+    let requests = Arc::new(AtomicUsize::new(0));
+    let seen = requests.clone();
+    let addr = device(move |request| {
+        if seen.fetch_add(1, Ordering::SeqCst) == FIRST {
+            let mut wire = cobs::encode(&V3_NACK);
+            wire.extend(frame_rx(0, 1));
+            return wire;
+        }
+        reply(request, MSG_PONG, &[])
+    })
+    .await;
+    let session = FrameLinkSession::connect_with_config(addr, patient())
+        .await
+        .unwrap();
+    let asked = Instant::now();
+    let refused = session.capabilities().await;
+    assert!(
+        matches!(refused, Err(Error::PeerVersion(PEER_V3))),
+        "{:?}",
+        refused.err()
+    );
+    assert!(asked.elapsed() < PROMPTLY, "{:?}", asked.elapsed());
+    let stats = session.framing_stats();
+    assert_eq!(
+        (
+            stats.other_version_frames,
+            stats.last_other_version,
+            stats.unparsed_frames
+        ),
+        (1, Some(PEER_V3), 0)
+    );
+    let pong = session.request(MSG_PING, FLAG_ACK_REQ, &[]).await.unwrap();
+    assert_eq!(pong.msg_type, MSG_PONG);
+    assert_eq!(requests.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn every_request_to_a_peer_on_another_version_is_sent_and_fails_at_once() {
+    let requests = Arc::new(AtomicUsize::new(0));
+    let seen = requests.clone();
+    let addr = device(move |_| {
+        seen.fetch_add(1, Ordering::SeqCst);
+        cobs::encode(&V3_NACK)
+    })
+    .await;
+    let session = FrameLinkSession::connect_with_config(addr, patient())
+        .await
+        .unwrap();
+    for _ in 0..ROUNDS {
+        let asked = Instant::now();
+        let refused = session.request(MSG_PING, FLAG_ACK_REQ, &[]).await;
+        assert!(
+            matches!(refused, Err(Error::PeerVersion(PEER_V3))),
+            "{:?}",
+            refused.err()
+        );
+        assert!(asked.elapsed() < PROMPTLY, "{:?}", asked.elapsed());
+    }
+    assert_eq!(requests.load(Ordering::SeqCst), ROUNDS);
+    let stats = session.framing_stats();
+    assert_eq!(
+        (stats.other_version_frames, stats.last_other_version),
+        (ROUNDS as u64, Some(PEER_V3))
+    );
+}
+
+#[tokio::test]
+async fn a_frame_that_unstuffs_but_does_not_parse_is_counted_and_changes_nothing_else() {
+    let addr = device(|request| {
+        let mut wire = cobs::encode(&TOO_SHORT);
+        wire.extend(reply(request, MSG_PONG, &[]));
+        wire
+    })
+    .await;
+    let session = FrameLinkSession::connect(addr).await.unwrap();
+    let pong = session.request(MSG_PING, FLAG_ACK_REQ, &[]).await.unwrap();
+    assert_eq!(pong.msg_type, MSG_PONG);
+    let stats = session.framing_stats();
+    assert_eq!(
+        (
+            stats.unparsed_frames,
+            stats.other_version_frames,
+            stats.last_other_version
+        ),
+        (1, 0, None)
+    );
+    assert_eq!((stats.abandoned_frames, stats.malformed_frames), (0, 0));
+}
+
+#[tokio::test]
+async fn connect_peer_passes_its_command_timeout_on() {
+    let addr = device(|_| Vec::new()).await;
+    let config = SessionConfig {
+        command_timeout: SHORT_TIMEOUT,
+        ..SessionConfig::default()
+    };
+    let session = FrameLinkSession::connect_peer(&Peer::Tcp(addr), config)
+        .await
+        .unwrap();
+    let refused = session.request(MSG_PING, FLAG_ACK_REQ, &[]).await;
+    assert!(
+        matches!(refused, Err(Error::Timeout(waited)) if waited == SHORT_TIMEOUT),
+        "{:?}",
+        refused.err()
     );
 }

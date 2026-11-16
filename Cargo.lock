@@ -8384,12 +8384,26 @@ version = "0.1.0"
 
 [[package]]
 name = "wslib-can"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "wslib-backoff",
  "wslib-tcp",
+]
+
+[[package]]
+name = "wslib-can-bus"
+version = "0.1.0"
+dependencies = [
+ "tokio",
+ "wslib-can",
+ "wslib-can-gsusb",
+ "wslib-can-gvret",
+ "wslib-can-pcan",
+ "wslib-can-slcan",
+ "wslib-can-socketcan",
+ "wslib-serial",
 ]
 
 [[package]]
@@ -8596,7 +8610,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-framelink"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "btleplug",
  "futures-util",
@@ -8606,10 +8620,13 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "wslib-can",
+ "wslib-can-bus",
  "wslib-file-atomic",
  "wslib-framelink-board",
  "wslib-framelink-protocol",
  "wslib-framing",
+ "wslib-isotp",
  "wslib-mcumgr",
  "wslib-mdns",
 ]
@@ -8629,7 +8646,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-framelink-protocol"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -8728,7 +8745,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-instruments"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "btleplug",
  "futures-util",
@@ -8737,13 +8754,19 @@ dependencies = [
  "tokio",
  "uuid",
  "wslib-can",
- "wslib-can-gsusb",
+ "wslib-can-bus",
  "wslib-can-gvret",
- "wslib-can-pcan",
- "wslib-can-slcan",
- "wslib-can-socketcan",
  "wslib-framelink-protocol",
- "wslib-serial",
+]
+
+[[package]]
+name = "wslib-isotp"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.21",
+ "tokio",
+ "windows-sys 0.61.2",
+ "wslib-can",
 ]
 
 [[package]]

@@ -13,7 +13,7 @@ use crate::{
     probe::{Probe, ProbeError},
     uri::ProbeUri,
     wiredreflow::{
-        bus::{Bus, BusError, CanBus, PortDirectory, SerialPort},
+        bus::{Bus, BusError, CanBus},
         frame::{CJ1, CJ2, RawFrame, TC1, TC1_FAULT, TC2, TC2_FAULT},
         link::{Opener, Timing, WiredReflowProbe, discover},
     },
@@ -95,34 +95,6 @@ fn deadline_in(wait: Duration) -> Instant {
 
 fn deadline() -> Instant {
     deadline_in(DEADLINE)
-}
-
-#[test]
-fn a_bus_is_a_socketcan_interface_or_an_slcan_port_and_round_trips() {
-    assert_eq!(
-        "can0".parse::<CanBus>().unwrap(),
-        CanBus::SocketCan {
-            interface: "can0".into()
-        }
-    );
-    let slcan: CanBus = "slcan=cu.usbmodem2101".parse().unwrap();
-    assert_eq!(
-        slcan,
-        CanBus::Slcan {
-            port: SerialPort {
-                directory: PortDirectory::Devices,
-                name: "cu.usbmodem2101".into()
-            }
-        }
-    );
-    assert_eq!(slcan.to_string(), "slcan=cu.usbmodem2101");
-    assert!("slcan=".parse::<CanBus>().is_err());
-    let path = "slcan=/dev/cu.usbmodem2101".parse::<CanBus>().unwrap_err();
-    assert!(
-        path.contains("write slcan=cu.usbmodem2101") && path.contains("under /dev/"),
-        "{path}"
-    );
-    assert!("".parse::<CanBus>().is_err());
 }
 
 fn can0() -> CanBus {

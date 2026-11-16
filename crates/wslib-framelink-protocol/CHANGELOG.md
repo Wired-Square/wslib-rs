@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.1
+
+- `can_id::device_id_text` writes a device id as `DEVICE_ID_DIGITS` (6)
+  upper-case hex digits.
+- `can_id::parse_device_id` reads hex after an optional `0x`, up to
+  `DEVICE_ID_MAX` (0FFFFF). It fails with `DeviceIdError`, which is
+  `#[non_exhaustive]`.
+- `can_id::DEVICE_ID_SHIFT` is the device id's bit offset in a CAN id.
+- `can_id::DeviceId` is a device id of at most `DEVICE_ID_MAX`. `new` refuses
+  a larger one and `get` returns it. It parses and displays as the functions
+  above do, and is `Copy`, `Eq`, `Ord` and `Hash`.
+
 ## 0.2.0
 
 - A frame definition's signal is 17 bytes on the wire, as the device has

@@ -172,7 +172,9 @@ fn a_socketcan_bus_off_linux_names_only_the_buses_this_build_opens() {
 fn a_usb_adapter_on_linux_says_to_name_its_socketcan_interface() {
     let error = open_error("wiredreflow:gsusb@028F08");
     assert_eq!(error.kind(), io::ErrorKind::Unsupported);
-    assert!(error.to_string().contains("can0"), "{error}");
+    let error = error.to_string();
+    assert!(error.contains("can0"), "{error}");
+    assert!(!error.contains("can-socketcan"), "{error}");
 }
 
 #[cfg(all(

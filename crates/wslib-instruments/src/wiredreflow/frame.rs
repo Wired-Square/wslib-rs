@@ -1,7 +1,7 @@
 use std::mem;
 
 use wslib_framelink_protocol::{
-    can_id::{CAN_DEVICE_ID_MASK, can_device_id, can_host, can_slot},
+    can_id::{DEVICE_ID_SHIFT, can_device_id, can_host, can_slot},
     types::{ASPECT_DEFAULT, ASPECT_INTEGRITY, ASPECT_REFERENCE, QTY_COUNT, QTY_TEMPERATURE},
 };
 
@@ -15,9 +15,6 @@ pub(crate) const SLOT_THERMOCOUPLES: u8 = 0x21;
 pub(crate) const SLOT_THERMOCOUPLE_FAULT: u8 = 0x25;
 const THERMOCOUPLES_DLC: usize = 8;
 const THERMOCOUPLE_FAULT_DLC: usize = 2;
-const DEVICE_ID_SHIFT: u32 = CAN_DEVICE_ID_MASK.trailing_zeros();
-pub(crate) const DEVICE_ID_MAX: u32 = CAN_DEVICE_ID_MASK >> DEVICE_ID_SHIFT;
-const DEVICE_ID_DIGITS: usize = 6;
 const DECI: i8 = -1;
 const UNITY: i8 = 0;
 const CHANNEL_1: u8 = 0;
@@ -100,10 +97,6 @@ const FIELDS: [Field; 6] = [
     fault(TC1_FAULT_AT, TC1_FAULT, "TC1 fault", TC1),
     fault(TC2_FAULT_AT, TC2_FAULT, "TC2 fault", TC2),
 ];
-
-pub(crate) fn device_text(device: u32) -> String {
-    format!("{device:0width$X}", width = DEVICE_ID_DIGITS)
-}
 
 pub(crate) fn device_of(frame: &RawFrame) -> Option<u32> {
     (frame.extended && !can_host(frame.id)).then(|| can_device_id(frame.id) >> DEVICE_ID_SHIFT)

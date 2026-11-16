@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.0
+
+- `wiredreflow::bus::CanBus`'s parse fails with wslib-can-bus'
+  `BusParseError`, not a `String`. An empty bus still names the buses this
+  crate opens.
+- It refuses a SocketCAN interface name containing `@` or `/`, which a
+  wiredreflow URI can't address: `@` starts the device id and `/` a signal.
+- The CAN bus address and its opener come from wslib-can-bus. The `can-*`
+  features alone decide which buses it opens and which `BUS_FORMS` it lists.
+- A build that opens no CAN bus says to build it with an adapter this
+  platform reaches, not to enable a `can-*` feature.
+- A gs_usb or PEAK bus on Linux says to name its SocketCAN interface, not to
+  use `can-socketcan`.
+- wslib-framelink-protocol 0.2.1's `can_id` reads and writes a WiredReflow
+  device id, with the same messages.
+- wslib-can's floor is 0.1.2, the same as wslib-isotp's and
+  wslib-framelink's.
+
 ## 0.2.0
 
 - On wslib-framelink-protocol 0.2, whose `SignalKey` it re-exports.

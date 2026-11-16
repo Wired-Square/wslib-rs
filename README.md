@@ -27,6 +27,7 @@ appliance chassis and every app beside it.
 | `wslib-bits`             | Payload fields by bit and order, word swaps, hex and readings |
 | `wslib-build-id`         | Stamps the commit an artefact was built from into it          |
 | `wslib-can`              | CAN frames, length codes, logs, and the task transports share |
+| `wslib-can-bus`          | A CAN adapter's address, and a wslib-can task opened on it    |
 | `wslib-can-gsusb`        | gs_usb (candleLight), a task over nusb, a listing on Linux    |
 | `wslib-can-gvret`        | GVRET, both ends, and a task over TCP or a serial port        |
 | `wslib-can-pcan`         | PCAN-USB and the FD family, a task over nusb or PCAN-Basic    |
@@ -42,7 +43,7 @@ appliance chassis and every app beside it.
 | `wslib-dns`              | DNS lookups that keep NXDOMAIN, NODATA and failures apart     |
 | `wslib-dns-mail`         | SPF, DMARC, DKIM, BIMI, MTA-STS and TLS-RPT records in DNS    |
 | `wslib-file-atomic`      | Crash-safe whole-file writes, readers set from creation       |
-| `wslib-framelink`        | A FrameLink session over TCP, discovery, BLE Wi-Fi setup      |
+| `wslib-framelink`        | A FrameLink session over TCP or CAN, discovery, BLE Wi-Fi     |
 | `wslib-framelink-board`  | FrameLink board TOML: parse, edit, scaffold, display names    |
 | `wslib-framelink-protocol` | FrameLink's wire, sans-io: frames, messages, signal identity |
 | `wslib-framing`          | Framing codecs for byte streams: COBS, with a capped decoder  |
@@ -52,6 +53,7 @@ appliance chassis and every app beside it.
 | `wslib-http-scaffold`    | SPA fallback, health and version routes, standard layers      |
 | `wslib-http-server`      | HTTP, TLS and a redirect listener, bounded and drained        |
 | `wslib-instruments`      | Blocking bench-instrument probes: a 121GW, a WiredReflow      |
+| `wslib-isotp`            | ISO-TP on classic CAN: segmenting, reassembly, flow control   |
 | `wslib-mcp`              | Hosting layer for tools-only MCP servers over rmcp            |
 | `wslib-mcu-flash`        | ESP32 and STM32 flashing: tty lookup, images, six backends    |
 | `wslib-mcumgr`           | SMP (mcumgr): image upload, test and confirm, files, UDP, BLE |

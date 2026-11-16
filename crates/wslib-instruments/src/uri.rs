@@ -1,5 +1,8 @@
 use std::{error::Error, fmt, io, str::FromStr};
 
+use wslib_can_bus::{BusKind, BusParseError, form_count, forms_of};
+use wslib_framelink_protocol::can_id::{DEVICE_ID_MAX, device_id_text, parse_device_id};
+
 #[cfg(not(feature = "ble"))]
 use crate::probe::ProbeError;
 use crate::{
@@ -17,7 +20,6 @@ use crate::{
             CanBus, DEVICE_SEPARATOR, PATH_SEPARATOR, SLCAN_PREFIX, SerialPort, name_the_bus,
             port_forms,
         },
-        frame::{DEVICE_ID_MAX, device_text},
         link::WiredReflowProbe,
     },
 };
@@ -40,26 +42,25 @@ pub const URI_FORMS: &[&str] = &[
     "wiredreflow:<bus>[@<device-id>][/<signal>…]",
 ];
 
-/// The `<bus>` forms this build opens.
-pub const BUS_FORMS: &[&str] = &[
-    #[cfg(all(feature = "can-socketcan", target_os = "linux"))]
-    "a SocketCAN interface such as can0",
+pub(crate) const CAN_KINDS: &[BusKind] = &[
+    #[cfg(feature = "can-socketcan")]
+    BusKind::SocketCan,
     #[cfg(feature = "can-slcan")]
-    "slcan=<name>",
-    #[cfg(all(feature = "can-slcan", target_os = "linux"))]
-    "slcan=by-id:<name>",
-    #[cfg(all(feature = "can-gsusb", any(target_os = "macos", target_os = "windows")))]
-    "gsusb[=<serial>]",
-    #[cfg(all(feature = "can-pcan", any(target_os = "macos", target_os = "windows")))]
-    "pcan[=<serial>]",
+    BusKind::Slcan,
+    #[cfg(feature = "can-gsusb")]
+    BusKind::GsUsb,
+    #[cfg(feature = "can-pcan")]
+    BusKind::Pcan,
     #[cfg(feature = "can-gvret")]
-    "gvret=<host>[:<port>]",
+    BusKind::Gvret,
 ];
+const CAN_FORMS: [&str; form_count(CAN_KINDS)] = forms_of(CAN_KINDS);
+
+/// The `<bus>` forms this build opens.
+pub const BUS_FORMS: &[&str] = &CAN_FORMS;
 
 const GW121: &str = "121gw";
 const WIREDREFLOW: &str = "wiredreflow";
-const HEX_PREFIX: &str = "0x";
-const HEX: u32 = 16;
 const SCHEME_SEPARATOR: char = ':';
 const SELECTOR_SEPARATOR: char = '/';
 const STATUS_OK: &str = "ok";
@@ -181,19 +182,12 @@ pub(crate) fn without_controls(text: &str) -> Result<&str, String> {
 }
 
 fn device_id(text: &str) -> Result<u32, ProbeUriError> {
-    let digits = text
-        .split_at_checked(HEX_PREFIX.len())
-        .filter(|(prefix, _)| prefix.eq_ignore_ascii_case(HEX_PREFIX))
-        .map_or(text, |(_, digits)| digits);
-    u32::from_str_radix(digits, HEX)
-        .ok()
-        .filter(|id| digits.chars().all(|digit| digit.is_ascii_hexdigit()) && *id <= DEVICE_ID_MAX)
-        .ok_or_else(|| {
-            ProbeUriError::Target(format!(
-                "{text:?} is not a WiredReflow device id (hex, up to {DEVICE_ID_MAX:X}); \
+    parse_device_id(text).map_err(|_| {
+        ProbeUriError::Target(format!(
+            "{text:?} is not a WiredReflow device id (hex, up to {DEVICE_ID_MAX:X}); \
                  the device id is everything after the first '{DEVICE_SEPARATOR}'"
-            ))
-        })
+        ))
+    })
 }
 
 fn corrected_slcan(parts: &[&str]) -> Option<String> {
@@ -217,7 +211,7 @@ fn corrected_slcan(parts: &[&str]) -> Option<String> {
         let mut uri = format!("{WIREDREFLOW}{SCHEME_SEPARATOR}{SLCAN_PREFIX}{port}");
         if let Some(id) = device {
             uri.push(DEVICE_SEPARATOR);
-            uri.push_str(&device_text(id));
+            uri.push_str(&device_id_text(id));
         }
         for text in signals {
             uri.push(SELECTOR_SEPARATOR);
@@ -283,7 +277,10 @@ impl FromStr for ProbeUri {
                 Some((bus, id)) => (bus, Some(device_id(id)?)),
                 None => (target, None),
             };
-            let bus: CanBus = bus_text.parse().map_err(ProbeUriError::Target)?;
+            let bus: CanBus = bus_text.parse().map_err(|why| match why {
+                BusParseError::Empty => ProbeUriError::Target(name_the_bus("the CAN bus")),
+                why => ProbeUriError::Target(why.to_string()),
+            })?;
             let probe = format!("{WIREDREFLOW}{SCHEME_SEPARATOR}{target}");
             return Ok(ProbeUri::WiredReflow {
                 bus,
@@ -302,7 +299,7 @@ impl fmt::Display for ProbeUri {
             ProbeUri::WiredReflow { bus, device, .. } => {
                 write!(f, "{WIREDREFLOW}{SCHEME_SEPARATOR}{bus}")?;
                 if let Some(id) = device {
-                    write!(f, "{DEVICE_SEPARATOR}{}", device_text(*id))?;
+                    write!(f, "{DEVICE_SEPARATOR}{}", device_id_text(*id))?;
                 }
             }
         }

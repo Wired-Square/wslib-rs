@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.3
+
+- `testing`: `loopback`, an in-memory bus for tests. A `LoopbackBus` hands
+  out `LoopbackPort`s, each opening a task on a `Loopback` device. Every
+  frame written to a port reaches every port open on the bus, the writer as
+  a `Tx` read.
+- A `Loopback` device delivers frames on buses 0 and 1, and reports those
+  two as `DeviceInfo::buses`.
+- A port can stall its next write, lose the next write a matcher picks so
+  that no port reads it, or be unplugged. It counts its closes.
+
 ## 0.1.2
 
 - thiserror's floor is 2.0.20.

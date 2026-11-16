@@ -15,6 +15,11 @@ pub enum Error {
     #[error("connection closed")]
     ConnectionClosed,
 
+    /// The peer answered on another FrameLink protocol version, so the
+    /// request waiting for a reply failed at once.
+    #[error("the peer speaks FrameLink protocol version {0}, not {PROTOCOL_VERSION}", PROTOCOL_VERSION = wslib_framelink_protocol::PROTOCOL_VERSION)]
+    PeerVersion(u8),
+
     #[error("send failed")]
     SendFailed,
 
@@ -35,6 +40,14 @@ pub enum Error {
 
     #[error("the device's capabilities carry no {0}")]
     MissingIdentity(&'static str),
+
+    #[cfg(feature = "can")]
+    #[error(transparent)]
+    CanOpen(#[from] wslib_can_bus::OpenError),
+
+    /// Only a build without the `can` feature returns it.
+    #[error("{0}: this build has no CAN transport; build wslib-framelink with its `can` feature")]
+    NoCanTransport(crate::Peer),
 
     #[cfg(feature = "discovery")]
     #[error("device id not currently known to Discovery: {0}")]

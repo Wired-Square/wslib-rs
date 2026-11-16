@@ -290,12 +290,15 @@ if grep -qx wslib-framelink <<<"$todo"; then
   step "wslib-framelink has no btleplug or mdns-sd by default, and mdns-sd only through wslib-mdns"
   tree=$(normal_tree wslib-framelink --target all)
   ! grep -E '^(btleplug|mdns-sd) ' <<<"$tree" || die "wslib-framelink's default build pulls in btleplug or mdns-sd"
+  ! grep -E '^(wslib-can|wslib-isotp) ' <<<"$tree" || die "wslib-framelink's default build pulls in a CAN stack"
   tree=$(normal_tree wslib-framelink --features discovery --target all --depth 1)
   ! grep -E '^mdns-sd ' <<<"$tree" || die "wslib-framelink depends on mdns-sd other than through wslib-mdns"
   step "wslib-framelink's smp has no btleplug without ble"
   tree=$(normal_tree wslib-framelink --features smp --target all)
   ! grep -E '^btleplug ' <<<"$tree" || die "wslib-framelink's smp pulls in btleplug"
   check_on aarch64-apple-ios wslib-framelink ble,wifi-prov,smp
+  step "wslib-framelink without can refuses a CAN peer"
+  cargo test -p wslib-framelink --lib --locked
 fi
 
 if grep -qx wslib-secret <<<"$todo"; then
@@ -312,7 +315,21 @@ fi
 if grep -qx wslib-instruments <<<"$todo"; then
   step "wslib-instruments has no btleplug, tokio or CAN backend by default"
   tree=$(normal_tree wslib-instruments --target all)
-  ! grep -E '^(btleplug|tokio|wslib-can[a-z-]*) ' <<<"$tree" || die "wslib-instruments' default build pulls in a backend"
+  ! grep -E '^(btleplug|tokio|wslib-can[a-z-]*) ' <<<"$tree" | grep -v '^wslib-can-bus ' \
+    || die "wslib-instruments' default build pulls in a backend"
+fi
+
+if grep -qx wslib-instruments <<<"$todo"; then
+  step "Feature-unification check: wslib-instruments names only its own buses beside wslib-can-bus' gvret"
+  cargo test -p wslib-instruments --no-default-features --features can-slcan,wslib-can-bus/gvret --locked
+fi
+
+if grep -qx wslib-can-bus <<<"$todo"; then
+  step "wslib-can-bus has no dependency by default"
+  tree=$(normal_tree wslib-can-bus --target all)
+  ! grep -v '^wslib-can-bus ' <<<"$tree" || die "wslib-can-bus' default build has a dependency"
+  step "wslib-can-bus refuses a bus before asking for its bitrate, feature by feature"
+  cargo hack test -p wslib-can-bus --each-feature --lib --locked
 fi
 
 # mio is tokio's socket layer.

@@ -20,8 +20,14 @@ use wslib_framelink_protocol::types::{
 };
 use wslib_framelink_protocol::{bridge, capabilities, dsig, frame_def, generator, xform};
 
-use crate::Error;
-use crate::client::{FrameLinkClient, FrameSender, FramingCounters, FramingStats};
+use crate::client::{FrameLinkClient, FrameSender, FramingCounters, FramingStats, Received};
+use crate::{Error, Peer};
+#[cfg(feature = "can")]
+use {
+    wslib_can_bus::CanBus,
+    wslib_framelink_protocol::can_id::DeviceId as CanDeviceId,
+    wslib_isotp::{IsoTpLink, Messages},
+};
 
 enum SessionCommand {
     Request {
@@ -82,14 +88,34 @@ struct Outgoing<'a> {
 }
 
 struct Answer {
-    frame: Frame,
     resent: bool,
+    reply: Result<Frame, Error>,
 }
 
 enum UnlockAttempt {
     Unlocked,
     NonceStale,
     Refused(u8),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FileStepKind {
+    Begin,
+    Data,
+    Commit,
+    Abort,
+}
+
+impl FileStepKind {
+    fn msg_type(self) -> u8 {
+        use wslib_framelink_protocol::types::{MSG_FILE_BEGIN, MSG_FILE_DATA, MSG_FILE_END};
+
+        match self {
+            FileStepKind::Begin => MSG_FILE_BEGIN,
+            FileStepKind::Data => MSG_FILE_DATA,
+            FileStepKind::Commit | FileStepKind::Abort => MSG_FILE_END,
+        }
+    }
 }
 
 enum FileStep {
@@ -121,10 +147,16 @@ pub struct TransmitStats {
 }
 
 pub struct SessionConfig {
-    /// How long the TCP connect may take; 5 seconds by default.
+    /// How long a TCP connect or a CAN adapter's opening may take; 5 seconds
+    /// by default.
     pub connect_timeout: Duration,
     /// How long one reply may take; 15 seconds by default.
     pub command_timeout: Duration,
+    /// The CAN bus's bitrate, for an adapter that sets the bus's rate; `None`
+    /// by default. There is no default rate: a FrameLink CAN link runs at
+    /// its bus's rate, which differs between products. A SocketCAN interface
+    /// and a GVRET device keep their own rate, and TCP ignores it.
+    pub can_bitrate: Option<u32>,
 }
 
 impl Default for SessionConfig {
@@ -132,6 +164,7 @@ impl Default for SessionConfig {
         Self {
             connect_timeout: Duration::from_secs(5),
             command_timeout: Duration::from_secs(15),
+            can_bitrate: None,
         }
     }
 }
@@ -139,7 +172,6 @@ impl Default for SessionConfig {
 /// A connection to one FrameLink device. A request refused as WRITE_LOCKED
 /// is unlocked and sent again.
 pub struct FrameLinkSession {
-    addr: SocketAddr,
     cmd_tx: mpsc::Sender<SessionCommand>,
     stream_rx: tokio::sync::Mutex<mpsc::Receiver<StreamFrame>>,
     client: FrameLinkClient,
@@ -162,16 +194,76 @@ impl FrameLinkSession {
         config: SessionConfig,
     ) -> Result<Arc<Self>, Error> {
         let (client, response_rx) = FrameLinkClient::connect(addr, config.connect_timeout).await?;
-        let sender = client.sender();
-        let command_timeout = config.command_timeout;
+        Ok(Self::start(client, response_rx, config.command_timeout))
+    }
 
+    /// A session over an ISO-TP link already open to FrameLink device
+    /// `device` on `peer_bus`.
+    ///
+    /// [`can_link_config`](crate::can_link_config) gives the link's ids.
+    /// [`addr`](Self::addr) reports `peer_bus` and `device` as given, without
+    /// checking them against the link. Each frame is one ISO-TP message. The
+    /// session ends when the link does: on `IsoTpLink::close`, or when the CAN
+    /// task under `IsoTpLink::over` ends. `config.connect_timeout` is unused.
+    /// Panics outside a tokio runtime.
+    #[cfg(feature = "can")]
+    pub fn connect_isotp(
+        link: IsoTpLink,
+        messages: Messages,
+        peer_bus: CanBus,
+        device: CanDeviceId,
+        config: SessionConfig,
+    ) -> Arc<Self> {
+        let (client, response_rx) = FrameLinkClient::isotp(link, messages, peer_bus, device);
+        Self::start(client, response_rx, config.command_timeout)
+    }
+
+    /// Opens the adapter on `bus` and a session over ISO-TP to FrameLink
+    /// device `device` on it.
+    ///
+    /// It opens the adapter with wslib-can-bus' `open` at
+    /// `config.can_bitrate`, so only through the wslib-can-bus adapter
+    /// features the build turns on. It fails with [`Error::CanOpen`] if the
+    /// adapter doesn't open, which includes an adapter that sets the bus's
+    /// rate given no `can_bitrate`. It fails with [`Error::Timeout`] after
+    /// `config.connect_timeout`. The adapter is never reopened: the session
+    /// ends when it goes.
+    #[cfg(feature = "can")]
+    pub async fn connect_can(
+        bus: &CanBus,
+        device: CanDeviceId,
+        config: SessionConfig,
+    ) -> Result<Arc<Self>, Error> {
+        let (client, response_rx) =
+            FrameLinkClient::can(bus, device, config.can_bitrate, config.connect_timeout).await?;
+        Ok(Self::start(client, response_rx, config.command_timeout))
+    }
+
+    /// A session to `peer`: [`connect_with_config`](Self::connect_with_config)
+    /// for a TCP peer, and `connect_can` for a CAN peer. A build without the
+    /// `can` feature fails a CAN peer with [`Error::NoCanTransport`].
+    pub async fn connect_peer(peer: &Peer, config: SessionConfig) -> Result<Arc<Self>, Error> {
+        match peer {
+            Peer::Tcp(addr) => Self::connect_with_config(*addr, config).await,
+            #[cfg(feature = "can")]
+            Peer::Can { bus, device } => Self::connect_can(bus, *device, config).await,
+            #[cfg(not(feature = "can"))]
+            Peer::Can { .. } => Err(Error::NoCanTransport(peer.clone())),
+        }
+    }
+
+    fn start(
+        client: FrameLinkClient,
+        response_rx: mpsc::Receiver<Received>,
+        command_timeout: Duration,
+    ) -> Arc<Self> {
         const STREAM_CHANNEL_CAP: usize = 4096;
+        const COMMAND_CHANNEL_CAP: usize = 64;
         let (stream_tx, stream_rx) = mpsc::channel::<StreamFrame>(STREAM_CHANNEL_CAP);
-
-        let (cmd_tx, cmd_rx) = mpsc::channel(64);
+        let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAP);
 
         let task_handle = tokio::spawn(session_task(
-            sender,
+            client.sender(),
             response_rx,
             cmd_rx,
             command_timeout,
@@ -181,17 +273,23 @@ impl FrameLinkSession {
             },
         ));
 
-        Ok(Arc::new(Self {
-            addr: client.addr(),
+        Arc::new(Self {
             cmd_tx,
             stream_rx: tokio::sync::Mutex::new(stream_rx),
             client,
             task_handle,
-        }))
+        })
     }
 
-    pub fn addr(&self) -> SocketAddr {
-        self.addr
+    /// The device this session talks to.
+    ///
+    /// ```no_run
+    /// # fn show(session: &wslib_framelink::FrameLinkSession) {
+    /// let shown: String = session.addr().to_string();
+    /// # }
+    /// ```
+    pub fn addr(&self) -> Peer {
+        self.client.peer().clone()
     }
 
     pub fn is_alive(&self) -> bool {
@@ -220,8 +318,8 @@ impl FrameLinkSession {
     /// Sends a request and waits for its one reply, whatever it is.
     pub async fn request(&self, msg_type: u8, flags: u8, payload: &[u8]) -> Result<Frame, Error> {
         self.exchange(msg_type, flags, payload, Expect::Any, 0)
-            .await
-            .map(|answer| answer.frame)
+            .await?
+            .reply
     }
 
     async fn exchange(
@@ -452,10 +550,9 @@ impl FrameLinkSession {
     /// Does not undo a commit that already happened.
     pub async fn abort_file(&self) -> Result<(), Error> {
         use wslib_framelink_protocol::file_xfer::{FileAction, pack_end};
-        use wslib_framelink_protocol::types::MSG_FILE_END;
 
         match self
-            .file_step(MSG_FILE_END, &pack_end(FileAction::Abort))
+            .file_step(FileStepKind::Abort, &pack_end(FileAction::Abort))
             .await?
         {
             FileStep::Acked | FileStep::SessionLost => Ok(()),
@@ -471,10 +568,8 @@ impl FrameLinkSession {
         progress: Option<&mpsc::Sender<FileProgress>>,
     ) -> Result<Option<FileUploadOutcome>, Error> {
         use wslib_framelink_protocol::file_xfer::{FileAction, FileData, pack_data, pack_end};
-        use wslib_framelink_protocol::types::{MSG_FILE_BEGIN, MSG_FILE_DATA, MSG_FILE_END};
-
         let total = data.len();
-        match self.file_step(MSG_FILE_BEGIN, begin).await? {
+        match self.file_step(FileStepKind::Begin, begin).await? {
             FileStep::Acked => {}
             FileStep::SessionLost => return Ok(None),
             FileStep::Unresolved => {
@@ -490,7 +585,7 @@ impl FrameLinkSession {
                 offset: offset as u32,
                 data: data[offset..end].to_vec(),
             });
-            match self.file_step(MSG_FILE_DATA, &payload).await? {
+            match self.file_step(FileStepKind::Data, &payload).await? {
                 FileStep::Acked => {}
                 FileStep::SessionLost => return Ok(None),
                 FileStep::Unresolved => {
@@ -502,7 +597,7 @@ impl FrameLinkSession {
         }
 
         match self
-            .file_step(MSG_FILE_END, &pack_end(FileAction::Commit))
+            .file_step(FileStepKind::Commit, &pack_end(FileAction::Commit))
             .await?
         {
             FileStep::Acked => Ok(Some(FileUploadOutcome::Committed)),
@@ -511,12 +606,11 @@ impl FrameLinkSession {
         }
     }
 
-    async fn file_step(&self, msg_type: u8, payload: &[u8]) -> Result<FileStep, Error> {
-        use wslib_framelink_protocol::types::{
-            ERR_INVALID_STATE, ERR_WRITE_LOCKED, MSG_FILE_BEGIN, MSG_FILE_END,
-        };
+    async fn file_step(&self, kind: FileStepKind, payload: &[u8]) -> Result<FileStep, Error> {
+        use wslib_framelink_protocol::types::{ERR_INVALID_STATE, ERR_WRITE_LOCKED};
 
-        let answer = match self
+        let msg_type = kind.msg_type();
+        let (resent, reply) = match self
             .exchange(
                 msg_type,
                 FLAG_ACK_REQ,
@@ -526,26 +620,32 @@ impl FrameLinkSession {
             )
             .await
         {
-            Ok(answer) => answer,
-            Err(e @ (Error::Protocol(_) | Error::WriteLocked(_))) => return Err(e),
-            Err(_) => return Ok(FileStep::Unresolved),
+            Ok(answer) => (answer.resent, answer.reply),
+            Err(error) => (false, Err(error)),
         };
-        if answer.frame.msg_type == MSG_ACK {
-            return Ok(FileStep::Acked);
+        let committing = kind == FileStepKind::Commit;
+        match reply {
+            Ok(frame) if frame.msg_type == MSG_ACK => Ok(FileStep::Acked),
+            _ if committing && resent => Ok(FileStep::Unresolved),
+            Err(Error::PeerVersion(_)) if committing => Ok(FileStep::Unresolved),
+            Ok(frame) => {
+                let code = types::nack_code(&frame.payload);
+                let session_gone = code == ERR_WRITE_LOCKED
+                    || (code == ERR_INVALID_STATE && kind != FileStepKind::Begin);
+                if session_gone {
+                    Ok(FileStep::SessionLost)
+                } else {
+                    Err(Error::Nack {
+                        request: msg_type,
+                        code,
+                    })
+                }
+            }
+            Err(error @ (Error::Protocol(_) | Error::WriteLocked(_) | Error::PeerVersion(_))) => {
+                Err(error)
+            }
+            Err(_) => Ok(FileStep::Unresolved),
         }
-        let code = types::nack_code(&answer.frame.payload);
-        if msg_type == MSG_FILE_END && answer.resent && code == ERR_INVALID_STATE {
-            return Ok(FileStep::Unresolved);
-        }
-        let session_gone =
-            code == ERR_WRITE_LOCKED || (code == ERR_INVALID_STATE && msg_type != MSG_FILE_BEGIN);
-        if session_gone {
-            return Ok(FileStep::SessionLost);
-        }
-        Err(Error::Nack {
-            request: msg_type,
-            code,
-        })
     }
 
     pub async fn collect_active_rule_ids(&self) -> Result<ActiveRuleIds, Error> {
@@ -582,7 +682,7 @@ impl FrameLinkSession {
 
 async fn session_task(
     sender: FrameSender,
-    mut response_rx: mpsc::Receiver<Frame>,
+    mut response_rx: mpsc::Receiver<Received>,
     mut cmd_rx: mpsc::Receiver<SessionCommand>,
     command_timeout: Duration,
     stream_tx: StreamSink,
@@ -604,8 +704,8 @@ async fn session_task(
             }
 
             // FRAME_RX between commands would otherwise wait for the next one.
-            frame = response_rx.recv() => match frame {
-                Some(frame) => forward_frame_rx(&frame, &stream_tx),
+            received = response_rx.recv() => match received {
+                Some(received) => forward(&received, &stream_tx),
                 None => return,
             }
         }
@@ -629,7 +729,7 @@ async fn report_progress(
 
 async fn handle_command(
     sender: &FrameSender,
-    response_rx: &mut mpsc::Receiver<Frame>,
+    response_rx: &mut mpsc::Receiver<Received>,
     command_timeout: Duration,
     cmd: SessionCommand,
     stream_tx: &StreamSink,
@@ -652,7 +752,7 @@ async fn handle_command(
                 resends,
             };
             let result =
-                send_request(sender, response_rx, stream_tx, command_timeout, &outgoing).await;
+                Ok(send_request(sender, response_rx, stream_tx, command_timeout, &outgoing).await);
             drain_stale(response_rx, stream_tx);
             let _ = result_tx.send(result);
         }
@@ -707,14 +807,15 @@ async fn handle_command(
 /// The next frame that is not FRAME_RX; FRAME_RX is forwarded, or dropped
 /// when the stream channel is full.
 async fn recv_response(
-    response_rx: &mut mpsc::Receiver<Frame>,
+    response_rx: &mut mpsc::Receiver<Received>,
     stream_tx: &StreamSink,
     deadline: tokio::time::Instant,
     command_timeout: Duration,
 ) -> Result<Frame, Error> {
     loop {
         let frame = match tokio::time::timeout_at(deadline, response_rx.recv()).await {
-            Ok(Some(f)) => f,
+            Ok(Some(Received::Frame(frame))) => frame,
+            Ok(Some(Received::PeerVersion(peer))) => return Err(Error::PeerVersion(peer)),
             Ok(None) => return Err(Error::ConnectionClosed),
             Err(_) => return Err(Error::Timeout(command_timeout)),
         };
@@ -745,38 +846,74 @@ fn forward_frame_rx(frame: &Frame, stream_tx: &StreamSink) {
     }
 }
 
-fn drain_stale(response_rx: &mut mpsc::Receiver<Frame>, stream_tx: &StreamSink) {
-    while let Ok(frame) = response_rx.try_recv() {
-        forward_frame_rx(&frame, stream_tx);
+fn forward(received: &Received, stream_tx: &StreamSink) {
+    if let Received::Frame(frame) = received {
+        forward_frame_rx(frame, stream_tx);
+    }
+}
+
+fn drain_on_this_version(
+    response_rx: &mut mpsc::Receiver<Received>,
+    stream_tx: &StreamSink,
+) -> Result<(), Error> {
+    let mut peer_version = None;
+    while let Ok(received) = response_rx.try_recv() {
+        if let Received::PeerVersion(peer) = received {
+            peer_version = Some(peer);
+        }
+        forward(&received, stream_tx);
+    }
+    peer_version.map_or(Ok(()), |peer| Err(Error::PeerVersion(peer)))
+}
+
+fn drain_stale(response_rx: &mut mpsc::Receiver<Received>, stream_tx: &StreamSink) {
+    while let Ok(received) = response_rx.try_recv() {
+        forward(&received, stream_tx);
     }
 }
 
 async fn send_request(
     sender: &FrameSender,
-    response_rx: &mut mpsc::Receiver<Frame>,
+    response_rx: &mut mpsc::Receiver<Received>,
     stream_tx: &StreamSink,
     command_timeout: Duration,
     outgoing: &Outgoing<'_>,
-) -> Result<Answer, Error> {
-    let answer = transact(sender, response_rx, stream_tx, command_timeout, outgoing).await?;
-    if !is_write_locked(&answer.frame) {
-        return Ok(answer);
+) -> Answer {
+    let refused = transact(sender, response_rx, stream_tx, command_timeout, outgoing).await;
+    if !matches!(&refused.reply, Ok(frame) if is_write_locked(frame)) {
+        return refused;
     }
-    unlock_after_refusal(sender, response_rx, stream_tx, command_timeout).await?;
-    transact(sender, response_rx, stream_tx, command_timeout, outgoing).await
+    let retried = match unlock_after_refusal(sender, response_rx, stream_tx, command_timeout).await
+    {
+        Ok(()) => transact(sender, response_rx, stream_tx, command_timeout, outgoing).await,
+        Err(error) => Answer {
+            resent: false,
+            reply: Err(error),
+        },
+    };
+    Answer {
+        resent: refused.resent || retried.resent,
+        reply: retried.reply,
+    }
 }
 
 async fn transact(
     sender: &FrameSender,
-    response_rx: &mut mpsc::Receiver<Frame>,
+    response_rx: &mut mpsc::Receiver<Received>,
     stream_tx: &StreamSink,
     command_timeout: Duration,
     outgoing: &Outgoing<'_>,
-) -> Result<Answer, Error> {
+) -> Answer {
     let (seq, wire) = sender.frame(outgoing.msg_type, outgoing.flags, outgoing.payload);
-    let mut resends = 0;
+    let mut sent = 0;
     loop {
-        sender.write(wire.clone()).await?;
+        if let Err(error) = sender.write(wire.clone()).await {
+            return Answer {
+                resent: sent > 1,
+                reply: Err(error),
+            };
+        }
+        sent += 1;
         match recv_answer(
             response_rx,
             stream_tx,
@@ -786,19 +923,19 @@ async fn transact(
         )
         .await
         {
-            Err(Error::Timeout(_)) if resends < outgoing.resends => resends += 1,
-            result => {
-                return result.map(|frame| Answer {
-                    frame,
-                    resent: resends > 0,
-                });
+            Err(Error::Timeout(_)) if sent <= outgoing.resends => {}
+            reply => {
+                return Answer {
+                    resent: sent > 1,
+                    reply,
+                };
             }
         }
     }
 }
 
 async fn recv_answer(
-    response_rx: &mut mpsc::Receiver<Frame>,
+    response_rx: &mut mpsc::Receiver<Received>,
     stream_tx: &StreamSink,
     command_timeout: Duration,
     seq: u8,
@@ -847,21 +984,21 @@ fn is_write_locked(frame: &Frame) -> bool {
 
 async fn unlock_after_refusal(
     sender: &FrameSender,
-    response_rx: &mut mpsc::Receiver<Frame>,
+    response_rx: &mut mpsc::Receiver<Received>,
     stream_tx: &StreamSink,
     command_timeout: Duration,
 ) -> Result<(), Error> {
     unlock_writes(sender, response_rx, stream_tx, command_timeout)
         .await
         .map_err(|e| match e {
-            Error::WriteLocked(_) => e,
+            Error::WriteLocked(_) | Error::PeerVersion(_) => e,
             other => Error::WriteLocked(format!("unlock after WRITE_LOCKED failed: {other}")),
         })
 }
 
 async fn unlock_writes(
     sender: &FrameSender,
-    response_rx: &mut mpsc::Receiver<Frame>,
+    response_rx: &mut mpsc::Receiver<Received>,
     stream_tx: &StreamSink,
     command_timeout: Duration,
 ) -> Result<(), Error> {
@@ -893,7 +1030,7 @@ async fn unlock_writes(
 
 async fn try_unlock(
     sender: &FrameSender,
-    response_rx: &mut mpsc::Receiver<Frame>,
+    response_rx: &mut mpsc::Receiver<Received>,
     stream_tx: &StreamSink,
     command_timeout: Duration,
 ) -> Result<UnlockAttempt, Error> {
@@ -915,8 +1052,8 @@ async fn try_unlock(
             resends: 0,
         },
     )
-    .await?
-    .frame;
+    .await
+    .reply?;
     if challenge.msg_type == MSG_NACK {
         return Ok(UnlockAttempt::Refused(types::nack_code(&challenge.payload)));
     }
@@ -936,8 +1073,8 @@ async fn try_unlock(
             resends: 0,
         },
     )
-    .await?
-    .frame;
+    .await
+    .reply?;
     if verdict.msg_type == MSG_ACK {
         return Ok(UnlockAttempt::Unlocked);
     }
@@ -949,7 +1086,7 @@ async fn try_unlock(
 
 async fn collect_multi(
     sender: &FrameSender,
-    response_rx: &mut mpsc::Receiver<Frame>,
+    response_rx: &mut mpsc::Receiver<Received>,
     stream_tx: &StreamSink,
     command_timeout: Duration,
     msg_type: u8,
@@ -980,7 +1117,7 @@ async fn collect_multi(
 
 async fn do_send_batch(
     sender: &FrameSender,
-    response_rx: &mut mpsc::Receiver<Frame>,
+    response_rx: &mut mpsc::Receiver<Received>,
     stream_tx: &StreamSink,
     command_timeout: Duration,
     messages: &[(u8, u8, Vec<u8>)],
@@ -1010,7 +1147,7 @@ async fn do_send_batch(
 
 async fn send_and_collect(
     sender: &FrameSender,
-    response_rx: &mut mpsc::Receiver<Frame>,
+    response_rx: &mut mpsc::Receiver<Received>,
     stream_tx: &StreamSink,
     command_timeout: Duration,
     messages: &[(u8, u8, Vec<u8>)],
@@ -1057,7 +1194,7 @@ const MAX_ENTRY_OVERHEAD: usize = 10;
 
 async fn transmit_pipeline(
     sender: &FrameSender,
-    response_rx: &mut mpsc::Receiver<Frame>,
+    response_rx: &mut mpsc::Receiver<Received>,
     stream_tx: &StreamSink,
     _command_timeout: Duration,
     entries: &[stream::BatchFrameEntry],
@@ -1085,11 +1222,9 @@ async fn transmit_pipeline(
         let payload = stream::build_frame_tx_batch(batch);
         sender.send(MSG_FRAME_TX_BATCH, FLAG_NONE, &payload).await?;
         pos += batch_size;
-
-        while let Ok(frame) = response_rx.try_recv() {
-            forward_frame_rx(&frame, stream_tx);
-        }
+        drain_on_this_version(response_rx, stream_tx)?;
     }
+    drain_on_this_version(response_rx, stream_tx)?;
 
     let sent = entries.len();
     Ok(TransmitStats {
@@ -1116,5 +1251,104 @@ mod tests {
         let too_large = usize::try_from(u32::MAX).unwrap() + 1;
         let err = declared_file_size(too_large).unwrap_err();
         assert!(err.to_string().contains("larger than FILE_BEGIN"), "{err}");
+    }
+
+    #[cfg(not(feature = "can"))]
+    #[tokio::test]
+    async fn a_build_without_can_refuses_a_can_peer() {
+        let peer: Peer = "can:can0@028F08".parse().unwrap();
+        let refused = FrameLinkSession::connect_peer(&peer, SessionConfig::default()).await;
+        assert!(
+            matches!(&refused, Err(Error::NoCanTransport(refused)) if *refused == peer),
+            "{:?}",
+            refused.err()
+        );
+    }
+
+    #[cfg(feature = "can")]
+    #[tokio::test]
+    async fn a_transmit_stream_that_meets_another_protocol_version_fails() {
+        use wslib_can::loopback::LoopbackBus;
+        use wslib_framelink_protocol::stream::{BatchFrameEntry, FrameMetadata};
+
+        const DEVICE_ID: u32 = 0x02_8F08;
+        const PEER_V3: u8 = 3;
+        const QUEUE_DEPTH: usize = 1;
+        const STREAM_CAP: usize = 1;
+        const RESPONSES_CAP: usize = 1;
+        const STREAM_ID: u32 = 0x123;
+        const DLC: u8 = 1;
+
+        let task = LoopbackBus::default()
+            .port()
+            .open(crate::client::can_options())
+            .await
+            .unwrap();
+        let device = CanDeviceId::new(DEVICE_ID).unwrap();
+        let (client, _) = FrameLinkClient::over_can_task(task, "can0".parse().unwrap(), device);
+        let (responses, mut response_rx) = mpsc::channel(RESPONSES_CAP);
+        responses.try_send(Received::PeerVersion(PEER_V3)).unwrap();
+        let (tx, _stream_rx) = mpsc::channel(STREAM_CAP);
+        let sink = StreamSink {
+            tx,
+            counters: client.counters(),
+        };
+        let entry = BatchFrameEntry {
+            iface_index: 0,
+            metadata: FrameMetadata::Can {
+                can_id: STREAM_ID,
+                dlc: DLC,
+                flags: 0,
+            },
+            data: vec![0xAA],
+        };
+        let refused = transmit_pipeline(
+            &client.sender(),
+            &mut response_rx,
+            &sink,
+            Duration::ZERO,
+            &[entry],
+            QUEUE_DEPTH,
+        )
+        .await;
+        assert!(
+            matches!(refused, Err(Error::PeerVersion(PEER_V3))),
+            "{:?}",
+            refused.err()
+        );
+    }
+
+    #[cfg(feature = "can")]
+    #[tokio::test(start_paused = true)]
+    async fn a_session_made_as_connect_can_makes_one_ends_when_its_adapter_goes() {
+        use tokio::time::{Instant, sleep, timeout};
+        use wslib_can::loopback::LoopbackBus;
+        use wslib_framelink_protocol::types::MSG_PING;
+
+        const DEVICE_ID: u32 = 0x02_8F08;
+        let device = CanDeviceId::new(DEVICE_ID).unwrap();
+        const COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
+        const TICK: Duration = Duration::from_millis(10);
+
+        let port = LoopbackBus::default().port();
+        let task = port.open(crate::client::can_options()).await.unwrap();
+        let (client, response_rx) =
+            FrameLinkClient::over_can_task(task, "can0".parse().unwrap(), device);
+        let session = FrameLinkSession::start(client, response_rx, COMMAND_TIMEOUT);
+        let unplugged = Instant::now();
+        port.unplug();
+        timeout(COMMAND_TIMEOUT, async {
+            while session.is_alive() {
+                sleep(TICK).await;
+            }
+        })
+        .await
+        .expect("the session ends with its adapter");
+        let refused = session.request(MSG_PING, FLAG_ACK_REQ, &[]).await;
+        assert!(
+            matches!(refused, Err(Error::ConnectionClosed)),
+            "{refused:?}"
+        );
+        assert!(unplugged.elapsed() < COMMAND_TIMEOUT);
     }
 }

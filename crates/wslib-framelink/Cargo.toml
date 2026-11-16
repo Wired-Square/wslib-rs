@@ -1,7 +1,7 @@
 [package]
 name = "wslib-framelink"
-version = "0.3.2"
-description = "A FrameLink device session over TCP, with discovery over mDNS and BLE, a device registry, Wi-Fi provisioning over BLE and firmware updates over SMP."
+version = "0.4.0"
+description = "A FrameLink device session over TCP or CAN (ISO-TP), with discovery over mDNS and BLE, a device registry, Wi-Fi provisioning over BLE and firmware updates over SMP."
 readme = "README.md"
 edition.workspace = true
 rust-version.workspace = true
@@ -15,6 +15,7 @@ discovery = ["dep:wslib-mdns", "dep:serde_json", "dep:futures-util", "dep:wslib-
 ble = ["dep:btleplug", "dep:uuid", "dep:futures-util", "tokio/rt-multi-thread", "wslib-mcumgr?/ble"]
 wifi-prov = ["ble", "discovery"]
 smp = ["discovery", "dep:wslib-mcumgr", "wslib-mcumgr/udp"]
+can = ["dep:wslib-isotp", "wslib-isotp/link", "dep:wslib-can", "wslib-can/task", "wslib-can-bus/task"]
 
 [dependencies]
 btleplug = { version = "0.13.5", optional = true }
@@ -25,17 +26,26 @@ thiserror = "2.0.20"
 tokio = { version = "1.53.3", default-features = false, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 tracing = "0.1.41"
 uuid = { version = "1.26.1", default-features = false, optional = true }
+wslib-can = { path = "../wslib-can", version = "0.1.2", registry = "wired-square", optional = true }
+wslib-can-bus = { path = "../wslib-can-bus", version = "0.1", registry = "wired-square" }
 wslib-file-atomic = { path = "../wslib-file-atomic", version = "0.1.6", registry = "wired-square", optional = true }
 wslib-framelink-board = { path = "../wslib-framelink-board", version = "0.3", registry = "wired-square" }
-wslib-framelink-protocol = { path = "../wslib-framelink-protocol", version = "0.2", registry = "wired-square" }
+wslib-framelink-protocol = { path = "../wslib-framelink-protocol", version = "0.2.1", registry = "wired-square" }
 wslib-framing = { path = "../wslib-framing", version = "0.1", registry = "wired-square" }
+wslib-isotp = { path = "../wslib-isotp", version = "0.1", registry = "wired-square", optional = true }
 wslib-mcumgr = { path = "../wslib-mcumgr", version = "0.1", registry = "wired-square", optional = true }
 wslib-mdns = { path = "../wslib-mdns", version = "0.1", registry = "wired-square", features = ["in-process"], optional = true }
 
 [dev-dependencies]
 serde_json = "1.0.85"
-tokio = { version = "1.53.3", features = ["io-util", "macros", "net", "rt", "time"] }
+tokio = { version = "1.53.3", features = ["io-util", "macros", "net", "rt", "test-util", "time"] }
+wslib-can = { path = "../wslib-can", version = "0.1.3", registry = "wired-square", features = ["testing"] }
+wslib-can-bus = { path = "../wslib-can-bus", version = "0.1", registry = "wired-square", features = ["gvret", "slcan"] }
 
 [[test]]
 name = "goldens"
 required-features = ["wifi-prov"]
+
+[[test]]
+name = "isotp_session"
+required-features = ["can"]

@@ -1,7 +1,5 @@
 use wslib_framelink_protocol::can_id::DEVICE_ID_MAX;
 
-use crate::wiredreflow::{DEVICE_ID_DIGITS, device_id_text};
-
 use crate::{
     gw121::{
         Target,
@@ -11,7 +9,9 @@ use crate::{
     uri::{BUS_FORMS, ProbeUri, ProbeUriError, value_text},
     value::Value,
     wiredreflow::{
+        DEVICE_ID_DIGITS,
         bus::{CanBus, PortDirectory, SerialPort, name_the_bus},
+        device_id_text,
         frame::{CJ1, TC1},
     },
 };

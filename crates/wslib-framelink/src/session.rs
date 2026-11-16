@@ -20,9 +20,10 @@ use wslib_framelink_protocol::types::{
 };
 use wslib_framelink_protocol::{bridge, capabilities, dsig, frame_def, generator, xform};
 
+use wslib_can_bus::BusConfig;
+
 use crate::client::{FrameLinkClient, FrameSender, FramingCounters, FramingStats, Received};
 use crate::{Error, Peer};
-use wslib_can_bus::BusConfig;
 #[cfg(feature = "can")]
 use {
     wslib_can_bus::CanBus,

@@ -48,55 +48,41 @@ pub async fn open(
     match bus {
         #[cfg(feature = "slcan")]
         CanBus::Slcan { port } => {
-            use wslib_serial::{LineSettings, Parity};
-            let (bitrate, data_bitrate) = rates(bus, config)?;
-            const LINE: LineSettings = LineSettings {
-                baud: 115_200,
-                data_bits: 8,
-                parity: Parity::None,
-                stop_bits: 1,
-            };
-            let slcan = wslib_can_slcan::SlcanOptions {
-                path: port.path(),
-                line: LINE,
-                bitrate,
-                data_bitrate,
-            };
+            let slcan = slcan_options(port, rates(bus, config)?);
             named(bus, wslib_can_slcan::open(slcan, options).await)
         }
         #[cfg(all(feature = "socketcan", target_os = "linux"))]
         CanBus::SocketCan { interface } => {
-            let socketcan = wslib_can_socketcan::SocketCanOptions {
-                interface: interface.clone(),
-                fd: config.mode.is_fd(),
-            };
+            let socketcan = socketcan_options(interface, config.mode);
             named(bus, wslib_can_socketcan::open(socketcan, options).await)
         }
         #[cfg(all(feature = "gsusb", any(target_os = "macos", target_os = "windows")))]
         CanBus::GsUsb { serial } => {
-            let (bitrate, data_bitrate) = rates(bus, config)?;
+            let rates = rates(bus, config)?;
             let device = crate::usb::only_adapter(
                 bus,
                 wslib_can_gsusb::devices(),
                 serial.as_deref(),
                 |device| device.serial.as_deref(),
             )?;
-            let mut gsusb = wslib_can_gsusb::GsUsbOptions::new(device, bitrate);
-            gsusb.data = data_bitrate.map(|rate| (rate, None));
-            named(bus, wslib_can_gsusb::open(gsusb, options).await)
+            named(
+                bus,
+                wslib_can_gsusb::open(gsusb_options(device, rates), options).await,
+            )
         }
         #[cfg(all(feature = "pcan", any(target_os = "macos", target_os = "windows")))]
         CanBus::Pcan { serial } => {
-            let (bitrate, data_bitrate) = rates(bus, config)?;
+            let rates = rates(bus, config)?;
             let device = crate::usb::only_adapter(
                 bus,
                 wslib_can_pcan::devices(),
                 serial.as_deref(),
                 |device| device.serial.as_deref(),
             )?;
-            let mut pcan = wslib_can_pcan::PcanOptions::new(device, bitrate);
-            pcan.data = data_bitrate.map(|rate| (rate, None));
-            named(bus, wslib_can_pcan::open(pcan, options).await)
+            named(
+                bus,
+                wslib_can_pcan::open(pcan_options(device, rates), options).await,
+            )
         }
         #[cfg(feature = "gvret")]
         CanBus::Gvret { host, port } => {
@@ -131,14 +117,79 @@ pub async fn open(
         reason = "only SLCAN, gs_usb and PEAK adapters take a bitrate"
     )
 )]
-fn rates(bus: &CanBus, config: BusConfig) -> Result<(u32, Option<u32>), OpenError> {
+fn rates(bus: &CanBus, config: BusConfig) -> Result<Rates, OpenError> {
     let bitrate = config
         .bitrate
         .ok_or_else(|| OpenError::NoBitrate(bus.clone()))?;
     match config.mode {
         CanMode::Fd { data_bitrate: None } => Err(OpenError::NoDataBitrate(bus.clone())),
-        mode => Ok((bitrate, mode.data_bitrate())),
+        mode => Ok(Rates {
+            bitrate,
+            data_bitrate: mode.data_bitrate(),
+        }),
     }
+}
+
+#[cfg_attr(
+    not(any(
+        feature = "slcan",
+        all(
+            any(feature = "gsusb", feature = "pcan"),
+            any(target_os = "macos", target_os = "windows")
+        )
+    )),
+    allow(
+        dead_code,
+        reason = "only SLCAN, gs_usb and PEAK adapters take a bitrate"
+    )
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Rates {
+    bitrate: u32,
+    data_bitrate: Option<u32>,
+}
+
+#[cfg(feature = "slcan")]
+const SLCAN_LINE: wslib_serial::LineSettings = wslib_serial::LineSettings {
+    baud: 115_200,
+    data_bits: 8,
+    parity: wslib_serial::Parity::None,
+    stop_bits: 1,
+};
+
+#[cfg(feature = "slcan")]
+fn slcan_options(port: &crate::bus::SerialPort, rates: Rates) -> wslib_can_slcan::SlcanOptions {
+    wslib_can_slcan::SlcanOptions {
+        path: port.path(),
+        line: SLCAN_LINE,
+        bitrate: rates.bitrate,
+        data_bitrate: rates.data_bitrate,
+    }
+}
+
+#[cfg(all(feature = "socketcan", target_os = "linux"))]
+fn socketcan_options(interface: &str, mode: CanMode) -> wslib_can_socketcan::SocketCanOptions {
+    wslib_can_socketcan::SocketCanOptions {
+        interface: interface.to_owned(),
+        fd: mode.is_fd(),
+    }
+}
+
+#[cfg(all(feature = "gsusb", any(target_os = "macos", target_os = "windows")))]
+fn gsusb_options(
+    device: wslib_can_gsusb::GsUsbDevice,
+    rates: Rates,
+) -> wslib_can_gsusb::GsUsbOptions {
+    let mut gsusb = wslib_can_gsusb::GsUsbOptions::new(device, rates.bitrate);
+    gsusb.data = rates.data_bitrate.map(|rate| (rate, None));
+    gsusb
+}
+
+#[cfg(all(feature = "pcan", any(target_os = "macos", target_os = "windows")))]
+fn pcan_options(device: wslib_can_pcan::PcanDevice, rates: Rates) -> wslib_can_pcan::PcanOptions {
+    let mut pcan = wslib_can_pcan::PcanOptions::new(device, rates.bitrate);
+    pcan.data = rates.data_bitrate.map(|rate| (rate, None));
+    pcan
 }
 
 #[cfg_attr(

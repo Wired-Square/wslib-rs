@@ -24,8 +24,8 @@ pub enum OpenError {
 }
 
 impl OpenError {
-    /// `Unsupported` for a bus this build doesn't open, otherwise the failure's
-    /// own kind.
+    /// `Unsupported` for a bus this build doesn't open and for CAN FD on GVRET,
+    /// `InvalidInput` for a missing rate, otherwise the failure's own kind.
     pub fn kind(&self) -> io::ErrorKind {
         match self {
             OpenError::FeatureOff(_) | OpenError::Unreachable(_) | OpenError::NoFd(_) => {

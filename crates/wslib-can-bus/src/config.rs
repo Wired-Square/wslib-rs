@@ -1,4 +1,4 @@
-/// How [`open`](crate::open) runs a bus's adapter: its nominal rate and
+/// How `open` runs a bus's adapter: its nominal rate and
 /// whether it meets the bus as classic CAN or CAN FD.
 ///
 /// An SLCAN, gs_usb or PEAK adapter sets the bus's rates, so it needs
@@ -7,7 +7,9 @@
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct BusConfig {
+    /// The nominal rate.
     pub bitrate: Option<u32>,
+    /// Classic CAN or CAN FD.
     pub mode: CanMode,
 }
 
@@ -33,14 +35,15 @@ impl BusConfig {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CanMode {
+    /// Classic CAN only. The default.
     #[default]
     Classic,
-    Fd {
-        data_bitrate: Option<u32>,
-    },
+    /// CAN FD, with the data phase at `data_bitrate`.
+    Fd { data_bitrate: Option<u32> },
 }
 
 impl CanMode {
+    /// Whether this is CAN FD.
     pub const fn is_fd(self) -> bool {
         matches!(self, CanMode::Fd { .. })
     }

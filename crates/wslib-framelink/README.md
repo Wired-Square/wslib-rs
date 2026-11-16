@@ -27,7 +27,7 @@ println!("{} {}", identity.board_name, identity.board_revision);
 - `Peer`: what `addr` returns, written and parsed as a `SocketAddr` or as
   `can:<bus>@<device-id>`, e.g. `can:slcan=ttyACM0@028F08`. The bus is a
   `CanBus` and the device id a `CanDeviceId`, in hex up to 0FFFFF. Both are
-  re-exported here. `connect_peer` connects to either kind.
+  re-exported here, with wslib-can-bus' `BusConfig` and `CanMode`. `connect_peer` connects to either kind.
   `PeerParseError::Unrecognised` means the text doesn't start with `can:` and
   isn't a socket address, so a caller can try it as a name.
 - `identify`: the board's name and revision, device id, TX queue depth (4
@@ -63,8 +63,8 @@ None is on by default.
   - `connect_can` opens the adapter with wslib-can-bus' `open`, and ends the
     session when the adapter goes.
   - `SessionConfig::can_bus` sets the bus's rate for an SLCAN, gs_usb or
-    PEAK adapter, which needs one. It has no default, because FrameLink CAN
-    buses run at different rates. `BusConfig::fd` opens the adapter for CAN
+    PEAK adapter, which needs one. The rate has no default, because FrameLink
+    CAN buses run at different rates. `BusConfig::fd` opens the adapter for CAN
     FD, so it can share a bus where other nodes send FD frames. FrameLink's
     own frames stay classic.
   - A failed send is counted in `send_failures`. The request then waits for
@@ -75,7 +75,7 @@ None is on by default.
     build turns on:
 
     ```toml
-    wslib-can-bus = { version = "0.1", registry = "wired-square", features = ["slcan"] }
+    wslib-can-bus = { version = "0.2", registry = "wired-square", features = ["slcan"] }
     ```
 
 - `smp` (with `discovery`): `Discovery::open_smp_udp` and `open_smp`, SMP
@@ -88,5 +88,5 @@ None is on by default.
 serialise as they did before the move; `tests/goldens.rs` pins them.
 
 ```toml
-wslib-framelink = { version = "0.4", registry = "wired-square" }
+wslib-framelink = { version = "0.5", registry = "wired-square" }
 ```

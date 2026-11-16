@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
+use wslib_can_bus::BusConfig;
 use wslib_framelink_board::editable::ActiveRuleIds;
 use wslib_framelink_protocol::frame::Frame;
 use wslib_framelink_protocol::stream::{
@@ -19,8 +20,6 @@ use wslib_framelink_protocol::types::{
     MSG_XFORM_LIST,
 };
 use wslib_framelink_protocol::{bridge, capabilities, dsig, frame_def, generator, xform};
-
-use wslib_can_bus::BusConfig;
 
 use crate::client::{FrameLinkClient, FrameSender, FramingCounters, FramingStats, Received};
 use crate::{Error, Peer};

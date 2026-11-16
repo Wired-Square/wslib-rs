@@ -177,7 +177,15 @@ fn slcan_is_given_both_rates() {
         },
     );
     assert_eq!(fd.path, port.path());
-    assert_eq!(fd.line, super::SLCAN_LINE);
+    assert_eq!(
+        fd.line,
+        wslib_serial::LineSettings {
+            baud: 115_200,
+            data_bits: 8,
+            parity: wslib_serial::Parity::None,
+            stop_bits: 1,
+        }
+    );
     assert_eq!((fd.bitrate, fd.data_bitrate), (BITRATE, Some(DATA_BITRATE)));
     let classic = super::slcan_options(
         &port,
@@ -194,8 +202,13 @@ fn slcan_is_given_both_rates() {
 fn socketcan_opens_an_fd_socket_exactly_in_fd() {
     let classic = super::socketcan_options("can0", crate::config::CanMode::Classic);
     assert_eq!((classic.interface.as_str(), classic.fd), ("can0", false));
-    let fd = super::socketcan_options("can0", BusConfig::fd(None, None).mode);
-    assert_eq!((fd.interface.as_str(), fd.fd), ("can0", true));
+    for config in [
+        BusConfig::fd(None, None),
+        BusConfig::fd(Some(BITRATE), Some(DATA_BITRATE)),
+    ] {
+        let fd = super::socketcan_options("can0", config.mode);
+        assert_eq!((fd.interface.as_str(), fd.fd), ("can0", true), "{config:?}");
+    }
 }
 
 #[cfg(all(feature = "gsusb", any(target_os = "macos", target_os = "windows")))]

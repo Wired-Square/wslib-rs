@@ -161,9 +161,9 @@ step "No compile-time-checked sqlx query"
 ! git grep -nE --untracked 'sqlx::(query|query_as|query_scalar|query_file)[a-z_]*!' -- '*.rs' \
   || die "a sqlx query! macro needs a database to build; use the runtime sqlx::query API"
 
-# Shared crates take no rustls provider; the app installs one.
+# Shared crates take no rustls provider; the app installs one. The xtask is a binary, so it is the app.
 step "No rustls provider by default"
-graph=$(cargo tree --workspace -e normal --prefix none)
+graph=$(cargo tree --workspace --exclude wslib-appliance-xtask -e normal --prefix none)
 ! grep -E '^(aws-lc-rs|ring) ' <<<"$graph" || die "a rustls provider is in the default graph"
 
 step "wslib-telemetry's setup-core has no regex engine"

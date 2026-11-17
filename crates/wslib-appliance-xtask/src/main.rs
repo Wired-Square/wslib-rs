@@ -3,9 +3,12 @@
 //! Every file it writes is rewritten unconditionally; a product's own additions
 //! live in files it never writes. `--version` names this tool's version (and
 //! commit, from a checkout), `build-id` the commit of the product being built.
-//! Exit codes: `0` clean, `1` drift, an unpatched erratum site or a failed gate,
-//! `2` could not run, or a gate could not run and none failed.
+//! Exit codes: `0` clean, `1` drift, an unpatched erratum site, a failed gate
+//! or a signer that is not a code-signing leaf, `2` could not run, or a gate
+//! could not run and none failed.
 
+#[cfg(unix)]
+mod app_archive;
 mod debian;
 #[cfg(unix)]
 mod dev_console;
@@ -60,6 +63,12 @@ enum Command {
     /// Stand in for a console in development: plain HTTP on loopback, proxied to an app socket as one chosen account.
     #[cfg(unix)]
     DevConsole(dev_console::DevConsole),
+    /// An app source's signed index, alone or packed with its images, as ApplianceOS installs from.
+    #[cfg(unix)]
+    AppArchive {
+        #[command(subcommand)]
+        command: app_archive::AppArchive,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -240,6 +249,8 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
             dev_console::run(args)?;
             return Ok(ExitCode::SUCCESS);
         }
+        #[cfg(unix)]
+        Command::AppArchive { command } => return app_archive::run(command),
     };
     let (artefacts, warnings) = owned(Path::new(""))?;
     for warning in &warnings {

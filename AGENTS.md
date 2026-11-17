@@ -47,7 +47,8 @@ publishing them.
   otherwise track, a platform binding, the ecosystem's foundation, or more
   than an afternoon's work. Otherwise write it. Turn off default features you
   don't use.
-- No crate enables a rustls crypto provider by default; the app installs one.
+- No library crate enables a rustls crypto provider by default; the app
+  installs one. A binary-only crate is the app and installs its own.
 - Storage goes through sqlx. A crate that stores ships its sqlx stores behind
   `sqlite` / `postgres` features and leaves migrations to the app. Only the
   `wslib-appliance-*` family may keep one concrete SQLite store.

@@ -1,7 +1,7 @@
 [package]
 name = "wslib-appliance-xtask"
-version = "0.2.7"
-description = "Renders a product's packaging scaffolding from appliance.toml, and stands in for a console in development."
+version = "0.2.8"
+description = "Renders a product's packaging scaffolding from appliance.toml, stands in for a console in development, and signs app archives."
 readme = "README.md"
 edition.workspace = true
 rust-version.workspace = true
@@ -21,10 +21,21 @@ wslib-build-id = { path = "../wslib-build-id", version = "0.1.0", registry = "wi
 
 [target.'cfg(unix)'.dependencies]
 chrono = { version = "0.4.39", default-features = false }
+cms = { version = "0.2.3", default-features = false }
 http-body-util = { version = "0.1", default-features = false }
 hyper = { version = "1.8", default-features = false, features = ["client", "http1", "server"] }
 hyper-util = { version = "0.1.18", default-features = false, features = ["tokio"] }
+p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
+p384 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
+rsa = { version = "0.9.10", default-features = false, features = ["std"] }
+rustls = { version = "0.23.27", default-features = false, features = ["ring"] }
+sha2 = { version = "0.10.9", features = ["oid"] }
+tar = { version = "0.4.46", default-features = false }
 tokio = { version = "1.47", default-features = false, features = ["net", "rt"] }
+wslib-crypto = { path = "../wslib-crypto", version = "0.1.3", registry = "wired-square" }
+wslib-crypto-ca = { path = "../wslib-crypto-ca", version = "0.2.0", registry = "wired-square" }
+wslib-crypto-x509 = { path = "../wslib-crypto-x509", version = "0.1.7", registry = "wired-square" }
+zeroize = { version = "1.8.1", default-features = false, features = ["alloc"] }
 
 [build-dependencies]
 wslib-build-id = { path = "../wslib-build-id", version = "0.1.0", registry = "wired-square" }
@@ -36,6 +47,7 @@ tempfile = "3.10.1"
 wslib-appliance-config = { path = "../wslib-appliance-config", version = "0.1.1", registry = "wired-square" }
 
 [target.'cfg(unix)'.dev-dependencies]
+rcgen = { version = "0.14.10", default-features = false }
 rustls = { version = "0.23.27", default-features = false, features = ["ring"] }
 tokio = { version = "1.47", features = ["io-util", "macros"] }
 wslib-appliance-server = { path = "../wslib-appliance-server", version = "0.1.0", registry = "wired-square", features = ["testing"] }

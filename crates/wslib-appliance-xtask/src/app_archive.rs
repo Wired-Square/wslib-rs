@@ -53,7 +53,7 @@ pub(crate) enum AppArchive {
         #[arg(required = true)]
         images: Vec<PathBuf>,
     },
-    /// Sign the entries in the JSON files and pack each with its sha256-<hex>.tar found under --images.
+    /// Sign the entries in the JSON files and pack each with its image, found by digest under --images.
     Sign {
         #[command(flatten)]
         signing: Signing,

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.8
+
+- `app-archive` (Unix): `keys`, `entry`, `verify`, `pack` and `sign` make an
+  app source's signed index, alone or packed with its docker-load images,
+  as an ApplianceOS console installs from, with no OpenSSL. A P-256, P-384
+  or RSA (2048 bits up) key signs over SHA-256; the code-signing chain
+  check runs through rustls's `ring` provider.
+  Source `wired-square` checks its signer against `--root` or the PEM in
+  `WIRED_SQUARE_APPS_ROOT`, and refuses to sign with neither.
+- Needs `wslib-crypto` 0.1.3, `wslib-crypto-x509` 0.1.7 and
+  `wslib-crypto-ca` 0.2.0.
+
 ## 0.2.7
 
 - Renders for `wslib-appliance-server` 0.1.6, so `gates` no longer warns on

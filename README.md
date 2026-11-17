@@ -17,7 +17,7 @@ appliance chassis and every app beside it.
 | `wslib-appliance-service` | The desktop backend, on control sockets and named pipes      |
 | `wslib-appliance-store`  | An appliance's tables, in one SQLite file its product shares  |
 | `wslib-appliance-types`  | An appliance's wire contract, shared by daemon and browser    |
-| `wslib-appliance-xtask`† | A product's packaging, CI gates and a stand-in console        |
+| `wslib-appliance-xtask`† | Packaging, CI gates, a stand-in console, signed app archives  |
 | `wslib-auth`             | Server-side sessions and their cookie, re-auth, attempts      |
 | `wslib-auth-oidc`        | OIDC ID-token checks against a cached, rotation-aware JWKS    |
 | `wslib-auth-passkey`     | WebAuthn passkey ceremonies, none attestation, ES256/EdDSA    |

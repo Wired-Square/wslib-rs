@@ -3,7 +3,8 @@
 The build-host tool for an appliance: it renders a product's packaging from one
 `appliance.toml`, so the system name is written once and every unit, Debian
 file, Dockerfile and build script is a function of that file. It also stands in
-for a console while the app is developed.
+for a console while the app is developed, and signs the app archives an
+ApplianceOS console installs from.
 
 **Not pure Rust.** `templates/` ships shell build scripts, Debian maintainer
 scripts, a systemd unit and a Dockerfile, as templates.
@@ -39,9 +40,58 @@ and `wslib-appliance-server` 0.1.6: the `/usr/share/<name>` layout, the
   `<PREFIX>_CONSOLE_UID`.
 - **`gates [--release]`** checks the repository in this directory against
   the rules of this version: see [Gates](#gates).
+- **`app-archive`** (Unix) signs an app source's index and packs it with its
+  images: see [App archives](#app-archives).
 
-Exit codes: `0` clean, `1` drift, an unpatched site or a failed gate, `2` the
-tool could not run, or a gate could not run and none failed.
+Exit codes: `0` clean, `1` drift, an unpatched site, a failed gate or a
+signer that is not a code-signing leaf, `2` the tool could not run, or a gate
+could not run and none failed.
+
+## App archives
+
+An archive is a ustar tar of a source's `index.json`
+(`{"schema":1,"source":…,"apps":[…]}`), its detached CMS signature
+`index.json.sig`, and each docker-load tarball at
+`images/sha256-<hex>.tar`, named by the digest the index pins. A source with
+a URL serves `index.json` and `index.json.sig` alone, and its images come
+from the registry each entry names.
+
+```sh
+wslib-appliance-xtask app-archive keys DIR
+wslib-appliance-xtask app-archive entry IMAGE.tar [--registry HOST]
+wslib-appliance-xtask app-archive verify CERT.pem [--root PEM]
+wslib-appliance-xtask app-archive pack --source NAME --cert PEM --key PATH|- [--root PEM] [--registry HOST] [--index] OUT IMAGE.tar...
+wslib-appliance-xtask app-archive sign --source NAME --cert PEM --key PATH|- [--root PEM] [--images DIR]... [--index] OUT ENTRY.json...
+```
+
+- **`keys`** makes a throwaway P-256 root and a code-signing leaf under it
+  in `DIR` (`root.pem`, `root.key`, `leaf.pem`, `leaf.key`, each `0600`),
+  and refuses a directory that holds any of them. Test keys only.
+- **`entry`** prints a docker-load tarball's index entry: its arch
+  (`arm/<variant>` for 32-bit ARM) and the manifest in its
+  `com.wiredsquare.appliance.manifest` label, pinned to its OCI manifest
+  digest and its `io.containerd.image.name` without the tag. The tarball
+  holds one image, and the label's `version` is its
+  `org.opencontainers.image.version`. `--registry` moves the repository
+  there, dropping a first path component that names a host.
+- **`verify`** exits `1` unless the certificate is a code-signing leaf of
+  the root, now.
+- **`pack`** signs an index of the images' entries and writes the archive
+  to `OUT`, or with `--index` the two index files into the directory
+  `OUT`. It prints what the index offers.
+- **`sign`** does the same from entries already written, as `entry` prints
+  them, finding each image under the `--images` directories by its
+  `sha256-<hex>.tar` name. A caller that keeps its entries in files checks
+  them against `entry` first.
+
+The certificate PEM holds the signer's certificate and then any
+intermediates, all of which the signature carries. The key is PKCS#8, SEC1 or
+PKCS#1 PEM: P-256, P-384 or RSA of 2048 bits or more, each signing over
+SHA-256, as the console requires. `-` reads it from stdin, and it is never
+written out. Source `wired-square` refuses a signer that is not a code-signing leaf
+of `--root`, or of the root PEM in `WIRED_SQUARE_APPS_ROOT`, and refuses to
+sign with neither. Another source is checked only against a `--root` given.
+A refusal writes nothing.
 
 ## Gates
 
@@ -257,6 +307,7 @@ every problem named at once.
 
 ## A crypto provider
 
-The tool itself serves no TLS. The daemon it packages is a family app, which
-installs its own rustls provider before serving; nothing rendered here
+The tool serves no TLS. `app-archive` checks chains with rustls's `ring`
+provider, as a binary may. The daemon it packages is a family app,
+which installs its own rustls provider before serving; nothing rendered here
 installs one.

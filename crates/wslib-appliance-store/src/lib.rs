@@ -150,8 +150,8 @@ pub enum StoreError {
     BadCursor(String),
 
     /// What the migration chains refuse beyond the variants above.
-    #[error(transparent)]
-    Database(wslib_db_sqlite::Error),
+    #[error("the migration chains were refused")]
+    Database(#[source] wslib_db_sqlite::Error),
 }
 
 impl From<wslib_db_sqlite::Error> for StoreError {
@@ -564,6 +564,20 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn a_chain_refusal_is_its_own_layer_over_the_databases_error() {
+        let e = StoreError::from(wslib_db_sqlite::Error::InvalidName("Bad".into()));
+        assert_eq!(e.to_string(), "the migration chains were refused");
+        let source = std::error::Error::source(&e).expect("the database's refusal");
+        assert!(
+            matches!(
+                source.downcast_ref::<wslib_db_sqlite::Error>(),
+                Some(wslib_db_sqlite::Error::InvalidName(name)) if name == "Bad"
+            ),
+            "{source:?}"
+        );
     }
 
     #[test]

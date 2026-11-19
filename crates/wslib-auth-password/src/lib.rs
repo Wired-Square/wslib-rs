@@ -220,8 +220,8 @@ mod tests {
         );
         let source = why.source().expect("argon2's reason");
         assert_eq!(
-            source.to_string(),
-            PasswordHash::new("not a hash").unwrap_err().to_string()
+            source.downcast_ref::<argon2::password_hash::phc::Error>(),
+            Some(&PasswordHash::new("not a hash").unwrap_err())
         );
     }
 

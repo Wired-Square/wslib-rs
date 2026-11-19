@@ -28,21 +28,19 @@ pub async fn rehash(password: &str) -> Result<String, PasswordError> {
     off_thread(move || crate::rehash(&password)).await?
 }
 
-/// [`verify`](crate::verify) off the runtime's threads; false, as for a
-/// wrong password, if the work panicked or the runtime shut down first.
-pub async fn verify(stored: &str, password: &str) -> bool {
+/// [`verify`](crate::verify) off the runtime's threads; an error, not an
+/// answer, if the work panicked or the runtime shut down first. Sign in only
+/// on `Ok(true)`.
+pub async fn verify(stored: &str, password: &str) -> Result<bool, PasswordError> {
     let (stored, password) = (stored.to_owned(), password.to_owned());
-    off_thread(move || crate::verify(&stored, &password))
-        .await
-        .unwrap_or(false)
+    off_thread(move || crate::verify(&stored, &password)).await
 }
 
-/// [`verify_absent`](crate::verify_absent) off the runtime's threads.
-pub async fn verify_absent(password: &str) -> bool {
+/// [`verify_absent`](crate::verify_absent) off the runtime's threads:
+/// `Ok(false)`, or an error as [`verify`] has.
+pub async fn verify_absent(password: &str) -> Result<bool, PasswordError> {
     let password = password.to_owned();
-    off_thread(move || crate::verify_absent(&password))
-        .await
-        .unwrap_or(false)
+    off_thread(move || crate::verify_absent(&password)).await
 }
 
 #[cfg(test)]
@@ -54,14 +52,23 @@ mod tests {
         let stored = hash(Policy::default(), "correct horse battery staple")
             .await
             .unwrap();
-        assert!(verify(&stored, "correct horse battery staple").await);
-        assert!(!verify(&stored, "wrong").await);
-        assert!(!verify_absent("correct horse battery staple").await);
+        assert!(matches!(
+            verify(&stored, "correct horse battery staple").await,
+            Ok(true)
+        ));
+        assert!(matches!(verify(&stored, "wrong").await, Ok(false)));
+        assert!(matches!(
+            verify_absent("correct horse battery staple").await,
+            Ok(false)
+        ));
         assert!(matches!(
             hash(Policy::default(), "short").await,
             Err(PasswordError::TooShort { min_chars: 12 })
         ));
-        assert!(verify(&rehash("short").await.unwrap(), "short").await);
+        assert!(matches!(
+            verify(&rehash("short").await.unwrap(), "short").await,
+            Ok(true)
+        ));
     }
 
     #[tokio::test]
@@ -81,6 +88,28 @@ mod tests {
         assert!(
             matches!(answer, Err(PasswordError::Cancelled)),
             "{answer:?}"
+        );
+    }
+
+    #[test]
+    fn a_verify_the_runtime_dropped_is_an_error_and_never_a_sign_in() {
+        let stored = Policy::default()
+            .hash("correct horse battery staple")
+            .unwrap();
+        let runtime = ::tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let handle = runtime.handle().clone();
+        drop(runtime);
+        let verified = handle.block_on(verify(&stored, "correct horse battery staple"));
+        assert!(
+            matches!(verified, Err(PasswordError::Cancelled)),
+            "{verified:?}"
+        );
+        let absent = handle.block_on(verify_absent("correct horse battery staple"));
+        assert!(
+            matches!(absent, Err(PasswordError::Cancelled)),
+            "{absent:?}"
         );
     }
 }

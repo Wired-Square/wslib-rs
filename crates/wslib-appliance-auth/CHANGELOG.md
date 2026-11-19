@@ -6,6 +6,8 @@
   place of its text. A panic in the password's blocking work is
   `AuthError::Panicked`, and the runtime shutting down before it ran is
   `AuthError::Cancelled`, in place of a `Hash` with tokio's text.
+- `AuthError::Store` says the account store failed, and gives the
+  `StoreError` through `source()`, rather than being that error.
 - On wslib-appliance-store 0.2 and wslib-auth-password 0.2.
 
 ## 0.1.3

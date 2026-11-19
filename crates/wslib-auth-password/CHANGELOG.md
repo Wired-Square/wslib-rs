@@ -6,9 +6,10 @@
   boxed, as its `source()`, and its message no longer repeats it.
   `PasswordError` no longer derives `Clone`, `PartialEq` or `Eq`.
 - The `tokio` wrappers answer `PasswordError::Cancelled` when the runtime
-  shut down before the hashing ran, and `PasswordError::Panicked` when it
+  shut down before the work ran, and `PasswordError::Panicked` when it
   panicked, in place of a `Hash` with text and a resumed panic. `verify` and
-  `verify_absent` answer false for either.
+  `verify_absent` return `Result<bool, PasswordError>`, so either is an error
+  rather than an answer; sign in only on `Ok(true)`.
 - `why_unreadable` answers an `UnreadableHash`, whose `source()` is argon2's
   reason, in place of that reason's text.
 

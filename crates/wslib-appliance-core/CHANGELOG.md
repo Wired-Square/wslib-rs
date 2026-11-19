@@ -2,9 +2,9 @@
 
 ## 0.2.0
 
-- A failed store or sign-in call's journal line writes each cause of the
-  `StoreError` or `AuthError` behind it, which keep them only through
-  `source()`.
+- A failed store or sign-in call's journal line, and a failed health
+  check's, writes each cause of the `StoreError` or `AuthError` behind it,
+  which keep them only through `source()`.
 - On wslib-appliance-store 0.2 and wslib-appliance-auth 0.2, whose
   `StoreError` and `AuthError` its `ApiError` converts from.
 - An operator's TLS sentence writes each cause of the wslib-tls,

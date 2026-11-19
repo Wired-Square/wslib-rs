@@ -31,3 +31,4 @@ wslib-secret = { path = "../wslib-secret", version = "0.1.1", registry = "wired-
 tempfile = "3.10.1"
 tokio = { version = "1.47", features = ["macros", "rt-multi-thread", "time"] }
 wslib-auth-passkey = { path = "../wslib-auth-passkey", version = "0.1.0", registry = "wired-square", features = ["testing"] }
+wslib-db-sqlite = { path = "../wslib-db-sqlite", version = "0.3", registry = "wired-square" }

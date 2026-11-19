@@ -125,7 +125,7 @@ pub enum AuthError {
     #[error("hashing or checking the password panicked")]
     Panicked,
 
-    #[error(transparent)]
+    #[error("the account store failed")]
     Store(#[from] wslib_appliance_store::StoreError),
 }
 
@@ -159,7 +159,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wslib_appliance_store::Store;
+    use wslib_appliance_store::{Store, StoreError};
     use wslib_appliance_types::Role;
 
     pub(crate) const PASSWORD: &str = "correct horse battery";
@@ -229,6 +229,42 @@ mod tests {
                 .map(ToString::to_string),
             Some("out of memory".to_string())
         );
+    }
+
+    #[test]
+    fn a_store_failure_is_its_own_layer_and_the_walk_reaches_the_database() {
+        let refused = || wslib_db_sqlite::Error::InvalidName("Bad".into());
+        let e = AuthError::from(StoreError::from(refused()));
+        assert_eq!(e.to_string(), "the account store failed");
+        let store = std::error::Error::source(&e).expect("the store's error");
+        assert!(
+            matches!(
+                store.downcast_ref::<StoreError>(),
+                Some(StoreError::Database(_))
+            ),
+            "{store:?}"
+        );
+        let database = store.source().expect("the database's refusal");
+        assert!(
+            matches!(
+                database.downcast_ref::<wslib_db_sqlite::Error>(),
+                Some(wslib_db_sqlite::Error::InvalidName(name)) if name == "Bad"
+            ),
+            "{database:?}"
+        );
+    }
+
+    #[test]
+    fn the_password_crates_cancelled_and_panicked_keep_their_meaning() {
+        use wslib_auth_password::PasswordError;
+        assert!(matches!(
+            AuthError::from(PasswordError::Cancelled),
+            AuthError::Cancelled
+        ));
+        assert!(matches!(
+            AuthError::from(PasswordError::Panicked),
+            AuthError::Panicked
+        ));
     }
 
     #[tokio::test]

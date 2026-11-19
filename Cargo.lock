@@ -8095,6 +8095,7 @@ dependencies = [
  "wslib-auth-passkey",
  "wslib-auth-password",
  "wslib-auth-totp",
+ "wslib-db-sqlite",
  "wslib-secret",
 ]
 

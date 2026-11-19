@@ -420,6 +420,21 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_sign_in_journals_each_cause_of_its_auth_error() {
+        let failed = ApiError::from(AuthError::Hash(Box::new(std::io::Error::other(
+            "out of memory",
+        ))));
+        assert!(
+            matches!(
+                &failed,
+                ApiError::Internal { context: "complete the sign-in", because }
+                    if because == "the password could not be hashed: out of memory"
+            ),
+            "{failed:?}"
+        );
+    }
+
+    #[test]
     fn the_three_sign_in_refusals_stay_one_answer_through_the_mapping() {
         let e = ApiError::from(AuthError::Refused);
         assert!(matches!(e, ApiError::Refused));

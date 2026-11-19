@@ -711,7 +711,7 @@ async fn healthz(State(app): State<ApplianceState>) -> Result<impl IntoResponse,
     app.store
         .setting(HEALTH_PROBE)
         .await
-        .map_err(|e| ApiError::unavailable("reach the database", &e))?;
+        .map_err(|e| ApiError::unavailable("reach the database", &crate::tls::chain(&e)))?;
 
     Ok((
         [(

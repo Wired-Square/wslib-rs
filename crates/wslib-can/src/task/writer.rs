@@ -104,7 +104,21 @@ pub struct CanWriter {
     limits: Arc<Mutex<Limits>>,
 }
 
-type Reply = oneshot::Sender<Result<io::Result<()>, SendRefused>>;
+/// Why a send that ran didn't reach the device.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum WriteFailed {
+    #[error("write failed")]
+    Io(#[source] io::Error),
+    /// The blocking call that wrote the frame panicked.
+    #[error("the blocking write panicked")]
+    Panicked,
+    #[cfg(all(feature = "serial", not(target_os = "ios")))]
+    #[error(transparent)]
+    Serial(wslib_serial::SerialError),
+}
+
+type Reply = oneshot::Sender<Result<Result<(), WriteFailed>, SendRefused>>;
 
 pub(super) struct Job {
     pub frame: CanFrame,
@@ -126,7 +140,7 @@ impl CanWriter {
 
     /// Answered once the device has taken the frame, not once the bus has. A
     /// failed write leaves the device up: the next read decides.
-    pub async fn send(&self, frame: CanFrame) -> Result<io::Result<()>, SendRefused> {
+    pub async fn send(&self, frame: CanFrame) -> Result<Result<(), WriteFailed>, SendRefused> {
         self.submit(frame)?.await
     }
 
@@ -135,8 +149,10 @@ impl CanWriter {
     pub fn submit(
         &self,
         frame: CanFrame,
-    ) -> Result<impl Future<Output = Result<io::Result<()>, SendRefused>> + Send + use<>, SendRefused>
-    {
+    ) -> Result<
+        impl Future<Output = Result<Result<(), WriteFailed>, SendRefused>> + Send + use<>,
+        SendRefused,
+    > {
         self.admit(&frame)?;
         let permit = self.jobs.try_reserve().map_err(|e| match e {
             TrySendError::Full(()) => SendRefused::QueueFull,
@@ -150,8 +166,10 @@ impl CanWriter {
     pub async fn send_when_ready(
         &self,
         frame: CanFrame,
-    ) -> Result<impl Future<Output = Result<io::Result<()>, SendRefused>> + Send + use<>, SendRefused>
-    {
+    ) -> Result<
+        impl Future<Output = Result<Result<(), WriteFailed>, SendRefused>> + Send + use<>,
+        SendRefused,
+    > {
         self.admit(&frame)?;
         let permit = self
             .jobs
@@ -178,7 +196,7 @@ impl CanWriter {
 fn queue(
     permit: mpsc::Permit<'_, Job>,
     frame: CanFrame,
-) -> impl Future<Output = Result<io::Result<()>, SendRefused>> + Send + use<> {
+) -> impl Future<Output = Result<Result<(), WriteFailed>, SendRefused>> + Send + use<> {
     let (reply, answer) = oneshot::channel();
     permit.send(Job { frame, reply });
     async { answer.await.unwrap_or(Err(SendRefused::Stopped)) }

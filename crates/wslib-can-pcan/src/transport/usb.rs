@@ -13,6 +13,7 @@ use nusb::{
 use tokio::time::{Instant, timeout, timeout_at};
 use wslib_can::{
     BusState, CanError, CanFrame, CanOptions, CanTask, Device, DeviceInfo, Limits, Received,
+    WriteFailed,
 };
 
 use super::{
@@ -254,11 +255,14 @@ impl Device for Classic {
         Ok(received)
     }
 
-    async fn write(&mut self, frame: &CanFrame) -> io::Result<()> {
+    async fn write(&mut self, frame: &CanFrame) -> Result<(), WriteFailed> {
         let message = encode_transmit(&outgoing(frame, self.srr), self.sequence);
         self.sequence = self.sequence.wrapping_add(1);
         self.message_out.submit(message.to_vec().into());
-        bounded(&mut self.message_out).await.map(drop)
+        bounded(&mut self.message_out)
+            .await
+            .map(drop)
+            .map_err(WriteFailed::Io)
     }
 
     fn bus_reports(&mut self) -> Vec<BusState> {
@@ -354,16 +358,19 @@ impl Device for Ucan {
         Ok(received)
     }
 
-    async fn write(&mut self, frame: &CanFrame) -> io::Result<()> {
+    async fn write(&mut self, frame: &CanFrame) -> Result<(), WriteFailed> {
         let channel = self.started.channel;
         if frame.bus != channel {
-            return Err(io::Error::new(
+            return Err(WriteFailed::Io(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("this task sends on channel {channel}"),
-            ));
+            )));
         }
         self.data_out.submit(ucan::outgoing(frame, channel).into());
-        bounded(&mut self.data_out).await.map(drop)
+        bounded(&mut self.data_out)
+            .await
+            .map(drop)
+            .map_err(WriteFailed::Io)
     }
 
     fn bus_reports(&mut self) -> Vec<BusState> {

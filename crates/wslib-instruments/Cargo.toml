@@ -25,7 +25,7 @@ futures-util = { version = "0.3.34", default-features = false, optional = true }
 serde = { version = "1.0.228", features = ["derive"], optional = true }
 tokio = { version = "1.53.3", default-features = false, features = ["macros", "rt", "sync", "time"], optional = true }
 uuid = { version = "1.26.1", default-features = false, optional = true }
-wslib-can = { path = "../wslib-can", version = "0.1.2", registry = "wired-square", features = ["task"], optional = true }
+wslib-can = { path = "../wslib-can", version = "0.2", registry = "wired-square", features = ["task"], optional = true }
 wslib-can-bus = { path = "../wslib-can-bus", version = "0.3", registry = "wired-square" }
 wslib-framelink-protocol = { path = "../wslib-framelink-protocol", version = "0.2.1", registry = "wired-square" }
 

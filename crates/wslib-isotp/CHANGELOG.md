@@ -1,9 +1,14 @@
 # Changelog
 
-## 0.1.1
+## 0.2.0
 
-- `SendFailed::Refused` and `Io` name only their own layer, and return the
-  `SendRefused` or `io::Error` from `source()`.
+- On wslib-can 0.2, whose `SendRefused` and `WriteFailed` `SendFailed`
+  carries.
+- `SendFailed::Io` is `SendFailed::Write`, carrying the adapter's
+  `WriteFailed` in place of an `io::Error`, and `SendFailures::io` is
+  `write`.
+- `SendFailed::Refused` and `Write` name only their own layer, and return the
+  `SendRefused` or `WriteFailed` from `source()`.
 
 ## 0.1.0
 

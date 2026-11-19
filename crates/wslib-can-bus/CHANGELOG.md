@@ -13,9 +13,9 @@
 - `SerialPort`'s parse fails with `PortParseError`, not a `String`.
   `BusParseError::Port` carries it as its source for an SLCAN bus whose port
   doesn't parse.
-- On wslib-serial 0.2, wslib-can-slcan 0.2, wslib-can-gvret 0.2,
+- On wslib-can 0.2, whose `CanError` is `OpenCause::Adapter`'s, and on
+  wslib-serial 0.2, wslib-can-slcan 0.2, wslib-can-gvret 0.2,
   wslib-can-gsusb 0.2, wslib-can-pcan 0.2 and wslib-can-socketcan 0.2.
-  wslib-can's floor is 0.1.4.
 
 ## 0.2.0
 

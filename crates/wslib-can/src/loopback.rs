@@ -3,7 +3,6 @@
 //! behaves as one on a real adapter with `own_frames`.
 
 use std::{
-    io,
     sync::{
         Arc, Mutex, MutexGuard, PoisonError,
         atomic::{AtomicUsize, Ordering},
@@ -17,7 +16,8 @@ use tokio::{
 };
 
 use crate::{
-    CanError, CanFrame, CanOptions, CanTask, Device, DeviceInfo, Direction, Limits, Received, Stamp,
+    CanError, CanFrame, CanOptions, CanTask, Device, DeviceInfo, Direction, Limits, Received,
+    Stamp, WriteFailed,
 };
 
 type Wire = mpsc::UnboundedSender<(usize, CanFrame)>;
@@ -44,6 +44,7 @@ impl LoopbackBus {
             bus: self.clone(),
             stall: Mutex::new(None),
             lose: Mutex::new(None),
+            fail: Mutex::new(None),
             unplug: Notify::new(),
             closes: AtomicUsize::new(0),
         }))
@@ -54,6 +55,7 @@ struct PortShared {
     bus: LoopbackBus,
     stall: Mutex<Option<Duration>>,
     lose: Mutex<Option<Matcher>>,
+    fail: Mutex<Option<WriteFailed>>,
     unplug: Notify,
     closes: AtomicUsize,
 }
@@ -78,6 +80,11 @@ impl LoopbackPort {
     /// a frame lost on the wire. No port reads it, this one included.
     pub fn lose_next_write(&self, matching: impl Fn(&CanFrame) -> bool + Send + 'static) {
         *locked(&self.0.lose) = Some(Box::new(matching));
+    }
+
+    /// The port's next write fails with `failed`, and reaches no port.
+    pub fn fail_next_write(&self, failed: WriteFailed) {
+        *locked(&self.0.fail) = Some(failed);
     }
 
     /// The device open on the port reads [`CanError::Closed`], once.
@@ -157,10 +164,13 @@ impl Device for Loopback {
         }])
     }
 
-    async fn write(&mut self, frame: &CanFrame) -> io::Result<()> {
+    async fn write(&mut self, frame: &CanFrame) -> Result<(), WriteFailed> {
         let stall = locked(&self.port.0.stall).take();
         if let Some(stall) = stall {
             sleep(stall).await;
+        }
+        if let Some(failed) = locked(&self.port.0.fail).take() {
+            return Err(failed);
         }
         if self.port.lost(frame) {
             return Ok(());

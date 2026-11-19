@@ -1,10 +1,10 @@
-use std::{io, time::Duration};
+use std::time::Duration;
 
 use tokio::{
     sync::oneshot,
     time::{Instant, sleep, timeout_at},
 };
-use wslib_can::SendRefused;
+use wslib_can::{SendRefused, WriteFailed};
 
 use super::{
     period::Period,
@@ -32,7 +32,7 @@ pub enum SendFailed {
     #[error("send refused")]
     Refused(#[source] SendRefused),
     #[error("send failed")]
-    Io(#[source] io::Error),
+    Write(#[source] WriteFailed),
     /// The adapter's queue had no room within N_As. The frame was not sent.
     #[error("the adapter's queue had no room within N_As")]
     AdapterTimeout,
@@ -169,13 +169,11 @@ mod tests {
             refused.source().unwrap().downcast_ref::<SendRefused>(),
             Some(&SendRefused::QueueFull)
         );
-        let failed = SendFailed::Io(io::ErrorKind::BrokenPipe.into());
+        let failed = SendFailed::Write(WriteFailed::Panicked);
         assert_eq!(failed.to_string(), "send failed");
-        let cause = failed
-            .source()
-            .unwrap()
-            .downcast_ref::<io::Error>()
-            .unwrap();
-        assert_eq!(cause.kind(), io::ErrorKind::BrokenPipe);
+        assert!(matches!(
+            failed.source().unwrap().downcast_ref::<WriteFailed>(),
+            Some(WriteFailed::Panicked)
+        ));
     }
 }

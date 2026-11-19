@@ -1,6 +1,5 @@
 use std::{
     future::Future,
-    io,
     sync::{Arc, Mutex},
     time::SystemTime,
 };
@@ -15,7 +14,7 @@ use wslib_backoff::Backoff;
 use super::{
     BusState, CanError, CanEvent, CanOptions, CanWriter, DeviceInfo, SendRefused,
     clock::{DeviceClock, Received},
-    writer::{Job, Limits},
+    writer::{Job, Limits, WriteFailed},
 };
 use crate::{CanFrame, Direction};
 
@@ -40,7 +39,7 @@ pub trait Device: Sized + Send + 'static {
     /// Cancel-safe. May return no frames.
     fn read(&mut self) -> impl Future<Output = Result<Vec<Received>, CanError>> + Send;
 
-    fn write(&mut self, frame: &CanFrame) -> impl Future<Output = io::Result<()>> + Send;
+    fn write(&mut self, frame: &CanFrame) -> impl Future<Output = Result<(), WriteFailed>> + Send;
 
     /// What the device has learnt of its bus since last asked, oldest first.
     /// A device holding any has `read` return at once.
@@ -292,6 +291,7 @@ mod tests {
 
     use super::*;
     use crate::{Stamp, Unsupported};
+    use std::io;
 
     type Script = Result<Vec<Received>, CanError>;
 
@@ -302,6 +302,7 @@ mod tests {
         written: Mutex<Vec<CanFrame>>,
         written_by_each_read: Mutex<Vec<usize>>,
         writes_allowed: Semaphore,
+        write_fails: Mutex<VecDeque<WriteFailed>>,
         writing: AtomicUsize,
         closes: AtomicUsize,
     }
@@ -357,9 +358,12 @@ mod tests {
             script
         }
 
-        async fn write(&mut self, frame: &CanFrame) -> io::Result<()> {
+        async fn write(&mut self, frame: &CanFrame) -> Result<(), WriteFailed> {
             self.rig.writing.fetch_add(1, Ordering::SeqCst);
             self.rig.writes_allowed.acquire().await.unwrap().forget();
+            if let Some(failed) = self.rig.write_fails.lock().unwrap().pop_front() {
+                return Err(failed);
+            }
             self.rig.written.lock().unwrap().push(frame.clone());
             Ok(())
         }
@@ -378,6 +382,7 @@ mod tests {
             written: Mutex::default(),
             written_by_each_read: Mutex::default(),
             writes_allowed: Semaphore::new(Semaphore::MAX_PERMITS),
+            write_fails: Mutex::default(),
             writing: AtomicUsize::new(0),
             closes: AtomicUsize::new(0),
         };
@@ -635,6 +640,28 @@ mod tests {
         );
         assert!(matches!(next(&mut task).await, CanEvent::Connected(_)));
         assert_eq!(rig.closes.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_write_that_failed_or_panicked_answers_its_send_typed() {
+        let (rig, _script) = rig(vec![]);
+        let mut task = open::<Fake>(rig.clone(), options(None)).await.unwrap();
+        assert!(matches!(next(&mut task).await, CanEvent::Connected(_)));
+        rig.write_fails.lock().unwrap().extend([
+            WriteFailed::Io(io::ErrorKind::BrokenPipe.into()),
+            WriteFailed::Panicked,
+        ]);
+        let writer = task.writer();
+        let failed = writer.send(frame(1)).await.unwrap().unwrap_err();
+        assert_eq!(failed.to_string(), "write failed");
+        let cause = std::error::Error::source(&failed)
+            .and_then(|e| e.downcast_ref::<io::Error>())
+            .unwrap();
+        assert_eq!(cause.kind(), io::ErrorKind::BrokenPipe);
+        let panicked = writer.send(frame(2)).await.unwrap().unwrap_err();
+        assert!(matches!(panicked, WriteFailed::Panicked), "{panicked:?}");
+        assert!(writer.send(frame(3)).await.unwrap().is_ok());
+        assert_eq!(*rig.written.lock().unwrap(), [frame(3)]);
     }
 
     #[tokio::test]

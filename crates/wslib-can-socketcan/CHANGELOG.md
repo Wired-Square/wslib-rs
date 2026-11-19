@@ -6,6 +6,8 @@
   `io::Error`: `Interface` for a name no interface has, with its
   `io::Error`, and `Netlink` with socketcan's error as its source, not its
   text.
+- On wslib-can 0.2: a send the socket doesn't take answers with
+  `WriteFailed::Io` and its `io::Error`.
 
 ## 0.1.1
 

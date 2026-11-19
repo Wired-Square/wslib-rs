@@ -6,7 +6,7 @@ use tokio::{
     task::{JoinError, spawn_blocking},
     time::{Instant, timeout_at},
 };
-use wslib_can::CanError;
+use wslib_can::{CanError, WriteFailed};
 use wslib_serial::{Access, LineSettings, SerialError, SerialOptions, SerialPort};
 
 pub(crate) fn open(path: &str, line: LineSettings) -> Result<SerialPort, CanError> {
@@ -55,16 +55,17 @@ pub(crate) fn error(error: SerialError) -> CanError {
             source,
         },
         SerialError::Closed => CanError::Closed,
-        SerialError::Read(e) | SerialError::Write(e) => CanError::Read(e),
+        SerialError::Read(e) => CanError::Read(e),
         SerialError::Panicked => CanError::Panicked,
         e => CanError::Serial(e),
     }
 }
 
-pub(crate) fn unwritten(error: SerialError) -> io::Error {
+pub(crate) fn unwritten(error: SerialError) -> WriteFailed {
     match error {
-        SerialError::Write(e) => e,
-        e => io::Error::other(self::error(e)),
+        SerialError::Write(e) => WriteFailed::Io(e),
+        SerialError::Panicked => WriteFailed::Panicked,
+        e => WriteFailed::Serial(e),
     }
 }
 
@@ -135,19 +136,19 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_write_that_panicked_is_an_io_error_holding_panicked() {
-        let panicked = unwritten(SerialError::Panicked);
-        assert!(
-            matches!(
-                panicked
-                    .get_ref()
-                    .and_then(|e| e.downcast_ref::<CanError>()),
-                Some(CanError::Panicked)
-            ),
-            "{panicked:?}"
-        );
+    fn a_serial_write_that_failed_or_panicked_is_the_typed_write_failure() {
+        assert!(matches!(
+            unwritten(SerialError::Panicked),
+            WriteFailed::Panicked
+        ));
         let failed = unwritten(SerialError::Write(io::ErrorKind::BrokenPipe.into()));
-        assert_eq!(failed.kind(), io::ErrorKind::BrokenPipe);
-        assert!(failed.get_ref().is_none());
+        assert!(
+            matches!(&failed, WriteFailed::Io(e) if e.kind() == io::ErrorKind::BrokenPipe),
+            "{failed:?}"
+        );
+        assert!(matches!(
+            unwritten(SerialError::Closed),
+            WriteFailed::Serial(SerialError::Closed)
+        ));
     }
 }

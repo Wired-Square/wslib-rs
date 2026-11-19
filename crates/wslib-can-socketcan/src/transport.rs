@@ -20,7 +20,8 @@ use socketcan::{
 };
 use tokio::io::{Interest, unix::AsyncFd};
 use wslib_can::{
-    CanError, CanFrame, CanOptions, CanTask, Device, DeviceInfo, Direction, Limits, Received, Stamp,
+    CanError, CanFrame, CanOptions, CanTask, Device, DeviceInfo, Direction, Limits, Received,
+    Stamp, WriteFailed,
 };
 
 use crate::{FD_FRAME_BYTES, parse_frame};
@@ -196,11 +197,12 @@ impl Device for SocketCan {
         Ok(received)
     }
 
-    async fn write(&mut self, frame: &CanFrame) -> io::Result<()> {
-        let frame = outgoing(frame).ok_or(io::ErrorKind::InvalidInput)?;
+    async fn write(&mut self, frame: &CanFrame) -> Result<(), WriteFailed> {
+        let frame = outgoing(frame).ok_or(WriteFailed::Io(io::ErrorKind::InvalidInput.into()))?;
         self.socket
             .async_io(Interest::WRITABLE, |socket| socket.write_frame(&frame))
             .await
+            .map_err(WriteFailed::Io)
     }
 
     async fn close(self) {

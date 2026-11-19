@@ -138,7 +138,7 @@ impl Shared {
         match timeout_at(deadline, answer).await {
             Err(_) => Err(SendFailed::Unconfirmed),
             Ok(Err(refused)) => Err(SendFailed::Refused(refused)),
-            Ok(Ok(Err(error))) => Err(SendFailed::Io(error)),
+            Ok(Ok(Err(error))) => Err(SendFailed::Write(error)),
             Ok(Ok(Ok(()))) => {
                 self.stats.frames_out.add();
                 Ok(())

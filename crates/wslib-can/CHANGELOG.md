@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.4
+## 0.2.0
 
 - `CanError::Open` and `Read` name only their own layer. The `io::Error`
   comes only through `source()`, which `Read` now returns too.
@@ -10,6 +10,14 @@
   iOS, which has no wslib-serial, the feature adds nothing.
 - `CanError::Panicked`: a transport's blocking call panicked. The task
   reports it as a disconnect and reopens, as for any loss.
+- `Device::write` returns `Result<(), WriteFailed>`, and `CanWriter`'s
+  `send`, `submit` and `send_when_ready` answer with a `WriteFailed`, in
+  place of an `io::Error`. `Io` holds the device's `io::Error`, `Panicked` a
+  blocking write that panicked, and, with `serial`, `Serial` a `SerialError`.
+- `CanError::Write` carries the `WriteFailed` of a write outside a send,
+  such as a probe's or a handshake's.
+- `testing`: `LoopbackPort::fail_next_write`, the port's next write failing
+  with a given `WriteFailed`.
 
 ## 0.1.3
 

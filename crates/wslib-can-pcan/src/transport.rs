@@ -481,7 +481,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use tokio::sync::mpsc;
-    use wslib_can::{CanEvent, CanOptions, CanTask, Device, Limits};
+    use wslib_can::{CanEvent, CanOptions, CanTask, Device, Limits, WriteFailed};
 
     use super::*;
     use crate::pcan_usb::{COMMAND_BYTES, encode_transmit, number};
@@ -985,7 +985,7 @@ mod tests {
             ))
         }
 
-        async fn write(&mut self, _: &CanFrame) -> io::Result<()> {
+        async fn write(&mut self, _: &CanFrame) -> Result<(), WriteFailed> {
             Ok(())
         }
 

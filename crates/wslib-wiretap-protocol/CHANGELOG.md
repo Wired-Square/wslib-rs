@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0
+
+- On wslib-can 0.2, whose `CanFrame` the import and ingest records convert
+  to and from.
+
 ## 0.2.3
 
 - `InventoryRow::bus`, the bus a row was grouped on, set by `on_bus` from a

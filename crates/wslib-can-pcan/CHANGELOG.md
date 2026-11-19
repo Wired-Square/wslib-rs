@@ -19,6 +19,8 @@
   reopens, where before the panic went unreported.
 - A `PCANBasic.dll` that doesn't load keeps libloading's error as the source
   of the open's `io::Error`.
+- On wslib-can 0.2: a send the adapter doesn't take answers with
+  `WriteFailed::Io` and its `io::Error`.
 
 ## 0.1.0
 

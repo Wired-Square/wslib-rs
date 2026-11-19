@@ -11,6 +11,10 @@
   `open` and `probe` return it, and a reopen's is the task's
   `Disconnected`, after which the task tries again. An open the runtime
   cancels before it runs is `CanError::Open` with `Interrupted`.
+- On wslib-can 0.2: a send answers with a `WriteFailed`: `Io` for the
+  socket's or port's `io::Error`, `Panicked` for a serial write that
+  panicked, and `Serial` for any other `SerialError`. A handshake's write
+  that fails now arrives as `CanError::Write`, not `CanError::Read`.
 
 ## 0.1.1
 

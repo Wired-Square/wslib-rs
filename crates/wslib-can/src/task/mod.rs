@@ -10,7 +10,7 @@ mod writer;
 
 pub use clock::{Received, Stamp};
 pub use run::{CanTask, Device, open};
-pub use writer::{CanWriter, Limits, SendRefused, Unsupported};
+pub use writer::{CanWriter, Limits, SendRefused, Unsupported, WriteFailed};
 
 use crate::{CanFrame, Direction, ErrorState};
 
@@ -191,6 +191,9 @@ pub enum CanError {
     Unresponsive,
     #[error("read failed")]
     Read(#[source] io::Error),
+    /// A write outside a send, such as a probe's or a handshake's, failed.
+    #[error(transparent)]
+    Write(WriteFailed),
     /// A blocking call on the device panicked.
     #[error("a blocking call on the device panicked")]
     Panicked,
@@ -248,6 +251,9 @@ mod tests {
         };
         assert_eq!(request.to_string(), "BT_CONST failed");
         assert_eq!(cause(&request), io::ErrorKind::TimedOut);
+        let write = CanError::Write(WriteFailed::Io(io::ErrorKind::BrokenPipe.into()));
+        assert_eq!(write.to_string(), "write failed");
+        assert_eq!(cause(&write), io::ErrorKind::BrokenPipe);
     }
 
     #[test]

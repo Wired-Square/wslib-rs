@@ -17,7 +17,7 @@ use tokio::{
 };
 use wslib_can::{
     BusState, CanError, CanFrame, CanOptions, Device, DeviceInfo, Direction, ErrorState, Limits,
-    Received, Stamp,
+    Received, Stamp, WriteFailed,
 };
 
 use super::{BusWatch, PcanDevice, PcanOptions, check, not_opened, timing};
@@ -456,17 +456,17 @@ impl<A: Api> Device for Basic<A> {
         self.drain()
     }
 
-    async fn write(&mut self, frame: &CanFrame) -> io::Result<()> {
+    async fn write(&mut self, frame: &CanFrame) -> Result<(), WriteFailed> {
         let msg = outgoing(frame);
         let deadline = Instant::now() + WRITE_TIMEOUT;
         let Started { api, handle, .. } = &self.started;
         loop {
             let status = api.write(*handle, &msg);
             if status & (status::XMTFULL | status::QXMTFULL) == 0 {
-                return checked(status);
+                return checked(status).map_err(WriteFailed::Io);
             }
             if Instant::now() >= deadline {
-                return Err(io::ErrorKind::TimedOut.into());
+                return Err(WriteFailed::Io(io::ErrorKind::TimedOut.into()));
             }
             sleep(WRITE_RETRY).await;
         }

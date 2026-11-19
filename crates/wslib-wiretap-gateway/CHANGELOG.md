@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0
+
+- On wslib-wiretap-protocol 0.3, whose `Protocol` it re-exports, and
+  wslib-can 0.2.
+
 ## 0.2.3
 
 - `QueryStats::bus` echoes the bus the gateway filtered on, on every `/query/*`

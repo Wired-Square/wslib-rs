@@ -9,7 +9,8 @@ use tokio::{
     time::{Instant, sleep, sleep_until, timeout_at},
 };
 use wslib_can::{
-    CanError, CanFrame, CanOptions, CanTask, Device, DeviceInfo, Direction, Limits, Received, Stamp,
+    CanError, CanFrame, CanOptions, CanTask, Device, DeviceInfo, Direction, Limits, Received,
+    Stamp, WriteFailed,
 };
 #[cfg(feature = "serial")]
 use wslib_serial::{LineSettings, SerialPort};
@@ -139,7 +140,7 @@ impl Device for Gvret {
         }
     }
 
-    async fn write(&mut self, frame: &CanFrame) -> io::Result<()> {
+    async fn write(&mut self, frame: &CanFrame) -> Result<(), WriteFailed> {
         encode_transmit_into(
             &mut self.outbound,
             frame.arb_id,
@@ -175,12 +176,12 @@ impl Gvret {
     /// A close or a read error is the caller's error; silence is not.
     async fn handshake(&mut self, probe_timeout: Duration) -> Result<(), CanError> {
         self.outbound.extend_from_slice(&SYNC);
-        self.flush().await.map_err(CanError::Read)?;
+        self.flush().await.map_err(CanError::Write)?;
         sleep(SETTLE).await;
         self.outbound.extend_from_slice(&REQ_DEV_INFO);
         self.ask_keepalive()?;
         self.outbound.extend_from_slice(&REQ_NUM_BUSES);
-        self.flush().await.map_err(CanError::Read)?;
+        self.flush().await.map_err(CanError::Write)?;
 
         let deadline = Instant::now() + probe_timeout;
         while self.info.buses.is_none() {
@@ -241,7 +242,7 @@ impl Gvret {
         Ok(())
     }
 
-    async fn flush(&mut self) -> io::Result<()> {
+    async fn flush(&mut self) -> Result<(), WriteFailed> {
         self.wire.flush(&mut self.outbound).await
     }
 }
@@ -306,12 +307,12 @@ impl Wire {
     }
 
     /// A failed write drops what was pending: the next read decides the link.
-    async fn flush(&mut self, outbound: &mut Vec<u8>) -> io::Result<()> {
+    async fn flush(&mut self, outbound: &mut Vec<u8>) -> Result<(), WriteFailed> {
         match self {
             Self::Tcp(stream) => {
                 while !outbound.is_empty() {
-                    stream.writable().await?;
-                    push(stream, outbound)?;
+                    stream.writable().await.map_err(WriteFailed::Io)?;
+                    push(stream, outbound).map_err(WriteFailed::Io)?;
                 }
                 Ok(())
             }

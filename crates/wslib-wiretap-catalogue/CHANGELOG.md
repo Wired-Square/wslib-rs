@@ -4,7 +4,7 @@
 
 - On wslib-serial 0.2, whose `DelimiterOptions` it re-exports, and
   wslib-modbus 0.3, whose `Finding`, `RegisterType`, `UnknownRegisterType`
-  and `WriteBank` it re-exports.
+  and `WriteBank` it re-exports, and wslib-wiretap-protocol 0.3.
 
 ## 0.3.1
 

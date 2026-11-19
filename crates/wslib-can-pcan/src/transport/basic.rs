@@ -404,7 +404,7 @@ async fn woken<A: Api>(waiter: &mut Option<JoinHandle<()>>, api: &Arc<A>) -> Res
         if e.is_panic() {
             CanError::Panicked
         } else {
-            CanError::Read(io::ErrorKind::Interrupted.into())
+            CanError::Cancelled
         }
     })
 }
@@ -1028,6 +1028,24 @@ mod tests {
             "{lost:?}"
         );
         assert!(matches!(next(&mut task).await, CanEvent::Connected(_)));
+    }
+
+    #[test]
+    fn a_wait_the_runtime_cancelled_is_cancelled() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        let woken = runtime.block_on(async {
+            let (release, held) = std::sync::mpsc::channel::<()>();
+            let busy = spawn_blocking(move || held.recv());
+            let queued = spawn_blocking(|| ());
+            queued.abort();
+            release.send(()).unwrap();
+            busy.await.unwrap().unwrap();
+            woken(&mut Some(queued), &Fake::with_one_usb_channel()).await
+        });
+        assert!(matches!(woken, Err(CanError::Cancelled)), "{woken:?}");
     }
 
     #[tokio::test]

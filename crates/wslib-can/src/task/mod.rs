@@ -197,6 +197,9 @@ pub enum CanError {
     /// A blocking call on the device panicked.
     #[error("a blocking call on the device panicked")]
     Panicked,
+    /// The runtime cancelled a blocking call on the device before it ran.
+    #[error("a blocking call on the device was cancelled")]
+    Cancelled,
     /// A request the device didn't take, by its protocol's name for it.
     #[error("{request} failed")]
     Request {

@@ -638,9 +638,7 @@ impl Network {
 
     async fn send(&self, server: IpAddr, query: &Message) -> Result<Message, LookupError> {
         let server = SocketAddr::new(server, self.port);
-        let bytes = query
-            .to_vec()
-            .map_err(|error| LookupError::failed("the query does not encode", error))?;
+        let bytes = encoded(query)?;
         let response = within(self.timeout, over_udp(server, &bytes, query)).await?;
         if !response.metadata.truncation {
             return Ok(response);
@@ -698,15 +696,25 @@ async fn over_tcp(
     let length = stream.read_u16().await.map_err(io(server))?;
     let mut buffer = vec![0; length.into()];
     stream.read_exact(&mut buffer).await.map_err(io(server))?;
-    let response = Message::from_vec(&buffer).map_err(|error| {
-        LookupError::failed(format!("{server}'s answer over TCP does not decode"), error)
-    })?;
+    let response = decoded_over_tcp(server, &buffer)?;
     if !answers(query, &response) {
         return Err(LookupError::Other(format!(
             "{server}: the answer over TCP is for another query"
         )));
     }
     Ok(response)
+}
+
+fn encoded(query: &Message) -> Result<Vec<u8>, LookupError> {
+    query
+        .to_vec()
+        .map_err(|error| LookupError::failed("the query does not encode", error))
+}
+
+fn decoded_over_tcp(server: SocketAddr, buffer: &[u8]) -> Result<Message, LookupError> {
+    Message::from_vec(buffer).map_err(|error| {
+        LookupError::failed(format!("{server}'s answer over TCP does not decode"), error)
+    })
 }
 
 /// A FORMERR may come back without the question (RFC 6891 §7).
@@ -1325,6 +1333,32 @@ mod tests {
             source.downcast_ref::<std::io::Error>().unwrap().kind(),
             std::io::ErrorKind::ConnectionRefused
         );
+    }
+
+    #[test]
+    fn an_answer_over_tcp_that_does_not_decode_keeps_hickorys_error() {
+        let server: SocketAddr = "192.0.2.1:53".parse().unwrap();
+        let error = decoded_over_tcp(server, &[0xff]).unwrap_err();
+        assert!(matches!(error, LookupError::Failed { .. }), "{error:?}");
+        assert_eq!(
+            error.to_string(),
+            "192.0.2.1:53's answer over TCP does not decode"
+        );
+        let source = std::error::Error::source(&error).unwrap();
+        assert!(source.is::<hickory_resolver::proto::serialize::binary::DecodeError>());
+    }
+
+    #[test]
+    fn a_query_that_does_not_encode_keeps_hickorys_error() {
+        const LONGEST_STRING: usize = 255;
+        let mut query = message(&example_com(RecordType::TXT), false);
+        let text = TXT::new(vec!["a".repeat(LONGEST_STRING + 1)]);
+        query.add_answer(Record::from_rdata(name("example.com"), 0, RData::TXT(text)));
+        let error = encoded(&query).unwrap_err();
+        assert!(matches!(error, LookupError::Failed { .. }), "{error:?}");
+        assert_eq!(error.to_string(), "the query does not encode");
+        let source = std::error::Error::source(&error).unwrap();
+        assert!(source.is::<hickory_resolver::proto::ProtoError>());
     }
 
     #[test]

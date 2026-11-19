@@ -145,7 +145,7 @@ async fn exchange(socket: &Path, request: &str) -> Result<Vec<u8>, Error> {
         .await
         .map_err(|e| match e.kind() {
             // A socket left behind by a tailscaled that exited refuses.
-            io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused => Error::Absent,
+            io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused => Error::Absent(e),
             _ => Error::Io(e),
         })?;
     stream.write_all(request.as_bytes()).await?;
@@ -159,7 +159,7 @@ async fn exchange(socket: &Path, request: &str) -> Result<Vec<u8>, Error> {
 
 #[cfg(not(unix))]
 async fn exchange(_: &Path, _: &str) -> Result<Vec<u8>, Error> {
-    Err(Error::Absent)
+    Err(Error::Absent(io::ErrorKind::Unsupported.into()))
 }
 
 fn answer(raw: &[u8]) -> Option<(u16, &[u8])> {
@@ -177,8 +177,9 @@ fn answer(raw: &[u8]) -> Option<(u16, &[u8])> {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Nothing listens on the socket: tailscaled isn't running.
-    Absent,
+    /// Nothing listens on the socket: tailscaled isn't running. The connect's
+    /// error is the source; off Unix it is `Unsupported`.
+    Absent(io::Error),
     /// tailscaled took longer than the timeout.
     Silent,
     /// tailscaled answered with a status outside 2xx; `said` is the first line of its body.
@@ -194,7 +195,7 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Absent => f.write_str("tailscaled is not running"),
+            Self::Absent(_) => f.write_str("tailscaled is not running"),
             Self::Silent => f.write_str("tailscaled did not answer in time"),
             Self::Refused { status, said } => write!(f, "tailscaled refused ({status}): {said}"),
             Self::Malformed(why) => write!(f, "tailscaled's answer could not be read: {why}"),
@@ -207,9 +208,9 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Io(e) => Some(e),
+            Self::Absent(e) | Self::Io(e) => Some(e),
             Self::Json(e) => Some(e),
-            Self::Absent | Self::Silent | Self::Refused { .. } | Self::Malformed(_) => None,
+            Self::Silent | Self::Refused { .. } | Self::Malformed(_) => None,
         }
     }
 }

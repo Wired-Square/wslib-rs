@@ -8,9 +8,9 @@
   its `source()`, in place of an `io::Error` holding their text.
 - `serve_http`, `serve_https`, `serve_redirect`, `serve_local` and
   `Https::serve` return `ServeError`: `Io`, with the `io::Error` as its
-  `source()`, or `Panicked`, when a generation of TLS connections
-  panicked, which was an `io::Error` holding tokio's `JoinError`. A
-  generation the runtime cancelled is `Io` with `Interrupted`.
+  `source()`, or `Panicked` or `Cancelled`, when a generation of TLS
+  connections panicked or the runtime cancelled it, which was an
+  `io::Error` holding tokio's `JoinError`.
 - Turns on rustls's `std`, without which `rustls::Error` is no `Error`.
 
 ## 0.1.7

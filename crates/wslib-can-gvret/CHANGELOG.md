@@ -11,7 +11,8 @@
 - A serial open that panics on the blocking pool is `CanError::Panicked`:
   `open` and `probe` return it, and a reopen's is the task's
   `Disconnected`, after which the task tries again. An open the runtime
-  cancels before it runs is `CanError::Open` with `Interrupted`.
+  cancels before it runs is `CanError::Cancelled`, and a port's
+  `SerialError::Cancelled` is that or `WriteFailed::Cancelled`.
 - A send answers with a `WriteFailed`: `Io` for the socket's or port's
   `io::Error`, `Panicked` for a serial write that panicked, and `Serial`
   for any other `SerialError`. A handshake's write that fails is

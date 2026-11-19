@@ -237,7 +237,7 @@ fn written_by(joined: Result<io::Result<()>, JoinError>) -> Result<(), WriteFail
     match joined {
         Ok(written) => written.map_err(WriteFailed::Io),
         Err(e) if e.is_panic() => Err(WriteFailed::Panicked),
-        Err(_) => Err(WriteFailed::Io(io::ErrorKind::Interrupted.into())),
+        Err(_) => Err(WriteFailed::Cancelled),
     }
 }
 
@@ -482,13 +482,10 @@ mod tests {
     }
 
     #[test]
-    fn a_write_that_panicked_is_panicked_and_one_cancelled_is_interrupted() {
+    fn a_write_that_panicked_is_panicked_and_one_cancelled_is_cancelled() {
         let error = written_by(panicked()).unwrap_err();
         assert!(matches!(error, WriteFailed::Panicked), "{error:?}");
         let error = written_by(cancelled(Ok(()))).unwrap_err();
-        assert!(
-            matches!(&error, WriteFailed::Io(e) if e.kind() == io::ErrorKind::Interrupted),
-            "{error:?}"
-        );
+        assert!(matches!(error, WriteFailed::Cancelled), "{error:?}");
     }
 }

@@ -110,5 +110,7 @@ mod tests {
         assert!(probe(&[Ok(false), Ok(false), Ok(false)]).unseen());
         let undecided = probe(&[Ok(false), Err(LookupError::Timeout), Ok(false)]);
         assert!(!undecided.seen() && !undecided.unseen());
+        let one_yes = probe(&[Ok(false), Ok(true), Ok(false)]);
+        assert!(one_yes.seen() && !one_yes.unseen());
     }
 }

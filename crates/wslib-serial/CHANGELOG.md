@@ -14,8 +14,9 @@
   the task's `Disconnected`, and the task reopens as after any loss. A
   write's or a control line's is that call's answer. A write that waits for
   a read that panicked is `Write` with `NotConnected`, the next read
-  reporting the read's `Panicked`. A call the runtime cancels before it runs
-  is `Read` or `Write` with `Interrupted`.
+  reporting the read's `Panicked`.
+- `SerialError::Cancelled`: the runtime cancelled a blocking call on the
+  port before it ran.
 
 ## 0.1.3
 

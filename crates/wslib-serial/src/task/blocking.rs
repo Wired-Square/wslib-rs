@@ -174,7 +174,7 @@ impl SerialPort {
         };
         let joined = handle.await;
         self.state = State::Gone;
-        let (port, written) = finished(joined, SerialError::Write)?;
+        let (port, written) = finished(joined)?;
         self.state = State::Idle(port);
         written.map_err(SerialError::Write)
     }
@@ -200,21 +200,18 @@ impl SerialPort {
         };
         let joined = handle.await;
         self.state = State::Gone;
-        let (port, read) = finished(joined, SerialError::Read)?;
+        let (port, read) = finished(joined)?;
         self.state = State::Idle(port);
         Ok(read)
     }
 }
 
-fn finished<T>(
-    joined: Result<T, JoinError>,
-    cancelled: fn(io::Error) -> SerialError,
-) -> Result<T, SerialError> {
+fn finished<T>(joined: Result<T, JoinError>) -> Result<T, SerialError> {
     joined.map_err(|e| {
         if e.is_panic() {
             SerialError::Panicked
         } else {
-            cancelled(io::ErrorKind::Interrupted.into())
+            SerialError::Cancelled
         }
     })
 }
@@ -272,20 +269,15 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_blocking_call_that_panicked_is_panicked_and_one_cancelled_is_interrupted() {
+    fn a_blocking_call_that_panicked_is_panicked_and_one_cancelled_is_cancelled() {
         assert!(matches!(
-            finished(panicked::<()>(), SerialError::Read),
+            finished(panicked::<()>()),
             Err(SerialError::Panicked)
         ));
-        let cancelled_read = finished(cancelled(), SerialError::Read);
+        let cancelled = finished(cancelled());
         assert!(
-            matches!(&cancelled_read, Err(SerialError::Read(e)) if e.kind() == io::ErrorKind::Interrupted),
-            "{cancelled_read:?}"
-        );
-        let cancelled_write = finished(cancelled(), SerialError::Write);
-        assert!(
-            matches!(&cancelled_write, Err(SerialError::Write(e)) if e.kind() == io::ErrorKind::Interrupted),
-            "{cancelled_write:?}"
+            matches!(cancelled, Err(SerialError::Cancelled)),
+            "{cancelled:?}"
         );
     }
 
@@ -293,7 +285,7 @@ pub(super) mod tests {
     fn a_blocking_call_that_returned_is_its_result() {
         let runtime = Builder::new_current_thread().build().unwrap();
         let joined = runtime.block_on(async { spawn_blocking(|| 1).await });
-        assert_eq!(finished(joined, SerialError::Read).unwrap(), 1);
+        assert_eq!(finished(joined).unwrap(), 1);
     }
 
     struct Panicking;

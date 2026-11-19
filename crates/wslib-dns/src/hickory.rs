@@ -116,7 +116,7 @@ impl HickoryResolver {
             .inner
             .lookup(fully_qualified(name)?, record_type)
             .await
-            .map_err(classify)?;
+            .map_err(|error| classify(error, name, record_type))?;
         answer(&lookup, extract, self.validating)
     }
 }
@@ -234,7 +234,7 @@ fn canonical_name(lookup: &HickoryLookup) -> Option<String> {
     aliased.then(|| name(&current))
 }
 
-fn classify(error: NetError) -> LookupError {
+fn classify(error: NetError, name: &str, record_type: RecordType) -> LookupError {
     match error {
         NetError::Dns(DnsError::NoRecordsFound(NoRecords { response_code, .. })) => {
             match response_code {
@@ -254,7 +254,7 @@ fn classify(error: NetError) -> LookupError {
             _ => LookupError::NoData,
         },
         NetError::Timeout => LookupError::Timeout,
-        other => LookupError::failed("the query failed", other),
+        other => LookupError::failed(format!("the {record_type} query for {name} failed"), other),
     }
 }
 
@@ -402,6 +402,10 @@ mod tests {
     use super::*;
     use hickory_resolver::proto::op::Query;
 
+    fn classified(error: NetError) -> LookupError {
+        classify(error, "example.com", RecordType::TXT)
+    }
+
     fn no_records(code: ResponseCode) -> NetError {
         NoRecords::new(Query::default(), code).into()
     }
@@ -442,15 +446,15 @@ mod tests {
     #[test]
     fn negative_answers_keep_nxdomain_and_nodata_apart() {
         assert!(matches!(
-            classify(no_records(ResponseCode::NXDomain)),
+            classified(no_records(ResponseCode::NXDomain)),
             LookupError::NxDomain
         ));
         assert!(matches!(
-            classify(no_records(ResponseCode::NoError)),
+            classified(no_records(ResponseCode::NoError)),
             LookupError::NoData
         ));
         assert!(matches!(
-            classify(no_records(ResponseCode::ServFail)),
+            classified(no_records(ResponseCode::ServFail)),
             LookupError::ServFail
         ));
     }
@@ -459,28 +463,31 @@ mod tests {
     fn failure_codes_map_one_to_one() {
         let code = |c| NetError::Dns(DnsError::ResponseCode(c));
         assert!(matches!(
-            classify(code(ResponseCode::ServFail)),
+            classified(code(ResponseCode::ServFail)),
             LookupError::ServFail
         ));
         assert!(matches!(
-            classify(code(ResponseCode::Refused)),
+            classified(code(ResponseCode::Refused)),
             LookupError::Refused
         ));
-        assert!(matches!(classify(NetError::Timeout), LookupError::Timeout));
         assert!(matches!(
-            classify(code(ResponseCode::FormErr)),
+            classified(NetError::Timeout),
+            LookupError::Timeout
+        ));
+        assert!(matches!(
+            classified(code(ResponseCode::FormErr)),
             LookupError::Other(_)
         ));
         assert!(matches!(
-            classify(NetError::Dns(DnsError::DnssecBogus)),
+            classified(NetError::Dns(DnsError::DnssecBogus)),
             LookupError::Bogus
         ));
     }
 
     #[test]
     fn an_unclassified_failure_keeps_hickorys_error_as_its_source() {
-        let error = classify(NetError::NoConnections);
-        assert_eq!(error.to_string(), "the query failed");
+        let error = classified(NetError::NoConnections);
+        assert_eq!(error.to_string(), "the TXT query for example.com failed");
         let source = std::error::Error::source(&error).unwrap();
         assert!(matches!(
             source.downcast_ref::<NetError>(),

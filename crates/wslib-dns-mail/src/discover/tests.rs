@@ -388,11 +388,14 @@ fn dnsbl_tells_listed_clean_blocked_and_failed_apart() {
         ));
         let blocked = dnsbl(&dns, ip("192.0.2.11"), "bl.example.org").await;
         assert!(matches!(blocked.status, DnsblStatus::QueryBlocked));
+        assert!(!blocked.is_listed());
         assert_eq!(blocked.codes, [ip("127.255.255.254")]);
+        let failed = dnsbl(&dns, ip("192.0.2.12"), "bl.example.org").await;
         assert!(matches!(
-            dnsbl(&dns, ip("192.0.2.12"), "bl.example.org").await.status,
+            failed.status,
             DnsblStatus::Failed(LookupError::ServFail)
         ));
+        assert!(!failed.is_listed());
         assert!(
             dnsbl(&dns, ip("2001:db8::1"), "bl.example.org")
                 .await

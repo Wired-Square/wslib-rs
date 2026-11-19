@@ -104,7 +104,7 @@ pub(crate) async fn serve_tls(
     port.0.send_replace(listener.local_addr().port());
     wslib_http_server::serve_https(listener, router, tls, stop.cancelled_owned())
         .await
-        .map_err(|e| ServeError::Serving(foreign(&chain(&e))))
+        .map_err(serving_failed)
 }
 
 /// `address` is `None` when the redirect is off: the default, and what
@@ -122,7 +122,7 @@ async fn serve_redirect(
         .map_err(|e| bind_failed(address, &e))?;
     wslib_http_server::serve_redirect(listener, https_port, stop.cancelled_owned())
         .await
-        .map_err(|e| ServeError::Serving(foreign(&chain(&e))))
+        .map_err(serving_failed)
 }
 
 /// A port an earlier release's Settings moved the listener to, if not the
@@ -150,6 +150,10 @@ fn bind_failed(address: SocketAddr, e: &std::io::Error) -> ServeError {
     }
 }
 
+fn serving_failed(error: wslib_http_server::ServeError) -> ServeError {
+    ServeError::Serving(foreign(&chain(&error)))
+}
+
 fn chain(error: &(dyn std::error::Error + 'static)) -> String {
     std::iter::successors(Some(error), |&e| e.source())
         .map(ToString::to_string)
@@ -170,7 +174,10 @@ mod tests {
     fn a_listener_failure_keeps_its_cause_in_the_journal_copy() {
         let failed =
             wslib_http_server::ServeError::Io(std::io::Error::other("the listener closed"));
-        assert_eq!(chain(&failed), "serving failed: the listener closed");
+        let ServeError::Serving(text) = serving_failed(failed) else {
+            panic!("a serving failure");
+        };
+        assert_eq!(text, "serving failed: the listener closed");
     }
 
     /// Its control socket's parent is a file (on Windows, not a pipe name).

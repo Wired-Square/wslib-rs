@@ -185,6 +185,21 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "in-process")]
+    #[test]
+    fn a_thread_that_could_not_start_keeps_the_io_error_as_the_source() {
+        let error = Error::Thread(std::io::Error::from(std::io::ErrorKind::OutOfMemory));
+        assert_eq!(
+            error.to_string(),
+            "the mDNS responder's event thread could not start"
+        );
+        let source = std::error::Error::source(&error).unwrap();
+        assert_eq!(
+            source.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::OutOfMemory
+        );
+    }
+
     #[cfg(feature = "avahi")]
     #[test]
     fn a_bus_failure_is_the_source_not_the_message() {

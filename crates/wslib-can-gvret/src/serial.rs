@@ -26,10 +26,7 @@ pub(crate) async fn open_before(
 ) -> Result<SerialPort, CanError> {
     let owned = path.to_owned();
     match timeout_at(deadline, spawn_blocking(move || open(&owned, line))).await {
-        Ok(opened) => finished(opened, |source| CanError::Open {
-            device: path.to_owned(),
-            source,
-        })?,
+        Ok(opened) => finished(opened)?,
         Err(_) => Err(CanError::Open {
             device: path.to_owned(),
             source: io::ErrorKind::TimedOut.into(),
@@ -57,6 +54,7 @@ pub(crate) fn error(error: SerialError) -> CanError {
         SerialError::Closed => CanError::Closed,
         SerialError::Read(e) => CanError::Read(e),
         SerialError::Panicked => CanError::Panicked,
+        SerialError::Cancelled => CanError::Cancelled,
         e => CanError::Serial(e),
     }
 }
@@ -65,19 +63,17 @@ pub(crate) fn unwritten(error: SerialError) -> WriteFailed {
     match error {
         SerialError::Write(e) => WriteFailed::Io(e),
         SerialError::Panicked => WriteFailed::Panicked,
+        SerialError::Cancelled => WriteFailed::Cancelled,
         e => WriteFailed::Serial(e),
     }
 }
 
-pub(crate) fn finished<T>(
-    joined: Result<T, JoinError>,
-    cancelled: impl FnOnce(io::Error) -> CanError,
-) -> Result<T, CanError> {
+pub(crate) fn finished<T>(joined: Result<T, JoinError>) -> Result<T, CanError> {
     joined.map_err(|e| {
         if e.is_panic() {
             CanError::Panicked
         } else {
-            cancelled(io::ErrorKind::Interrupted.into())
+            CanError::Cancelled
         }
     })
 }
@@ -115,22 +111,15 @@ pub(crate) mod tests {
         })
     }
 
-    fn not_opened(source: io::Error) -> CanError {
-        CanError::Open {
-            device: "/dev/ttyACM0".into(),
-            source,
-        }
-    }
-
     #[test]
-    fn an_open_that_panicked_is_panicked_and_one_cancelled_is_an_interrupted_open() {
+    fn an_open_that_panicked_is_panicked_and_one_cancelled_is_cancelled() {
         assert!(matches!(
-            finished(panicked::<()>(), not_opened),
+            finished(panicked::<()>()),
             Err(CanError::Panicked)
         ));
-        let cancelled = finished(cancelled(()), not_opened);
+        let cancelled = finished(cancelled(()));
         assert!(
-            matches!(&cancelled, Err(CanError::Open { source, .. }) if source.kind() == io::ErrorKind::Interrupted),
+            matches!(cancelled, Err(CanError::Cancelled)),
             "{cancelled:?}"
         );
     }
@@ -152,6 +141,7 @@ pub(crate) mod tests {
             "{read:?}"
         );
         assert!(matches!(error(SerialError::Panicked), CanError::Panicked));
+        assert!(matches!(error(SerialError::Cancelled), CanError::Cancelled));
         let written = error(SerialError::Write(io::ErrorKind::BrokenPipe.into()));
         assert!(
             matches!(written, CanError::Serial(SerialError::Write(_))),
@@ -168,6 +158,10 @@ pub(crate) mod tests {
         assert!(matches!(
             unwritten(SerialError::Panicked),
             WriteFailed::Panicked
+        ));
+        assert!(matches!(
+            unwritten(SerialError::Cancelled),
+            WriteFailed::Cancelled
         ));
         let failed = unwritten(SerialError::Write(io::ErrorKind::BrokenPipe.into()));
         assert!(

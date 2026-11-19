@@ -2,6 +2,8 @@
 
 ## 0.2.0
 
+- `Error::Absent` holds the connect's `io::Error`, `NotFound` or
+  `ConnectionRefused`, as its `source()`; off Unix it is `Unsupported`.
 - `Error::Json`: the answer's body was not the JSON expected, with
   serde_json's error as its `source()`. It was `Malformed` with the error's
   text; `Malformed` keeps the crate's own sentences.

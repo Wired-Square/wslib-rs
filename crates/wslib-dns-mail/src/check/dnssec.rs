@@ -88,7 +88,6 @@ pub(crate) async fn dnssec_findings(
     (status, out)
 }
 
-/// A failed lookup at or under `zone`, whose error `wanted` accepts.
 fn failed_in(finding: &Finding, zone: &str, wanted: impl Fn(&LookupError) -> bool) -> bool {
     matches!(
         &finding.detail,

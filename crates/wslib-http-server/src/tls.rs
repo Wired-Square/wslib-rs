@@ -171,7 +171,9 @@ impl fmt::Display for ServerConfigError {
             Self::Chain(_) => f.write_str("the certificate chain is not valid PEM"),
             Self::NoCertificate => f.write_str("the certificate chain holds no certificate"),
             Self::Key(_) => f.write_str("the private key is not valid PEM"),
-            Self::Refused(_) => f.write_str("rustls refused the certificate chain and key"),
+            Self::Refused(_) => f.write_str(
+                "rustls refused the certificate chain and key, or the provider's protocol versions",
+            ),
         }
     }
 }

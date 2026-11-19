@@ -118,6 +118,9 @@ pub enum SerialError {
     /// A blocking call on the port panicked.
     #[error("a blocking call on the port panicked")]
     Panicked,
+    /// The runtime cancelled a blocking call on the port before it ran.
+    #[error("a blocking call on the port was cancelled")]
+    Cancelled,
 }
 
 /// Owns the task: dropping it stops the task and closes the port.

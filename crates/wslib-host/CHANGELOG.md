@@ -4,7 +4,8 @@
 
 - An account name that isn't UTF-8 (`account_name`) or UTF-16
   (`Sid::account`) is an `InvalidData` `io::Error` that says so, with the
-  decoder's error as its `source()`.
+  decoder's error as its `source()`. The `io::Error`'s `get_ref` now holds
+  a private type; the decoder's error is reached through `source()`.
 
 ## 0.1.4
 

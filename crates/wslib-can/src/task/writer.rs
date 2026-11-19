@@ -113,6 +113,9 @@ pub enum WriteFailed {
     /// The blocking call that wrote the frame panicked.
     #[error("the blocking write panicked")]
     Panicked,
+    /// The runtime cancelled the blocking write before it ran.
+    #[error("the blocking write was cancelled")]
+    Cancelled,
     #[cfg(all(feature = "serial", not(target_os = "ios")))]
     #[error("the serial port refused the write")]
     Serial(#[source] wslib_serial::SerialError),

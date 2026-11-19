@@ -16,7 +16,8 @@
   refused write is that `io::Error`, the adapter gone being
   `ConnectionAborted`. A wait for the receive event that panics is
   `CanError::Panicked`, the task's `Disconnected`, after which the task
-  reopens, where before the panic went unreported.
+  reopens, where before the panic went unreported. One the runtime cancels
+  before it runs is `CanError::Cancelled`.
 - A `PCANBasic.dll` that doesn't load keeps libloading's error as the source
   of the open's `io::Error`.
 - A send the adapter doesn't take answers with `WriteFailed::Io` and its

@@ -169,7 +169,7 @@ fn the_pem_helper_refuses_what_is_not_a_pair() {
     let mismatched = refused(&pair.cert_pem, &other.key_pem);
     assert_eq!(
         mismatched.to_string(),
-        "rustls refused the certificate chain and key"
+        "rustls refused the certificate chain and key, or the provider's protocol versions"
     );
     let source = std::error::Error::source(&mismatched).unwrap();
     assert!(source.is::<rustls::Error>());

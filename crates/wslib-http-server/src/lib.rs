@@ -195,12 +195,13 @@ impl Https {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum ServeError {
-    /// Accepting or serving failed; a generation of TLS connections that the
-    /// runtime cancelled is `Interrupted`.
+    /// Accepting or serving failed.
     Io(io::Error),
     /// A generation of TLS connections panicked; the panic hook has printed
     /// it.
     Panicked,
+    /// The runtime cancelled a generation of TLS connections.
+    Cancelled,
 }
 
 impl fmt::Display for ServeError {
@@ -208,6 +209,7 @@ impl fmt::Display for ServeError {
         f.write_str(match self {
             Self::Io(_) => "serving failed",
             Self::Panicked => "a generation of TLS connections panicked",
+            Self::Cancelled => "a generation of TLS connections was cancelled",
         })
     }
 }
@@ -216,7 +218,7 @@ impl std::error::Error for ServeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(e) => Some(e),
-            Self::Panicked => None,
+            Self::Panicked | Self::Cancelled => None,
         }
     }
 }
@@ -231,7 +233,7 @@ fn ended(joined: Result<io::Result<()>, JoinError>) -> Result<(), ServeError> {
     match joined {
         Ok(served) => Ok(served?),
         Err(e) if e.is_panic() => Err(ServeError::Panicked),
-        Err(_) => Err(ServeError::Io(io::ErrorKind::Interrupted.into())),
+        Err(_) => Err(ServeError::Cancelled),
     }
 }
 
@@ -324,15 +326,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_cancelled_generation_is_interrupted() {
+    async fn a_cancelled_generation_is_cancelled() {
         let mut generations = JoinSet::new();
         generations.spawn(std::future::pending::<io::Result<()>>());
         generations.abort_all();
         let joined = generations.join_next().await.unwrap();
-        let ServeError::Io(error) = ended(joined).unwrap_err() else {
-            panic!("an io::Error");
-        };
-        assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+        let error = ended(joined).unwrap_err();
+        assert!(matches!(error, ServeError::Cancelled), "{error:?}");
+        assert_eq!(
+            error.to_string(),
+            "a generation of TLS connections was cancelled"
+        );
     }
 
     #[tokio::test]

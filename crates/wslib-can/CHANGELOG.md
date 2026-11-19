@@ -10,6 +10,8 @@
   iOS, which has no wslib-serial, the feature adds nothing.
 - `CanError::Panicked`: a transport's blocking call panicked. The task
   reports it as a disconnect and reopens, as for any loss.
+- `CanError::Cancelled` and `WriteFailed::Cancelled`: the runtime cancelled
+  a transport's blocking call, or its blocking write, before it ran.
 - `Device::write` returns `Result<(), WriteFailed>`, and `CanWriter`'s
   `send`, `submit` and `send_when_ready` answer with a `WriteFailed`, in
   place of an `io::Error`. `Io` holds the device's `io::Error`, `Panicked` a

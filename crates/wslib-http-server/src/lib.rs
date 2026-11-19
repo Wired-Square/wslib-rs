@@ -12,10 +12,10 @@ mod local;
 mod redirect;
 mod tls;
 
-use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+use std::{fmt, io};
 
 use axum::Router;
 use axum::extract::connect_info::IntoMakeServiceWithConnectInfo;
@@ -26,7 +26,7 @@ use axum_server::{Address, Handle, Server};
 use hyper_util::rt::{TokioExecutor, TokioTimer};
 use hyper_util::server::conn::auto::{Builder, Http1Builder};
 use tokio::sync::watch;
-use tokio::task::JoinSet;
+use tokio::task::{JoinError, JoinSet};
 use tokio_util::sync::CancellationToken;
 use tower::util::MapResponse;
 
@@ -34,7 +34,9 @@ pub use bounded::{Bounds, Listener};
 #[cfg(unix)]
 pub use local::{LocalSocket, serve_local};
 pub use redirect::{redirect_router, serve_redirect};
-pub use tls::{PeerCertificates, Tls, server_config_from_pem, server_config_from_pem_files};
+pub use tls::{
+    PeerCertificates, ServerConfigError, Tls, server_config_from_pem, server_config_from_pem_files,
+};
 #[cfg(unix)]
 pub use wslib_host::PeerCredentials;
 
@@ -55,7 +57,7 @@ pub async fn serve_http(
     listener: Listener,
     router: Router,
     stop: impl Future<Output = ()>,
-) -> io::Result<()> {
+) -> Result<(), ServeError> {
     let bounds = listener.bounds;
     tracing::info!(address = %listener.local_addr(), "listening");
     let handle = Handle::<Peer>::new();
@@ -74,7 +76,7 @@ pub async fn serve_https(
     router: Router,
     tls: Tls,
     stop: impl Future<Output = ()>,
-) -> io::Result<()> {
+) -> Result<(), ServeError> {
     let bounds = listener.bounds;
     tracing::info!(address = %listener.local_addr(), "listening");
     let listener = Arc::new(listener);
@@ -93,7 +95,7 @@ pub async fn serve_https(
         generations.spawn(server.serve(app::<SocketAddr>(router.clone())));
         let renewed = loop {
             tokio::select! {
-                Some(ended) = generations.join_next() => ended.map_err(io::Error::other)??,
+                Some(joined) = generations.join_next() => ended(joined)?,
                 Ok(()) = renewals.changed() => break true,
                 () = &mut stop => break false,
             }
@@ -104,8 +106,8 @@ pub async fn serve_https(
         }
     }
     let stopping = tokio::time::Instant::now();
-    while let Some(ended) = generations.join_next().await {
-        ended.map_err(io::Error::other)??;
+    while let Some(joined) = generations.join_next().await {
+        ended(joined)?;
     }
     warn_past(stopping, bounds.grace);
     Ok(())
@@ -143,9 +145,13 @@ impl Https {
 
     /// Serve `router` until `stop` completes and both listeners have drained,
     /// or one fails and the other has drained.
-    pub async fn serve(self, router: Router, stop: impl Future<Output = ()>) -> io::Result<()> {
+    pub async fn serve(
+        self,
+        router: Router,
+        stop: impl Future<Output = ()>,
+    ) -> Result<(), ServeError> {
         let stopping = CancellationToken::new();
-        let stops_both = |served: io::Result<()>| {
+        let stops_both = |served: Result<(), ServeError>| {
             if served.is_err() {
                 stopping.cancel();
             }
@@ -182,6 +188,50 @@ impl Https {
             }
         };
         https.and(redirect)
+    }
+}
+
+/// Why a listener stopped serving.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum ServeError {
+    /// Accepting or serving failed; a generation of TLS connections that the
+    /// runtime cancelled is `Interrupted`.
+    Io(io::Error),
+    /// A generation of TLS connections panicked; the panic hook has printed
+    /// it.
+    Panicked,
+}
+
+impl fmt::Display for ServeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Io(_) => "serving failed",
+            Self::Panicked => "a generation of TLS connections panicked",
+        })
+    }
+}
+
+impl std::error::Error for ServeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(e) => Some(e),
+            Self::Panicked => None,
+        }
+    }
+}
+
+impl From<io::Error> for ServeError {
+    fn from(e: io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+fn ended(joined: Result<io::Result<()>, JoinError>) -> Result<(), ServeError> {
+    match joined {
+        Ok(served) => Ok(served?),
+        Err(e) if e.is_panic() => Err(ServeError::Panicked),
+        Err(_) => Err(ServeError::Io(io::ErrorKind::Interrupted.into())),
     }
 }
 
@@ -236,21 +286,66 @@ async fn until_stopped<A: Address>(
     handle: Handle<A>,
     stop: impl Future<Output = ()>,
     grace: Duration,
-) -> io::Result<()> {
+) -> Result<(), ServeError> {
     tokio::pin!(serving);
     tokio::select! {
-        served = &mut serving => return served,
+        served = &mut serving => return Ok(served?),
         () = stop => {}
     }
     let stopping = tokio::time::Instant::now();
     handle.graceful_shutdown(Some(grace));
     let served = serving.await;
     warn_past(stopping, grace);
-    served
+    Ok(served?)
 }
 
 fn warn_past(stopping: tokio::time::Instant, grace: Duration) {
     if stopping.elapsed() >= grace {
         tracing::warn!(?grace, "closed connections still open at the grace period");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_panicked_generation_is_typed_with_no_runtime_type() {
+        let mut generations = JoinSet::new();
+        generations.spawn(async { panic!("a generation") });
+        let joined = generations.join_next().await.unwrap();
+        let error = ended(joined).unwrap_err();
+        assert!(matches!(error, ServeError::Panicked));
+        assert_eq!(
+            error.to_string(),
+            "a generation of TLS connections panicked"
+        );
+        assert!(std::error::Error::source(&error).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_generation_is_interrupted() {
+        let mut generations = JoinSet::new();
+        generations.spawn(std::future::pending::<io::Result<()>>());
+        generations.abort_all();
+        let joined = generations.join_next().await.unwrap();
+        let ServeError::Io(error) = ended(joined).unwrap_err() else {
+            panic!("an io::Error");
+        };
+        assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+    }
+
+    #[tokio::test]
+    async fn a_failed_generation_keeps_its_io_error_as_the_source() {
+        let mut generations = JoinSet::new();
+        generations.spawn(async { Err(io::Error::from(io::ErrorKind::ConnectionReset)) });
+        let joined = generations.join_next().await.unwrap();
+        let error = ended(joined).unwrap_err();
+        assert_eq!(error.to_string(), "serving failed");
+        let source = std::error::Error::source(&error).unwrap();
+        assert_eq!(
+            source.downcast_ref::<io::Error>().unwrap().kind(),
+            io::ErrorKind::ConnectionReset
+        );
     }
 }

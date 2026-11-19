@@ -22,8 +22,6 @@ const BIMI_EKU_ID: &str = "1.3.6.1.5.5.7.3.31";
 const MARK_TYPE: &str = "1.3.6.1.4.1.53087.1.13";
 const LOGOTYPE: &str = "1.3.6.1.5.5.7.1.12";
 
-const CAUSE_SEPARATOR: &str = ": ";
-
 /// A compressed embedded logo is refused once it inflates past this.
 const LOGOTYPE_INFLATE_LIMIT: usize = 256 * 1024;
 
@@ -34,16 +32,46 @@ pub struct VmcTrustAnchors(Vec<TrustAnchor<'static>>);
 
 impl VmcTrustAnchors {
     /// Every certificate in a PEM bundle, as a trust anchor.
-    pub fn from_pem(pem: &[u8]) -> Result<Self, String> {
+    pub fn from_pem(pem: &[u8]) -> Result<Self, TrustAnchorError> {
         let mut anchors = Vec::new();
         for der in CertificateDer::pem_slice_iter(pem) {
-            let der = der.map_err(|error| error.to_string())?;
-            anchors.push(chain::trust_anchor(&der).map_err(|error| chain_of(&error))?);
+            let der = der.map_err(TrustAnchorError::Pem)?;
+            anchors.push(chain::trust_anchor(&der).map_err(TrustAnchorError::Refused)?);
         }
         if anchors.is_empty() {
-            return Err("no certificates in the bundle".into());
+            return Err(TrustAnchorError::Empty);
         }
         Ok(Self(anchors))
+    }
+}
+
+/// Why [`VmcTrustAnchors::from_pem`] refused a bundle.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum TrustAnchorError {
+    Pem(rustls_pki_types::pem::Error),
+    /// The verifier can't anchor on one of the certificates.
+    Refused(ChainError),
+    Empty,
+}
+
+impl std::fmt::Display for TrustAnchorError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Pem(_) => "the bundle is not valid PEM",
+            Self::Refused(_) => "a certificate in the bundle can't be a trust anchor",
+            Self::Empty => "no certificates in the bundle",
+        })
+    }
+}
+
+impl std::error::Error for TrustAnchorError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Pem(error) => Some(error),
+            Self::Refused(error) => Some(error),
+            Self::Empty => None,
+        }
     }
 }
 
@@ -344,13 +372,6 @@ fn same_problem(a: &VmcProblem, b: &VmcProblem) -> bool {
         }
         MissingSct => matches!(b, MissingSct),
     }
-}
-
-fn chain_of(error: &(dyn std::error::Error + 'static)) -> String {
-    std::iter::successors(Some(error), |&e| e.source())
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(CAUSE_SEPARATOR)
 }
 
 fn failed(problem: VmcProblem) -> VmcVerification {

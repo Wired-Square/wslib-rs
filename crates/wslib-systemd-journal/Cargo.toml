@@ -1,6 +1,6 @@
 [package]
 name = "wslib-systemd-journal"
-version = "0.1.0"
+version = "0.1.1"
 description = "Reads the systemd journal through journalctl's JSON output: a bounded query, parsed entries, and whether the journal held more."
 readme = "README.md"
 edition.workspace = true

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0
+
+- `server_config_from_pem` and `server_config_from_pem_files` return
+  `ServerConfigError`: `Read`, `Chain`, `NoCertificate`, `Key` or
+  `Refused`, with the `io::Error`, the PEM decoder's or rustls's error as
+  its `source()`, in place of an `io::Error` holding their text.
+- `serve_http`, `serve_https`, `serve_redirect`, `serve_local` and
+  `Https::serve` return `ServeError`: `Io`, with the `io::Error` as its
+  `source()`, or `Panicked`, when a generation of TLS connections
+  panicked, which was an `io::Error` holding tokio's `JoinError`. A
+  generation the runtime cancelled is `Io` with `Interrupted`.
+- Turns on rustls's `std`, without which `rustls::Error` is no `Error`.
+
 ## 0.1.7
 
 - `Tls::renew`: every `serve_https` serving that `Tls` drains the

@@ -19,7 +19,7 @@ use tokio::time::timeout;
 use tokio_rustls::TlsConnector;
 use tokio_util::sync::CancellationToken;
 use wslib_http_server::{
-    Bounds, PeerCertificates, Tls, serve_https, server_config_from_pem,
+    Bounds, PeerCertificates, ServerConfigError, Tls, serve_https, server_config_from_pem,
     server_config_from_pem_files,
 };
 
@@ -139,8 +139,16 @@ fn the_pem_helper_reads_files() {
 
     read.expect("a server config");
     let missing = missing.expect_err("no file");
-    assert_eq!(missing.kind(), std::io::ErrorKind::NotFound);
-    assert!(missing.to_string().contains("absent.pem"), "{missing}");
+    assert!(
+        matches!(&missing, ServerConfigError::Read { path, .. } if path.ends_with("absent.pem")),
+        "{missing:?}"
+    );
+    assert!(missing.to_string().ends_with("absent.pem"), "{missing}");
+    let source = std::error::Error::source(&missing).unwrap();
+    assert_eq!(
+        source.downcast_ref::<std::io::Error>().unwrap().kind(),
+        std::io::ErrorKind::NotFound
+    );
 }
 
 #[test]
@@ -149,14 +157,40 @@ fn the_pem_helper_refuses_what_is_not_a_pair() {
     let refused = |cert: &str, key: &str| {
         server_config_from_pem(support::provider(), cert.as_bytes(), key.as_bytes())
             .expect_err("refused")
-            .kind()
     };
-    assert_eq!(refused("", &pair.key_pem), std::io::ErrorKind::InvalidData);
-    assert_eq!(refused(&pair.cert_pem, ""), std::io::ErrorKind::InvalidData);
+    assert!(matches!(
+        refused("", &pair.key_pem),
+        ServerConfigError::NoCertificate
+    ));
+    let no_key = refused(&pair.cert_pem, "");
+    assert_eq!(no_key.to_string(), "the private key is not valid PEM");
+    let source = std::error::Error::source(&no_key).unwrap();
+    assert!(source.is::<rustls::pki_types::pem::Error>());
+    let mismatched = refused(&pair.cert_pem, &other.key_pem);
     assert_eq!(
-        refused(&pair.cert_pem, &other.key_pem),
-        std::io::ErrorKind::InvalidData
+        mismatched.to_string(),
+        "rustls refused the certificate chain and key"
     );
+    let source = std::error::Error::source(&mismatched).unwrap();
+    assert!(source.is::<rustls::Error>());
+}
+
+#[test]
+fn a_chain_that_is_not_pem_keeps_the_decoders_error() {
+    let pair = Pair::new();
+    let chain = "-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----\n";
+    let refused = server_config_from_pem(
+        support::provider(),
+        chain.as_bytes(),
+        pair.key_pem.as_bytes(),
+    )
+    .expect_err("refused");
+    assert_eq!(
+        refused.to_string(),
+        "the certificate chain is not valid PEM"
+    );
+    let source = std::error::Error::source(&refused).unwrap();
+    assert!(source.is::<rustls::pki_types::pem::Error>());
 }
 
 /// As an owner that builds with axum-server's `from_pem`, which sets h2 and

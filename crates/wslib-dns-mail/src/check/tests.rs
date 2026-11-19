@@ -518,7 +518,7 @@ fn dane_findings_per_mx_host() {
 fn a_non_validating_resolver_skips_tlsa() {
     let dns = good_mx().with_tlsa(TLSA_NAME, tlsa(3, vec![0xab; 32]));
     let check = block_on(check_mx(&dns, "example.com", &[]));
-    assert_eq!(check.mx.hosts[0].tlsa, None);
+    assert!(check.mx.hosts[0].tlsa.is_none());
     assert_eq!(dns.queries(TLSA_NAME, RecordType::Tlsa), 0);
 }
 

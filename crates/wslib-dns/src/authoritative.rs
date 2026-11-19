@@ -640,7 +640,7 @@ impl Network {
         let server = SocketAddr::new(server, self.port);
         let bytes = query
             .to_vec()
-            .map_err(|error| LookupError::Other(error.to_string()))?;
+            .map_err(|error| LookupError::failed("the query does not encode", error))?;
         let response = within(self.timeout, over_udp(server, &bytes, query)).await?;
         if !response.metadata.truncation {
             return Ok(response);
@@ -698,8 +698,9 @@ async fn over_tcp(
     let length = stream.read_u16().await.map_err(io(server))?;
     let mut buffer = vec![0; length.into()];
     stream.read_exact(&mut buffer).await.map_err(io(server))?;
-    let response = Message::from_vec(&buffer)
-        .map_err(|error| LookupError::Other(format!("{server}: {error}")))?;
+    let response = Message::from_vec(&buffer).map_err(|error| {
+        LookupError::failed(format!("{server}'s answer over TCP does not decode"), error)
+    })?;
     if !answers(query, &response) {
         return Err(LookupError::Other(format!(
             "{server}: the answer over TCP is for another query"
@@ -718,7 +719,7 @@ fn answers(query: &Message, response: &Message) -> bool {
 }
 
 fn io(server: SocketAddr) -> impl Fn(std::io::Error) -> LookupError {
-    move |error| LookupError::Other(format!("{server}: {error}"))
+    move |error| LookupError::failed(format!("the exchange with {server} failed"), error)
 }
 
 #[cfg(test)]
@@ -1031,14 +1032,14 @@ mod tests {
         txt_of(&walker, "example.com").await.unwrap();
         asked(&walker);
         for _ in 0..2 {
-            assert_eq!(
+            assert!(matches!(
                 txt_of(&walker, "nothing.example.com").await,
                 Err(LookupError::NxDomain)
-            );
+            ));
             let a = walker
                 .lookup(&name("example.com"), RecordType::A, extract::a)
                 .await;
-            assert_eq!(a, Err(LookupError::NoData));
+            assert!(matches!(a, Err(LookupError::NoData)));
         }
         assert_eq!(asked(&walker), [IpAddr::from(EXAMPLE); 4]);
     }
@@ -1070,10 +1071,10 @@ mod tests {
         assert_eq!(hop.records, ["host.example.net"]);
         assert_eq!(hop.canonical_name, None);
 
-        assert_eq!(
+        assert!(matches!(
             txt_of(&walker, "dangling.example.com").await,
             Err(LookupError::NxDomain)
-        );
+        ));
         assert!(matches!(
             txt_of(&walker, "loop1.example.com").await,
             Err(LookupError::Other(_))
@@ -1095,12 +1096,15 @@ mod tests {
     #[tokio::test]
     async fn when_every_server_fails_the_error_is_never_absence() {
         let (answer, queries) = broken(vec![]).await;
-        assert_eq!(answer, Err(LookupError::Timeout));
+        assert!(matches!(answer, Err(LookupError::Timeout)));
         assert_eq!(queries, 2 + 4 * 2);
         let refused = vec![(BROKEN[1], Server::Code(ResponseCode::Refused))];
-        assert_eq!(broken(refused).await.0, Err(LookupError::Refused));
+        assert!(matches!(broken(refused).await.0, Err(LookupError::Refused)));
         let servfail = vec![(BROKEN[0], Server::Code(ResponseCode::ServFail))];
-        assert_eq!(broken(servfail).await.0, Err(LookupError::ServFail));
+        assert!(matches!(
+            broken(servfail).await.0,
+            Err(LookupError::ServFail)
+        ));
         for code in [ResponseCode::NoError, ResponseCode::NXDomain] {
             let lame = vec![(BROKEN[0], Server::Code(code))];
             assert!(matches!(broken(lame).await.0, Err(LookupError::Other(_))));
@@ -1132,14 +1136,14 @@ mod tests {
             .unwrap();
         assert_eq!(apex.records, ["ns1.example.com", "ns2.example.com"]);
 
-        assert_eq!(
+        assert!(matches!(
             walker.delegation(&name("nothing.com")).await,
             Err(LookupError::NxDomain)
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             walker.delegation(&name("ns1.example.com")).await,
             Err(LookupError::NoData)
-        );
+        ));
         let shared = walker.delegation(&name("sub.example.com")).await.unwrap();
         assert_eq!(shared.records, ["ns1.example.com", "ns3.example.com"]);
     }
@@ -1176,10 +1180,10 @@ mod tests {
             ..AuthoritativeOptions::default()
         };
         let walker = walker_with(internet(), options);
-        assert_eq!(
+        assert!(matches!(
             txt_of(&walker, "example.com").await,
-            Err(LookupError::Other("gave up after 2 queries".into()))
-        );
+            Err(LookupError::Other(message)) if message == "gave up after 2 queries"
+        ));
     }
 
     fn reply(query: &Message, answers: Vec<Record>) -> Message {
@@ -1305,9 +1309,21 @@ mod tests {
         let silent = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         let network = local(silent.local_addr().unwrap().port());
         let query = example_com(RecordType::TXT);
-        assert_eq!(
+        assert!(matches!(
             network.exchange(Ipv4Addr::LOCALHOST.into(), &query).await,
             Err(LookupError::Timeout)
+        ));
+    }
+
+    #[test]
+    fn a_failed_exchange_keeps_the_io_error_as_its_source() {
+        let server: SocketAddr = "192.0.2.1:53".parse().unwrap();
+        let error = io(server)(std::io::Error::from(std::io::ErrorKind::ConnectionRefused));
+        assert_eq!(error.to_string(), "the exchange with 192.0.2.1:53 failed");
+        let source = std::error::Error::source(&error).unwrap();
+        assert_eq!(
+            source.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::ConnectionRefused
         );
     }
 

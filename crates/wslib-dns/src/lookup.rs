@@ -1,4 +1,6 @@
+use std::error::Error;
 use std::fmt;
+use std::sync::Arc;
 
 /// The outcome of one DNS query.
 pub type Lookup<T> = Result<Answer<T>, LookupError>;
@@ -55,7 +57,7 @@ impl<T> Answer<T> {
 }
 
 /// Why a query returned no records.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[non_exhaustive]
@@ -75,14 +77,33 @@ pub enum LookupError {
     /// DNSSEC validation failed: the answer can't be trusted, whatever it
     /// said.
     Bogus,
-    /// A failure the backend could not classify, in its own words.
+    /// A failure this crate could not classify, in its own words.
     Other(String),
+    /// The exchange or the DNS library failed, with its error as the
+    /// [`source`](Error::source).
+    Failed {
+        why: String,
+        /// `None` when read back from the serialised form.
+        #[cfg_attr(feature = "serde", serde(skip))]
+        source: Option<Arc<dyn Error + Send + Sync>>,
+    },
 }
 
 impl LookupError {
     /// The name or the record is absent: an answer, not a failure to get one.
     pub fn is_absent(&self) -> bool {
         matches!(self, Self::NxDomain | Self::NoData)
+    }
+
+    #[cfg(feature = "hickory")]
+    pub(crate) fn failed(
+        why: impl Into<String>,
+        source: impl Error + Send + Sync + 'static,
+    ) -> Self {
+        Self::Failed {
+            why: why.into(),
+            source: Some(Arc::new(source)),
+        }
     }
 }
 
@@ -107,11 +128,30 @@ impl fmt::Display for LookupError {
             Self::NotSent => f.write_str("query not sent: deadline or query budget exhausted"),
             Self::Bogus => f.write_str("DNSSEC validation failed (bogus)"),
             Self::Other(message) => f.write_str(message),
+            Self::Failed { why, .. } => f.write_str(why),
         }
     }
 }
 
-impl std::error::Error for LookupError {}
+impl Error for LookupError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Failed {
+                source: Some(source),
+                ..
+            } => Some(&**source),
+            Self::NxDomain
+            | Self::NoData
+            | Self::ServFail
+            | Self::Refused
+            | Self::Timeout
+            | Self::NotSent
+            | Self::Bogus
+            | Self::Other(_)
+            | Self::Failed { source: None, .. } => None,
+        }
+    }
+}
 
 /// The record types the [`Resolver`](crate::Resolver) queries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -208,10 +248,48 @@ impl Mx {
     }
 }
 
-#[cfg(all(test, feature = "serde"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
+    fn failed() -> LookupError {
+        LookupError::Failed {
+            why: "the exchange with 192.0.2.1:53 failed".into(),
+            source: Some(Arc::new(std::io::Error::from(
+                std::io::ErrorKind::ConnectionReset,
+            ))),
+        }
+    }
+
+    #[test]
+    fn a_failure_says_its_own_layer_and_keeps_the_cause_typed() {
+        let error = failed();
+        assert_eq!(error.to_string(), "the exchange with 192.0.2.1:53 failed");
+        let source = error.source().unwrap();
+        assert_eq!(
+            source.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::ConnectionReset
+        );
+        assert!(error.clone().source().unwrap().is::<std::io::Error>());
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn a_failure_serialises_its_sentence_and_not_its_cause() {
+        let json = serde_json::to_string(&failed()).unwrap();
+        assert_eq!(
+            json,
+            r#"{"failed":{"why":"the exchange with 192.0.2.1:53 failed"}}"#
+        );
+        let read: LookupError = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            &read,
+            LookupError::Failed { why, source: None } if why == "the exchange with 192.0.2.1:53 failed"
+        ));
+        assert!(read.source().is_none());
+    }
+
+    #[cfg(feature = "serde")]
     #[test]
     fn serialised_names_are_the_contract() {
         let names: Vec<String> = [

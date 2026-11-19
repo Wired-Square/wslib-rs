@@ -123,7 +123,7 @@ async fn an_unknown_path_is_refused_as_not_found() {
 }
 
 #[tokio::test]
-async fn an_answer_that_is_not_http_or_not_the_json_expected_or_over_1_mib_is_malformed() {
+async fn an_answer_that_is_not_http_or_over_1_mib_is_malformed() {
     let header = b"HTTP/1.0 200 OK\r\n\r\n".to_vec();
     let fine = br#"{"BackendState": "Running"}"#.to_vec();
     assert!(
@@ -133,12 +133,21 @@ async fn an_answer_that_is_not_http_or_not_the_json_expected_or_over_1_mib_is_ma
             .is_ok()
     );
     let oversized = [&header[..], &fine, &vec![b' '; 1 << 20]].concat();
-    for raw in [
-        b"nonsense".to_vec(),
-        [header, b"{".to_vec()].concat(),
-        oversized,
-    ] {
+    for raw in [b"nonsense".to_vec(), oversized] {
         let api = answering_raw(raw);
         assert!(matches!(api.status().await, Err(Error::Malformed(_))));
     }
+}
+
+#[tokio::test]
+async fn an_answer_that_is_not_the_json_expected_keeps_the_decoders_error() {
+    let api = answering_raw(b"HTTP/1.0 200 OK\r\n\r\n{".to_vec());
+    let error = api.status().await.unwrap_err();
+    assert!(matches!(error, Error::Json(_)));
+    assert_eq!(
+        error.to_string(),
+        "tailscaled's answer is not the JSON expected"
+    );
+    let source = std::error::Error::source(&error).unwrap();
+    assert!(source.is::<serde_json::Error>());
 }

@@ -537,18 +537,29 @@ fn garbage_is_a_parse_problem() {
         "{:?}",
         verification.problems
     );
-    assert!(VmcTrustAnchors::from_pem(b"").is_err());
+    assert!(matches!(
+        VmcTrustAnchors::from_pem(b""),
+        Err(TrustAnchorError::Empty)
+    ));
 }
 
 #[test]
-fn an_anchor_the_verifier_refuses_says_why_in_its_words() {
+fn an_anchor_the_verifier_refuses_keeps_its_error_as_the_source() {
     let pem = b"-----BEGIN CERTIFICATE-----\nMAA=\n-----END CERTIFICATE-----\n";
     let refused = VmcTrustAnchors::from_pem(pem).unwrap_err();
-    let der = rustls_pki_types::CertificateDer::from(vec![0x30, 0x00]);
-    let verifier = chain::trust_anchor(&der).unwrap_err();
-    let verifier = std::error::Error::source(&verifier).expect("the verifier's error");
-    assert!(
-        refused.ends_with(&format!(": {verifier}")),
-        "the verifier's detail is kept: {refused}"
+    assert_eq!(
+        refused.to_string(),
+        "a certificate in the bundle can't be a trust anchor"
     );
+    let source = std::error::Error::source(&refused).unwrap();
+    assert!(source.downcast_ref::<ChainError>().is_some());
+}
+
+#[test]
+fn a_bundle_that_is_not_pem_keeps_the_decoders_error_as_the_source() {
+    let pem = b"-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----\n";
+    let refused = VmcTrustAnchors::from_pem(pem).unwrap_err();
+    assert_eq!(refused.to_string(), "the bundle is not valid PEM");
+    let source = std::error::Error::source(&refused).unwrap();
+    assert!(source.is::<rustls_pki_types::pem::Error>());
 }

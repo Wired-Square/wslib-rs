@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.5
+
+- An account name that isn't UTF-8 (`account_name`) or UTF-16
+  (`Sid::account`) is an `InvalidData` `io::Error` that says so, with the
+  decoder's error as its `source()`.
+
 ## 0.1.4
 
 - libc's floor is 0.2.183, the workspace's.

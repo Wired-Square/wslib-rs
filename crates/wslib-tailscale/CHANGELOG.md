@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0
+
+- `Error::Json`: the answer's body was not the JSON expected, with
+  serde_json's error as its `source()`. It was `Malformed` with the error's
+  text; `Malformed` keeps the crate's own sentences.
+
 ## 0.1.1
 
 - The `testing` feature builds off Unix, with no `testing` module: it

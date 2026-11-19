@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0
+
+- `LookupError::Failed { why, source }`: the exchange or hickory failed,
+  said in this crate's words, with that error as its `source()`. A
+  serialised `Failed` keeps `why` and reads back with no `source`.
+  `Other` holds only this crate's own sentences, so a failure that was
+  `Other` with hickory's or the socket's text is now `Failed`.
+- `LookupError`, `CnameChainError`, `QueryRecord`, `PublicProbe` and
+  `PublicAnswer` no longer derive `PartialEq` and `Eq`, nor `LookupError`
+  `Hash`.
+- `CnameChainError::Lookup`'s `Display` names the name whose lookup failed;
+  the `LookupError` is its `source()`.
+
 ## 0.2.5
 
 - `present`: a lookup's records, none when the name or type is absent, and

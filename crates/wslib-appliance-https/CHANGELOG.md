@@ -2,8 +2,10 @@
 
 ## 0.2.0
 
-- Pins `wslib-appliance-core` at 0.2.0. On wslib-appliance-store 0.2 and
-  wslib-appliance-auth 0.2.
+- Pins `wslib-appliance-core` at 0.2.0. On wslib-appliance-store 0.2,
+  wslib-appliance-auth 0.2 and wslib-http-server 0.2.
+- A listener's failure writes each cause of wslib-http-server's
+  `ServeError` in `ServeError::Serving`'s text.
 
 ## 0.1.6
 

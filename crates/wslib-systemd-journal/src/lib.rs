@@ -250,8 +250,8 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotInstalled => f.write_str("journalctl is not installed"),
-            Self::Spawn(e) => write!(f, "could not run journalctl: {e}"),
-            Self::Io(e) => write!(f, "could not read journalctl's output: {e}"),
+            Self::Spawn(_) => f.write_str("could not run journalctl"),
+            Self::Io(_) => f.write_str("could not read journalctl's output"),
             Self::Exited(status) => write!(f, "journalctl failed: {status}"),
             Self::Timeout => f.write_str("journalctl did not answer in time"),
             Self::Lines => f.write_str("a query must allow at least one line"),
@@ -272,6 +272,27 @@ impl std::error::Error for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failure_says_its_own_layer_and_keeps_the_io_error() {
+        for (error, said) in [
+            (
+                Error::Spawn(io::Error::from(io::ErrorKind::PermissionDenied)),
+                "could not run journalctl",
+            ),
+            (
+                Error::Io(io::Error::from(io::ErrorKind::PermissionDenied)),
+                "could not read journalctl's output",
+            ),
+        ] {
+            assert_eq!(error.to_string(), said);
+            let source = std::error::Error::source(&error).unwrap();
+            assert_eq!(
+                source.downcast_ref::<io::Error>().unwrap().kind(),
+                io::ErrorKind::PermissionDenied
+            );
+        }
+    }
 
     fn has(args: &[String], wanted: &str) -> bool {
         args.iter().any(|a| a == wanted)

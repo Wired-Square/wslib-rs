@@ -102,7 +102,7 @@ impl HickoryResolver {
         let inner = TokioResolver::builder_with_config(config, TokioRuntimeProvider::default())
             .with_options(opts)
             .build()
-            .map_err(|error| LookupError::Other(error.to_string()))?;
+            .map_err(|error| LookupError::failed("the resolver could not be built", error))?;
         Ok(Self { inner, validating })
     }
 
@@ -127,7 +127,8 @@ pub(crate) fn fully_qualified(name: &str) -> Result<Name, LookupError> {
     if !name.ends_with('.') {
         name.push('.');
     }
-    Name::from_ascii(name).map_err(|error| LookupError::Other(format!("invalid name: {error}")))
+    Name::from_ascii(&name)
+        .map_err(|error| LookupError::failed(format!("{name} is not a valid DNS name"), error))
 }
 
 fn nameserver(address: SocketAddr) -> NameServerConfig {
@@ -253,7 +254,7 @@ fn classify(error: NetError) -> LookupError {
             _ => LookupError::NoData,
         },
         NetError::Timeout => LookupError::Timeout,
-        other => LookupError::Other(other.to_string()),
+        other => LookupError::failed("the query failed", other),
     }
 }
 
@@ -440,40 +441,63 @@ mod tests {
 
     #[test]
     fn negative_answers_keep_nxdomain_and_nodata_apart() {
-        assert_eq!(
+        assert!(matches!(
             classify(no_records(ResponseCode::NXDomain)),
             LookupError::NxDomain
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             classify(no_records(ResponseCode::NoError)),
             LookupError::NoData
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             classify(no_records(ResponseCode::ServFail)),
             LookupError::ServFail
-        );
+        ));
     }
 
     #[test]
     fn failure_codes_map_one_to_one() {
         let code = |c| NetError::Dns(DnsError::ResponseCode(c));
-        assert_eq!(
+        assert!(matches!(
             classify(code(ResponseCode::ServFail)),
             LookupError::ServFail
-        );
-        assert_eq!(classify(code(ResponseCode::Refused)), LookupError::Refused);
-        assert_eq!(classify(NetError::Timeout), LookupError::Timeout);
+        ));
+        assert!(matches!(
+            classify(code(ResponseCode::Refused)),
+            LookupError::Refused
+        ));
+        assert!(matches!(classify(NetError::Timeout), LookupError::Timeout));
         assert!(matches!(
             classify(code(ResponseCode::FormErr)),
             LookupError::Other(_)
         ));
-        assert_eq!(
+        assert!(matches!(
             classify(NetError::Dns(DnsError::DnssecBogus)),
             LookupError::Bogus
-        );
-        assert!(matches!(
-            classify(NetError::NoConnections),
-            LookupError::Other(_)
         ));
+    }
+
+    #[test]
+    fn an_unclassified_failure_keeps_hickorys_error_as_its_source() {
+        let error = classify(NetError::NoConnections);
+        assert_eq!(error.to_string(), "the query failed");
+        let source = std::error::Error::source(&error).unwrap();
+        assert!(matches!(
+            source.downcast_ref::<NetError>(),
+            Some(NetError::NoConnections)
+        ));
+    }
+
+    #[test]
+    fn an_invalid_name_keeps_hickorys_error_as_its_source() {
+        const LONGEST_LABEL: usize = 63;
+        let long = "a".repeat(LONGEST_LABEL + 1);
+        let error = fully_qualified(&long).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("{long}. is not a valid DNS name")
+        );
+        let source = std::error::Error::source(&error).unwrap();
+        assert!(source.is::<hickory_resolver::proto::ProtoError>());
     }
 }

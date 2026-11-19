@@ -27,7 +27,7 @@ fn spf_keeps_every_spf_record_and_ignores_other_txt() {
         assert!(none.is_absent() && none.error.is_none());
         let gone = spf(&dns, "missing.example.com").await;
         assert!(gone.is_absent());
-        assert_eq!(gone.error, Some(LookupError::NxDomain));
+        assert!(matches!(gone.error, Some(LookupError::NxDomain)));
     });
 }
 
@@ -36,7 +36,7 @@ fn a_failed_lookup_is_not_absence() {
     let dns = FakeResolver::new().with_error("example.com", RecordType::Txt, LookupError::Timeout);
     let set = block_on(spf(&dns, "example.com"));
     assert!(!set.is_absent());
-    assert_eq!(set.failure(), Some(&LookupError::Timeout));
+    assert!(matches!(set.failure(), Some(&LookupError::Timeout)));
 }
 
 #[test]
@@ -152,7 +152,7 @@ fn a_failed_existence_check_leaves_the_tag_unknown() {
         .with_txt("_dmarc.example.com", ["v=DMARC1; p=reject"]);
     let found = block_on(dmarc(&dns, "mail.example.com", DmarcDiscoveryMode::Rfc7489));
     assert_eq!(found.applies, None);
-    assert_eq!(found.existence_error, Some(LookupError::Timeout));
+    assert!(matches!(found.existence_error, Some(LookupError::Timeout)));
     assert!(found.records.found().is_some());
     assert_eq!(dns.queries("mail.example.com", RecordType::Mx), 0);
 }
@@ -230,25 +230,23 @@ fn external_report_destinations_need_an_authorisation_record() {
             .clone()
     };
     block_on(async {
-        assert_eq!(
+        assert!(matches!(
             dmarc_report_authorisation(&dns, "example.com", &uri("mailto:d@mail.example.com"))
                 .await,
             ReportAuthorisation::SameOrganisation
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             dmarc_report_authorisation(&dns, "example.com", &uri("mailto:d@reports.example.net"))
                 .await,
-            ReportAuthorisation::Authorised {
-                name: "example.com._report._dmarc.reports.example.net".into()
-            }
-        );
-        assert_eq!(
+            ReportAuthorisation::Authorised { name }
+                if name == "example.com._report._dmarc.reports.example.net"
+        ));
+        assert!(matches!(
             dmarc_report_authorisation(&dns, "example.com", &uri("mailto:d@other.example.net"))
                 .await,
-            ReportAuthorisation::Unauthorised {
-                name: "example.com._report._dmarc.other.example.net".into()
-            }
-        );
+            ReportAuthorisation::Unauthorised { name }
+                if name == "example.com._report._dmarc.other.example.net"
+        ));
         assert!(matches!(
             dmarc_report_authorisation(&dns, "example.com", &uri("mailto:d@example.org")).await,
             ReportAuthorisation::Failed {
@@ -291,11 +289,11 @@ fn a_selector_is_judged_by_where_its_aliases_reach() {
         block_on(dkim(&dns, selector, "example.com"))
             .aliased_to(&format!("{selector}.DKIM.Provider.example."))
     };
-    assert_eq!(verdict("via"), Ok(AliasVerdict::Reaches));
-    assert_eq!(verdict("other"), Ok(AliasVerdict::Elsewhere));
-    assert_eq!(verdict("own"), Ok(AliasVerdict::NotAliased));
-    assert_eq!(verdict("missing"), Ok(AliasVerdict::NotAliased));
-    assert_eq!(verdict("broken"), Err(LookupError::ServFail));
+    assert!(matches!(verdict("via"), Ok(AliasVerdict::Reaches)));
+    assert!(matches!(verdict("other"), Ok(AliasVerdict::Elsewhere)));
+    assert!(matches!(verdict("own"), Ok(AliasVerdict::NotAliased)));
+    assert!(matches!(verdict("missing"), Ok(AliasVerdict::NotAliased)));
+    assert!(matches!(verdict("broken"), Err(LookupError::ServFail)));
 }
 
 #[test]
@@ -354,7 +352,10 @@ fn null_mx_ip_literals_and_hosts_without_addresses() {
         assert!(mixed.has_null_with_others());
         assert!(mixed.hosts[1].is_ip_literal());
         assert!(mixed.hosts[1].address_error.is_none());
-        assert_eq!(mixed.hosts[2].address_error, Some(LookupError::NxDomain));
+        assert!(matches!(
+            mixed.hosts[2].address_error,
+            Some(LookupError::NxDomain)
+        ));
     });
     assert_eq!(dns.queries("192.0.2.25", RecordType::A), 0);
 }
@@ -381,17 +382,17 @@ fn dnsbl_tells_listed_clean_blocked_and_failed_apart() {
         let listed = dnsbl(&dns, ip("192.0.2.10"), "bl.example.org").await;
         assert!(listed.is_listed());
         assert_eq!(listed.reason.as_deref(), Some("listed for spam"));
-        assert_eq!(
+        assert!(matches!(
             dnsbl(&dns, ip("192.0.2.9"), "bl.example.org").await.status,
             DnsblStatus::NotListed
-        );
+        ));
         let blocked = dnsbl(&dns, ip("192.0.2.11"), "bl.example.org").await;
-        assert_eq!(blocked.status, DnsblStatus::QueryBlocked);
+        assert!(matches!(blocked.status, DnsblStatus::QueryBlocked));
         assert_eq!(blocked.codes, [ip("127.255.255.254")]);
-        assert_eq!(
+        assert!(matches!(
             dnsbl(&dns, ip("192.0.2.12"), "bl.example.org").await.status,
             DnsblStatus::Failed(LookupError::ServFail)
-        );
+        ));
         assert!(
             dnsbl(&dns, ip("2001:db8::1"), "bl.example.org")
                 .await

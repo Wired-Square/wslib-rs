@@ -98,7 +98,7 @@ impl AddrListener<Permitted<TcpStream>, Peer> for Arc<Listener> {
     }
 
     async fn accept_stream(&self) -> io::Result<(Permitted<TcpStream>, Peer)> {
-        let permit = permit(&self.permits).await?;
+        let permit = permit(&self.permits).await;
         loop {
             match self.tcp.accept().await {
                 Ok((stream, peer)) => return Ok((Permitted { stream, permit }, Peer(peer))),
@@ -119,11 +119,11 @@ pub(crate) fn made_bound() -> io::Error {
     )
 }
 
-pub(crate) async fn permit(permits: &Arc<Semaphore>) -> io::Result<OwnedSemaphorePermit> {
+pub(crate) async fn permit(permits: &Arc<Semaphore>) -> OwnedSemaphorePermit {
     Arc::clone(permits)
         .acquire_owned()
         .await
-        .map_err(io::Error::other)
+        .expect("a listener never closes its permits")
 }
 
 // As axum's own `serve`: a peer gone before its accept is retried at once, and

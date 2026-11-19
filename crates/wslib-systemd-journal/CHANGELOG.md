@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- `Error::Spawn` and `Error::Io` say only their own layer; the `io::Error`
+  is the `source()`.
+
 ## 0.1.0
 
 - `Query`: a bounded `journalctl --output=json` read, newest first. `Source`

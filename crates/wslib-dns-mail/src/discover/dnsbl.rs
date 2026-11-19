@@ -3,7 +3,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use wslib_dns::{LookupError, Resolver, reversed_labels};
 
 /// What a DNS blocklist said about an address.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DnsblResult {
     pub address: IpAddr,
@@ -17,7 +17,7 @@ pub struct DnsblResult {
     pub reason: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum DnsblStatus {
@@ -33,7 +33,7 @@ pub enum DnsblStatus {
 
 impl DnsblResult {
     pub fn is_listed(&self) -> bool {
-        self.status == DnsblStatus::Listed
+        matches!(self.status, DnsblStatus::Listed)
     }
 }
 

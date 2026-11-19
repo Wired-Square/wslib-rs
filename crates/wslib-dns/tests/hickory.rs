@@ -13,8 +13,14 @@ async fn a_server_that_never_answers_is_a_timeout() {
         options
     })
     .unwrap();
-    assert_eq!(dns.a("example.com").await, Err(LookupError::Timeout));
-    assert_eq!(dns.txt("example.com").await, Err(LookupError::Timeout));
+    assert!(matches!(
+        dns.a("example.com").await,
+        Err(LookupError::Timeout)
+    ));
+    assert!(matches!(
+        dns.txt("example.com").await,
+        Err(LookupError::Timeout)
+    ));
 }
 
 #[tokio::test]

@@ -165,7 +165,7 @@ impl InProcess {
                         .for_each(|a| a.follow(&event));
                 }
             })
-            .map_err(|e| Error::Daemon(e.to_string()))?;
+            .map_err(Error::Thread)?;
         Ok(Self {
             shared: Arc::new(Shared {
                 daemon,
@@ -307,7 +307,7 @@ impl Drop for Registered {
 }
 
 fn daemon_error(e: mdns_sd::Error) -> Error {
-    Error::Daemon(e.to_string())
+    Error::Daemon(Box::new(e))
 }
 
 fn machine_name() -> HostName {
@@ -422,6 +422,17 @@ mod tests {
     use super::*;
 
     const KIND: &str = "_http._tcp.local.";
+
+    #[test]
+    fn a_refusal_says_its_own_layer_and_keeps_the_responders_error() {
+        let refused = daemon_error(mdns_sd::Error::DaemonShutdown);
+        assert_eq!(refused.to_string(), "the mDNS responder refused");
+        let source = std::error::Error::source(&refused).unwrap();
+        assert!(matches!(
+            source.downcast_ref::<mdns_sd::Error>(),
+            Some(mdns_sd::Error::DaemonShutdown)
+        ));
+    }
 
     fn name_change(original: &str, new_name: &str) -> DaemonEvent {
         DaemonEvent::NameChange(DnsNameChange {

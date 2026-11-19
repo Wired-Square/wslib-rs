@@ -112,6 +112,12 @@ pub enum SerialError {
     Closed,
     #[error("read failed")]
     Read(#[source] io::Error),
+    /// A write, or a DTR or RTS change, failed.
+    #[error("write failed")]
+    Write(#[source] io::Error),
+    /// A blocking call on the port panicked.
+    #[error("a blocking call on the port panicked")]
+    Panicked,
 }
 
 /// Owns the task: dropping it stops the task and closes the port.
@@ -234,10 +240,10 @@ impl Port {
     }
 
     #[cfg(feature = "write")]
-    async fn run(&mut self, op: Op) -> io::Result<()> {
+    async fn run(&mut self, op: Op) -> Result<(), SerialError> {
         match (self, op) {
             #[cfg(unix)]
-            (Self::Termios(_), _) => Err(io::ErrorKind::Unsupported.into()),
+            (Self::Termios(_), _) => Err(SerialError::Write(io::ErrorKind::Unsupported.into())),
             (Self::Serialport(port), Op::Write(mut bytes)) => port.write(&mut bytes).await,
             (Self::Serialport(port), Op::Dtr(level)) => port.set_dtr(level).await,
             (Self::Serialport(port), Op::Rts(level)) => port.set_rts(level).await,
@@ -428,6 +434,59 @@ mod tests {
         let read = SerialError::Read(io::ErrorKind::BrokenPipe.into());
         assert_eq!(read.to_string(), "read failed");
         assert_eq!(cause(&read), io::ErrorKind::BrokenPipe);
+    }
+
+    #[cfg(feature = "write")]
+    #[tokio::test]
+    async fn a_read_that_panicked_is_a_disconnect_and_the_port_is_reopened() {
+        const MISSING: &str = "/nonexistent/wslib-serial";
+        const REOPEN: Duration = Duration::from_millis(10);
+        let options = SerialOptions {
+            access: Access::ReadWrite,
+            reopen: Some(REOPEN),
+            ..SerialOptions::default()
+        };
+        let (events, mut event_rx) = mpsc::channel(options.events);
+        let (_jobs, job_rx) = mpsc::channel(options.writes);
+        let task = Task {
+            path: MISSING.into(),
+            line: line(8, 1),
+            backoff: Backoff::new(REOPEN, options.reopen_max),
+            options,
+            events,
+            jobs: job_rx,
+            failures: 0,
+        };
+        let running = tokio::spawn(task.run(Ok(Port::Serialport(blocking::tests::panicking()))));
+        assert!(matches!(
+            event_rx.recv().await,
+            Some(SerialEvent::Connected)
+        ));
+        let lost = event_rx.recv().await;
+        assert!(
+            matches!(
+                lost,
+                Some(SerialEvent::Disconnected {
+                    error: SerialError::Panicked,
+                    consecutive: 1,
+                    retry_in: Some(_),
+                })
+            ),
+            "{lost:?}"
+        );
+        let reopened = event_rx.recv().await;
+        assert!(
+            matches!(
+                &reopened,
+                Some(SerialEvent::Disconnected {
+                    error: SerialError::Open { path, .. },
+                    consecutive: 2,
+                    ..
+                }) if path == MISSING
+            ),
+            "{reopened:?}"
+        );
+        running.abort();
     }
 
     #[test]

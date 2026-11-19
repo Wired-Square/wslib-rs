@@ -393,13 +393,20 @@ impl<A: Api> Basic<A> {
 }
 
 /// Cancel-safe: a wait cut short is picked up by the next.
-async fn woken<A: Api>(waiter: &mut Option<JoinHandle<()>>, api: &Arc<A>) {
+async fn woken<A: Api>(waiter: &mut Option<JoinHandle<()>>, api: &Arc<A>) -> Result<(), CanError> {
     let waiting = waiter.get_or_insert_with(|| {
         let api = api.clone();
         spawn_blocking(move || api.wait(WAKE_BOUND))
     });
-    let _ = waiting.await;
+    let woken = waiting.await;
     *waiter = None;
+    woken.map_err(|e| {
+        if e.is_panic() {
+            CanError::Panicked
+        } else {
+            CanError::Read(io::ErrorKind::Interrupted.into())
+        }
+    })
 }
 
 impl<A: Api> Device for Basic<A> {
@@ -443,7 +450,7 @@ impl<A: Api> Device for Basic<A> {
             return Ok(received);
         }
         let woken = woken(&mut self.waiter, &self.started.api);
-        if self.bus.wait(woken).await.is_none() {
+        if self.bus.wait(woken).await.transpose()?.is_none() {
             return Ok(received);
         }
         self.drain()
@@ -750,6 +757,7 @@ mod tests {
         status: Mutex<u32>,
         writes: Mutex<VecDeque<u32>>,
         written: Mutex<Vec<Msg>>,
+        waits_panic: Mutex<u32>,
     }
 
     impl Fake {
@@ -841,6 +849,13 @@ mod tests {
         }
 
         fn wait(&self, _: Duration) {
+            let panics = {
+                let mut left = self.waits_panic.lock().unwrap();
+                let panics = *left > 0;
+                *left = left.saturating_sub(1);
+                panics
+            };
+            assert!(!panics, "the wait panicked");
             std::thread::sleep(Duration::from_millis(1));
         }
     }
@@ -992,6 +1007,27 @@ mod tests {
             panic!("a bus report");
         };
         assert_eq!(state.state, ErrorState::Passive);
+    }
+
+    #[tokio::test]
+    async fn a_wait_that_panicked_is_a_loss_that_reopens_the_channel() {
+        let fake = Fake::with_one_usb_channel();
+        let mut task = opened(&fake, options(false, false)).await.unwrap();
+        next(&mut task).await;
+        *fake.waits_panic.lock().unwrap() = 1;
+        let lost = next(&mut task).await;
+        assert!(
+            matches!(
+                lost,
+                CanEvent::Disconnected {
+                    error: CanError::Panicked,
+                    retry_in: Some(_),
+                    ..
+                }
+            ),
+            "{lost:?}"
+        );
+        assert!(matches!(next(&mut task).await, CanEvent::Connected(_)));
     }
 
     #[tokio::test]

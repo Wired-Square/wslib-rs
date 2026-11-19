@@ -1,6 +1,6 @@
 [package]
 name = "wslib-modbus"
-version = "0.2.3"
+version = "0.3.0"
 description = "Modbus: the wire facts, a TOML register map decoded and encoded, poll schedules on the caller's clock, a register sweep's plan, Modbus RTU framed and stamped off a serial line, and a Modbus TCP client, poller and poll task with writes behind their own feature."
 readme = "README.md"
 edition.workspace = true

@@ -1,7 +1,5 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    error::Error,
-    iter,
     sync::{Arc, Mutex, OnceLock},
 };
 
@@ -16,6 +14,7 @@ use wslib_serial::SerialEvent;
 use super::{
     MonitorOptions, Opener, PortKey, Refusal, Update,
     bounds::Ring,
+    chain,
     echo::EchoMatcher,
     link::{Link, Unresolved},
     lock,
@@ -23,14 +22,6 @@ use super::{
 use crate::{COLOURS, MonitorState, Participant, Span};
 
 const RESET_PULSE: Duration = Duration::from_millis(10);
-const CAUSE_SEPARATOR: &str = ": ";
-
-fn chain(error: &(dyn Error + 'static)) -> String {
-    iter::successors(Some(error), |&e| e.source())
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(CAUSE_SEPARATOR)
-}
 
 pub(super) enum Command {
     Write { bytes: Vec<u8>, by: Option<String> },
@@ -325,7 +316,7 @@ impl Port {
                 }
                 link.write(bytes)
                     .await
-                    .map_err(|e| format!("write {path}: {e}"))
+                    .map_err(|e| format!("write {path}: {}", chain(&*e)))
             }
             Command::Reset => {
                 let pulsed = async {
@@ -333,7 +324,9 @@ impl Port {
                     sleep(RESET_PULSE).await;
                     link.set_dtr(true).await
                 };
-                pulsed.await.map_err(|e| format!("reset {path}: {e}"))
+                pulsed
+                    .await
+                    .map_err(|e| format!("reset {path}: {}", chain(&*e)))
             }
         }
     }

@@ -7,13 +7,15 @@
   an `io::Error` wrapping either. `source()` returns the `io::Error` or the
   `CanError` itself.
 - `OpenError::Open` names only the bus that did not open; the cause comes
-  only through `source()`. `kind()` is the cause's kind, so a missing
-  adapter or port is `NotFound`, and a USB listing that fails keeps its own.
+  only through `source()`. `kind()` is the cause's `io::Error` kind, a GVRET
+  connect's included, so a missing adapter or port is `NotFound`, and a USB
+  listing that fails keeps its own.
 - `SerialPort`'s parse fails with `PortParseError`, not a `String`.
   `BusParseError::Port` carries it as its source for an SLCAN bus whose port
   doesn't parse.
-- On wslib-serial 0.2, wslib-can-slcan 0.2, wslib-can-gvret 0.2 and
-  wslib-can-socketcan 0.2. wslib-can's floor is 0.1.4.
+- On wslib-serial 0.2, wslib-can-slcan 0.2, wslib-can-gvret 0.2,
+  wslib-can-gsusb 0.2, wslib-can-pcan 0.2 and wslib-can-socketcan 0.2.
+  wslib-can's floor is 0.1.4.
 
 ## 0.2.0
 

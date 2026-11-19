@@ -107,6 +107,50 @@ fn an_adapter_that_did_not_open_is_its_can_error_and_its_kind() {
     assert_eq!(closed.kind(), io::ErrorKind::Other);
 }
 
+#[cfg(feature = "task")]
+#[test]
+fn an_adapter_read_or_request_that_failed_is_its_io_errors_kind() {
+    use wslib_can::CanError;
+
+    for (adapter, kind) in [
+        (
+            CanError::Read(io::ErrorKind::BrokenPipe.into()),
+            io::ErrorKind::BrokenPipe,
+        ),
+        (
+            CanError::Request {
+                request: "BT_CONST",
+                source: io::ErrorKind::TimedOut.into(),
+            },
+            io::ErrorKind::TimedOut,
+        ),
+    ] {
+        assert_eq!(OpenCause::Adapter(adapter).kind(), kind);
+    }
+}
+
+#[cfg(feature = "gvret")]
+#[test]
+fn a_gvret_connect_that_failed_is_its_io_errors_kind() {
+    use wslib_can::CanError;
+    use wslib_can_gvret::TransportError;
+
+    let refused = TransportError::Connect {
+        addr: "127.0.0.1:23".parse().unwrap(),
+        source: io::ErrorKind::ConnectionRefused.into(),
+    };
+    let lost = TransportError::Io(io::ErrorKind::ConnectionReset.into());
+    for (transport, kind) in [
+        (refused, io::ErrorKind::ConnectionRefused),
+        (lost, io::ErrorKind::ConnectionReset),
+    ] {
+        assert_eq!(
+            OpenCause::Adapter(CanError::Connect(transport)).kind(),
+            kind
+        );
+    }
+}
+
 #[test]
 fn a_bus_is_refused_for_its_feature_first_then_for_its_platform() {
     let linux = cfg!(target_os = "linux");

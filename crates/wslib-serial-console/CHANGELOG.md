@@ -3,8 +3,10 @@
 ## 0.3.1
 
 - On wslib-serial 0.2.
-- A port's open or read failure in a monitor's state message writes the
-  error and each of its causes.
+- A port's open, read, write or reset failure, and a port listing's, in a
+  monitor's state message writes the error and each of its causes.
+- `test-support`: `FakeDevice::lose` ends the line with a `SerialError`, as a
+  read that failed would.
 
 ## 0.3.0
 

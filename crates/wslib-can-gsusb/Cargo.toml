@@ -1,6 +1,6 @@
 [package]
 name = "wslib-can-gsusb"
-version = "0.1.1"
+version = "0.2.0"
 description = "gs_usb, the candleLight protocol, and a CAN task on a gs_usb adapter over nusb on macOS and Windows, or its SocketCAN interfaces listed on Linux."
 readme = "README.md"
 edition.workspace = true

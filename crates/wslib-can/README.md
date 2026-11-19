@@ -28,7 +28,8 @@ None is on by default.
   serves sends through `CanWriter` between reads, and reopens a lost device
   after a wait that doubles from `reopen` up to `reopen_max`.
 - `tcp`: `CanError::Connect`, carrying wslib-tcp's `TransportError`.
-- `serial`: `CanError::Serial`, carrying wslib-serial's `SerialError`.
+- `serial`: `CanError::Serial`, carrying wslib-serial's `SerialError`; on
+  iOS, which has no wslib-serial, nothing.
 - `testing` (with `task`): `loopback`, an in-memory bus for testing a
   protocol over `CanTask` with no adapter. Each port's task sees every frame
   written on the bus.

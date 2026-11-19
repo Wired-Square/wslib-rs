@@ -1,5 +1,4 @@
-use std::io;
-use std::path::Path;
+use std::{error::Error, path::Path};
 
 use wslib_mcu_flash::ports::{SERIAL_BY_PATH_DIR, by_path_index, not_attached};
 use wslib_serial::{
@@ -7,7 +6,7 @@ use wslib_serial::{
     SerialWriter,
 };
 
-use super::PortKey;
+use super::{PortKey, chain};
 #[cfg(any(test, feature = "test-support"))]
 use crate::test_support::{FakeLink, FakePorts};
 
@@ -27,7 +26,7 @@ pub(super) enum Unresolved {
 
 fn usb_serial_tty(serial: &str) -> Result<Option<String>, Unresolved> {
     Ok(wslib_serial::ports()
-        .map_err(|e| Unresolved::Failed(format!("listing ports: {e}")))?
+        .map_err(|e| Unresolved::Failed(format!("listing ports: {}", chain(&e))))?
         .into_iter()
         .filter(|port| matches!(&port.kind, PortKind::Usb(usb) if usb.serial.as_deref() == Some(serial)))
         .map(|port| port.path)
@@ -76,6 +75,8 @@ impl Opener {
     }
 }
 
+pub(super) type Unwritten = Box<dyn Error + Send + Sync>;
+
 /// One open of a port, ended by its first loss.
 pub(super) enum Link {
     Serial(SerialWriter, SerialTask),
@@ -92,19 +93,19 @@ impl Link {
         }
     }
 
-    pub(super) async fn write(&self, bytes: Vec<u8>) -> io::Result<()> {
+    pub(super) async fn write(&self, bytes: Vec<u8>) -> Result<(), Unwritten> {
         match self {
-            Self::Serial(writer, _) => writer.write(bytes).await.map_err(io::Error::other)?,
+            Self::Serial(writer, _) => Ok(writer.write(bytes).await??),
             #[cfg(any(test, feature = "test-support"))]
-            Self::Fake(link) => link.write(bytes),
+            Self::Fake(link) => Ok(link.write(bytes)?),
         }
     }
 
-    pub(super) async fn set_dtr(&self, level: bool) -> io::Result<()> {
+    pub(super) async fn set_dtr(&self, level: bool) -> Result<(), Unwritten> {
         match self {
-            Self::Serial(writer, _) => writer.set_dtr(level).await.map_err(io::Error::other)?,
+            Self::Serial(writer, _) => Ok(writer.set_dtr(level).await??),
             #[cfg(any(test, feature = "test-support"))]
-            Self::Fake(link) => link.set_dtr(level),
+            Self::Fake(link) => Ok(link.set_dtr(level)?),
         }
     }
 

@@ -24,7 +24,7 @@ toml_edit = { version = "0.25", default-features = false, features = ["display",
 ts-rs = { version = "12", optional = true, features = ["no-serde-warnings"] }
 wslib-bits = { path = "../wslib-bits", version = "0.1", registry = "wired-square", features = ["decimal", "display"] }
 wslib-checksum = { path = "../wslib-checksum", version = "0.1", registry = "wired-square" }
-wslib-modbus = { path = "../wslib-modbus", version = "0.2.1", registry = "wired-square", default-features = false }
+wslib-modbus = { path = "../wslib-modbus", version = "0.3", registry = "wired-square", default-features = false }
 wslib-quantity = { path = "../wslib-quantity", version = "0.2.0", registry = "wired-square" }
 wslib-serial = { path = "../wslib-serial", version = "0.2", registry = "wired-square", default-features = false }
 wslib-wiretap-protocol = { path = "../wslib-wiretap-protocol", version = "0.2", registry = "wired-square" }

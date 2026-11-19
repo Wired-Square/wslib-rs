@@ -36,8 +36,8 @@ pub enum OpenCause {
 }
 
 impl OpenCause {
-    /// The `io::Error`'s kind, the adapter's when its error holds one, else
-    /// `Other`.
+    /// The `io::Error`'s kind; for the adapter's error, that of the
+    /// `io::Error` it holds (a GVRET connect's too), else `Other`.
     pub fn kind(&self) -> io::ErrorKind {
         match self {
             OpenCause::Io(e) => e.kind(),
@@ -47,6 +47,11 @@ impl OpenCause {
                 | CanError::Read(source)
                 | CanError::Request { source, .. },
             ) => source.kind(),
+            #[cfg(feature = "gvret")]
+            OpenCause::Adapter(CanError::Connect(
+                wslib_can_gvret::TransportError::Connect { source, .. }
+                | wslib_can_gvret::TransportError::Io(source),
+            )) => source.kind(),
             #[cfg(feature = "task")]
             OpenCause::Adapter(_) => io::ErrorKind::Other,
         }

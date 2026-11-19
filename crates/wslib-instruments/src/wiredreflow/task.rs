@@ -186,4 +186,36 @@ mod tests {
         });
         assert!(closed.load(Ordering::Relaxed));
     }
+
+    #[test]
+    fn a_disconnect_keeps_each_cause_in_its_reason() {
+        let read_failed = || {
+            wslib_can::CanError::Read(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "the adapter went away",
+            ))
+        };
+        let lost = translated(CanEvent::Disconnected {
+            error: read_failed(),
+            consecutive: 1,
+            retry_in: Some(Duration::from_secs(1)),
+        });
+        assert_eq!(
+            lost,
+            Some(Err(BusError::Lost(
+                "read failed: the adapter went away".into()
+            )))
+        );
+        let ended = translated(CanEvent::Disconnected {
+            error: read_failed(),
+            consecutive: 1,
+            retry_in: None,
+        });
+        assert_eq!(
+            ended,
+            Some(Err(BusError::Ended(
+                "read failed: the adapter went away".into()
+            )))
+        );
+    }
 }

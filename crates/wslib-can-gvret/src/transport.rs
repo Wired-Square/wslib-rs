@@ -316,7 +316,7 @@ impl Wire {
                 Ok(())
             }
             #[cfg(feature = "serial")]
-            Self::Serial(port) => port.write(outbound).await,
+            Self::Serial(port) => port.write(outbound).await.map_err(crate::serial::unwritten),
         }
     }
 

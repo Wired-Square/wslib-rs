@@ -2,7 +2,9 @@
 
 ## 0.4.0
 
-- On wslib-serial 0.2, whose `DelimiterOptions` it re-exports.
+- On wslib-serial 0.2, whose `DelimiterOptions` it re-exports, and
+  wslib-modbus 0.3, whose `Finding`, `RegisterType`, `UnknownRegisterType`
+  and `WriteBank` it re-exports.
 
 ## 0.3.1
 

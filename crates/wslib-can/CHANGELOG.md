@@ -6,7 +6,10 @@
   comes only through `source()`, which `Read` now returns too.
 - `CanError::Request`: a request the device didn't take, named, with its
   `io::Error` as the source.
-- `serial`: `CanError::Serial`, carrying wslib-serial's `SerialError`.
+- `serial`: `CanError::Serial`, carrying wslib-serial's `SerialError`. On
+  iOS, which has no wslib-serial, the feature adds nothing.
+- `CanError::Panicked`: a transport's blocking call panicked. The task
+  reports it as a disconnect and reopens, as for any loss.
 
 ## 0.1.3
 

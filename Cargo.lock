@@ -8452,7 +8452,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-can-gsusb"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "nusb 0.2.7",
  "tokio",
@@ -8472,7 +8472,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-can-pcan"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "libloading",
  "nusb 0.2.7",
@@ -8881,7 +8881,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-modbus"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "rust_decimal",
  "rust_decimal_macros",

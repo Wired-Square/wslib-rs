@@ -1,6 +1,6 @@
 [package]
 name = "wslib-can-pcan"
-version = "0.1.1"
+version = "0.2.0"
 description = "PEAK-System's PCAN-USB and its CAN FD family, both codecs, and a CAN task on either over nusb on macOS and Windows, or through PEAK's own driver on Windows."
 readme = "README.md"
 edition.workspace = true

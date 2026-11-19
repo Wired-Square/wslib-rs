@@ -1,12 +1,14 @@
 # Changelog
 
-## 0.2.3
+## 0.3.0
 
-- A tokio-modbus protocol error is wslib-tcp's `TransportError::Violation`,
-  with tokio-modbus's `ProtocolError` as its source, in place of `Protocol`
-  and a sentence. wslib-tcp's floor is 0.1.2.
-- A `WriteOutcome::Failed` detail and a verify read's problem write the
-  request error and each of its causes.
+- A tokio-modbus protocol error now arrives as wslib-tcp's
+  `TransportError::Violation`, with tokio-modbus's `ProtocolError` as its
+  source, not as `Protocol` and a sentence. wslib-tcp's floor is 0.1.2.
+- `WriteOutcome::Failed` carries a `WriteFailure`, and `Unconfirmed` the
+  `VerifyProblem`s, in place of text. Each names its `WriteTarget`, and a
+  request that failed is its `source()`, held in an `Arc`. `WriteReport` and
+  `WriteOutcome` are no longer `PartialEq` or `Eq`.
 
 ## 0.2.2
 

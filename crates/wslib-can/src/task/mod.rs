@@ -175,7 +175,7 @@ pub enum CanError {
     #[cfg(feature = "tcp")]
     #[error(transparent)]
     Connect(wslib_tcp::TransportError),
-    #[cfg(feature = "serial")]
+    #[cfg(all(feature = "serial", not(target_os = "ios")))]
     #[error(transparent)]
     Serial(wslib_serial::SerialError),
     /// The device didn't answer as its protocol says.
@@ -191,6 +191,9 @@ pub enum CanError {
     Unresponsive,
     #[error("read failed")]
     Read(#[source] io::Error),
+    /// A blocking call on the device panicked.
+    #[error("a blocking call on the device panicked")]
+    Panicked,
     /// A request the device didn't take, by its protocol's name for it.
     #[error("{request} failed")]
     Request {

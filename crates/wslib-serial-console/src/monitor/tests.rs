@@ -150,6 +150,26 @@ async fn a_port_that_does_not_open_is_backed_off_from_with_each_cause() {
 }
 
 #[tokio::test]
+async fn a_read_that_failed_is_backed_off_from_with_each_cause() {
+    let bench = Bench::new();
+    let device = bench.plug();
+    let mut console = bench.console("alex").await;
+    let cause = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "the cable came out");
+    device.lose(wslib_serial::SerialError::Read(cause));
+    let wanted = format!("read {PATH}: read failed: the cable came out");
+    until(&mut console, |u| {
+        matches!(
+            u,
+            Update::State {
+                state: MonitorState::Backoff,
+                message: Some(message),
+            } if *message == wanted
+        )
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn a_subscriber_is_told_the_monitors_state_before_anything_else() {
     let bench = Bench::new();
     let mut console = bench.monitors.subscribe(path(), None, Bounds::default());

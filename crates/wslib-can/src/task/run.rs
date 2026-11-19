@@ -614,6 +614,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_read_that_panicked_is_a_disconnect_and_the_device_is_reopened() {
+        let (rig, script) = rig(vec![Ok(DeviceInfo::default())]);
+        let mut task = open::<Fake>(rig.clone(), options(Some(Duration::from_millis(1))))
+            .await
+            .unwrap();
+        assert!(matches!(next(&mut task).await, CanEvent::Connected(_)));
+        script.send(Err(CanError::Panicked)).unwrap();
+        let lost = next(&mut task).await;
+        assert!(
+            matches!(
+                lost,
+                CanEvent::Disconnected {
+                    error: CanError::Panicked,
+                    consecutive: 1,
+                    retry_in: Some(_),
+                }
+            ),
+            "{lost:?}"
+        );
+        assert!(matches!(next(&mut task).await, CanEvent::Connected(_)));
+        assert_eq!(rig.closes.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn the_reopen_wait_stops_growing_at_its_cap() {
         let (rig, _script) = rig(vec![Err(gone()), Err(gone()), Err(gone())]);
         let options = CanOptions {

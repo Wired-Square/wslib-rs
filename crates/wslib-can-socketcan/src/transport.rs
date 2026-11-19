@@ -419,4 +419,19 @@ mod tests {
         assert!(matches!(remote, CanAnyFrame::Remote(r) if r.dlc() == 5));
         assert!(outgoing(&CanFrame::remote(0, 0x10, false, 9)).is_none());
     }
+
+    #[test]
+    fn a_netlink_failure_names_the_interface_and_keeps_socketcans_error() {
+        let failed = BitratesError::Netlink {
+            interface: "can0".into(),
+            source: Box::new(io::Error::from(io::ErrorKind::PermissionDenied)),
+        };
+        assert_eq!(failed.to_string(), "cannot read can0's rates");
+        let cause = failed
+            .source()
+            .unwrap()
+            .downcast_ref::<io::Error>()
+            .unwrap();
+        assert_eq!(cause.kind(), io::ErrorKind::PermissionDenied);
+    }
 }

@@ -275,7 +275,7 @@ pub(super) fn outgoing(frame: &CanFrame, channel: u8) -> Vec<u8> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use std::time::Duration;
 
     use wslib_can::BusState;
@@ -297,7 +297,7 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct FakePipe {
+    pub(in crate::transport) struct FakePipe {
         log: Vec<Op>,
         info: Vec<u8>,
         broken: Option<(u16, io::ErrorKind)>,

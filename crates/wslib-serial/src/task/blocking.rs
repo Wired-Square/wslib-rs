@@ -2,7 +2,7 @@
 //! write waits for at most one read. serialport opens every port read-write,
 //! and a Windows one always exclusively; without `write` no write code exists.
 
-use std::{io, mem, panic, time::Duration};
+use std::{io, mem, time::Duration};
 
 use serialport::{DataBits, FlowControl, StopBits};
 use tokio::task::{JoinError, JoinHandle, spawn_blocking};
@@ -90,7 +90,7 @@ impl SerialPort {
     /// once the bytes are queued, not sent. Cancel-safe: `bytes` is taken only
     /// when the write starts.
     #[cfg(feature = "write")]
-    pub async fn write(&mut self, bytes: &mut Vec<u8>) -> io::Result<()> {
+    pub async fn write(&mut self, bytes: &mut Vec<u8>) -> Result<(), SerialError> {
         let mut port = self.idle().await?;
         let bytes = mem::take(bytes);
         self.state = State::Writing(spawn_blocking(move || {
@@ -103,14 +103,14 @@ impl SerialPort {
     /// Asserts DTR when `level` is true, once any read or write in flight has
     /// returned.
     #[cfg(feature = "write")]
-    pub async fn set_dtr(&mut self, level: bool) -> io::Result<()> {
+    pub async fn set_dtr(&mut self, level: bool) -> Result<(), SerialError> {
         self.control(move |port| port.write_data_terminal_ready(level))
             .await
     }
 
     /// Asserts RTS when `level` is true, as [`set_dtr`](Self::set_dtr) does DTR.
     #[cfg(feature = "write")]
-    pub async fn set_rts(&mut self, level: bool) -> io::Result<()> {
+    pub async fn set_rts(&mut self, level: bool) -> Result<(), SerialError> {
         self.control(move |port| port.write_request_to_send(level))
             .await
     }
@@ -119,7 +119,7 @@ impl SerialPort {
     async fn control(
         &mut self,
         set: impl FnOnce(&mut Boxed) -> serialport::Result<()> + Send + 'static,
-    ) -> io::Result<()> {
+    ) -> Result<(), SerialError> {
         let mut port = self.idle().await?;
         self.state = State::Writing(spawn_blocking(move || {
             let set = set(&mut port).map_err(io::Error::from);
@@ -130,14 +130,14 @@ impl SerialPort {
 
     /// The port, taken once any read or write in flight has returned.
     #[cfg(feature = "write")]
-    async fn idle(&mut self) -> io::Result<Boxed> {
+    async fn idle(&mut self) -> Result<Boxed, SerialError> {
         if let State::Reading(_) = self.state {
             self.unread = Some(self.read_in_flight().await?);
         }
         let _ = self.written().await;
         match mem::replace(&mut self.state, State::Gone) {
             State::Idle(port) => Ok(port),
-            _ => Err(io::ErrorKind::NotConnected.into()),
+            _ => Err(SerialError::Write(io::ErrorKind::NotConnected.into())),
         }
     }
 
@@ -168,15 +168,15 @@ impl SerialPort {
     }
 
     /// The write in flight's result, if there is one.
-    async fn written(&mut self) -> io::Result<()> {
+    async fn written(&mut self) -> Result<(), SerialError> {
         let State::Writing(handle) = &mut self.state else {
             return Ok(());
         };
         let joined = handle.await;
         self.state = State::Gone;
-        let (port, written) = finished(joined)?;
+        let (port, written) = finished(joined, SerialError::Write)?;
         self.state = State::Idle(port);
-        written
+        written.map_err(SerialError::Write)
     }
 
     async fn next_read(&mut self) -> Result<io::Result<Vec<u8>>, SerialError> {
@@ -191,25 +191,31 @@ impl SerialPort {
         let State::Reading(_) = self.state else {
             return Err(SerialError::Closed);
         };
-        self.read_in_flight().await.map_err(SerialError::Read)
+        self.read_in_flight().await
     }
 
-    async fn read_in_flight(&mut self) -> io::Result<io::Result<Vec<u8>>> {
+    async fn read_in_flight(&mut self) -> Result<io::Result<Vec<u8>>, SerialError> {
         let State::Reading(handle) = &mut self.state else {
-            return Err(io::ErrorKind::NotConnected.into());
+            return Err(SerialError::Closed);
         };
         let joined = handle.await;
         self.state = State::Gone;
-        let (port, read) = finished(joined)?;
+        let (port, read) = finished(joined, SerialError::Read)?;
         self.state = State::Idle(port);
         Ok(read)
     }
 }
 
-fn finished<T>(joined: Result<T, JoinError>) -> io::Result<T> {
-    joined.or_else(|e| match e.try_into_panic() {
-        Ok(payload) => panic::resume_unwind(payload),
-        Err(_) => Err(io::ErrorKind::Interrupted.into()),
+fn finished<T>(
+    joined: Result<T, JoinError>,
+    cancelled: fn(io::Error) -> SerialError,
+) -> Result<T, SerialError> {
+    joined.map_err(|e| {
+        if e.is_panic() {
+            SerialError::Panicked
+        } else {
+            cancelled(io::ErrorKind::Interrupted.into())
+        }
     })
 }
 
@@ -223,22 +229,198 @@ fn read_once(mut port: Boxed, len: usize) -> (Boxed, io::Result<Vec<u8>>) {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::panic::AssertUnwindSafe;
+pub(super) mod tests {
+    use std::{
+        io::{Read, Write},
+        sync::mpsc,
+    };
+
+    use tokio::runtime::Builder;
 
     use super::*;
 
-    const PANIC: &str = "the blocking call panicked";
+    const LINE: LineSettings = LineSettings {
+        baud: 9600,
+        data_bits: 8,
+        parity: Parity::None,
+        stop_bits: 1,
+    };
 
-    #[tokio::test]
-    async fn a_blocking_call_that_panicked_resumes_its_panic() {
-        let joined = spawn_blocking(|| panic::panic_any(PANIC)).await;
-        let payload = panic::catch_unwind(AssertUnwindSafe(|| finished::<()>(joined))).unwrap_err();
-        assert_eq!(payload.downcast_ref::<&str>(), Some(&PANIC));
+    fn panicked<T: Send + 'static>() -> Result<T, JoinError> {
+        Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(async {
+                spawn_blocking(|| -> T { panic!("a blocking call panicked") }).await
+            })
+    }
+
+    fn cancelled() -> Result<(), JoinError> {
+        let runtime = Builder::new_current_thread()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (release, held) = mpsc::channel::<()>();
+            let busy = spawn_blocking(move || held.recv());
+            let queued = spawn_blocking(|| ());
+            queued.abort();
+            release.send(()).unwrap();
+            busy.await.unwrap().unwrap();
+            queued.await
+        })
+    }
+
+    #[test]
+    fn a_blocking_call_that_panicked_is_panicked_and_one_cancelled_is_interrupted() {
+        assert!(matches!(
+            finished(panicked::<()>(), SerialError::Read),
+            Err(SerialError::Panicked)
+        ));
+        let cancelled_read = finished(cancelled(), SerialError::Read);
+        assert!(
+            matches!(&cancelled_read, Err(SerialError::Read(e)) if e.kind() == io::ErrorKind::Interrupted),
+            "{cancelled_read:?}"
+        );
+        let cancelled_write = finished(cancelled(), SerialError::Write);
+        assert!(
+            matches!(&cancelled_write, Err(SerialError::Write(e)) if e.kind() == io::ErrorKind::Interrupted),
+            "{cancelled_write:?}"
+        );
+    }
+
+    #[test]
+    fn a_blocking_call_that_returned_is_its_result() {
+        let runtime = Builder::new_current_thread().build().unwrap();
+        let joined = runtime.block_on(async { spawn_blocking(|| 1).await });
+        assert_eq!(finished(joined, SerialError::Read).unwrap(), 1);
+    }
+
+    struct Panicking;
+
+    impl Read for Panicking {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            panic!("read panicked")
+        }
+    }
+
+    impl Write for Panicking {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            panic!("write panicked")
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl serialport::SerialPort for Panicking {
+        fn name(&self) -> Option<String> {
+            None
+        }
+        fn baud_rate(&self) -> serialport::Result<u32> {
+            Ok(LINE.baud)
+        }
+        fn data_bits(&self) -> serialport::Result<DataBits> {
+            Ok(DataBits::Eight)
+        }
+        fn flow_control(&self) -> serialport::Result<FlowControl> {
+            Ok(FlowControl::None)
+        }
+        fn parity(&self) -> serialport::Result<serialport::Parity> {
+            Ok(serialport::Parity::None)
+        }
+        fn stop_bits(&self) -> serialport::Result<StopBits> {
+            Ok(StopBits::One)
+        }
+        fn timeout(&self) -> Duration {
+            READ_TIMEOUT
+        }
+        fn set_baud_rate(&mut self, _: u32) -> serialport::Result<()> {
+            Ok(())
+        }
+        fn set_data_bits(&mut self, _: DataBits) -> serialport::Result<()> {
+            Ok(())
+        }
+        fn set_flow_control(&mut self, _: FlowControl) -> serialport::Result<()> {
+            Ok(())
+        }
+        fn set_parity(&mut self, _: serialport::Parity) -> serialport::Result<()> {
+            Ok(())
+        }
+        fn set_stop_bits(&mut self, _: StopBits) -> serialport::Result<()> {
+            Ok(())
+        }
+        fn set_timeout(&mut self, _: Duration) -> serialport::Result<()> {
+            Ok(())
+        }
+        fn write_request_to_send(&mut self, _: bool) -> serialport::Result<()> {
+            panic!("RTS panicked")
+        }
+        fn write_data_terminal_ready(&mut self, _: bool) -> serialport::Result<()> {
+            panic!("DTR panicked")
+        }
+        fn read_clear_to_send(&mut self) -> serialport::Result<bool> {
+            Ok(false)
+        }
+        fn read_data_set_ready(&mut self) -> serialport::Result<bool> {
+            Ok(false)
+        }
+        fn read_ring_indicator(&mut self) -> serialport::Result<bool> {
+            Ok(false)
+        }
+        fn read_carrier_detect(&mut self) -> serialport::Result<bool> {
+            Ok(false)
+        }
+        fn bytes_to_read(&self) -> serialport::Result<u32> {
+            Ok(0)
+        }
+        fn bytes_to_write(&self) -> serialport::Result<u32> {
+            Ok(0)
+        }
+        fn clear(&self, _: serialport::ClearBuffer) -> serialport::Result<()> {
+            Ok(())
+        }
+        fn try_clone(&self) -> serialport::Result<Box<dyn serialport::SerialPort>> {
+            Ok(Box::new(Panicking))
+        }
+        fn set_break(&self) -> serialport::Result<()> {
+            Ok(())
+        }
+        fn clear_break(&self) -> serialport::Result<()> {
+            Ok(())
+        }
+    }
+
+    pub(in crate::task) fn panicking() -> SerialPort {
+        SerialPort {
+            state: State::Idle(Box::new(Panicking)),
+            unread: None,
+            read_buffer: 1,
+        }
     }
 
     #[tokio::test]
-    async fn a_blocking_call_that_returned_is_its_result() {
-        assert_eq!(finished(spawn_blocking(|| 1).await).unwrap(), 1);
+    async fn a_read_that_panicked_is_panicked_and_leaves_the_port_closed() {
+        let mut port = panicking();
+        assert!(matches!(port.read().await, Err(SerialError::Panicked)));
+        assert!(matches!(port.read().await, Err(SerialError::Closed)));
+    }
+
+    #[cfg(feature = "write")]
+    #[tokio::test]
+    async fn a_write_or_control_change_that_panicked_is_panicked() {
+        assert!(matches!(
+            panicking().write(&mut b"x".to_vec()).await,
+            Err(SerialError::Panicked)
+        ));
+        assert!(matches!(
+            panicking().set_dtr(true).await,
+            Err(SerialError::Panicked)
+        ));
+        assert!(matches!(
+            panicking().set_rts(true).await,
+            Err(SerialError::Panicked)
+        ));
     }
 }

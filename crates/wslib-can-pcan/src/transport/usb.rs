@@ -528,6 +528,10 @@ impl From<nusb::Error> for Unclaimed {
     }
 }
 
+async fn identified(pipe: &mut impl ucan::Pipe) -> Result<FirmwareInfo, Unclaimed> {
+    ucan::identify(pipe).await.map_err(Unclaimed::Identify)
+}
+
 fn unclaimed(device: &PcanDevice) -> impl Fn(Unclaimed) -> CanError {
     let not_opened = not_opened(device);
     move |error| match error {
@@ -608,9 +612,7 @@ impl Claim for UcanClaim {
             interface: device.claim_interface(number).await?,
             command: None,
         };
-        let firmware = ucan::identify(&mut pipe)
-            .await
-            .map_err(Unclaimed::Identify)?;
+        let firmware = identified(&mut pipe).await?;
         pipe.command = Some(pipe.interface.endpoint(firmware.endpoints().command_out)?);
         Ok(Self {
             pipe,
@@ -708,6 +710,26 @@ mod tests {
                 CanError::Handshake("the firmware info is short")
             ),
             "{unidentified:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_fd_adapter_that_does_not_identify_as_it_is_claimed_is_that_error() {
+        let device = PcanDevice {
+            serial: None,
+            bus: 1,
+            address: 2,
+            product: PcanModel::UsbFd.to_string(),
+            model: PcanModel::UsbFd,
+        };
+        let mut pipe = ucan::tests::FakePipe::default();
+        let Err(unidentified) = identified(&mut pipe).await else {
+            panic!("an empty firmware info identified");
+        };
+        let error = unclaimed(&device)(unidentified);
+        assert!(
+            matches!(error, CanError::Handshake("the firmware info is short")),
+            "{error:?}"
         );
     }
 }

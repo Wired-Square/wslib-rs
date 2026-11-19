@@ -122,6 +122,15 @@ impl FakeDevice {
         });
     }
 
+    /// Ends the line with `error`, as a read that failed would.
+    pub fn lose(&self, error: SerialError) {
+        let _ = self.reads.send(SerialEvent::Disconnected {
+            error,
+            consecutive: 1,
+            retry_in: None,
+        });
+    }
+
     /// What the monitor next put on the line; `None` once it has closed the
     /// port.
     pub async fn next(&mut self) -> Option<Wired> {

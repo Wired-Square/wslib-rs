@@ -6,10 +6,14 @@
   `LineSettingsError` typed.
 - `SerialError::Open` and `Read` name only their own layer. The `io::Error`
   comes only through `source()`, which `Read` now returns too.
-- A port read on the blocking pool (on Windows, and with `write`) resumes a
-  blocking call's panic on the caller, as an inline call would, in place of
-  an `io::Error` holding its text. A call the runtime cancels before it runs
-  fails as `Interrupted`.
+- `SerialPort::write`, `set_dtr` and `set_rts`, and `SerialWriter`'s, answer
+  with a `SerialError` in place of an `io::Error`: `Write` holds the
+  `io::Error` of a write, or of a DTR or RTS change, that failed.
+- `SerialError::Panicked`: a blocking call on the port panicked, on Windows
+  or with `write`, in a read, a write or a DTR or RTS change. A read's is
+  the task's `Disconnected`, and the task reopens as after any loss. A
+  write's or a control line's is that call's answer. A call the runtime
+  cancels before it runs is `Read` or `Write` with `Interrupted`.
 
 ## 0.1.3
 

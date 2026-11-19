@@ -108,7 +108,6 @@ fn main() -> ExitCode {
     }
 }
 
-/// `error` and each of its causes, as one line.
 fn chain(error: &(dyn Error + 'static)) -> String {
     iter::successors(Some(error), |&e| e.source())
         .map(ToString::to_string)

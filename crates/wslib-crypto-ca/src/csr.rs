@@ -69,7 +69,10 @@ impl std::ops::Deref for Csr {
 impl CsrView {
     /// Parses a DER request without checking its signature, so that a stored one reads with no provider.
     pub fn from_der(der: &[u8]) -> Result<Self, Error> {
-        let request = der::whole(X509CertificationRequest::from_der(der))?;
+        let request = der::whole(
+            X509CertificationRequest::from_der(der),
+            "certificate request",
+        )?;
         let [signed, signature_algorithm, _] = der::elements(der)?[..] else {
             return Err(Error::Malformed("not a certificate signing request".into()));
         };
@@ -78,10 +81,10 @@ impl CsrView {
         Ok(Self {
             der: der.to_vec(),
             subject: info.subject.as_raw().to_vec(),
-            subject_text: rfc_4514(info.subject.as_raw()).map_err(der::decode)?,
+            subject_text: rfc_4514(info.subject.as_raw()).map_err(der::decode("subject"))?,
             common_name: common_name(&info.subject),
             spki: spki.to_vec(),
-            key: KeyDescription::of_spki(spki).map_err(der::decode)?,
+            key: KeyDescription::of_spki(spki).map_err(der::decode("public key"))?,
             names: requested_names(&request),
             signed: signed.to_vec(),
             signature_algorithm: signature_algorithm.to_vec(),
@@ -98,8 +101,8 @@ impl CsrView {
         if pem.len() > limit {
             return Err(Error::Malformed(format!("PEM over {limit} bytes")));
         }
-        let der =
-            CertificateSigningRequestDer::from_pem_slice(pem.as_bytes()).map_err(der::decode)?;
+        let der = CertificateSigningRequestDer::from_pem_slice(pem.as_bytes())
+            .map_err(der::decode("certificate request PEM"))?;
         Self::from_der(&der)
     }
 

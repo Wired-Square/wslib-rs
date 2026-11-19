@@ -126,14 +126,14 @@ fn a_request_needs_an_algorithm_the_caller_allows() {
 fn what_is_not_a_request_is_refused() {
     assert!(matches!(
         Csr::from_der(b"\x30\x03\x02\x01\x01", algorithms()),
-        Err(Error::Decode(_))
+        Err(Error::Decode { .. })
     ));
     assert!(matches!(
         Csr::from_pem(
             "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n",
             algorithms()
         ),
-        Err(Error::Decode(_))
+        Err(Error::Decode { .. })
     ));
     let long = " ".repeat(pem::MAX_LEN + 1);
     assert!(matches!(

@@ -252,12 +252,16 @@ fn a_broken_policy_says_whether_rua_saves_it() {
             FindingCode::DmarcPolicyNone
         ]
     );
-    assert_eq!(
-        missing[0].detail,
-        Detail::Policy {
-            tag: "p".into(),
-            treated_as_none: true
-        }
+    assert!(
+        matches!(
+            &missing[0].detail,
+            Detail::Policy {
+                tag,
+                treated_as_none: true
+            } if tag == "p"
+        ),
+        "{:?}",
+        missing[0].detail
     );
     let invalid = check("v=DMARC1; p=block");
     assert_eq!(
@@ -267,12 +271,16 @@ fn a_broken_policy_says_whether_rua_saves_it() {
             FindingCode::DmarcNoAggregateReports
         ]
     );
-    assert_eq!(
-        invalid[0].detail,
-        Detail::Policy {
-            tag: "p".into(),
-            treated_as_none: false
-        }
+    assert!(
+        matches!(
+            &invalid[0].detail,
+            Detail::Policy {
+                tag,
+                treated_as_none: false
+            } if tag == "p"
+        ),
+        "{:?}",
+        invalid[0].detail
     );
 }
 
@@ -780,12 +788,13 @@ fn a_servfail_in_a_zone_with_ds_records_is_a_suspected_bogus() {
         .filter(|finding| finding.code == FindingCode::DnssecSuspectedBogus)
         .collect();
     assert_eq!(suspected.len(), 1);
-    assert_eq!(
-        suspected[0].detail,
-        Detail::SuspectedBogus {
-            zone: "example.com".into(),
-            ds: vec![ds],
-        }
+    assert!(
+        matches!(
+            &suspected[0].detail,
+            Detail::SuspectedBogus { zone, ds: found } if zone == "example.com" && *found == [ds]
+        ),
+        "{:?}",
+        suspected[0].detail
     );
     assert!(
         !codes(&dnssec_report(&failing()).findings).contains(&FindingCode::DnssecSuspectedBogus)

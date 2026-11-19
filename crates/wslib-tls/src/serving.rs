@@ -394,11 +394,16 @@ impl Serving {
         + 'static,
     ) -> Result<T, ServingError> {
         let (location, remembered) = (self.location.clone(), left.take());
-        let (done, still_left) = blocking(move || match recover(&location, remembered.as_ref()) {
+        let kept = remembered.clone();
+        let finished = blocking(move || match recover(&location, remembered.as_ref()) {
             Ok(()) => then(&location),
             Err(error) => (Err(error), remembered),
         })
-        .await?;
+        .await;
+        let (done, still_left) = match finished {
+            Ok(finished) => finished,
+            Err(abandoned) => (Err(abandoned), kept),
+        };
         *left = still_left;
         done
     }
@@ -2363,6 +2368,61 @@ mod tests {
             key: path(),
             source: Box::new(source),
         });
+    }
+
+    fn a_left_record(dir: &Scratch) -> RecordIdentity {
+        let mut txn = Transaction::begin(&dir.0, "elsewhere").unwrap();
+        txn.stage(&dir.join("target"), b"new", &Options::new())
+            .unwrap();
+        fs::create_dir_all(dir.join("target").join("in-the-way")).unwrap();
+        match txn.commit_identified() {
+            Err((CommitError::Committed(_), Some(identity))) => identity,
+            other => panic!("not left for recovery: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn work_that_panics_after_recovery_keeps_the_record_it_was_to_finish() {
+        let (_, provider) = &providers()[0];
+        let dir = Scratch::new("after-recovery-panics");
+        let serving = start(provider, dir.managed()).unwrap();
+        let identity = a_left_record(&dir);
+        let mut left = Some(identity.clone());
+        let failed = serving
+            .after_recovery(&mut left, |_| -> (Result<(), ServingError>, _) {
+                panic!("the work fell over")
+            })
+            .await;
+        assert!(matches!(failed, Err(ServingError::Panicked)), "{failed:?}");
+        assert_eq!(left, Some(identity));
+    }
+
+    #[test]
+    fn blocking_work_the_runtime_drops_is_cancelled() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let handle = runtime.handle().clone();
+        drop(runtime);
+        let cancelled = handle.block_on(blocking(|| ()));
+        assert!(
+            matches!(cancelled, Err(ServingError::Cancelled)),
+            "{cancelled:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_path_holding_a_nul_byte_is_invalid_input() {
+        use std::os::unix::ffi::OsStrExt;
+        let path = Path::new(std::ffi::OsStr::from_bytes(b"cert\0.pem"));
+        let refused = c_path(path).unwrap_err();
+        assert_eq!(refused.kind(), io::ErrorKind::InvalidInput);
+        assert!(
+            refused
+                .get_ref()
+                .is_some_and(|inner| !inner.is::<std::ffi::NulError>())
+        );
     }
 
     #[tokio::test]

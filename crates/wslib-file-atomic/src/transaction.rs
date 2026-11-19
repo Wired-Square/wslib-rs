@@ -80,7 +80,7 @@ impl error::Error for CommitError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         Some(match self {
             Self::RolledBack(error) => error,
-            Self::Committed(error) => error.inner(),
+            Self::Committed(error) => error,
         })
     }
 }
@@ -91,28 +91,25 @@ pub enum RecoverError {
     /// A record, or a staged file a committed record renames, that this
     /// process could not have written.
     Refused(Refused),
+    /// Reading, renaming, removing or syncing failed.
     Io(io::Error),
 }
 
-impl RecoverError {
-    fn inner(&self) -> &(dyn error::Error + 'static) {
-        match self {
-            Self::Refused(refused) => refused,
-            Self::Io(error) => error,
-        }
-    }
-}
-
-/// The refusal's or the `io::Error`'s own.
 impl fmt::Display for RecoverError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self.inner(), f)
+        f.write_str(match self {
+            Self::Refused(_) => "recovery would not act on a file",
+            Self::Io(_) => "recovery failed",
+        })
     }
 }
 
 impl error::Error for RecoverError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-        self.inner().source()
+        Some(match self {
+            Self::Refused(refused) => refused,
+            Self::Io(error) => error,
+        })
     }
 }
 

@@ -12,7 +12,8 @@
   source is the inner `ServingError`, not its box.
 - Work on the blocking pool that panics is `ServingError::Panicked`, and work
   the runtime drops before it runs `ServingError::Cancelled`, in place of a
-  resumed panic.
+  resumed panic. The record a failed commit left stays remembered through
+  either.
 - A path holding a NUL byte is an `InvalidInput` `io::Error`, as std's own
   calls give it.
 

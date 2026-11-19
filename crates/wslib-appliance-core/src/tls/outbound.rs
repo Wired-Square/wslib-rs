@@ -339,6 +339,43 @@ mod tests {
         )
     }
 
+    #[test]
+    fn an_authority_the_verifier_refuses_says_why_in_every_layer() {
+        use wslib_crypto_x509::pem::{self, CERTIFICATE};
+        const ECDSA_SHA256: [u8; 10] = [0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02];
+        const SHA384: u8 = 0x03;
+        let key = wslib_crypto::KeyAlgorithm::EcP256.generate().expect("key");
+        let signer = wslib_crypto::Signer::new(super::super::provider().unwrap(), &key.into())
+            .expect("loads");
+        let mut params =
+            rcgen::CertificateParams::new(vec!["widget-root".to_string()]).expect("names");
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        params.serial_number = Some(1u64.into());
+        let mut der = params.self_signed(&signer).expect("signs").der().to_vec();
+        let outer = der
+            .windows(ECDSA_SHA256.len())
+            .rposition(|window| window == ECDSA_SHA256)
+            .expect("the outer signature algorithm");
+        der[outer + ECDSA_SHA256.len() - 1] = SHA384;
+        let pem = pem::encode(CERTIFICATE, &der);
+        let view = inspect_pem(&pem).expect("x509-parser reads it");
+        let ca = TrustedCa {
+            sha256: view.sha256,
+            subject: view.subject,
+            not_before: view.not_before,
+            not_after: view.not_after,
+            added_at: wslib_appliance_store::now(),
+            added_by: "admin".to_string(),
+            pem,
+        };
+        let why = anchor(&mut Trust::default(), &ca)
+            .expect_err("webpki refuses a signature algorithm that is not the body's");
+        assert!(
+            why.starts_with("not usable as a trust anchor: the certificate does not verify: "),
+            "{why}"
+        );
+    }
+
     fn trusted(ca: &Authority) -> TrustedCa {
         let view = inspect_pem(&ca.pem).expect("readable");
         let at = wslib_appliance_store::now();

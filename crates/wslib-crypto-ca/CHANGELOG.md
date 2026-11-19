@@ -2,9 +2,13 @@
 
 ## 0.3.0
 
-- `Error::Decode`: PEM, DER or a certificate the decoder refuses, its error,
-  or wslib-crypto-x509's, boxed as the source, in place of `Error::Malformed`
+- `Error::Decode { what, source }`: PEM, DER or a certificate the decoder
+  refuses, naming what it was, with the decoder's error, or
+  wslib-crypto-x509's, boxed as the source, in place of `Error::Malformed`
   holding its text. `Malformed` keeps this crate's own sentences.
+- `Error::Key` says "the key or the crypto provider failed" and returns
+  wslib-crypto's `Error` from `source()`, in place of passing its message
+  and source through.
 - `Error::Encode` carries rcgen's error, boxed, as its source, in place of
   its text. rcgen's draft of an unexpected shape is `Error::UnexpectedDraft`.
 - `Error::Signature` names only its own part; the `SignatureError` comes

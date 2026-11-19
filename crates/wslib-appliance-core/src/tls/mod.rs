@@ -300,7 +300,6 @@ fn ours(pair: wslib_tls::ServingPair) -> ServingPair {
     }
 }
 
-/// `error` and each of its causes, as one sentence for an operator.
 pub(crate) fn chain(error: &(dyn Error + 'static)) -> String {
     iter::successors(Some(error), |&e| e.source())
         .map(ToString::to_string)

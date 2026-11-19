@@ -417,12 +417,17 @@ fn io_kind(error: &RecoverError) -> Option<io::ErrorKind> {
     }
 }
 
+fn refusal(refused: &RecoverError) -> &Refused {
+    match refused {
+        RecoverError::Refused(refusal) => refusal,
+        RecoverError::Io(e) => panic!("not a refusal: {e}"),
+    }
+}
+
 fn assert_refused(refused: &RecoverError, path: &str) {
-    let RecoverError::Refused(refusal) = refused else {
-        panic!("not a refusal: {refused}");
-    };
-    assert!(refused.to_string().contains(path), "{refused}");
-    assert_eq!(refusal.path().file_name().unwrap(), path, "{refused}");
+    let refusal = refusal(refused);
+    assert!(refusal.to_string().contains(path), "{refusal}");
+    assert_eq!(refusal.path().file_name().unwrap(), path, "{refusal}");
 }
 
 fn assert_refused_untouched(dir: &Scratch, refused: RecoverError) {
@@ -541,8 +546,8 @@ fn a_symlinked_record_is_refused() {
     }
     let refused = recover(&dir.0, "tls").unwrap_err();
     assert!(
-        refused.to_string().contains("not a regular file"),
-        "{refused}"
+        refusal(&refused).to_string().contains("not a regular file"),
+        "{refused:?}"
     );
     assert_refused_untouched(&dir, refused);
     assert!(planted.exists());
@@ -564,8 +569,8 @@ fn a_record_that_is_a_junction_or_a_directory_is_refused() {
     assert!(made.status.success(), "{made:?}");
     let refused = recover(&dir.0, "tls").unwrap_err();
     assert!(
-        refused.to_string().contains("not a regular file"),
-        "{refused}"
+        refusal(&refused).to_string().contains("not a regular file"),
+        "{refused:?}"
     );
     assert_refused_untouched(&dir, refused);
 
@@ -574,8 +579,8 @@ fn a_record_that_is_a_junction_or_a_directory_is_refused() {
     fs::create_dir(dir.join(RECORD)).unwrap();
     let refused = recover(&dir.0, "tls").unwrap_err();
     assert!(
-        refused.to_string().contains("not a regular file"),
-        "{refused}"
+        refusal(&refused).to_string().contains("not a regular file"),
+        "{refused:?}"
     );
     assert_refused_untouched(&dir, refused);
 }
@@ -589,8 +594,10 @@ fn a_record_owned_by_someone_else_is_refused() {
     }
     let refused = recover(&dir.0, "tls").unwrap_err();
     assert!(
-        refused.to_string().contains("owned by another user"),
-        "{refused}"
+        refusal(&refused)
+            .to_string()
+            .contains("owned by another user"),
+        "{refused:?}"
     );
     assert_refused_untouched(&dir, refused);
 }
@@ -672,12 +679,17 @@ fn a_commit_failing_after_the_commit_point_is_left_for_recover() {
         committed.to_string(),
         "committed, but left for recovery to finish"
     );
+    let recovery = committed
+        .source()
+        .and_then(|e| e.downcast_ref::<RecoverError>());
     assert!(
-        committed
-            .source()
-            .is_some_and(|e| e.downcast_ref::<io::Error>().is_some()),
+        matches!(recovery, Some(RecoverError::Io(_))),
         "{committed:?}"
     );
+    let io = recovery
+        .and_then(|e| e.source())
+        .and_then(|e| e.downcast_ref::<io::Error>());
+    assert!(io.is_some(), "{committed:?}");
     assert!(
         fs::read_to_string(dir.join(RECORD))
             .unwrap()
@@ -742,7 +754,16 @@ fn a_commit_error_says_only_which_side_and_carries_its_cause() {
         committed.to_string(),
         "committed, but left for recovery to finish"
     );
-    let cause = committed.source().and_then(|e| e.downcast_ref::<Refused>());
+    let recovery = committed
+        .source()
+        .and_then(|e| e.downcast_ref::<RecoverError>());
+    assert!(
+        matches!(recovery, Some(RecoverError::Refused(_))),
+        "{committed:?}"
+    );
+    let cause = recovery
+        .and_then(|e| e.source())
+        .and_then(|e| e.downcast_ref::<Refused>());
     assert_eq!(cause.map(Refused::path), Some(Path::new("/app/tls.txn")));
 
     let rolled_back = CommitError::RolledBack(io::Error::new(io::ErrorKind::NotFound, "gone"));
@@ -754,14 +775,22 @@ fn a_commit_error_says_only_which_side_and_carries_its_cause() {
 }
 
 #[test]
-fn a_recover_error_is_its_refusal_or_its_io_error() {
+fn a_recover_error_says_only_its_own_part_and_carries_its_cause() {
     let refused = RecoverError::Refused(Refused::new("/app/tls.txn", "planted"));
-    assert_eq!(refused.to_string(), "/app/tls.txn is refused: planted");
-    assert!(refused.source().is_none());
+    assert_eq!(refused.to_string(), "recovery would not act on a file");
+    let refusal = refused.source().and_then(|e| e.downcast_ref::<Refused>());
+    assert_eq!(refusal.map(Refused::path), Some(Path::new("/app/tls.txn")));
 
-    let io = RecoverError::Io(io::Error::other("the disk is gone"));
-    assert_eq!(io.to_string(), "the disk is gone");
-    assert!(io.source().is_none());
+    let io = RecoverError::Io(io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        "the disk is gone",
+    ));
+    assert_eq!(io.to_string(), "recovery failed");
+    let cause = io.source().and_then(|e| e.downcast_ref::<io::Error>());
+    assert_eq!(
+        cause.map(io::Error::kind),
+        Some(io::ErrorKind::PermissionDenied)
+    );
 }
 
 #[test]

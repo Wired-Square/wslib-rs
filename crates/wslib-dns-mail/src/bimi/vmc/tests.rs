@@ -323,7 +323,10 @@ fn each_problem_is_reported() {
     ] {
         let verification = verify(mark);
         assert!(
-            verification.problems.contains(&expected),
+            verification
+                .problems
+                .iter()
+                .any(|problem| same_problem(problem, &expected)),
             "{expected:?}: {:?}",
             verification.problems
         );
@@ -344,7 +347,10 @@ fn a_name_under_the_organisational_domain_covers_a_subdomain() {
         &options(&root),
     );
     assert!(
-        !verification.problems.contains(&VmcProblem::SanMismatch),
+        !verification
+            .problems
+            .iter()
+            .any(|problem| matches!(problem, VmcProblem::SanMismatch)),
         "{:?}",
         verification.problems
     );
@@ -380,40 +386,73 @@ fn an_untrusted_root_fails_the_chain() {
         .problems
         .iter()
         .find(|p| matches!(p, VmcProblem::Chain { .. }));
-    let Some(VmcProblem::Chain { message, cause }) = chain else {
+    let Some(VmcProblem::Chain { refusal, cause }) = chain else {
         panic!("{:?}", verification.problems);
     };
-    let error = cause.error().expect("the verifier's refusal");
+    assert_eq!(*refusal, ChainRefusal::Untrusted);
+    let error = cause.as_deref().expect("the verifier's refusal");
     assert!(matches!(error, ChainError::Untrusted(_)), "{error:?}");
-    let verifier = std::error::Error::source(error).expect("the verifier's error");
     assert!(
-        message.ends_with(&format!(": {verifier}")),
-        "the verifier's detail is kept: {message}"
+        std::error::Error::source(error).is_some(),
+        "the verifier's own error: {error:?}"
     );
 }
 
 #[cfg(feature = "serde")]
 #[test]
-fn a_chain_problem_serialises_its_message_and_not_its_cause() {
+fn a_chain_problem_serialises_its_refusal_and_not_its_cause() {
     let error = ChainError::Untrusted(Box::new(std::io::Error::other("unknown issuer")));
     let problem = VmcProblem::Chain {
-        message: "the certificate is not issued under a trusted anchor: unknown issuer".into(),
-        cause: Cause::new(error),
+        refusal: ChainRefusal::from(&error),
+        cause: Some(Arc::new(error)),
     };
     let json = serde_json::to_value(&problem).unwrap();
     assert_eq!(
         json,
-        serde_json::json!({
-            "kind": "chain",
-            "message": "the certificate is not issued under a trusted anchor: unknown issuer",
-        })
+        serde_json::json!({ "kind": "chain", "refusal": "untrusted" })
     );
     let read: VmcProblem = serde_json::from_value(json).unwrap();
     assert!(
-        matches!(&read, VmcProblem::Chain { cause, .. } if cause.error().is_none()),
+        matches!(
+            read,
+            VmcProblem::Chain {
+                refusal: ChainRefusal::Untrusted,
+                cause: None
+            }
+        ),
         "{read:?}"
     );
-    assert_eq!(read, problem, "equal by what they say");
+}
+
+#[test]
+fn a_problem_is_reported_once() {
+    let mut verification = VmcVerification::default();
+    let untrusted = || VmcProblem::Chain {
+        refusal: ChainRefusal::Untrusted,
+        cause: None,
+    };
+    for problem in [
+        VmcProblem::Expired,
+        VmcProblem::Expired,
+        untrusted(),
+        untrusted(),
+        VmcProblem::Chain {
+            refusal: ChainRefusal::Invalid,
+            cause: None,
+        },
+        VmcProblem::UnknownMarkType { value: None },
+        VmcProblem::UnknownMarkType {
+            value: Some("Trade Mark".into()),
+        },
+    ] {
+        verification.problem(problem);
+    }
+    assert_eq!(
+        verification.problems.len(),
+        5,
+        "{:?}",
+        verification.problems
+    );
 }
 
 #[test]

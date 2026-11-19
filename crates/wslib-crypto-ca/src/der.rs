@@ -49,11 +49,14 @@ pub(crate) fn elements(der: &[u8]) -> Result<Vec<&[u8]>, Error> {
 }
 
 /// What x509-parser read, provided it read every byte.
-pub(crate) fn whole<T>(parsed: x509_parser::error::X509Result<'_, T>) -> Result<T, Error> {
+pub(crate) fn whole<T>(
+    parsed: x509_parser::error::X509Result<'_, T>,
+    what: &'static str,
+) -> Result<T, Error> {
     match parsed {
         Ok(([], value)) => Ok(value),
         Ok(_) => Err(Error::Malformed("trailing bytes".into())),
-        Err(e) => Err(decode(e)),
+        Err(e) => Err(decode(what)(e)),
     }
 }
 
@@ -141,8 +144,13 @@ pub(crate) fn encode(e: rcgen::Error) -> Error {
     Error::Encode(Box::new(e))
 }
 
-pub(crate) fn decode(e: impl std::error::Error + Send + Sync + 'static) -> Error {
-    Error::Decode(Box::new(e))
+pub(crate) fn decode<E: std::error::Error + Send + Sync + 'static>(
+    what: &'static str,
+) -> impl FnOnce(E) -> Error {
+    move |e| Error::Decode {
+        what,
+        source: Box::new(e),
+    }
 }
 
 #[cfg(test)]
@@ -171,8 +179,11 @@ mod tests {
     fn an_error_says_only_its_own_part_and_carries_its_cause() {
         let pem = "-----BEGIN CERTIFICATE REQUEST-----\n!!!!\n-----END CERTIFICATE REQUEST-----\n";
         let undecoded = crate::CsrView::from_pem(pem).unwrap_err();
-        assert!(matches!(undecoded, Error::Decode(_)), "{undecoded:?}");
-        assert_eq!(undecoded.to_string(), "does not decode");
+        assert!(matches!(undecoded, Error::Decode { .. }), "{undecoded:?}");
+        assert_eq!(
+            undecoded.to_string(),
+            "the certificate request PEM does not decode"
+        );
         let source = std::error::Error::source(&undecoded)
             .and_then(|e| e.downcast_ref::<rustls_pki_types::pem::Error>());
         assert!(source.is_some(), "{undecoded:?}");
@@ -184,6 +195,15 @@ mod tests {
         assert!(
             matches!(source, Some(rcgen::Error::RemoteKeyError)),
             "{unencoded:?}"
+        );
+
+        let keyless = Error::from(wslib_crypto::Error::NoProvider);
+        assert_eq!(keyless.to_string(), "the key or the crypto provider failed");
+        let source = std::error::Error::source(&keyless)
+            .and_then(|e| e.downcast_ref::<wslib_crypto::Error>());
+        assert!(
+            matches!(source, Some(wslib_crypto::Error::NoProvider)),
+            "{keyless:?}"
         );
 
         let unsigned = Error::from(SignatureError::BadSignature);

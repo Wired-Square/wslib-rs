@@ -366,3 +366,51 @@ pub(super) fn keys(dir: &Path) -> Result<(), Failed> {
     );
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const UNDECODABLE: &str = "-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----\n";
+
+    #[test]
+    fn a_chain_that_does_not_read_says_what_the_decoder_said() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("chain.pem");
+        fs::write(&path, UNDECODABLE).unwrap();
+        let decoder = pem::certificates(UNDECODABLE).unwrap_err();
+        let decoder = std::error::Error::source(&decoder).expect("the decoder's error");
+        let refused = Chain::read(&path).err().expect("refused");
+        assert!(refused.ends_with(&format!(": {decoder}")), "{refused}");
+    }
+
+    #[test]
+    fn a_key_that_does_not_convert_says_what_the_decoder_said() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("key.pem");
+        fs::write(
+            &path,
+            "-----BEGIN EC PRIVATE KEY-----\nMAA=\n-----END EC PRIVATE KEY-----\n",
+        )
+        .unwrap();
+        let refused = Key::read(&path).err().expect("refused");
+        assert!(
+            refused.contains("the private key is malformed: "),
+            "{refused}"
+        );
+    }
+
+    #[test]
+    fn a_leaf_of_another_root_says_what_the_verifier_said() {
+        let (ours, theirs) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        keys(ours.path()).unwrap();
+        keys(theirs.path()).unwrap();
+        let chain = Chain::read(&ours.path().join("leaf.pem")).unwrap();
+        let root = Root::File(theirs.path().join("root.pem"));
+        let refused = chain.refusal(&root).unwrap().expect("not their leaf");
+        assert!(
+            refused.contains("the certificate is not issued under a trusted anchor: "),
+            "{refused}"
+        );
+    }
+}

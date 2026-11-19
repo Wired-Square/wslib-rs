@@ -2,11 +2,13 @@
 
 ## 0.6.0
 
-- `VmcProblem::Chain` carries `cause`, a `Cause<ChainError>` holding the
-  verifier's refusal, typed, on the live value. It is not serialised, reads
-  back empty, and takes no part in equality. `message` is the refusal and
-  each of its causes.
-- `Cause<E>`: a report entry's typed cause.
+- `VmcProblem::Chain` is `{ refusal, cause }`: `refusal` a `ChainRefusal`
+  (`Untrusted` or `Invalid`) in place of the verifier's text in `message`,
+  and `cause` the verifier's `ChainError`, typed, on the live value only. A
+  serialised problem carries the refusal and reads back with no cause.
+- `VmcProblem`, `VmcVerification`, `Finding`, `Detail`, `DomainReport`,
+  `DkimCheck`, `DmarcCheck`, `MxCheck` and `SpfCheck` no longer derive
+  `PartialEq` and `Eq`.
 - `VmcTrustAnchors::from_pem`'s refusal of an anchor writes the verifier's
   error and each of its causes.
 - On wslib-crypto-x509 0.2.

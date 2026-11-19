@@ -21,9 +21,12 @@ pub enum Error {
     /// Decodes, but not as what was wanted, in this crate's words.
     #[error("does not decode: {0}")]
     Malformed(String),
-    /// The decoder's error.
-    #[error("does not decode")]
-    Decode(#[source] Box<dyn std::error::Error + Send + Sync>),
+    /// `what` the decoder refused, and its error.
+    #[error("the {what} does not decode")]
+    Decode {
+        what: &'static str,
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
     #[error("the signature does not hold")]
     Signature(#[from] wslib_crypto_x509::signature::SignatureError),
     #[error("{name:?} cannot go in a certificate: {reason}")]
@@ -33,7 +36,8 @@ pub enum Error {
     Encode(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("rcgen's draft has an unexpected shape")]
     UnexpectedDraft,
-    #[error(transparent)]
+    /// wslib-crypto's error: a key it can't use, or the provider failing.
+    #[error("the key or the crypto provider failed")]
     Key(#[from] wslib_crypto::Error),
     #[error("the certificate does not say CA:TRUE")]
     NotAnAuthority,

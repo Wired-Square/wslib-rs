@@ -173,11 +173,11 @@ pub enum CanError {
     #[error("cannot open {device}")]
     Open { device: String, source: io::Error },
     #[cfg(feature = "tcp")]
-    #[error(transparent)]
-    Connect(wslib_tcp::TransportError),
+    #[error("connecting failed")]
+    Connect(#[source] wslib_tcp::TransportError),
     #[cfg(all(feature = "serial", not(target_os = "ios")))]
-    #[error(transparent)]
-    Serial(wslib_serial::SerialError),
+    #[error("the serial port failed")]
+    Serial(#[source] wslib_serial::SerialError),
     /// The device didn't answer as its protocol says.
     #[error("handshake failed: {0}")]
     Handshake(&'static str),
@@ -192,8 +192,8 @@ pub enum CanError {
     #[error("read failed")]
     Read(#[source] io::Error),
     /// A write outside a send, such as a probe's or a handshake's, failed.
-    #[error(transparent)]
-    Write(WriteFailed),
+    #[error("a write outside a send failed")]
+    Write(#[source] WriteFailed),
     /// A blocking call on the device panicked.
     #[error("a blocking call on the device panicked")]
     Panicked,
@@ -252,8 +252,54 @@ mod tests {
         assert_eq!(request.to_string(), "BT_CONST failed");
         assert_eq!(cause(&request), io::ErrorKind::TimedOut);
         let write = CanError::Write(WriteFailed::Io(io::ErrorKind::BrokenPipe.into()));
-        assert_eq!(write.to_string(), "write failed");
-        assert_eq!(cause(&write), io::ErrorKind::BrokenPipe);
+        assert_eq!(write.to_string(), "a write outside a send failed");
+        let failed = std::error::Error::source(&write)
+            .and_then(|e| e.downcast_ref::<WriteFailed>())
+            .expect("the write's own error");
+        assert_eq!(cause_of(failed), Some(io::ErrorKind::BrokenPipe));
+    }
+
+    fn cause_of(error: &dyn std::error::Error) -> Option<io::ErrorKind> {
+        error
+            .source()
+            .and_then(|e| e.downcast_ref::<io::Error>())
+            .map(io::Error::kind)
+    }
+
+    #[cfg(feature = "tcp")]
+    #[test]
+    fn a_failed_connect_is_its_own_layer_over_the_transports_error() {
+        let connect = CanError::Connect(wslib_tcp::TransportError::Io(
+            io::ErrorKind::ConnectionRefused.into(),
+        ));
+        assert_eq!(connect.to_string(), "connecting failed");
+        let transport = std::error::Error::source(&connect)
+            .and_then(|e| e.downcast_ref::<wslib_tcp::TransportError>())
+            .expect("the transport's error");
+        assert_eq!(cause_of(transport), Some(io::ErrorKind::ConnectionRefused));
+    }
+
+    #[cfg(all(feature = "serial", not(target_os = "ios")))]
+    #[test]
+    fn a_serial_failure_is_its_own_layer_over_the_ports_error() {
+        let serial = || wslib_serial::SerialError::Write(io::ErrorKind::BrokenPipe.into());
+        for (error, said) in [
+            (
+                Box::new(CanError::Serial(serial())) as Box<dyn std::error::Error>,
+                "the serial port failed",
+            ),
+            (
+                Box::new(WriteFailed::Serial(serial())),
+                "the serial port refused the write",
+            ),
+        ] {
+            assert_eq!(error.to_string(), said);
+            let port = error
+                .source()
+                .and_then(|e| e.downcast_ref::<wslib_serial::SerialError>())
+                .expect("the port's error");
+            assert_eq!(cause_of(port), Some(io::ErrorKind::BrokenPipe));
+        }
     }
 
     #[test]

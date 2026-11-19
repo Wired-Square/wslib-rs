@@ -225,11 +225,11 @@ fn an_openssl_crl_reads_and_verifies() {
 fn what_is_not_a_crl_does_not_decode() {
     assert!(matches!(
         CrlView::from_der(b"\x30\x00"),
-        Err(Error::Decode(_))
+        Err(Error::Decode { .. })
     ));
     assert!(matches!(
         CrlView::from_pem(include_str!("data/openssl-ca.pem")),
-        Err(Error::Decode(_))
+        Err(Error::Decode { .. })
     ));
 }
 

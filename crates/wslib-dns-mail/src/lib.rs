@@ -18,7 +18,6 @@
 //! ```
 
 mod address;
-mod cause;
 mod fault;
 mod inflate;
 mod text;
@@ -34,7 +33,6 @@ pub mod mta_sts;
 pub mod spf;
 pub mod tls_rpt;
 
-pub use cause::Cause;
 pub use fault::{FaultCode, Parsed, SyntaxFault};
 pub use text::Tag;
 pub use uri::ReportUri;

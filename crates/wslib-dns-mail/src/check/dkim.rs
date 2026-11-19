@@ -9,7 +9,7 @@ pub const RSA_MINIMUM_BITS: u32 = 1024;
 /// RFC 8301 §3.2: signers should use at least this.
 pub const RSA_RECOMMENDED_BITS: u32 = 2048;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DkimCheck {
     /// The selectors asked for, then any the probe found.

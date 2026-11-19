@@ -114,8 +114,8 @@ pub enum WriteFailed {
     #[error("the blocking write panicked")]
     Panicked,
     #[cfg(all(feature = "serial", not(target_os = "ios")))]
-    #[error(transparent)]
-    Serial(wslib_serial::SerialError),
+    #[error("the serial port refused the write")]
+    Serial(#[source] wslib_serial::SerialError),
 }
 
 type Reply = oneshot::Sender<Result<Result<(), WriteFailed>, SendRefused>>;

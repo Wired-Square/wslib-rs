@@ -16,6 +16,10 @@
   blocking write that panicked, and, with `serial`, `Serial` a `SerialError`.
 - `CanError::Write` carries the `WriteFailed` of a write outside a send,
   such as a probe's or a handshake's.
+- `CanError::Connect`, `Serial` and `Write`, and `WriteFailed::Serial`, each
+  name their own layer and return the `TransportError`, `SerialError` or
+  `WriteFailed` from `source()`, in place of passing its message and source
+  through.
 - `testing`: `LoopbackPort::fail_next_write`, the port's next write failing
   with a given `WriteFailed`.
 

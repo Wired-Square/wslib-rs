@@ -5,7 +5,7 @@ use wslib_dns::{DnssecStatus, Resolver};
 use super::{Detail, Finding, FindingCode, Severity, lookup_failure};
 use crate::discover::{DnsblResult, DnsblStatus, MxDiscovery, TlsaSet, dnsbl, join_all, mx};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MxCheck {
     pub mx: MxDiscovery,

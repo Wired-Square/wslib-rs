@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.0
+
+- `VmcProblem::Chain` carries `cause`, a `Cause<ChainError>` holding the
+  verifier's refusal, typed, on the live value. It is not serialised, reads
+  back empty, and takes no part in equality. `message` is the refusal and
+  each of its causes.
+- `Cause<E>`: a report entry's typed cause.
+- `VmcTrustAnchors::from_pem`'s refusal of an anchor writes the verifier's
+  error and each of its causes.
+- On wslib-crypto-x509 0.2.
+
 ## 0.5.4
 
 - `DkimDiscovery::aliased_to`: whether the selector's CNAME chain reaches

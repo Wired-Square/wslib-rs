@@ -1,6 +1,6 @@
 [package]
 name = "wslib-mcu-flash"
-version = "0.3.0"
+version = "0.3.1"
 description = "Chip families, USB-serial port resolution, firmware image parsing and the flash backends (esptool, dfu-util, espflash, USB DFU, STM32 AN3155, MCUboot over SMP) Wired Square tools share."
 readme = "README.md"
 edition.workspace = true
@@ -23,7 +23,7 @@ nusb = { version = "0.1.10", optional = true }
 serde = { version = "1.0.228", features = ["derive"], optional = true }
 serialport = { version = "4.9", features = ["usbportinfo-interface"], optional = true }
 tokio = { version = "1.53.3", features = ["time"], optional = true }
-wslib-file-atomic = { path = "../wslib-file-atomic", version = "0.1.6", registry = "wired-square", optional = true }
+wslib-file-atomic = { path = "../wslib-file-atomic", version = "0.2", registry = "wired-square", optional = true }
 wslib-mcumgr = { path = "../wslib-mcumgr", version = "0.1.0", registry = "wired-square", optional = true }
 
 [features]

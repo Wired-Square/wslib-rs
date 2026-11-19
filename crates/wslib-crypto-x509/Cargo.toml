@@ -1,6 +1,6 @@
 [package]
 name = "wslib-crypto-x509"
-version = "0.1.7"
+version = "0.2.0"
 description = "X.509 certificates on wslib-crypto: PEM hygiene, inspect and examine with warnings, name coverage, chain checks over the caller's algorithms, and a self-signed serving certificate."
 readme = "README.md"
 edition.workspace = true
@@ -12,7 +12,7 @@ publish = ["wired-square"]
 
 [dependencies]
 const-oid = { version = "0.9.6", features = ["db"] }
-wslib-crypto = { version = "0.1", path = "../wslib-crypto", registry = "wired-square" }
+wslib-crypto = { version = "0.2", path = "../wslib-crypto", registry = "wired-square" }
 rcgen = { version = "0.14.10", default-features = false }
 rustls-pki-types = { version = "1.12", features = ["std"] }
 rustls-webpki = { version = "0.103.9", default-features = false, features = ["std"] }

@@ -14,12 +14,15 @@ use x509_parser::extensions::{GeneralName, ParsedExtension};
 use x509_parser::prelude::FromDer;
 
 use super::{LogoValidation, validate_logo};
+use crate::Cause;
 
 /// `id-kp-BrandIndicatorforMessageIdentification`, DER-encoded.
 const BIMI_EKU: &[u8] = &[0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x1f];
 const BIMI_EKU_ID: &str = "1.3.6.1.5.5.7.3.31";
 const MARK_TYPE: &str = "1.3.6.1.4.1.53087.1.13";
 const LOGOTYPE: &str = "1.3.6.1.5.5.7.1.12";
+
+const CAUSE_SEPARATOR: &str = ": ";
 
 /// A compressed embedded logo is refused once it inflates past this.
 const LOGOTYPE_INFLATE_LIMIT: usize = 256 * 1024;
@@ -35,7 +38,7 @@ impl VmcTrustAnchors {
         let mut anchors = Vec::new();
         for der in CertificateDer::pem_slice_iter(pem) {
             let der = der.map_err(|error| error.to_string())?;
-            anchors.push(chain::trust_anchor(&der).map_err(|error| error.to_string())?);
+            anchors.push(chain::trust_anchor(&der).map_err(|error| chain_of(&error))?);
         }
         if anchors.is_empty() {
             return Err("no certificates in the bundle".into());
@@ -118,9 +121,12 @@ pub enum VmcProblem {
     Parse {
         message: String,
     },
-    /// The chain doesn't lead to a trusted root, in the verifier's words.
+    /// The chain doesn't lead to a trusted root: `message` is the
+    /// verifier's error and each of its causes, and `cause` the error itself.
     Chain {
         message: String,
+        #[cfg_attr(feature = "serde", serde(skip))]
+        cause: Cause<ChainError>,
     },
     Expired,
     NotYetValid,
@@ -147,7 +153,7 @@ impl std::fmt::Display for VmcProblem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Parse { message } => write!(f, "not a PEM certificate chain: {message}"),
-            Self::Chain { message } => {
+            Self::Chain { message, .. } => {
                 write!(f, "the chain doesn't lead to a trusted root: {message}")
             }
             Self::Expired => f.write_str("the certificate has expired"),
@@ -277,7 +283,8 @@ pub fn verify_vmc(
             ChainError::NotYetValid => VmcProblem::NotYetValid,
             ChainError::WrongPurpose => VmcProblem::WrongEku,
             error => VmcProblem::Chain {
-                message: error.to_string(),
+                message: chain_of(&error),
+                cause: Cause::new(error),
             },
         });
     }
@@ -290,6 +297,13 @@ impl VmcVerification {
             self.problems.push(problem);
         }
     }
+}
+
+fn chain_of(error: &(dyn std::error::Error + 'static)) -> String {
+    std::iter::successors(Some(error), |&e| e.source())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(CAUSE_SEPARATOR)
 }
 
 fn failed(problem: VmcProblem) -> VmcVerification {

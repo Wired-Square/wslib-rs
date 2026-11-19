@@ -376,14 +376,44 @@ fn an_untrusted_root_fails_the_chain() {
         None,
         &options(&stranger),
     );
+    let chain = verification
+        .problems
+        .iter()
+        .find(|p| matches!(p, VmcProblem::Chain { .. }));
+    let Some(VmcProblem::Chain { message, cause }) = chain else {
+        panic!("{:?}", verification.problems);
+    };
+    let error = cause.error().expect("the verifier's refusal");
+    assert!(matches!(error, ChainError::Untrusted(_)), "{error:?}");
+    let verifier = std::error::Error::source(error).expect("the verifier's error");
     assert!(
-        verification
-            .problems
-            .iter()
-            .any(|p| matches!(p, VmcProblem::Chain { .. })),
-        "{:?}",
-        verification.problems
+        message.ends_with(&format!(": {verifier}")),
+        "the verifier's detail is kept: {message}"
     );
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn a_chain_problem_serialises_its_message_and_not_its_cause() {
+    let error = ChainError::Untrusted(Box::new(std::io::Error::other("unknown issuer")));
+    let problem = VmcProblem::Chain {
+        message: "the certificate is not issued under a trusted anchor: unknown issuer".into(),
+        cause: Cause::new(error),
+    };
+    let json = serde_json::to_value(&problem).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({
+            "kind": "chain",
+            "message": "the certificate is not issued under a trusted anchor: unknown issuer",
+        })
+    );
+    let read: VmcProblem = serde_json::from_value(json).unwrap();
+    assert!(
+        matches!(&read, VmcProblem::Chain { cause, .. } if cause.error().is_none()),
+        "{read:?}"
+    );
+    assert_eq!(read, problem, "equal by what they say");
 }
 
 #[test]
@@ -402,4 +432,17 @@ fn garbage_is_a_parse_problem() {
         verification.problems
     );
     assert!(VmcTrustAnchors::from_pem(b"").is_err());
+}
+
+#[test]
+fn an_anchor_the_verifier_refuses_says_why_in_its_words() {
+    let pem = b"-----BEGIN CERTIFICATE-----\nMAA=\n-----END CERTIFICATE-----\n";
+    let refused = VmcTrustAnchors::from_pem(pem).unwrap_err();
+    let der = rustls_pki_types::CertificateDer::from(vec![0x30, 0x00]);
+    let verifier = chain::trust_anchor(&der).unwrap_err();
+    let verifier = std::error::Error::source(&verifier).expect("the verifier's error");
+    assert!(
+        refused.ends_with(&format!(": {verifier}")),
+        "the verifier's detail is kept: {refused}"
+    );
 }

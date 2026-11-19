@@ -13,7 +13,7 @@ use wslib_appliance_types::tls::{CertificateReport, CertificateView, MAX_PEM_LEN
 use wslib_crypto_x509::pem::{self, CERTIFICATE, PRIVATE_KEY};
 use wslib_crypto_x509::{Error, Warning};
 
-use super::TlsError;
+use super::{TlsError, chain};
 
 /// Read a certificate's DER.
 pub(super) fn read(der: &[u8]) -> Result<wslib_crypto_x509::CertificateView, TlsError> {
@@ -227,7 +227,7 @@ pub(super) fn check_pair(leaf: &Leaf, key_pem: &str) -> Result<(), TlsError> {
     let key = pem::private_key(key_pem).map_err(|e| refused(e, Wanted::PrivateKey))?;
     let provider = super::provider().map_err(|e| TlsError::Internal(e.to_string()))?;
     let matches = wslib_crypto::key_matches(&provider, &key, &leaf.read.spki)
-        .map_err(|e| TlsError::Pem(format!("this private key is not usable: {e}")))?;
+        .map_err(|e| TlsError::Pem(format!("this private key is not usable: {}", chain(&e))))?;
     if matches {
         Ok(())
     } else {
@@ -330,7 +330,8 @@ fn refused(e: Error, wanted: Wanted) -> TlsError {
 fn decoding(e: Error) -> String {
     match e {
         Error::Malformed(why) => why,
-        e => e.to_string(),
+        Error::Decode(cause) => chain(&*cause),
+        e => chain(&e),
     }
 }
 
@@ -383,6 +384,23 @@ mod tests {
 
     fn examined_at(pem: &str, host: Option<&str>, now: DateTime<Utc>) -> CertificateReport {
         examine(&parse(pem).expect("parses"), host, now)
+    }
+
+    #[test]
+    fn what_the_decoder_and_the_provider_say_reaches_the_operator() {
+        let undecodable = "-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----\n";
+        let decoder = pem::certificates(undecodable).unwrap_err();
+        let decoder = std::error::Error::source(&decoder).expect("the decoder's error");
+        let refused = parse(undecodable).err().expect("refused").to_string();
+        assert!(refused.contains(&decoder.to_string()), "{refused}");
+
+        let leaf = parse(&certificate(|_| {})).expect("parses");
+        let garbage = "-----BEGIN PRIVATE KEY-----\nMAA=\n-----END PRIVATE KEY-----\n";
+        let refused = check_pair(&leaf, garbage).unwrap_err().to_string();
+        assert!(
+            refused.contains("will not load the key: "),
+            "the provider's own words follow: {refused}"
+        );
     }
 
     #[test]

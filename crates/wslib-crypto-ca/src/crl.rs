@@ -194,8 +194,7 @@ impl CrlView {
             .collect();
         Ok(Self {
             issuer: crl.issuer().as_raw().to_vec(),
-            issuer_text: wslib_crypto_x509::rfc_4514(crl.issuer().as_raw())
-                .map_err(der::malformed)?,
+            issuer_text: wslib_crypto_x509::rfc_4514(crl.issuer().as_raw()).map_err(der::decode)?,
             number,
             this_update: instant(crl.last_update()),
             next_update: crl.next_update().map(instant),
@@ -212,8 +211,8 @@ impl CrlView {
 
     /// The one `X509 CRL` section of `pem`.
     pub fn from_pem(pem: &str) -> Result<Self, Error> {
-        let der = CertificateRevocationListDer::from_pem_slice(pem.as_bytes())
-            .map_err(|e| Error::Malformed(e.to_string()))?;
+        let der =
+            CertificateRevocationListDer::from_pem_slice(pem.as_bytes()).map_err(der::decode)?;
         Self::from_der(&der)
     }
 
@@ -228,8 +227,7 @@ impl CrlView {
         issuer: &CertificateDer<'_>,
         algorithms: &[&dyn SignatureVerificationAlgorithm],
     ) -> Result<(), Error> {
-        let (_, certificate) =
-            X509Certificate::from_der(issuer).map_err(|e| Error::Malformed(e.to_string()))?;
+        let (_, certificate) = X509Certificate::from_der(issuer).map_err(der::decode)?;
         if certificate.subject().as_raw() != self.issuer {
             return Err(Error::IssuerMismatch);
         }

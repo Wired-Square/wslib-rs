@@ -16,7 +16,7 @@ use tokio::sync::watch;
 use wslib_crypto::{KeyAlgorithm, Signer};
 use wslib_crypto_x509::pem::{self, CERTIFICATE, PRIVATE_KEY};
 use wslib_crypto_x509::{CertificateView, Report, SubjectAltName};
-use wslib_file_atomic::{CommitError, Options, RecordIdentity, Refused, Transaction};
+use wslib_file_atomic::{CommitError, Options, RecordIdentity, RecoverError, Refused, Transaction};
 use wslib_secret::Secret;
 
 use crate::trust::authority;
@@ -352,7 +352,7 @@ impl Serving {
         algorithm: KeyAlgorithm,
     ) -> Result<Arc<ServerConfig>, ServingError> {
         let (provider, names) = (self.provider.clone(), names.to_vec());
-        let (pair, served) = blocking(move || mint_pair(&provider, &names, algorithm)).await?;
+        let (pair, served) = blocking(move || mint_pair(&provider, &names, algorithm)).await??;
         self.commit(pair, served).await
     }
 
@@ -398,7 +398,7 @@ impl Serving {
             Ok(()) => then(&location),
             Err(error) => (Err(error), remembered),
         })
-        .await;
+        .await?;
         *left = still_left;
         done
     }
@@ -465,77 +465,158 @@ fn named(location: Location, source: ServingError) -> ServingError {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum ServingError {
-    #[error("cannot tell whether {} is there: {source}", path.display())]
-    Undetermined { path: PathBuf, source: io::Error },
+    Undetermined {
+        path: PathBuf,
+        source: io::Error,
+    },
     /// Never completed with a generated half, which would not match.
-    #[error("{} is there and {} is not", present.display(), missing.display())]
-    HalfPair { present: PathBuf, missing: PathBuf },
-    #[error("reading {}: {source}", path.display())]
-    Unreadable { path: PathBuf, source: io::Error },
-    #[error("{} holds no certificate", path.display())]
-    NoCertificate { path: PathBuf },
-    #[error("the certificate: {0}")]
-    Certificate(#[source] wslib_crypto_x509::Error),
-    #[error("the private key: {0}")]
-    Key(#[source] wslib_crypto_x509::Error),
-    #[error("the private key: {0}")]
-    KeyRefused(#[source] wslib_crypto::Error),
-    #[error("the private key does not belong to the certificate")]
+    HalfPair {
+        present: PathBuf,
+        missing: PathBuf,
+    },
+    Unreadable {
+        path: PathBuf,
+        source: io::Error,
+    },
+    NoCertificate {
+        path: PathBuf,
+    },
+    Certificate(wslib_crypto_x509::Error),
+    Key(wslib_crypto_x509::Error),
+    KeyRefused(wslib_crypto::Error),
     Mismatched,
-    #[error("rustls will not serve the pair: {0}")]
-    Refused(#[source] rustls::Error),
-    #[error(
-        "{} and {} were named, so they are not moved aside and replaced: {source}",
-        cert.display(),
-        key.display()
-    )]
+    Refused(rustls::Error),
     Named {
         cert: PathBuf,
         key: PathBuf,
         source: Box<ServingError>,
     },
-    #[error("moving {} aside: {source}", path.display())]
-    Displace { path: PathBuf, source: io::Error },
-    #[error(
-        "an interrupted write cannot be finished; check {}, then move it aside by hand: {source}",
-        record.display()
-    )]
-    Recover { record: PathBuf, source: io::Error },
-    #[error(
-        "an interrupted write's record is refused; check {}, then move it aside by hand: {source}",
-        record.display()
-    )]
-    RecordRefused { record: PathBuf, source: io::Error },
-    #[error("generating a key: {0}")]
-    Generate(#[source] wslib_crypto::Error),
-    #[error("minting a certificate: {0}")]
-    Mint(#[source] wslib_crypto_x509::Error),
-    #[error("writing {}, so nothing was replaced: {source}", path.display())]
+    Displace {
+        path: PathBuf,
+        source: io::Error,
+    },
+    Recover {
+        record: PathBuf,
+        source: io::Error,
+    },
+    RecordRefused {
+        record: PathBuf,
+        source: Refused,
+    },
+    Generate(wslib_crypto::Error),
+    Mint(wslib_crypto_x509::Error),
     #[non_exhaustive]
-    Write { path: PathBuf, source: io::Error },
-    #[error(
-        "the new pair is committed but not in place, and the old one is still served; {}: {source}",
-        unfinished_next_step(record, *named)
-    )]
+    Write {
+        path: PathBuf,
+        source: io::Error,
+    },
     #[non_exhaustive]
     Unfinished {
         record: PathBuf,
         named: bool,
-        source: io::Error,
+        source: RecoverError,
     },
-    #[error(
-        "{} holds an interrupted write of the pair, which a start or a recover finishes",
-        record.display()
-    )]
-    Interrupted { record: PathBuf },
-    #[error("cannot write to {}: {kind}", directory.display())]
+    Interrupted {
+        record: PathBuf,
+    },
     Unwritable {
         directory: PathBuf,
         kind: io::ErrorKind,
     },
+    /// The work on the blocking pool panicked; the panic hook has reported it.
+    Panicked,
+    /// The runtime shut down before the work on the blocking pool ran.
+    Cancelled,
+}
+
+impl std::fmt::Display for ServingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Undetermined { path, .. } => {
+                write!(f, "cannot tell whether {} is there", path.display())
+            }
+            Self::HalfPair { present, missing } => write!(
+                f,
+                "{} is there and {} is not",
+                present.display(),
+                missing.display()
+            ),
+            Self::Unreadable { path, .. } => write!(f, "cannot read {}", path.display()),
+            Self::NoCertificate { path } => write!(f, "{} holds no certificate", path.display()),
+            Self::Certificate(_) => f.write_str("the certificate is unusable"),
+            Self::Key(_) => f.write_str("the private key is unusable"),
+            Self::KeyRefused(_) => f.write_str("the crypto provider refuses the private key"),
+            Self::Mismatched => f.write_str("the private key does not belong to the certificate"),
+            Self::Refused(_) => f.write_str("rustls will not serve the pair"),
+            Self::Named { cert, key, .. } => write!(
+                f,
+                "{} and {} were named, so they are not moved aside and replaced",
+                cert.display(),
+                key.display()
+            ),
+            Self::Displace { path, .. } => write!(f, "moving {} aside failed", path.display()),
+            Self::Recover { record, .. } => write!(
+                f,
+                "an interrupted write cannot be finished; check {}, then move it aside by hand",
+                record.display()
+            ),
+            Self::RecordRefused { record, .. } => write!(
+                f,
+                "an interrupted write's record is refused; check {}, then move it aside by hand",
+                record.display()
+            ),
+            Self::Generate(_) => f.write_str("generating a key failed"),
+            Self::Mint(_) => f.write_str("minting a certificate failed"),
+            Self::Write { path, .. } => write!(
+                f,
+                "writing {} failed, so nothing was replaced",
+                path.display()
+            ),
+            Self::Unfinished { record, named, .. } => write!(
+                f,
+                "the new pair is committed but not in place, and the old one is still served; {}",
+                unfinished_next_step(record, *named)
+            ),
+            Self::Interrupted { record } => write!(
+                f,
+                "{} holds an interrupted write of the pair, which a start or a recover finishes",
+                record.display()
+            ),
+            Self::Unwritable { directory, kind } => {
+                write!(f, "cannot write to {}: {kind}", directory.display())
+            }
+            Self::Panicked => f.write_str("the blocking work panicked"),
+            Self::Cancelled => f.write_str("the runtime shut down before the blocking work ran"),
+        }
+    }
+}
+
+impl std::error::Error for ServingError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Undetermined { source, .. }
+            | Self::Unreadable { source, .. }
+            | Self::Displace { source, .. }
+            | Self::Recover { source, .. }
+            | Self::Write { source, .. } => Some(source),
+            Self::Certificate(source) | Self::Key(source) | Self::Mint(source) => Some(source),
+            Self::KeyRefused(source) | Self::Generate(source) => Some(source),
+            Self::Refused(source) => Some(source),
+            Self::Named { source, .. } => Some(&**source),
+            Self::RecordRefused { source, .. } => Some(source),
+            Self::Unfinished { source, .. } => Some(source),
+            Self::HalfPair { .. }
+            | Self::NoCertificate { .. }
+            | Self::Mismatched
+            | Self::Interrupted { .. }
+            | Self::Unwritable { .. }
+            | Self::Panicked
+            | Self::Cancelled => None,
+        }
+    }
 }
 
 impl ServingError {
@@ -696,12 +777,11 @@ fn transaction(location: &Location) -> (&Path, String) {
 fn recover(location: &Location, left: Option<&RecordIdentity>) -> Result<(), ServingError> {
     let (record_dir, record) = transaction(location);
     let targets = [location.cert.as_path(), &location.key];
-    let failed = |source: io::Error| {
+    let failed = |error| {
         let record = location.record();
-        if source.get_ref().is_some_and(|inner| inner.is::<Refused>()) {
-            ServingError::RecordRefused { record, source }
-        } else {
-            ServingError::Recover { record, source }
+        match error {
+            RecoverError::Refused(source) => ServingError::RecordRefused { record, source },
+            RecoverError::Io(source) => ServingError::Recover { record, source },
         }
     };
     if let Some(identity) = left
@@ -740,20 +820,13 @@ fn named_record_acted_on(location: &Location) -> Result<(), ServingError> {
         if [euid, 0].contains(&directory.uid()) && directory.mode() & 0o022 == 0 {
             return Ok(());
         }
-        format!(
-            "{} may be written by others, so {} is not acted on",
-            record_dir.display(),
-            record.display()
-        )
+        format!("{} may be written by others", record_dir.display())
     };
     #[cfg(windows)]
-    let why = format!(
-        "{} is at a named location, so it is left for the operator",
-        record.display()
-    );
+    let why = "it is at a named location, so it is left for the operator";
     Err(ServingError::RecordRefused {
+        source: Refused::new(&record, why),
         record,
-        source: io::Error::new(io::ErrorKind::PermissionDenied, why),
     })
 }
 
@@ -803,15 +876,20 @@ fn commit_pair(
                 )
             }
             CommitError::RolledBack(source) => unwritten(&record, source),
-            other => unwritten(&record, other.into()),
         })
 }
 
-/// Off the runtime's workers; a panic there is carried on here.
-async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
-    tokio::task::spawn_blocking(work)
-        .await
-        .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()))
+/// Off the runtime's workers.
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, ServingError> {
+    tokio::task::spawn_blocking(work).await.map_err(|e| {
+        if e.is_panic() {
+            ServingError::Panicked
+        } else {
+            ServingError::Cancelled
+        }
+    })
 }
 
 /// Into the first free `.unusable`, `.unusable.1`, …, so an earlier incident's file is kept.
@@ -843,7 +921,12 @@ fn displace(path: &Path) -> Result<Option<PathBuf>, ServingError> {
 #[cfg(unix)]
 fn c_path(path: &Path) -> io::Result<std::ffi::CString> {
     use std::os::unix::ffi::OsStrExt;
-    std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(io::Error::other)
+    std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "file name contained an unexpected NUL byte",
+        )
+    })
 }
 
 #[cfg(unix)]
@@ -2217,5 +2300,74 @@ mod tests {
         assert!(unwritable(install(&serving, &cert, &key).await.map(drop)));
         assert_eq!(serving.pair().await.unwrap().cert_pem, before.cert_pem);
         fs::set_permissions(&keys, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    fn says_only_its_own_part<C: std::error::Error + 'static>(
+        cause: C,
+        wrap: impl FnOnce(C) -> ServingError,
+    ) {
+        let said = cause.to_string();
+        let error = wrap(cause);
+        assert!(!error.to_string().contains(&said), "{error}");
+        let source = std::error::Error::source(&error).and_then(|e| e.downcast_ref::<C>());
+        assert_eq!(source.map(ToString::to_string), Some(said), "{error:?}");
+    }
+
+    #[test]
+    fn a_serving_error_says_only_its_own_part_and_carries_its_cause() {
+        let path = || PathBuf::from("/srv/tls/cert.pem");
+        let io = || io::Error::other("the disk is on fire");
+        says_only_its_own_part(io(), |source| ServingError::Undetermined {
+            path: path(),
+            source,
+        });
+        says_only_its_own_part(io(), |source| ServingError::Unreadable {
+            path: path(),
+            source,
+        });
+        says_only_its_own_part(io(), |source| ServingError::Displace {
+            path: path(),
+            source,
+        });
+        says_only_its_own_part(io(), |source| ServingError::Recover {
+            record: path(),
+            source,
+        });
+        says_only_its_own_part(io(), |source| ServingError::Write {
+            path: path(),
+            source,
+        });
+        let unreadable = || wslib_crypto_x509::Error::Malformed("the ink ran".into());
+        says_only_its_own_part(unreadable(), ServingError::Certificate);
+        says_only_its_own_part(unreadable(), ServingError::Key);
+        says_only_its_own_part(unreadable(), ServingError::Mint);
+        says_only_its_own_part(wslib_crypto::Error::Unsupported, ServingError::KeyRefused);
+        says_only_its_own_part(wslib_crypto::Error::Unsupported, ServingError::Generate);
+        says_only_its_own_part(
+            rustls::Error::General("rustls says no".into()),
+            ServingError::Refused,
+        );
+        says_only_its_own_part(Refused::new("/srv/tls/key.pem.txn", "planted"), |source| {
+            ServingError::RecordRefused {
+                record: path(),
+                source,
+            }
+        });
+        says_only_its_own_part(RecoverError::Io(io()), |source| ServingError::Unfinished {
+            record: path(),
+            named: false,
+            source,
+        });
+        says_only_its_own_part(ServingError::Mismatched, |source| ServingError::Named {
+            cert: path(),
+            key: path(),
+            source: Box::new(source),
+        });
+    }
+
+    #[tokio::test]
+    async fn blocking_work_that_panics_is_an_error_not_a_panic() {
+        let failed = blocking(|| -> () { panic!("the work fell over") }).await;
+        assert!(matches!(failed, Err(ServingError::Panicked)), "{failed:?}");
     }
 }

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0
+
+- On wslib-file-atomic 0.2, wslib-crypto 0.2 and wslib-crypto-x509 0.2,
+  whose errors `ServingError`, `AnchorError` and `KeyFingerprint::of` carry.
+- `ServingError::RecordRefused`'s source is wslib-file-atomic's `Refused`,
+  a named location's refusal included, and `ServingError::Unfinished`'s a
+  `RecoverError`, in place of an `io::Error`.
+- `ServingError`, `ProbeError::Failed` and `AnchorError` name only their own
+  part; the cause comes only through `source()`. `ServingError::Named`'s
+  source is the inner `ServingError`, not its box.
+- Work on the blocking pool that panics is `ServingError::Panicked`, and work
+  the runtime drops before it runs `ServingError::Cancelled`, in place of a
+  resumed panic.
+- A path holding a NUL byte is an `InvalidInput` `io::Error`, as std's own
+  calls give it.
+
 ## 0.2.5
 
 - libc's floor is 0.2.183, the workspace's.

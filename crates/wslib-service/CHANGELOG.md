@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.6
+
+- On wslib-file-atomic 0.2.
+
 ## 0.1.5
 
 - libc's floor is 0.2.183, the workspace's.

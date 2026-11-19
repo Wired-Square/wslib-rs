@@ -55,7 +55,6 @@ pub enum Recovered {
 }
 
 /// Why a [`Transaction::commit`] failed, and on which side of the commit point.
-#[non_exhaustive]
 #[derive(Debug)]
 pub enum CommitError {
     /// Before it: every target is untouched, and anything left is a pending
@@ -63,43 +62,74 @@ pub enum CommitError {
     RolledBack(io::Error),
     /// After it: the committed record is left, and [`recover`] rolls it forward,
     /// unless the failure was syncing the record's directory and a power cut
-    /// then undoes the commit, leaving every target as it was.
-    Committed(io::Error),
-}
-
-impl CommitError {
-    fn io(&self) -> &io::Error {
-        match self {
-            Self::RolledBack(error) | Self::Committed(error) => error,
-        }
-    }
+    /// then undoes the commit, leaving every target as it was. Rolling forward
+    /// failed as [`recover`] would have.
+    Committed(RecoverError),
 }
 
 impl fmt::Display for CommitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::RolledBack(error) => write!(f, "not committed, and rolled back: {error}"),
-            Self::Committed(error) => {
-                write!(f, "committed, but left for recovery to finish: {error}")
-            }
-        }
+        f.write_str(match self {
+            Self::RolledBack(_) => "not committed, and rolled back",
+            Self::Committed(_) => "committed, but left for recovery to finish",
+        })
     }
 }
 
 impl error::Error for CommitError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-        Some(self.io())
+        Some(match self {
+            Self::RolledBack(error) => error,
+            Self::Committed(error) => error.inner(),
+        })
     }
 }
 
-impl From<CommitError> for io::Error {
-    fn from(e: CommitError) -> Self {
-        io::Error::new(e.io().kind(), e)
+/// Why [`recover`] did not finish a transaction.
+#[derive(Debug)]
+pub enum RecoverError {
+    /// A record, or a staged file a committed record renames, that this
+    /// process could not have written.
+    Refused(Refused),
+    Io(io::Error),
+}
+
+impl RecoverError {
+    fn inner(&self) -> &(dyn error::Error + 'static) {
+        match self {
+            Self::Refused(refused) => refused,
+            Self::Io(error) => error,
+        }
+    }
+}
+
+/// The refusal's or the `io::Error`'s own.
+impl fmt::Display for RecoverError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self.inner(), f)
+    }
+}
+
+impl error::Error for RecoverError {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        self.inner().source()
+    }
+}
+
+impl From<io::Error> for RecoverError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+impl From<Refused> for RecoverError {
+    fn from(refused: Refused) -> Self {
+        Self::Refused(refused)
     }
 }
 
 /// Why [`recover`] would not act on a record, or on a staged file a committed
-/// record renames: the source of the `PermissionDenied` it returns.
+/// record renames.
 #[derive(Debug)]
 pub struct Refused {
     path: PathBuf,
@@ -107,6 +137,15 @@ pub struct Refused {
 }
 
 impl Refused {
+    /// A refusal of `path` for `why`, for a caller whose own checks refuse a
+    /// record before [`recover`] sees it.
+    pub fn new(path: impl Into<PathBuf>, why: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            why: why.into(),
+        }
+    }
+
     /// The record or staged file refused.
     pub fn path(&self) -> &Path {
         &self.path
@@ -202,20 +241,19 @@ impl Transaction {
         };
         // The rename of the committed record is the commit point: from there
         // the only correct direction is forward.
-        match staged.promote() {
+        let promoted = match staged.promote() {
             Err(PromoteError::Unmoved { staged, error }) => {
                 let _ = staged.discard();
                 let _ = self.roll_back();
-                Err((CommitError::RolledBack(error), None))
+                return Err((CommitError::RolledBack(error), None));
             }
-            promoted => {
-                self.open = false;
-                promoted
-                    .map_err(io::Error::from)
-                    .and_then(|()| roll_forward(&self.record, &self.suffix, &self.targets))
-                    .map_err(|error| (CommitError::Committed(error), identity))
-            }
-        }
+            Err(PromoteError::Unsynced(error)) => Err(RecoverError::Io(error)),
+            Ok(()) => Ok(()),
+        };
+        self.open = false;
+        promoted
+            .and_then(|()| roll_forward(&self.record, &self.suffix, &self.targets))
+            .map_err(|error| (CommitError::Committed(error), identity))
     }
 
     /// Where the record is.
@@ -296,17 +334,20 @@ impl Drop for Transaction {
 /// Finish what a crash left of the transaction named `name` with its record in
 /// `dir`; call it before reading the files a transaction writes.
 ///
-/// A record is refused, as `PermissionDenied`, unless it is a regular file,
-/// not a symbolic link, owned by this process's user and writable by no one
-/// else; on Windows, owned by this process's user or its default owner. So is
-/// a staged file a committed record would rename over its target. A refusal
-/// carries a [`Refused`].
-pub fn recover(dir: &Path, name: &str) -> io::Result<Recovered> {
+/// A record is [`RecoverError::Refused`] unless it is a regular file, not a
+/// symbolic link, owned by this process's user and writable by no one else;
+/// on Windows, owned by this process's user or its default owner. So is a
+/// staged file a committed record would rename over its target.
+pub fn recover(dir: &Path, name: &str) -> Result<Recovered, RecoverError> {
     recover_checked(dir, name, None, None).map(checked_in_full)
 }
 
 /// As [`recover`], also refusing a record that names a file outside `targets`.
-pub fn recover_expecting(dir: &Path, name: &str, targets: &[&Path]) -> io::Result<Recovered> {
+pub fn recover_expecting(
+    dir: &Path,
+    name: &str,
+    targets: &[&Path],
+) -> Result<Recovered, RecoverError> {
     let expected = expected(targets);
     recover_checked(dir, name, Some(&expected), None).map(checked_in_full)
 }
@@ -319,7 +360,7 @@ pub fn recover_identified(
     name: &str,
     targets: &[&Path],
     identity: &RecordIdentity,
-) -> io::Result<Option<Recovered>> {
+) -> Result<Option<Recovered>, RecoverError> {
     let expected = expected(targets);
     recover_checked(dir, name, Some(&expected), Some(identity))
 }
@@ -337,10 +378,12 @@ fn recover_checked(
     name: &str,
     expected: Option<&[PathBuf]>,
     identity: Option<&RecordIdentity>,
-) -> io::Result<Option<Recovered>> {
+) -> Result<Option<Recovered>, RecoverError> {
     let record = record_path(dir, name)?;
     let contents = match read_record(&record, identity) {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Some(Recovered::Nothing)),
+        Err(RecoverError::Io(e)) if e.kind() == io::ErrorKind::NotFound => {
+            return Ok(Some(Recovered::Nothing));
+        }
         Ok(None) => return Ok(None),
         Ok(Some(contents)) => contents,
         Err(e) => return Err(e),
@@ -373,9 +416,11 @@ fn recover_checked(
     }
     let suffix = suffix(name);
     match state {
-        PENDING => roll_back(&record, &suffix, &targets).map(|()| Recovered::RolledBack),
+        PENDING => roll_back(&record, &suffix, &targets)
+            .map(|()| Recovered::RolledBack)
+            .map_err(RecoverError::Io),
         COMMITTED => roll_forward(&record, &suffix, &targets).map(|()| Recovered::RolledForward),
-        _ => Err(malformed()),
+        _ => Err(malformed().into()),
     }
     .map(Some)
 }
@@ -389,26 +434,25 @@ fn as_recorded(target: &Path) -> PathBuf {
     }
 }
 
-fn refused(path: &Path, why: &str) -> io::Error {
-    let refused = Refused {
-        path: path.to_path_buf(),
-        why: why.to_string(),
-    };
-    io::Error::new(io::ErrorKind::PermissionDenied, refused)
+fn refused(path: &Path, why: &str) -> RecoverError {
+    Refused::new(path, why).into()
 }
 
 /// Read from the file that was checked, so nothing can be swapped in between.
-fn read_record(record: &Path, identity: Option<&RecordIdentity>) -> io::Result<Option<String>> {
+fn read_record(
+    record: &Path,
+    identity: Option<&RecordIdentity>,
+) -> Result<Option<String>, RecoverError> {
     let file = open_record(record)?;
     match identity {
         Some(identity) if RecordIdentity::of(&file)? != *identity => return Ok(None),
         Some(_) => {}
         None => refuse_unless_ours(record, &file)?,
     }
-    io::read_to_string(file).map(Some)
+    Ok(io::read_to_string(file).map(Some)?)
 }
 
-fn refuse_unless_ours(path: &Path, file: &File) -> io::Result<()> {
+fn refuse_unless_ours(path: &Path, file: &File) -> Result<(), RecoverError> {
     if !file.metadata()?.is_file() {
         return Err(refused(path, "not a regular file"));
     }
@@ -420,7 +464,7 @@ fn refuse_unless_ours(path: &Path, file: &File) -> io::Result<()> {
 
 /// Non-blocking, so a FIFO planted as the record is refused rather than waited on.
 #[cfg(unix)]
-fn open_record(record: &Path) -> io::Result<File> {
+fn open_record(record: &Path) -> Result<File, RecoverError> {
     use std::os::unix::fs::OpenOptionsExt;
     match fs::OpenOptions::new()
         .read(true)
@@ -428,7 +472,7 @@ fn open_record(record: &Path) -> io::Result<File> {
         .open(record)
     {
         Err(e) if e.raw_os_error() == Some(libc::ELOOP) => Err(refused(record, "a symbolic link")),
-        opened => opened,
+        opened => Ok(opened?),
     }
 }
 
@@ -448,15 +492,15 @@ fn untrusted(file: &File) -> io::Result<Option<&'static str>> {
 
 /// A link is opened as itself, which is then not a regular file.
 #[cfg(windows)]
-fn open_record(record: &Path) -> io::Result<File> {
+fn open_record(record: &Path) -> Result<File, RecoverError> {
     use std::os::windows::fs::OpenOptionsExt;
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
     };
-    fs::OpenOptions::new()
+    Ok(fs::OpenOptions::new()
         .read(true)
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
-        .open(record)
+        .open(record)?)
 }
 
 #[cfg(windows)]
@@ -519,11 +563,11 @@ fn a_directory(file_type: fs::FileType) -> bool {
 /// A staged file already gone under a committed record was renamed before the
 /// crash, so replaying is idempotent; one there is checked as the record is, as
 /// a file planted under its name would be renamed over the target.
-fn roll_forward(record: &Path, suffix: &str, targets: &[PathBuf]) -> io::Result<()> {
+fn roll_forward(record: &Path, suffix: &str, targets: &[PathBuf]) -> Result<(), RecoverError> {
     for target in targets {
         let staged = beside(target, suffix);
         match open_record(&staged) {
-            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(RecoverError::Io(e)) if e.kind() == io::ErrorKind::NotFound => continue,
             opened => refuse_unless_ours(&staged, &opened?)?,
         }
         match fs::rename(&staged, target) {
@@ -533,7 +577,7 @@ fn roll_forward(record: &Path, suffix: &str, targets: &[PathBuf]) -> io::Result<
     }
     sync_parents(targets)?;
     fs::remove_file(record)?;
-    sync_parent(record)
+    Ok(sync_parent(record)?)
 }
 
 fn sync_parents(targets: &[PathBuf]) -> io::Result<()> {

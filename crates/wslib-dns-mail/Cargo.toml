@@ -1,6 +1,6 @@
 [package]
 name = "wslib-dns-mail"
-version = "0.5.4"
+version = "0.6.0"
 description = "Email-authentication records in DNS: lenient parsers with byte-span faults for SPF, DMARC, DKIM keys, BIMI, MTA-STS and TLS-RPT, and record editors."
 readme = "README.md"
 edition.workspace = true
@@ -18,7 +18,7 @@ render = ["dep:usvg"]
 
 [dependencies]
 wslib-dns = { version = "0.2.5", path = "../wslib-dns", registry = "wired-square" }
-wslib-crypto-x509 = { version = "0.1", path = "../wslib-crypto-x509", registry = "wired-square" }
+wslib-crypto-x509 = { version = "0.2", path = "../wslib-crypto-x509", registry = "wired-square" }
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 quick-xml = "0.38"
 rustls-pki-types = { version = "1.12", features = ["std"] }

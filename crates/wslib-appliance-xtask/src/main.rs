@@ -20,6 +20,8 @@ mod packaging;
 mod render;
 mod unit;
 
+use std::error::Error;
+use std::iter;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -88,6 +90,8 @@ enum Packaging {
     Diff,
 }
 
+const CAUSE_SEPARATOR: &str = ": ";
+
 const CONFIG: &str = "appliance.toml";
 const SCAFFOLD: &str = "scaffold";
 const RENDER_AGAIN: &str =
@@ -98,10 +102,18 @@ fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("error: {e}");
+            eprintln!("error: {}", chain(&*e));
             ExitCode::from(COULD_NOT_RUN)
         }
     }
+}
+
+/// `error` and each of its causes, as one line.
+fn chain(error: &(dyn Error + 'static)) -> String {
+    iter::successors(Some(error), |&e| e.source())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(CAUSE_SEPARATOR)
 }
 
 /// Every file the chassis owns: only these are ever reported as drift, and a

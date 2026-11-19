@@ -222,14 +222,14 @@ fn an_openssl_crl_reads_and_verifies() {
 }
 
 #[test]
-fn what_is_not_a_crl_is_malformed() {
+fn what_is_not_a_crl_does_not_decode() {
     assert!(matches!(
         CrlView::from_der(b"\x30\x00"),
-        Err(Error::Malformed(_))
+        Err(Error::Decode(_))
     ));
     assert!(matches!(
         CrlView::from_pem(include_str!("data/openssl-ca.pem")),
-        Err(Error::Malformed(_))
+        Err(Error::Decode(_))
     ));
 }
 

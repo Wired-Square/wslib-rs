@@ -112,12 +112,12 @@ pub(crate) fn authority(
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum AnchorError {
-    #[error("not a readable certificate: {0}")]
+    #[error("not a readable certificate")]
     Unreadable(#[from] wslib_crypto_x509::Error),
     /// A leaf would otherwise anchor itself and trust the one host presenting it.
     #[error("certificate {fingerprint} is not an authority's: it has no CA:TRUE")]
     NotAnAuthority { fingerprint: Fingerprint },
-    #[error("not usable as a trust anchor: {0}")]
+    #[error("not usable as a trust anchor")]
     Unusable(#[from] ChainError),
     #[error("no authority was given")]
     NoneGiven,
@@ -186,6 +186,23 @@ mod tests {
             Err(AnchorError::Unreadable(_))
         ));
         assert_eq!(trust.anchors.len(), 1);
+    }
+
+    #[test]
+    fn an_anchor_error_says_only_its_own_part_and_carries_its_cause() {
+        let unreadable = Trust::default()
+            .anchor(&CertificateDer::from(vec![0x30, 0x00]))
+            .unwrap_err();
+        assert_eq!(unreadable.to_string(), "not a readable certificate");
+        let source = std::error::Error::source(&unreadable)
+            .and_then(|e| e.downcast_ref::<wslib_crypto_x509::Error>());
+        assert!(source.is_some(), "{unreadable:?}");
+
+        let unusable = AnchorError::from(ChainError::Expired);
+        assert_eq!(unusable.to_string(), "not usable as a trust anchor");
+        let source =
+            std::error::Error::source(&unusable).and_then(|e| e.downcast_ref::<ChainError>());
+        assert!(matches!(source, Some(ChainError::Expired)), "{unusable:?}");
     }
 
     #[test]

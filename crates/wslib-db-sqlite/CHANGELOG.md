@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.5
+
+- On wslib-file-atomic 0.2.
+
 ## 0.2.4
 
 - A file database's pool closes a connection returned mid-transaction or

@@ -182,12 +182,22 @@ fn promoting_by_path_with_nothing_staged_is_unmoved_and_not_found() {
 }
 
 #[test]
-fn a_promote_error_becomes_an_io_error_of_the_same_kind() {
-    let unsynced = PromoteError::Unsynced(io::ErrorKind::PermissionDenied.into());
-    assert!(unsynced.source().is_some());
-    let error = io::Error::from(unsynced);
-    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
-    assert!(error.to_string().contains("not synced"), "{error}");
+fn a_promote_error_says_only_its_own_part_and_carries_the_io_error() {
+    let unsynced = PromoteError::Unsynced(io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        "the sync was refused",
+    ));
+    assert_eq!(
+        unsynced.to_string(),
+        "renamed, but its directory was not synced"
+    );
+    let source = unsynced
+        .source()
+        .and_then(|e| e.downcast_ref::<io::Error>());
+    assert_eq!(
+        source.map(io::Error::kind),
+        Some(io::ErrorKind::PermissionDenied)
+    );
 }
 
 #[test]
@@ -300,12 +310,13 @@ fn a_staged_file_knows_its_target() {
 fn an_unmoved_promote_names_no_path() {
     let dir = Scratch::new("unmoved-message");
     let path = dir.join("password");
-    let error = promote(&path, "next").unwrap_err().to_string();
-    assert!(
-        error.starts_with("the staged file was not renamed over its target: "),
-        "{error}"
+    let error = promote(&path, "next").unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "the staged file was not renamed over its target"
     );
-    assert!(!error.contains("password"), "{error}");
+    let source = error.source().and_then(|e| e.downcast_ref::<io::Error>());
+    assert_eq!(source.map(io::Error::kind), Some(io::ErrorKind::NotFound));
 }
 
 /// A writable but unreadable directory: the file can be made and renamed, but

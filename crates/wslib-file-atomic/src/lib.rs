@@ -10,7 +10,7 @@
 //! let password = Path::new("/var/lib/app/password");
 //! let staged = Options::new().staging_suffix("next").stage(password, b"rotated")?;
 //! staged.promote()?;
-//! # Ok::<(), std::io::Error>(())
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! The staged name is fixed, so writers to one path are serialised by the
@@ -29,8 +29,8 @@ mod transaction;
 mod windows;
 
 pub use transaction::{
-    CommitError, RecordIdentity, Recovered, Refused, Transaction, recover, recover_expecting,
-    recover_identified,
+    CommitError, RecordIdentity, RecoverError, Recovered, Refused, Transaction, recover,
+    recover_expecting, recover_identified,
 };
 #[cfg(windows)]
 pub use windows::administrators_read_and_delete;
@@ -376,27 +376,16 @@ impl PromoteError {
 
 impl fmt::Display for PromoteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Unmoved { error, .. } => write!(
-                f,
-                "the staged file was not renamed over its target: {error}"
-            ),
-            Self::Unsynced(error) => {
-                write!(f, "renamed, but its directory was not synced: {error}")
-            }
-        }
+        f.write_str(match self {
+            Self::Unmoved { .. } => "the staged file was not renamed over its target",
+            Self::Unsynced(_) => "renamed, but its directory was not synced",
+        })
     }
 }
 
 impl error::Error for PromoteError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         Some(self.io())
-    }
-}
-
-impl From<PromoteError> for io::Error {
-    fn from(e: PromoteError) -> Self {
-        io::Error::new(e.io().kind(), e)
     }
 }
 

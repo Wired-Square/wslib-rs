@@ -127,7 +127,7 @@ fn unreachable(e: ProbeError) -> TlsError {
     match e {
         ProbeError::Failed { host, port, source } => TlsError::Unreachable(format!(
             "{host}:{port} presented no certificate: {}",
-            crate::redact::foreign(&source)
+            crate::redact::foreign(&super::chain(&source))
         )),
         e @ (ProbeError::NotHttps { .. }
         | ProbeError::NoHost { .. }
@@ -164,7 +164,7 @@ fn anchor(trust: &mut Trust, ca: &TrustedCa) -> Result<(), String> {
     if Ok(leaf.sha256()) != canonical_sha256(&ca.sha256) {
         return Err("the row's fingerprint is not the certificate's".to_string());
     }
-    trust.anchor(&leaf.into_der()).map_err(|e| e.to_string())
+    trust.anchor(&leaf.into_der()).map_err(|e| super::chain(&e))
 }
 
 /// A pasted SHA-256 fingerprint (bare, colon- or space-separated, either case)

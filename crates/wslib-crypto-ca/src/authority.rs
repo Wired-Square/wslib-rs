@@ -30,8 +30,7 @@ impl KeyIdentifierMethod {
     pub fn of(self, spki: &[u8]) -> Result<[u8; 20], Error> {
         match self {
             Self::Sha1 => {
-                let (_, info) = SubjectPublicKeyInfo::from_der(spki)
-                    .map_err(|e| Error::Malformed(e.to_string()))?;
+                let (_, info) = SubjectPublicKeyInfo::from_der(spki).map_err(der::decode)?;
                 Ok(Sha1::digest(&info.subject_public_key.data).into())
             }
             Self::Sha256 => Ok(wslib_crypto::key_identifier(spki)),

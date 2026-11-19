@@ -84,7 +84,8 @@ impl Root {
             ),
             Self::Pem(pem) => (pem.clone(), format!("the root in {WIRED_SQUARE_ROOT}")),
         };
-        let mut certificates = pem::certificates(&pem).map_err(|e| format!("{named}: {e}"))?;
+        let mut certificates =
+            pem::certificates(&pem).map_err(|e| format!("{named}: {}", crate::chain(&e)))?;
         Ok((certificates.swap_remove(0), named))
     }
 }
@@ -99,7 +100,7 @@ impl Chain {
     pub(super) fn read(path: &Path) -> Result<Self, String> {
         fs::read_to_string(path)
             .map_err(|e| e.to_string())
-            .and_then(|pem| pem::certificates(&pem).map_err(|e| e.to_string()))
+            .and_then(|pem| pem::certificates(&pem).map_err(|e| crate::chain(&e)))
             .map(|certificates| Self {
                 path: path.to_path_buf(),
                 certificates,
@@ -110,7 +111,8 @@ impl Chain {
     /// Why its leaf is not a code-signing leaf of `root` now, if it is not.
     pub(super) fn refusal(&self, root: &Root) -> Result<Option<String>, String> {
         let (root, named) = root.certificate()?;
-        let anchor = chain::trust_anchor(&root).map_err(|e| format!("{named}: {e}"))?;
+        let anchor =
+            chain::trust_anchor(&root).map_err(|e| format!("{named}: {}", crate::chain(&e)))?;
         let [leaf, intermediates @ ..] = self.certificates.as_slice() else {
             unreachable!("pem::certificates gives at least one");
         };
@@ -125,8 +127,9 @@ impl Chain {
         .err()
         .map(|e| {
             format!(
-                "{} is not a code-signing leaf of {named}: {e}",
-                self.path.display()
+                "{} is not a code-signing leaf of {named}: {}",
+                self.path.display(),
+                crate::chain(&e)
             )
         }))
     }
@@ -224,8 +227,8 @@ impl Key {
             false => fs::File::open(path).and_then(|mut file| file.read_to_string(&mut text)),
         }
         .map_err(|e| e.to_string())
-        .and_then(|_| pem::private_key(&text).map_err(|e| e.to_string()))
-        .and_then(|key| to_pkcs8(&key).map_err(|e| e.to_string()))
+        .and_then(|_| pem::private_key(&text).map_err(|e| crate::chain(&e)))
+        .and_then(|key| to_pkcs8(&key).map_err(|e| crate::chain(&e)))
         .and_then(|key| Self::from_pkcs8(key.secret_pkcs8_der()))
         .map_err(|e| format!("{}: {e}", path.display()))
     }

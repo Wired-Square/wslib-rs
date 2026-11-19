@@ -78,10 +78,10 @@ impl CsrView {
         Ok(Self {
             der: der.to_vec(),
             subject: info.subject.as_raw().to_vec(),
-            subject_text: rfc_4514(info.subject.as_raw()).map_err(der::malformed)?,
+            subject_text: rfc_4514(info.subject.as_raw()).map_err(der::decode)?,
             common_name: common_name(&info.subject),
             spki: spki.to_vec(),
-            key: KeyDescription::of_spki(spki).map_err(der::malformed)?,
+            key: KeyDescription::of_spki(spki).map_err(der::decode)?,
             names: requested_names(&request),
             signed: signed.to_vec(),
             signature_algorithm: signature_algorithm.to_vec(),
@@ -98,8 +98,8 @@ impl CsrView {
         if pem.len() > limit {
             return Err(Error::Malformed(format!("PEM over {limit} bytes")));
         }
-        let der = CertificateSigningRequestDer::from_pem_slice(pem.as_bytes())
-            .map_err(|e| Error::Malformed(e.to_string()))?;
+        let der =
+            CertificateSigningRequestDer::from_pem_slice(pem.as_bytes()).map_err(der::decode)?;
         Self::from_der(&der)
     }
 

@@ -1,6 +1,6 @@
 [package]
 name = "wslib-docker"
-version = "0.1.2"
+version = "0.1.3"
 description = "A Docker Engine client over its Unix socket or Windows named pipe, image references as `docker pull` takes them, registry trust in certs.d, and a fake engine for tests."
 readme = "README.md"
 edition.workspace = true
@@ -24,7 +24,7 @@ hyper-util = { version = "0.1.18", features = ["tokio"], optional = true }
 serde_json = { version = "1.0.85", optional = true }
 tokio = { version = "1.47", default-features = false, features = ["net", "rt", "time"], optional = true }
 tokio-util = { version = "0.7.19", features = ["io"], optional = true }
-wslib-file-atomic = { path = "../wslib-file-atomic", version = "0.1", registry = "wired-square", optional = true }
+wslib-file-atomic = { path = "../wslib-file-atomic", version = "0.2", registry = "wired-square", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1.47", features = ["macros", "rt"] }

@@ -1,6 +1,6 @@
 [package]
 name = "wslib-service"
-version = "0.1.5"
+version = "0.1.6"
 description = "A background service on launchd, systemd or the Windows service control manager from one call, and its private state and log."
 readme = "README.md"
 edition.workspace = true
@@ -33,7 +33,7 @@ wslib-systemd-notify = { version = "0.1.1", path = "../wslib-systemd-notify", re
 # preshutdown timeout; the log file's and the state directory's owner and DACL.
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.8"
-wslib-file-atomic = { version = "0.1.5", path = "../wslib-file-atomic", registry = "wired-square" }
+wslib-file-atomic = { version = "0.2", path = "../wslib-file-atomic", registry = "wired-square" }
 windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
     "Win32_Security",
@@ -52,7 +52,7 @@ wslib-telemetry = { version = "0.1.9", path = "../wslib-telemetry", registry = "
 
 # The DACL read-backs.
 [target.'cfg(windows)'.dev-dependencies]
-wslib-file-atomic = { version = "0.1.5", path = "../wslib-file-atomic", registry = "wired-square", features = ["testing"] }
+wslib-file-atomic = { version = "0.2", path = "../wslib-file-atomic", registry = "wired-square", features = ["testing"] }
 
 [[test]]
 name = "testing"

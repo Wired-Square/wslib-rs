@@ -1,6 +1,6 @@
 [package]
 name = "wslib-pairing"
-version = "0.1.0"
+version = "0.1.1"
 description = "Pairing primitives for a daemon and its client: a one-time code, single use and attempt-limited across restarts, and the URI that carries it with the daemon's key pin."
 readme = "README.md"
 edition.workspace = true
@@ -12,9 +12,9 @@ publish = ["wired-square"]
 
 [dependencies]
 thiserror = "2"
-wslib-file-atomic = { version = "0.1.5", path = "../wslib-file-atomic", registry = "wired-square" }
+wslib-file-atomic = { version = "0.2", path = "../wslib-file-atomic", registry = "wired-square" }
 wslib-secret = { version = "0.1.2", path = "../wslib-secret", registry = "wired-square", features = ["token"] }
 
 [dev-dependencies]
 tempfile = "3.10.1"
-wslib-crypto = { version = "0.1.2", path = "../wslib-crypto", registry = "wired-square" }
+wslib-crypto = { version = "0.2", path = "../wslib-crypto", registry = "wired-square" }

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.0
+
+- `recover`, `recover_expecting` and `recover_identified` fail with
+  `RecoverError`: `Refused` carrying the `Refused` for a record or staged
+  file this process could not have written, or `Io` carrying the
+  `io::Error`, in place of an `io::Error` whose `PermissionDenied` held the
+  `Refused` out of `source()`'s reach. Its message is the `Refused`'s or the
+  `io::Error`'s own.
+- `CommitError::Committed` carries the `RecoverError` rolling forward failed
+  with. `CommitError` is exhaustive: its two variants are the two sides of
+  the commit point.
+- `PromoteError` and `CommitError` name only their own part. The cause comes
+  only through `source()`, which for `Committed` is the `Refused` or the
+  `io::Error` itself.
+- `From<PromoteError>` and `From<CommitError>` for `io::Error` are gone.
+- `Refused::new(path, why)`: a refusal, for a caller whose own checks refuse
+  a record before `recover` sees it.
+
 ## 0.1.9
 
 - libc's floor is 0.2.183, the workspace's.

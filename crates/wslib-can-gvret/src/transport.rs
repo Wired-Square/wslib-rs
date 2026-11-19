@@ -12,7 +12,7 @@ use wslib_can::{
     CanError, CanFrame, CanOptions, CanTask, Device, DeviceInfo, Direction, Limits, Received,
     Stamp, WriteFailed,
 };
-#[cfg(feature = "serial")]
+#[cfg(all(feature = "serial", not(target_os = "ios")))]
 use wslib_serial::{LineSettings, SerialPort};
 
 use crate::{
@@ -29,7 +29,7 @@ pub enum Link {
         connect_timeout: Duration,
     },
     /// Opened read-write and exclusive.
-    #[cfg(feature = "serial")]
+    #[cfg(all(feature = "serial", not(target_os = "ios")))]
     Serial { path: String, line: LineSettings },
 }
 
@@ -249,7 +249,7 @@ impl Gvret {
 
 enum Wire {
     Tcp(TcpStream),
-    #[cfg(feature = "serial")]
+    #[cfg(all(feature = "serial", not(target_os = "ios")))]
     Serial(SerialPort),
 }
 
@@ -270,7 +270,7 @@ impl Wire {
                 let _ = stream.set_nodelay(true);
                 Ok(Self::Tcp(stream))
             }
-            #[cfg(feature = "serial")]
+            #[cfg(all(feature = "serial", not(target_os = "ios")))]
             Link::Serial { path, line } => match deadline {
                 Some(deadline) => crate::serial::open_before(path, *line, deadline).await,
                 None => crate::serial::open(path, *line),
@@ -301,7 +301,7 @@ impl Wire {
                     }
                 }
             },
-            #[cfg(feature = "serial")]
+            #[cfg(all(feature = "serial", not(target_os = "ios")))]
             Self::Serial(port) => crate::serial::read(port, outbound).await,
         }
     }
@@ -316,13 +316,13 @@ impl Wire {
                 }
                 Ok(())
             }
-            #[cfg(feature = "serial")]
+            #[cfg(all(feature = "serial", not(target_os = "ios")))]
             Self::Serial(port) => port.write(outbound).await.map_err(crate::serial::unwritten),
         }
     }
 
     async fn close(self) {
-        #[cfg(feature = "serial")]
+        #[cfg(all(feature = "serial", not(target_os = "ios")))]
         if let Self::Serial(port) = self {
             port.close().await;
         }

@@ -743,7 +743,7 @@ async fn a_probe_connect_gets_no_longer_than_the_probe() {
     .await
 }
 
-#[cfg(feature = "serial")]
+#[cfg(all(feature = "serial", not(target_os = "ios")))]
 mod serial {
     use wslib_serial::{LineSettings, Parity, SerialError};
 

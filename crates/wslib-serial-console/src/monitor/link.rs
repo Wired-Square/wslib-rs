@@ -1,4 +1,4 @@
-use std::{error::Error, path::Path};
+use std::{error::Error, io, path::Path};
 
 use wslib_mcu_flash::ports::{SERIAL_BY_PATH_DIR, by_path_index, not_attached};
 use wslib_serial::{
@@ -26,11 +26,15 @@ pub(super) enum Unresolved {
 
 fn usb_serial_tty(serial: &str) -> Result<Option<String>, Unresolved> {
     Ok(wslib_serial::ports()
-        .map_err(|e| Unresolved::Failed(format!("listing ports: {}", chain(&e))))?
+        .map_err(listing_failed)?
         .into_iter()
         .filter(|port| matches!(&port.kind, PortKind::Usb(usb) if usb.serial.as_deref() == Some(serial)))
         .map(|port| port.path)
         .min_by_key(|path| (!path.starts_with("/dev/cu."), path.clone())))
+}
+
+fn listing_failed(error: io::Error) -> Unresolved {
+    Unresolved::Failed(format!("listing ports: {}", chain(&error)))
 }
 
 fn topology_tty(name: &str) -> Option<String> {
@@ -115,5 +119,40 @@ impl Link {
             #[cfg(any(test, feature = "test-support"))]
             Self::Fake(_) => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fmt;
+
+    use super::*;
+
+    #[derive(Debug)]
+    struct Denied(io::Error);
+
+    impl fmt::Display for Denied {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("the port list is unreadable")
+        }
+    }
+
+    impl Error for Denied {
+        fn source(&self) -> Option<&(dyn Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+
+    #[test]
+    fn a_listing_that_failed_says_so_with_each_cause() {
+        let cause = io::Error::new(io::ErrorKind::PermissionDenied, "sysfs is closed");
+        let failed = listing_failed(io::Error::other(Denied(cause)));
+        let Unresolved::Failed(why) = failed else {
+            panic!("a failure");
+        };
+        assert_eq!(
+            why,
+            "listing ports: the port list is unreadable: sysfs is closed"
+        );
     }
 }

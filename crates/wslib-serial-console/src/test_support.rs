@@ -15,6 +15,10 @@ use crate::{
     monitor::{Opener, lock},
 };
 
+/// The reason a [`FakeDevice`] that [`fail_writes`](FakeDevice::fail_writes)
+/// gives each write and control line it refuses.
+pub const WRITES_REFUSED: &str = "the device stopped taking bytes";
+
 /// Stops every port's monitor when dropped, so a test that fails doesn't
 /// leave one holding its port.
 pub struct StopReaders(pub Monitors);
@@ -175,17 +179,17 @@ impl FakeLink {
         self.events.recv().await
     }
 
-    pub(crate) fn write(&self, bytes: Vec<u8>) -> io::Result<()> {
+    pub(crate) fn write(&self, bytes: Vec<u8>) -> Result<(), SerialError> {
         self.put(Wired::Bytes(bytes))
     }
 
-    pub(crate) fn set_dtr(&self, level: bool) -> io::Result<()> {
+    pub(crate) fn set_dtr(&self, level: bool) -> Result<(), SerialError> {
         self.put(Wired::Dtr(level))
     }
 
-    fn put(&self, wired: Wired) -> io::Result<()> {
-        self.wire
-            .send(wired)
-            .map_err(|_| io::ErrorKind::BrokenPipe.into())
+    fn put(&self, wired: Wired) -> Result<(), SerialError> {
+        self.wire.send(wired).map_err(|_| {
+            SerialError::Write(io::Error::new(io::ErrorKind::BrokenPipe, WRITES_REFUSED))
+        })
     }
 }

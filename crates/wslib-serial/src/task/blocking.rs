@@ -18,7 +18,7 @@ type Boxed = Box<dyn serialport::SerialPort>;
 pub struct SerialPort {
     state: State,
     /// A read that finished while a write waited for the port.
-    unread: Option<io::Result<Vec<u8>>>,
+    unread: Option<Result<io::Result<Vec<u8>>, SerialError>>,
     read_buffer: usize,
 }
 
@@ -75,7 +75,7 @@ impl SerialPort {
     pub async fn read(&mut self) -> Result<Vec<u8>, SerialError> {
         loop {
             let read = match self.unread.take() {
-                Some(read) => read,
+                Some(read) => read?,
                 None => self.next_read().await?,
             };
             match read {
@@ -132,7 +132,7 @@ impl SerialPort {
     #[cfg(feature = "write")]
     async fn idle(&mut self) -> Result<Boxed, SerialError> {
         if let State::Reading(_) = self.state {
-            self.unread = Some(self.read_in_flight().await?);
+            self.unread = Some(self.read_in_flight().await);
         }
         let _ = self.written().await;
         match mem::replace(&mut self.state, State::Gone) {
@@ -403,6 +403,26 @@ pub(super) mod tests {
     #[tokio::test]
     async fn a_read_that_panicked_is_panicked_and_leaves_the_port_closed() {
         let mut port = panicking();
+        assert!(matches!(port.read().await, Err(SerialError::Panicked)));
+        assert!(matches!(port.read().await, Err(SerialError::Closed)));
+    }
+
+    #[cfg(feature = "write")]
+    #[tokio::test]
+    async fn a_write_behind_a_read_that_panicked_finds_the_port_gone_and_the_read_reports_the_panic()
+     {
+        let mut port = SerialPort {
+            state: State::Reading(spawn_blocking(|| -> (Boxed, io::Result<Vec<u8>>) {
+                panic!("read panicked")
+            })),
+            unread: None,
+            read_buffer: 1,
+        };
+        let written = port.write(&mut b"x".to_vec()).await;
+        assert!(
+            matches!(&written, Err(SerialError::Write(e)) if e.kind() == io::ErrorKind::NotConnected),
+            "{written:?}"
+        );
         assert!(matches!(port.read().await, Err(SerialError::Panicked)));
         assert!(matches!(port.read().await, Err(SerialError::Closed)));
     }

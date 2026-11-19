@@ -2,7 +2,7 @@
 //! device over TCP or, with `serial`, a serial port.
 
 mod codec;
-#[cfg(feature = "serial")]
+#[cfg(all(feature = "serial", not(target_os = "ios")))]
 mod serial;
 #[cfg(feature = "transport")]
 mod transport;

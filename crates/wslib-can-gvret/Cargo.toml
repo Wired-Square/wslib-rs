@@ -17,8 +17,10 @@ serial = ["transport", "wslib-can/serial", "dep:wslib-serial", "wslib-serial/wri
 [dependencies]
 tokio = { version = "1.53.3", default-features = false, features = ["net", "rt", "time"], optional = true }
 wslib-can = { path = "../wslib-can", version = "0.2", registry = "wired-square" }
-wslib-serial = { path = "../wslib-serial", version = "0.2", registry = "wired-square", optional = true }
 wslib-tcp = { path = "../wslib-tcp", version = "0.1", registry = "wired-square", optional = true }
+
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+wslib-serial = { path = "../wslib-serial", version = "0.2", registry = "wired-square", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1.53.3", features = ["io-util", "macros", "net", "rt", "sync", "time"] }

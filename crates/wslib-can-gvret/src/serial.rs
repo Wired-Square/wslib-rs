@@ -136,6 +136,34 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn each_serial_error_is_the_can_error_for_it() {
+        let opened = error(SerialError::Open {
+            path: "/dev/ttyACM0".into(),
+            source: io::ErrorKind::NotFound.into(),
+        });
+        assert!(
+            matches!(&opened, CanError::Open { device, source } if device == "/dev/ttyACM0" && source.kind() == io::ErrorKind::NotFound),
+            "{opened:?}"
+        );
+        assert!(matches!(error(SerialError::Closed), CanError::Closed));
+        let read = error(SerialError::Read(io::ErrorKind::BrokenPipe.into()));
+        assert!(
+            matches!(&read, CanError::Read(e) if e.kind() == io::ErrorKind::BrokenPipe),
+            "{read:?}"
+        );
+        assert!(matches!(error(SerialError::Panicked), CanError::Panicked));
+        let written = error(SerialError::Write(io::ErrorKind::BrokenPipe.into()));
+        assert!(
+            matches!(written, CanError::Serial(SerialError::Write(_))),
+            "{written:?}"
+        );
+        assert!(matches!(
+            error(SerialError::UnsupportedBaud(1)),
+            CanError::Serial(SerialError::UnsupportedBaud(1))
+        ));
+    }
+
+    #[test]
     fn a_serial_write_that_failed_or_panicked_is_the_typed_write_failure() {
         assert!(matches!(
             unwritten(SerialError::Panicked),

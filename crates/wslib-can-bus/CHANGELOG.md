@@ -7,9 +7,9 @@
   an `io::Error` wrapping either. `source()` returns the `io::Error` or the
   `CanError` itself.
 - `OpenError::Open` names only the bus that did not open; the cause comes
-  only through `source()`. `kind()` is the cause's `io::Error` kind, a GVRET
-  connect's included, so a missing adapter or port is `NotFound`, and a USB
-  listing that fails keeps its own.
+  only through `source()`. `kind()` is the cause's `io::Error` kind, a
+  failed write's and a GVRET connect's included, so a missing adapter or
+  port is `NotFound`, and a USB listing that fails keeps its own.
 - `SerialPort`'s parse fails with `PortParseError`, not a `String`.
   `BusParseError::Port` carries it as its source for an SLCAN bus whose port
   doesn't parse.

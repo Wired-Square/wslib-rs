@@ -56,16 +56,16 @@ impl fmt::Display for WriteTarget {
 #[non_exhaustive]
 pub enum WriteFailure {
     /// No connection to write on.
-    Connect(Arc<dyn Error + Send + Sync>),
+    Connect(Arc<TransportError>),
     /// The read before a read-modify-write of the run at `target` failed.
     ReadModifyWrite {
         target: WriteTarget,
-        error: Arc<dyn Error + Send + Sync>,
+        error: Arc<RequestError>,
     },
     /// The write of the run at `target` failed.
     Write {
         target: WriteTarget,
-        error: Arc<dyn Error + Send + Sync>,
+        error: Arc<RequestError>,
     },
 }
 
@@ -84,9 +84,8 @@ impl fmt::Display for WriteFailure {
 impl Error for WriteFailure {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Connect(error)
-            | Self::ReadModifyWrite { error, .. }
-            | Self::Write { error, .. } => Some(&**error),
+            Self::Connect(error) => Some(&**error),
+            Self::ReadModifyWrite { error, .. } | Self::Write { error, .. } => Some(&**error),
         }
     }
 }
@@ -104,7 +103,7 @@ pub enum VerifyProblem {
     /// The verify read of the run at `target` failed.
     Unread {
         target: WriteTarget,
-        error: Arc<dyn Error + Send + Sync>,
+        error: Arc<RequestError>,
     },
 }
 
@@ -314,7 +313,7 @@ impl Batch<'_> {
 
     fn fail(
         &mut self,
-        failed: fn(WriteTarget, Arc<dyn Error + Send + Sync>) -> WriteFailure,
+        failed: fn(WriteTarget, Arc<RequestError>) -> WriteFailure,
         first: &ModbusWrite,
         e: RequestError,
     ) -> bool {

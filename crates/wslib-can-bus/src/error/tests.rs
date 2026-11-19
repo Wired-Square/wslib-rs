@@ -109,8 +109,8 @@ fn an_adapter_that_did_not_open_is_its_can_error_and_its_kind() {
 
 #[cfg(feature = "task")]
 #[test]
-fn an_adapter_read_or_request_that_failed_is_its_io_errors_kind() {
-    use wslib_can::CanError;
+fn an_adapter_read_request_or_write_that_failed_is_its_io_errors_kind() {
+    use wslib_can::{CanError, WriteFailed};
 
     for (adapter, kind) in [
         (
@@ -124,6 +124,11 @@ fn an_adapter_read_or_request_that_failed_is_its_io_errors_kind() {
             },
             io::ErrorKind::TimedOut,
         ),
+        (
+            CanError::Write(WriteFailed::Io(io::ErrorKind::BrokenPipe.into())),
+            io::ErrorKind::BrokenPipe,
+        ),
+        (CanError::Write(WriteFailed::Panicked), io::ErrorKind::Other),
     ] {
         assert_eq!(OpenCause::Adapter(adapter).kind(), kind);
     }

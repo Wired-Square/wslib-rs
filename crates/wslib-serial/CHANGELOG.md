@@ -12,8 +12,10 @@
 - `SerialError::Panicked`: a blocking call on the port panicked, on Windows
   or with `write`, in a read, a write or a DTR or RTS change. A read's is
   the task's `Disconnected`, and the task reopens as after any loss. A
-  write's or a control line's is that call's answer. A call the runtime
-  cancels before it runs is `Read` or `Write` with `Interrupted`.
+  write's or a control line's is that call's answer. A write that waits for
+  a read that panicked is `Write` with `NotConnected`, the next read
+  reporting the read's `Panicked`. A call the runtime cancels before it runs
+  is `Read` or `Write` with `Interrupted`.
 
 ## 0.1.3
 

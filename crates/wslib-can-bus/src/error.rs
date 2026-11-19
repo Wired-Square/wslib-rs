@@ -1,7 +1,7 @@
 use std::{error::Error, fmt, io};
 
 #[cfg(feature = "task")]
-use wslib_can::CanError;
+use wslib_can::{CanError, WriteFailed};
 
 use crate::bus::{BUS_FORMS, CanBus, name_the_bus};
 
@@ -37,7 +37,8 @@ pub enum OpenCause {
 
 impl OpenCause {
     /// The `io::Error`'s kind; for the adapter's error, that of the
-    /// `io::Error` it holds (a GVRET connect's too), else `Other`.
+    /// `io::Error` it holds (a failed write's and a GVRET connect's too),
+    /// else `Other`.
     pub fn kind(&self) -> io::ErrorKind {
         match self {
             OpenCause::Io(e) => e.kind(),
@@ -45,7 +46,8 @@ impl OpenCause {
             OpenCause::Adapter(
                 CanError::Open { source, .. }
                 | CanError::Read(source)
-                | CanError::Request { source, .. },
+                | CanError::Request { source, .. }
+                | CanError::Write(WriteFailed::Io(source)),
             ) => source.kind(),
             #[cfg(feature = "gvret")]
             OpenCause::Adapter(CanError::Connect(

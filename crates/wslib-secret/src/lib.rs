@@ -250,7 +250,7 @@ impl fmt::Display for LoadError {
         match self {
             Self::BothSet { var, file_var } => write!(f, "both {var} and {file_var} are set"),
             Self::NotUnicode(var) => write!(f, "{var} is not valid Unicode"),
-            Self::Read { path, source } => write!(f, "{}: {source}", path.display()),
+            Self::Read { path, .. } => write!(f, "cannot read {}", path.display()),
             Self::Empty(path) => write!(f, "{} is empty", path.display()),
         }
     }
@@ -370,9 +370,24 @@ mod tests {
         }
         let missing = std::env::temp_dir().join("wslib-secret-missing");
         assert!(matches!(
-            Secret::from_file(missing),
+            Secret::from_file(&missing),
             Err(LoadError::Read { .. })
         ));
+    }
+
+    #[test]
+    fn an_unreadable_file_is_named_with_the_os_error_beneath() {
+        let missing = std::env::temp_dir().join("wslib-secret-unread");
+        let err = Secret::from_file(&missing).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!("cannot read {}", missing.display())
+        );
+        let source = std::error::Error::source(&err).expect("the OS error");
+        assert_eq!(
+            source.downcast_ref::<io::Error>().map(io::Error::kind),
+            Some(io::ErrorKind::NotFound)
+        );
     }
 
     #[test]

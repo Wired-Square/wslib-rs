@@ -7,6 +7,7 @@
 //! **Hashing and verifying block** for tens of milliseconds; on an async
 //! runtime use the [`tokio`] wrappers (feature `tokio`).
 
+use std::error::Error;
 use std::fmt;
 use std::sync::OnceLock;
 
@@ -95,7 +96,7 @@ fn hash_unchecked(password: &str) -> Result<String, PasswordError> {
     hasher()
         .hash_password(password.as_bytes())
         .map(|hash| hash.to_string())
-        .map_err(|e| PasswordError::Hash(e.to_string()))
+        .map_err(|e| PasswordError::Hash(Box::new(e)))
 }
 
 /// Whether `password` matches the `stored` PHC string. **Blocks.**
@@ -109,9 +110,27 @@ pub fn verify(stored: &str, password: &str) -> bool {
             .is_ok()
 }
 
-/// Why `stored` is not a readable PHC string, for a log line; `None` when it is.
-pub fn why_unreadable(stored: &str) -> Option<String> {
-    PasswordHash::new(stored).err().map(|e| e.to_string())
+/// Why `stored` is not a readable PHC string; `None` when it is.
+pub fn why_unreadable(stored: &str) -> Option<UnreadableHash> {
+    PasswordHash::new(stored)
+        .err()
+        .map(|e| UnreadableHash(Box::new(e)))
+}
+
+/// A stored hash that is not a readable PHC string; `source()` is argon2's reason.
+#[derive(Debug)]
+pub struct UnreadableHash(Box<dyn Error + Send + Sync>);
+
+impl fmt::Display for UnreadableHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("the stored hash is not a readable PHC string")
+    }
+}
+
+impl Error for UnreadableHash {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&*self.0)
+    }
 }
 
 /// Costs what [`verify`] costs and is always false: call it when no account
@@ -142,7 +161,7 @@ pub fn needs_rehash(stored: &str) -> bool {
 }
 
 /// Why a password was not hashed.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum PasswordError {
     TooShort {
         min_chars: usize,
@@ -150,8 +169,12 @@ pub enum PasswordError {
     TooLong {
         max_bytes: usize,
     },
-    /// argon2 or the OS random source failed.
-    Hash(String),
+    /// argon2 or the OS random source failed; `source()` is its error.
+    Hash(Box<dyn Error + Send + Sync>),
+    /// The runtime shut down before a `tokio` wrapper's hashing ran.
+    Cancelled,
+    /// A `tokio` wrapper's hashing panicked.
+    Panicked,
 }
 
 impl fmt::Display for PasswordError {
@@ -163,12 +186,21 @@ impl fmt::Display for PasswordError {
             Self::TooLong { max_bytes } => {
                 write!(f, "the password must be at most {max_bytes} bytes")
             }
-            Self::Hash(e) => write!(f, "the password could not be hashed: {e}"),
+            Self::Hash(_) => f.write_str("the password could not be hashed"),
+            Self::Cancelled => f.write_str("the runtime shut down before the password was hashed"),
+            Self::Panicked => f.write_str("hashing the password panicked"),
         }
     }
 }
 
-impl std::error::Error for PasswordError {}
+impl Error for PasswordError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Hash(e) => Some(&**e),
+            Self::TooShort { .. } | Self::TooLong { .. } | Self::Cancelled | Self::Panicked => None,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -180,8 +212,28 @@ mod tests {
 
     #[test]
     fn only_an_unreadable_hash_says_why() {
-        assert_eq!(why_unreadable(FROM_ARGON2_0_5), None);
-        assert!(why_unreadable("not a hash").is_some_and(|why| !why.is_empty()));
+        assert!(why_unreadable(FROM_ARGON2_0_5).is_none());
+        let why = why_unreadable("not a hash").expect("unreadable");
+        assert_eq!(
+            why.to_string(),
+            "the stored hash is not a readable PHC string"
+        );
+        let source = why.source().expect("argon2's reason");
+        assert_eq!(
+            source.to_string(),
+            PasswordHash::new("not a hash").unwrap_err().to_string()
+        );
+    }
+
+    #[test]
+    fn a_failed_hash_says_only_that_and_keeps_argon2s_error() {
+        let refused = PasswordError::Hash(Box::new(argon2::password_hash::Error::OutOfMemory));
+        assert_eq!(refused.to_string(), "the password could not be hashed");
+        let source = refused.source().expect("argon2's error");
+        assert_eq!(
+            source.downcast_ref::<argon2::password_hash::Error>(),
+            Some(&argon2::password_hash::Error::OutOfMemory)
+        );
     }
 
     #[test]
@@ -256,29 +308,28 @@ mod tests {
     #[test]
     fn the_minimum_counts_characters_and_the_maximum_bytes() {
         let policy = Policy::default();
-        assert_eq!(
+        assert!(matches!(
             policy.check(&"x".repeat(11)),
             Err(PasswordError::TooShort { min_chars: 12 })
-        );
-        assert_eq!(policy.check(&"x".repeat(12)), Ok(()));
-        assert_eq!(policy.check(&"é".repeat(12)), Ok(()), "24 bytes, 12 chars");
+        ));
+        assert!(policy.check(&"x".repeat(12)).is_ok());
+        assert!(policy.check(&"é".repeat(12)).is_ok(), "24 bytes, 12 chars");
         assert!(policy.check(&"é".repeat(11)).is_err(), "22 bytes, 11 chars");
-        assert_eq!(Policy::with_min_chars(8).check("12345678"), Ok(()));
+        assert!(Policy::with_min_chars(8).check("12345678").is_ok());
 
-        assert_eq!(policy.check(&"x".repeat(MAX_BYTES)), Ok(()));
-        let too_long = PasswordError::TooLong {
-            max_bytes: MAX_BYTES,
+        assert!(policy.check(&"x".repeat(MAX_BYTES)).is_ok());
+        let too_long = |refused| {
+            matches!(
+                refused,
+                Err(PasswordError::TooLong {
+                    max_bytes: MAX_BYTES
+                })
+            )
         };
-        assert_eq!(
-            policy.check(&"x".repeat(MAX_BYTES + 1)),
-            Err(too_long.clone())
-        );
-        assert_eq!(
-            policy.check(&"é".repeat(MAX_BYTES / 2 + 1)),
-            Err(too_long.clone())
-        );
+        assert!(too_long(policy.check(&"x".repeat(MAX_BYTES + 1))));
+        assert!(too_long(policy.check(&"é".repeat(MAX_BYTES / 2 + 1))));
         let refused = Policy::with_min_chars(0).hash(&"x".repeat(MAX_BYTES + 1));
-        assert_eq!(refused, Err(too_long));
+        assert!(too_long(refused.map(drop)));
     }
 
     #[test]
@@ -298,12 +349,12 @@ mod tests {
         assert!(verify(&upgraded, short));
         assert!(!needs_rehash(&upgraded));
 
-        assert_eq!(
+        assert!(matches!(
             rehash(&"x".repeat(MAX_BYTES + 1)),
             Err(PasswordError::TooLong {
                 max_bytes: MAX_BYTES
             })
-        );
+        ));
     }
 
     #[test]

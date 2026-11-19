@@ -29,6 +29,7 @@
 //! the first verify panics.
 
 use std::collections::HashMap;
+use std::error::Error as StdError;
 use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -58,7 +59,7 @@ struct Keys {
     by_kid: HashMap<String, Arc<DecodingKey>>,
     fetched_at: Option<Instant>,
     attempted_at: Option<Instant>,
-    failure: Option<String>,
+    failure: Option<Error>,
 }
 
 impl Verifier {
@@ -137,24 +138,25 @@ impl Verifier {
     /// The token's claims, once its signature, `iss`, `aud`, `exp`, `nbf` and
     /// any required `token_use` check out.
     pub async fn verify<C: DeserializeOwned>(&self, token: &str) -> Result<C, Error> {
-        let header = jsonwebtoken::decode_header(token).map_err(rejected)?;
+        let header = jsonwebtoken::decode_header(token)
+            .map_err(|e| Error::rejected_by("its header does not decode", e))?;
         let kid = header
             .kid
-            .ok_or_else(|| Error::Rejected("the token names no key (kid)".into()))?;
+            .ok_or_else(|| Error::rejected("the token names no key (kid)"))?;
         let key = self.key(&kid).await?;
         let claims = jsonwebtoken::decode::<Map<String, Value>>(token, &key, &self.validation)
-            .map_err(rejected)?
+            .map_err(|e| Error::rejected_by("it does not verify", e))?
             .claims;
         if let Some(expected) = &self.token_use {
             let found = claims.get("token_use").and_then(Value::as_str);
             if found != Some(expected) {
-                return Err(Error::Rejected(format!(
+                return Err(Error::rejected(format!(
                     "token_use is {found:?}, not {expected:?}"
                 )));
             }
         }
         serde_json::from_value(Value::Object(claims))
-            .map_err(|e| Error::Rejected(format!("the claims don't fit: {e}")))
+            .map_err(|e| Error::rejected_by("the claims don't fit", e))
     }
 
     /// Fetches the JWKS now, whatever the cache holds: to warm it at start-up,
@@ -178,8 +180,8 @@ impl Verifier {
         let keys = self.keys.read().await;
         match (keys.by_kid.get(kid), &keys.failure) {
             (Some(key), _) => Ok(key.clone()),
-            (None, Some(failure)) => Err(Error::Unavailable(failure.clone())),
-            (None, None) => Err(Error::Rejected(format!(
+            (None, Some(failure)) => Err(failure.clone()),
+            (None, None) => Err(Error::rejected(format!(
                 "the issuer's JWKS has no key {kid:?}"
             ))),
         }
@@ -212,12 +214,12 @@ impl Verifier {
             }
             Err(failure) => {
                 keys.failure = Some(failure.clone());
-                Err(Error::Unavailable(failure))
+                Err(failure)
             }
         }
     }
 
-    async fn download(&self) -> Result<HashMap<String, Arc<DecodingKey>>, String> {
+    async fn download(&self) -> Result<HashMap<String, Arc<DecodingKey>>, Error> {
         let url = &self.jwks_url;
         let answer = self
             .http
@@ -225,25 +227,26 @@ impl Verifier {
             .timeout(self.timeout)
             .send()
             .await
-            .map_err(|e| format!("GET {url}: {e}"))?;
+            .map_err(|e| Error::unavailable(url, "the request failed", Some(Arc::new(e))))?;
         let status = answer.status();
         if !status.is_success() {
-            return Err(format!("GET {url}: HTTP {status}"));
+            return Err(Error::unavailable(url, format!("HTTP {status}"), None));
         }
         let body = answer
             .bytes()
             .await
-            .map_err(|e| format!("GET {url}: {e}"))?;
-        signing_keys(&body).map_err(|why| format!("{url}: {why}"))
+            .map_err(|e| Error::unavailable(url, "the body did not arrive", Some(Arc::new(e))))?;
+        signing_keys(url, &body)
     }
 }
 
 /// Keys of other types or uses are skipped rather than refused, so an issuer
 /// adding one doesn't break verification.
-fn signing_keys(jwks: &[u8]) -> Result<HashMap<String, Arc<DecodingKey>>, String> {
-    let jwks: Value = serde_json::from_slice(jwks).map_err(|e| format!("not JSON: {e}"))?;
+fn signing_keys(url: &str, jwks: &[u8]) -> Result<HashMap<String, Arc<DecodingKey>>, Error> {
+    let jwks: Value = serde_json::from_slice(jwks)
+        .map_err(|e| Error::unavailable(url, "it is not JSON", Some(Arc::new(e))))?;
     let Some(Value::Array(entries)) = jwks.get("keys") else {
-        return Err("no `keys` list".into());
+        return Err(Error::unavailable(url, "it has no `keys` list", None));
     };
     let keys: HashMap<_, _> = entries
         .iter()
@@ -255,7 +258,11 @@ fn signing_keys(jwks: &[u8]) -> Result<HashMap<String, Arc<DecodingKey>>, String
         })
         .collect();
     if keys.is_empty() {
-        return Err("no RS256 signing key with a kid".into());
+        return Err(Error::unavailable(
+            url,
+            "it has no RS256 signing key with a kid",
+            None,
+        ));
     }
     Ok(keys)
 }
@@ -269,30 +276,73 @@ fn is_rs256_signing(jwk: &Jwk) -> bool {
         )
 }
 
-fn rejected(e: jsonwebtoken::errors::Error) -> Error {
-    Error::Rejected(e.to_string())
-}
-
-/// Why a token wasn't accepted. Both carry text for the log; show users a
-/// fixed message.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Why a token wasn't accepted, for the log; show users a fixed message.
+///
+/// `why` is this crate's sentence; `source` is the error of jsonwebtoken,
+/// serde_json or reqwest behind it, where there is one.
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum Error {
     /// The token is bad: malformed, signed by an unknown key, expired, or for
     /// another issuer, audience or use.
-    Rejected(String),
-    /// The token's key isn't cached and the issuer's JWKS couldn't be fetched,
-    /// so the token may be good.
-    Unavailable(String),
+    Rejected {
+        why: String,
+        source: Option<Arc<dyn StdError + Send + Sync>>,
+    },
+    /// The token's key isn't cached and the issuer's JWKS at `url` couldn't
+    /// be fetched, so the token may be good.
+    Unavailable {
+        url: String,
+        why: String,
+        source: Option<Arc<dyn StdError + Send + Sync>>,
+    },
+}
+
+impl Error {
+    fn rejected(why: impl Into<String>) -> Self {
+        Self::Rejected {
+            why: why.into(),
+            source: None,
+        }
+    }
+
+    fn rejected_by(why: &str, source: impl StdError + Send + Sync + 'static) -> Self {
+        Self::Rejected {
+            why: why.into(),
+            source: Some(Arc::new(source)),
+        }
+    }
+
+    fn unavailable(
+        url: &str,
+        why: impl Into<String>,
+        source: Option<Arc<dyn StdError + Send + Sync>>,
+    ) -> Self {
+        Self::Unavailable {
+            url: url.into(),
+            why: why.into(),
+            source,
+        }
+    }
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Rejected(why) => write!(f, "token rejected: {why}"),
-            Self::Unavailable(why) => write!(f, "the issuer's keys are unavailable: {why}"),
+            Self::Rejected { why, .. } => write!(f, "token rejected: {why}"),
+            Self::Unavailable { url, why, .. } => {
+                write!(f, "the issuer's keys at {url} are unavailable: {why}")
+            }
         }
     }
 }
 
-impl std::error::Error for Error {}
+impl StdError for Error {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Self::Rejected { source, .. } | Self::Unavailable { source, .. } => {
+                source.as_deref().map(|e| e as &(dyn StdError + 'static))
+            }
+        }
+    }
+}

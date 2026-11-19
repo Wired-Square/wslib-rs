@@ -66,6 +66,14 @@ mod tests {
     }
 
     #[test]
+    fn an_unreadable_stamp_says_where_and_keeps_chronos_error_as_its_source() {
+        let e = parse("t", "at", "yesterday").expect_err("not a stamp");
+        assert_eq!(e.to_string(), "unreadable at in t");
+        let source = std::error::Error::source(&e).expect("chrono's error");
+        assert!(source.is::<chrono::ParseError>(), "{source:?}");
+    }
+
+    #[test]
     fn now_round_trips_exactly() {
         let at = now();
         assert_eq!(parse("t", "at", &format(at)).unwrap(), at);

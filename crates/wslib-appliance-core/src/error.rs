@@ -248,7 +248,7 @@ impl From<StoreError> for ApiError {
             StoreError::BadCursor(_) => {
                 Self::BadRequest("that cursor did not come from this appliance".to_string())
             }
-            other => Self::internal("reach the database", &other),
+            other => Self::internal("reach the database", &crate::tls::chain(&other)),
         }
     }
 }
@@ -309,7 +309,7 @@ impl From<AuthError> for ApiError {
                 Self::BadRequest(e.to_string())
             }
             AuthError::Store(e) => e.into(),
-            other => Self::internal("complete the sign-in", &other),
+            other => Self::internal("complete the sign-in", &crate::tls::chain(&other)),
         }
     }
 }
@@ -404,14 +404,19 @@ mod tests {
             ApiError::from(StoreError::UsernameTaken("admin".into())),
             ApiError::Conflict(_)
         ));
-        assert!(matches!(
-            ApiError::from(StoreError::Unreadable {
-                table: "users",
-                what: "role",
-                because: "superuser".into(),
-            }),
-            ApiError::Internal { .. }
-        ));
+        let unreadable = ApiError::from(StoreError::Unreadable {
+            table: "users",
+            what: "role",
+            source: Box::new(wslib_appliance_types::UnknownRole("superuser".into())),
+        });
+        assert!(
+            matches!(
+                &unreadable,
+                ApiError::Internal { because, .. }
+                    if because == r#"unreadable role in users: unknown role: "superuser""#
+            ),
+            "{unreadable:?}"
+        );
     }
 
     #[test]

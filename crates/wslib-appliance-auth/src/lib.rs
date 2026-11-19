@@ -114,8 +114,16 @@ pub enum AuthError {
     #[error("the system's random source failed")]
     Random,
 
-    #[error("hashing: {0}")]
-    Hash(String),
+    #[error("the password could not be hashed")]
+    Hash(#[source] Box<dyn std::error::Error + Send + Sync>),
+
+    /// The runtime shut down before the password's blocking work ran.
+    #[error("the runtime shut down before the password was hashed or checked")]
+    Cancelled,
+
+    /// The password's blocking work panicked.
+    #[error("hashing or checking the password panicked")]
+    Panicked,
 
     #[error(transparent)]
     Store(#[from] wslib_appliance_store::StoreError),
@@ -139,9 +147,13 @@ where
     T: Send + 'static,
     F: FnOnce() -> T + Send + 'static,
 {
-    tokio::task::spawn_blocking(f)
-        .await
-        .map_err(|e| AuthError::Hash(e.to_string()))
+    tokio::task::spawn_blocking(f).await.map_err(|e| {
+        if e.is_panic() {
+            AuthError::Panicked
+        } else {
+            AuthError::Cancelled
+        }
+    })
 }
 
 #[cfg(test)]
@@ -202,5 +214,37 @@ mod tests {
     #[test]
     fn two_tokens_are_never_the_same() {
         assert_ne!(random_bytes::<32>().unwrap(), random_bytes::<32>().unwrap());
+    }
+
+    #[test]
+    fn a_failed_hash_says_only_that_and_keeps_the_hashers_error() {
+        let e = AuthError::from(wslib_auth_password::PasswordError::Hash(Box::new(
+            std::io::Error::other("out of memory"),
+        )));
+        assert_eq!(e.to_string(), "the password could not be hashed");
+        let source = std::error::Error::source(&e).expect("the hasher's error");
+        assert_eq!(
+            source
+                .downcast_ref::<std::io::Error>()
+                .map(ToString::to_string),
+            Some("out of memory".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn password_work_that_panics_is_an_error_not_a_panic() {
+        let answer = off_thread(|| -> () { panic!("argon2 went wrong") }).await;
+        assert!(matches!(answer, Err(AuthError::Panicked)), "{answer:?}");
+    }
+
+    #[test]
+    fn password_work_the_runtime_dropped_before_it_ran_is_cancelled() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let handle = runtime.handle().clone();
+        drop(runtime);
+        let answer = handle.block_on(off_thread(|| ()));
+        assert!(matches!(answer, Err(AuthError::Cancelled)), "{answer:?}");
     }
 }

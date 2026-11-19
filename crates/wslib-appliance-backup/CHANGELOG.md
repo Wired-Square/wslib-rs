@@ -1,8 +1,9 @@
 # Changelog
 
-## 0.2.5
+## 0.3.0
 
-- Pins `wslib-appliance-core` at 0.1.7. On wslib-file-atomic 0.2.
+- Pins `wslib-appliance-core` at 0.2.0. On wslib-appliance-store 0.2 and
+  wslib-file-atomic 0.2.
 
 ## 0.2.4
 

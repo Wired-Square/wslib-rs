@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.6
+
+- `SessionError`'s message no longer repeats its cause, which comes through
+  `source()` only.
+
 ## 0.1.5
 
 - `Sessions::bind` keeps the secret it mints when the clock has stepped back

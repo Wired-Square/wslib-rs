@@ -282,12 +282,12 @@ impl<E> From<E> for SessionError<E> {
     }
 }
 
-impl<E: fmt::Display> fmt::Display for SessionError<E> {
+impl<E> fmt::Display for SessionError<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Random(e) => write!(f, "no session token could be made: {e}"),
-            Self::Store(e) => write!(f, "the session store failed: {e}"),
-        }
+        f.write_str(match self {
+            Self::Random(_) => "no session token could be made",
+            Self::Store(_) => "the session store failed",
+        })
     }
 }
 
@@ -332,6 +332,24 @@ mod tests {
     fn a_session_error_boxes_as_send_and_sync_for_question_mark() {
         let boxed: Box<dyn std::error::Error + Send + Sync> =
             SessionError::Store(std::io::Error::other("down")).into();
-        assert_eq!(boxed.to_string(), "the session store failed: down");
+        assert_eq!(boxed.to_string(), "the session store failed");
+        let source = boxed.source().expect("the store's error");
+        assert_eq!(
+            source
+                .downcast_ref::<std::io::Error>()
+                .map(ToString::to_string),
+            Some("down".to_string())
+        );
+    }
+
+    #[test]
+    fn a_failed_random_source_is_its_own_sentence_with_getrandoms_error_beneath() {
+        let e = SessionError::<std::io::Error>::Random(getrandom::Error::UNSUPPORTED);
+        assert_eq!(e.to_string(), "no session token could be made");
+        let source = std::error::Error::source(&e).expect("getrandom's error");
+        assert_eq!(
+            source.downcast_ref::<getrandom::Error>(),
+            Some(&getrandom::Error::UNSUPPORTED)
+        );
     }
 }

@@ -1472,7 +1472,12 @@ mod tests {
             .expect("write a role this build does not know");
 
         let e = store.user_by_id(&user.id).await.expect_err("must refuse");
-        assert!(e.to_string().contains("role"), "{e}");
-        assert!(e.to_string().contains("superuser"), "{e}");
+        assert_eq!(e.to_string(), "unreadable role in users");
+        let source = std::error::Error::source(&e).expect("the role's error");
+        assert_eq!(
+            source.downcast_ref::<wslib_appliance_types::UnknownRole>(),
+            Some(&wslib_appliance_types::UnknownRole("superuser".into())),
+            "{source:?}"
+        );
     }
 }

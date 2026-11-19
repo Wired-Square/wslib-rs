@@ -53,6 +53,8 @@ pub enum Error {
     NotUtf8,
     /// The async runtime shut down before `op` answered.
     Cancelled,
+    /// The blocking call `tokio::blocking` ran panicked.
+    Panicked,
     /// The testing fake was called with nothing scripted; this is the call.
     Unscripted(String),
     Io(io::Error),
@@ -94,6 +96,7 @@ impl fmt::Display for Error {
             }
             Self::NotUtf8 => f.write_str("the value is not UTF-8"),
             Self::Cancelled => f.write_str("the runtime shut down before op answered"),
+            Self::Panicked => f.write_str("the blocking call to op panicked"),
             Self::Unscripted(call) => write!(f, "nothing scripted for `{call}`"),
             Self::Io(_) => f.write_str("run op"),
         }
@@ -121,7 +124,7 @@ impl From<io::Error> for Error {
         match e.kind() {
             io::ErrorKind::NotFound => Self::CliNotFound,
             io::ErrorKind::TimedOut => Self::TimedOut,
-            _ => e.downcast::<Self>().unwrap_or_else(Self::Io),
+            _ => Self::Io(e),
         }
     }
 }

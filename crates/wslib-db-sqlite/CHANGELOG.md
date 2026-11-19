@@ -1,7 +1,12 @@
 # Changelog
 
-## 0.2.5
+## 0.3.0
 
+- `Error::Unreadable` holds the error that made the value unreadable as
+  `source`, in place of its text in `because`, and `Error::unreadable` takes
+  that error.
+- `Error`'s messages no longer repeat their cause: `Db`, `Migrate` and
+  `Serialise` give theirs through `source()` only.
 - On wslib-file-atomic 0.2.
 
 ## 0.2.4

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0
+
+- `Error::Rejected` and `Error::Unavailable` are struct variants: `why` is
+  the crate's own sentence, `Unavailable`'s `url` is the JWKS's, named in its
+  message, and `source()` is the jsonwebtoken, serde_json or reqwest error
+  behind it, held in an `Arc` so `Error` stays `Clone` and a cached fetch
+  failure keeps its cause. `Error` no longer derives `PartialEq` or `Eq`.
+
 ## 0.1.0
 
 - `Verifier`: checks RS256 ID tokens for one issuer and audience (signature,

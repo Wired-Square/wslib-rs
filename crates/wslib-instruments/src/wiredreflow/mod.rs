@@ -24,11 +24,10 @@ mod task;
     feature = "can-gvret"
 )))]
 mod task {
-    use std::io;
-
     use super::bus::{Bus, CanBus, refused};
+    use crate::probe::StartError;
 
-    pub(crate) fn open_bus(bus: &CanBus) -> io::Result<Box<dyn Bus>> {
+    pub(crate) fn open_bus(bus: &CanBus) -> Result<Box<dyn Bus>, StartError> {
         Err(refused(bus))
     }
 }

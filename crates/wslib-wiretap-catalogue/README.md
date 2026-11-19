@@ -60,5 +60,5 @@ under the names consumers already import: `Catalogue` as `Catalog`,
 declarations.
 
 ```toml
-wslib-wiretap-catalogue = { version = "0.1", registry = "wired-square" }
+wslib-wiretap-catalogue = { version = "0.4", registry = "wired-square" }
 ```

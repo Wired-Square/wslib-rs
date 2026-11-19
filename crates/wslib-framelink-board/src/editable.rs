@@ -1314,19 +1314,25 @@ description = "Maps CAN signals to LED indicators"
         assert!(ed.to_toml().contains("quantity = \"0x96\""));
 
         let decimal = TEST_TOML.replace("unit = \"rpm\"", "unit = \"rpm\"\nquantity = \"22\"");
-        let error = EditableBoardDef::from_toml(&decimal)
-            .unwrap_err()
+        let error = EditableBoardDef::from_toml(&decimal).unwrap_err();
+        assert_eq!(error.to_string(), "TOML parse failed");
+        let cause = std::error::Error::source(&error)
+            .and_then(|s| s.downcast_ref::<toml_edit::de::Error>())
+            .expect("toml_edit's error")
             .to_string();
-        assert!(error.contains("unknown quantity '22'"), "{error}");
+        assert!(cause.contains("unknown quantity '22'"), "{cause}");
     }
 
     #[test]
     fn an_unknown_frame_signal_quantity_is_refused() {
         let unknown = TEST_TOML.replace("unit = \"rpm\"", "unit = \"rpm\"\nquantity = \"warmth\"");
-        let error = EditableBoardDef::from_toml(&unknown)
-            .unwrap_err()
+        let error = EditableBoardDef::from_toml(&unknown).unwrap_err();
+        assert_eq!(error.to_string(), "TOML parse failed");
+        let cause = std::error::Error::source(&error)
+            .and_then(|s| s.downcast_ref::<toml_edit::de::Error>())
+            .expect("toml_edit's error")
             .to_string();
-        assert!(error.contains("unknown quantity 'warmth'"), "{error}");
+        assert!(cause.contains("unknown quantity 'warmth'"), "{cause}");
     }
 
     #[test]

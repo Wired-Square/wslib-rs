@@ -4,11 +4,25 @@
 
 - On wslib-can-bus 0.3, whose `CanBus` it re-exports at `wiredreflow::bus`,
   and wslib-can 0.2.
-- A WiredReflow bus that doesn't open is an `io::Error` whose message is
-  wslib-can-bus' explanation and whose source is the open's own cause,
-  typed, in place of one message holding both.
-- A CAN task's disconnect reason, and the reason a WiredReflow bus doesn't
-  parse, write the error and each of its causes.
+- `uri::open`, `Gw121Probe::start` and `start_tapped`, and
+  `WiredReflowProbe::start` fail with `probe::StartError`, in place of an
+  `io::Error`: `FeatureDisabled`, `Unreachable`, `Bus` with wslib-can-bus'
+  `OpenError` as its `source()`, `Thread`, `Runtime`, `Stopped`,
+  `NoWiredReflow`, `ManyWiredReflows` and `Ended`. `StartError::kind` is
+  the `io::ErrorKind` the `io::Error` had. `ProbeError::FeatureDisabled` is
+  gone.
+- `ProbeError::Disconnected { why, source }`: `why` is this crate's
+  sentence, and the error that cut the instrument off (btleplug's, the CAN
+  adapter's, or an `io::Error`) is the `source()`, held in an `Arc`, in
+  place of one message holding both. `ProbeError` and `cluster::Latest` are
+  no longer `PartialEq` or `Eq`.
+- `gw121::ble::scan` fails with `ScanError`: `Stopped`, or `Failed` with
+  btleplug's error as its `source()`, in place of an `io::Error`, which
+  was `Interrupted` for a stop.
+- `ProbeUriError::Bus` holds a WiredReflow bus's `BusParseError`, and
+  `ProbeUriError::UnknownSignal` a selector's signal-key parse error, each
+  the `source()`, in place of their text in `Target` and `Signal`.
+  `signal::parse` returns wslib-framelink-protocol's error, not a `String`.
 
 ## 0.4.0
 

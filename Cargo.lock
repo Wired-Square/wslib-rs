@@ -8678,7 +8678,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-framelink-board"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "flate2",
  "serde",
@@ -8816,7 +8816,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-mcp"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "axum",
  "ipnet",
@@ -8834,7 +8834,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-mcu-flash"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "ciborium",
@@ -8854,7 +8854,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-mcumgr"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "btleplug",
  "ciborium",

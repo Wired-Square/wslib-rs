@@ -336,7 +336,7 @@ mod tests {
         let result = crate::frame::decode_reply::<StateResponse>(&frame, "image state");
 
         assert!(
-            matches!(result, Err(Error::Decode(_))),
+            matches!(result, Err(Error::Undecodable { .. })),
             "{:?}",
             result.err()
         );

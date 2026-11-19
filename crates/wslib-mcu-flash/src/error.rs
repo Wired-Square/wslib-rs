@@ -1,9 +1,19 @@
+use std::error::Error;
+
 use crate::identity::{Mac, reported_mac};
 
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum FlashError {
     #[error("{0}")]
     Message(String),
+    /// A step failed in espflash, serialport, nusb, the OS, SMP or another
+    /// step; `why` says which, and the source is its error.
+    #[error("{why}")]
+    Failed {
+        why: String,
+        #[source]
+        source: Box<dyn Error + Send + Sync>,
+    },
     #[error("USB device {0:?} not attached")]
     NotAttached(String),
     #[error(
@@ -15,15 +25,19 @@ pub enum FlashError {
     Cancelled,
 }
 
-impl From<String> for FlashError {
-    fn from(s: String) -> Self {
-        FlashError::Message(s)
-    }
-}
-
 impl From<&str> for FlashError {
     fn from(s: &str) -> Self {
         FlashError::Message(s.to_string())
+    }
+}
+
+pub(crate) fn failed(
+    why: impl Into<String>,
+    source: impl Error + Send + Sync + 'static,
+) -> FlashError {
+    FlashError::Failed {
+        why: why.into(),
+        source: Box::new(source),
     }
 }
 

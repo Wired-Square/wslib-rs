@@ -5,6 +5,14 @@
 - On wslib-serial 0.2, whose `DelimiterOptions` it re-exports, and
   wslib-modbus 0.3, whose `Finding`, `RegisterType`, `UnknownRegisterType`
   and `WriteBank` it re-exports, and wslib-wiretap-protocol 0.3.
+- `DocumentError` is the error of `edit::apply_edit`, `apply_edits` and
+  `bump_meta_version`, `migrate::migrate`, `dbc::render_catalogue_as_dbc`
+  and its `_with_mode`, and `dbc::import::convert_dbc_to_toml`, in place of
+  a `String`: `Refused` for the crate's own sentences, `Toml` and
+  `TomlDocument` with toml's and toml_edit's errors, and `Dbc` with
+  can-dbc's error, boxed, each the `source()`.
+- `CatalogueError::Toml` and `RtuRulesError::Toml` say "catalogue is not
+  valid TOML", with toml's error as their `source()`.
 
 ## 0.3.1
 

@@ -1,7 +1,9 @@
 use std::{
     collections::VecDeque,
-    io,
-    sync::mpsc::{self, Receiver, RecvTimeoutError, Sender},
+    sync::{
+        Arc,
+        mpsc::{self, Receiver, RecvTimeoutError, Sender},
+    },
     time::Duration,
 };
 
@@ -9,10 +11,13 @@ use tokio::sync::oneshot;
 use wslib_can::{CanEvent, CanOptions, CanTask, TimeMapping};
 
 use super::{
-    bus::{Bus, BusError, CanBus, chain, failed, feature, refused},
+    bus::{Bus, BusError, CanBus, feature, refused},
     frame::RawFrame,
 };
-use crate::worker::{RELEASE_WITHIN, Worker};
+use crate::{
+    probe::StartError,
+    worker::{RELEASE_WITHIN, Worker},
+};
 
 const BITRATE: u32 = 500_000;
 
@@ -37,9 +42,7 @@ impl Bus for TaskBus {
                 Ok(self.pending.pop_front())
             }
             Err(RecvTimeoutError::Timeout) => Ok(None),
-            Err(RecvTimeoutError::Disconnected) => {
-                Err(BusError::Ended("the CAN task ended".into()))
-            }
+            Err(RecvTimeoutError::Disconnected) => Err(BusError::Ended(None)),
         }
     }
 }
@@ -59,12 +62,12 @@ fn translated(event: CanEvent) -> Option<Read> {
             error,
             retry_in: Some(_),
             ..
-        } => Some(Err(BusError::Lost(chain(&error)))),
+        } => Some(Err(BusError::Lost(Arc::new(error)))),
         CanEvent::Disconnected {
             error,
             retry_in: None,
             ..
-        } => Some(Err(BusError::Ended(chain(&error)))),
+        } => Some(Err(BusError::Ended(Some(Arc::new(error))))),
         _ => None,
     }
 }
@@ -96,7 +99,7 @@ fn opens(bus: &CanBus) -> bool {
     feature(kind).1 && kind.reachable()
 }
 
-async fn open_task(bus: &CanBus) -> io::Result<CanTask> {
+async fn open_task(bus: &CanBus) -> Result<CanTask, StartError> {
     if !opens(bus) {
         return Err(refused(bus));
     }
@@ -106,12 +109,12 @@ async fn open_task(bus: &CanBus) -> io::Result<CanTask> {
         options(),
     )
     .await
-    .map_err(failed)
+    .map_err(StartError::Bus)
 }
 
 /// Opens the bus on a thread of its own running its own runtime, so a caller
 /// inside a tokio runtime never blocks on it; dropping the bus ends both.
-pub(crate) fn open_bus(bus: &CanBus) -> io::Result<Box<dyn Bus>> {
+pub(crate) fn open_bus(bus: &CanBus) -> Result<Box<dyn Bus>, StartError> {
     let (opened_tx, opened) = mpsc::sync_channel(1);
     let (reads_tx, reads) = mpsc::channel();
     let (stop, stopping) = oneshot::channel();
@@ -123,7 +126,7 @@ pub(crate) fn open_bus(bus: &CanBus) -> io::Result<Box<dyn Bus>> {
         {
             Ok(runtime) => runtime,
             Err(e) => {
-                let _ = opened_tx.send(Err(e));
+                let _ = opened_tx.send(Err(StartError::Runtime(e)));
                 return;
             }
         };
@@ -139,12 +142,9 @@ pub(crate) fn open_bus(bus: &CanBus) -> io::Result<Box<dyn Bus>> {
                 }
             }
         });
-    })?;
-    opened.recv().map_err(|_| {
-        io::Error::other(format!(
-            "{bus}: the CAN thread stopped before it opened the bus"
-        ))
-    })??;
+    })
+    .map_err(StartError::Thread)?;
+    opened.recv().map_err(|_| StartError::Stopped)??;
     Ok(Box::new(TaskBus {
         reads,
         pending: VecDeque::new(),
@@ -187,35 +187,39 @@ mod tests {
         assert!(closed.load(Ordering::Relaxed));
     }
 
+    fn read_failed() -> wslib_can::CanError {
+        wslib_can::CanError::Read(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "the adapter went away",
+        ))
+    }
+
+    fn is_read_failed(cause: &(dyn std::error::Error + Send + Sync + 'static)) -> bool {
+        matches!(
+            cause.downcast_ref::<wslib_can::CanError>(),
+            Some(wslib_can::CanError::Read(e)) if e.kind() == std::io::ErrorKind::BrokenPipe
+        )
+    }
+
     #[test]
-    fn a_disconnect_keeps_each_cause_in_its_reason() {
-        let read_failed = || {
-            wslib_can::CanError::Read(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "the adapter went away",
-            ))
-        };
+    fn a_disconnect_keeps_the_cans_error_typed() {
         let lost = translated(CanEvent::Disconnected {
             error: read_failed(),
             consecutive: 1,
             retry_in: Some(Duration::from_secs(1)),
         });
-        assert_eq!(
-            lost,
-            Some(Err(BusError::Lost(
-                "read failed: the adapter went away".into()
-            )))
+        assert!(
+            matches!(&lost, Some(Err(BusError::Lost(cause))) if is_read_failed(&**cause)),
+            "{lost:?}"
         );
         let ended = translated(CanEvent::Disconnected {
             error: read_failed(),
             consecutive: 1,
             retry_in: None,
         });
-        assert_eq!(
-            ended,
-            Some(Err(BusError::Ended(
-                "read failed: the adapter went away".into()
-            )))
+        assert!(
+            matches!(&ended, Some(Err(BusError::Ended(Some(cause)))) if is_read_failed(&**cause)),
+            "{ended:?}"
         );
     }
 }

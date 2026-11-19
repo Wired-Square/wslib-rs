@@ -14,7 +14,7 @@ const DEFAULT_INTERVAL_MS: u64 = 5000;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ManifestError {
-    #[error("manifest is not valid TOML: {0}")]
+    #[error("manifest is not valid TOML")]
     Toml(#[from] toml::de::Error),
     #[error("manifest defines no [frame.modbus.*] frames")]
     NoFrames,
@@ -22,6 +22,15 @@ pub enum ManifestError {
         "frame '{0}' has no register_number and its name is not a register address (decimal or 0x-hex)"
     )]
     BadRegister(String),
+}
+
+/// Why [`set_frame_disabled`] left the manifest as it was.
+#[derive(Debug, thiserror::Error)]
+pub enum FrameEditError {
+    #[error("manifest is not valid TOML")]
+    Toml(#[from] toml_edit::TomlError),
+    #[error("manifest has no frame '{0}'")]
+    NoFrame(String),
 }
 
 /// A single decoded field within a frame's register block.
@@ -590,17 +599,19 @@ fn continues(last: &ModbusWrite, next: &ModbusWrite) -> bool {
 
 /// The manifest with a frame's `disabled` key set or removed, comments and
 /// formatting kept; `Err` for invalid TOML or a missing frame.
-pub fn set_frame_disabled(text: &str, frame: &str, disabled: bool) -> Result<String, String> {
-    let mut doc = text
-        .parse::<toml_edit::DocumentMut>()
-        .map_err(|e| format!("manifest is not valid TOML: {e}"))?;
+pub fn set_frame_disabled(
+    text: &str,
+    frame: &str,
+    disabled: bool,
+) -> Result<String, FrameEditError> {
+    let mut doc = text.parse::<toml_edit::DocumentMut>()?;
     let frame_tbl = doc
         .get_mut("frame")
         .and_then(|f| f.get_mut("modbus"))
         .and_then(|m| m.as_table_like_mut())
         .and_then(|m| m.get_mut(frame))
         .and_then(|f| f.as_table_like_mut())
-        .ok_or_else(|| format!("manifest has no frame '{frame}'"))?;
+        .ok_or_else(|| FrameEditError::NoFrame(frame.to_owned()))?;
     if disabled {
         frame_tbl.insert("disabled", toml_edit::value(true));
     } else {
@@ -810,10 +821,15 @@ mod tests {
 
     #[test]
     fn invalid_toml_is_refused() {
-        assert!(matches!(
-            ManifestMeta::parse("[meta"),
-            Err(ManifestError::Toml(_))
-        ));
+        let refused = ManifestMeta::parse("[meta").unwrap_err();
+
+        assert!(matches!(refused, ManifestError::Toml(_)));
+        assert_eq!(refused.to_string(), "manifest is not valid TOML");
+        assert!(
+            std::error::Error::source(&refused)
+                .and_then(|s| s.downcast_ref::<toml::de::Error>())
+                .is_some()
+        );
     }
 
     #[test]
@@ -1246,7 +1262,22 @@ length = 1
         assert!(!ModbusManifest::parse(&enabled).unwrap().frames[0].disabled);
 
         // Unknown frame is an error.
-        assert!(set_frame_disabled(toml, "missing", true).is_err());
+        assert!(matches!(
+            set_frame_disabled(toml, "missing", true),
+            Err(FrameEditError::NoFrame(frame)) if frame == "missing"
+        ));
+    }
+
+    #[test]
+    fn a_frame_edit_on_invalid_toml_keeps_toml_edits_error() {
+        let refused = set_frame_disabled("[frame", "a", true).unwrap_err();
+
+        assert_eq!(refused.to_string(), "manifest is not valid TOML");
+        assert!(
+            std::error::Error::source(&refused)
+                .and_then(|s| s.downcast_ref::<toml_edit::TomlError>())
+                .is_some()
+        );
     }
 
     /// Byte and word order are set here *on purpose*: a coil block has neither.

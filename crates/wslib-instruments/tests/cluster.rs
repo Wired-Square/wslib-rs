@@ -125,7 +125,10 @@ impl Probe for GoesQuiet {
     fn next(&mut self, deadline: Instant) -> Result<Vec<Sample>, ProbeError> {
         if self.0.load(Ordering::Relaxed) {
             thread::sleep(deadline.saturating_duration_since(Instant::now()));
-            return Err(ProbeError::Disconnected("no frames for 5 s".into()));
+            return Err(ProbeError::Disconnected {
+                why: "no frames for 5 s".into(),
+                source: None,
+            });
         }
         Steady(HOT_TENTHS).next(deadline)
     }
@@ -198,7 +201,7 @@ fn a_silent_probe_ages_and_reports_its_error() {
         latest.age()
     );
     assert!(
-        matches!(latest.error, Some(ProbeError::Disconnected(_))),
+        matches!(latest.error, Some(ProbeError::Disconnected { .. })),
         "{:?}",
         latest.error
     );
@@ -211,7 +214,7 @@ fn a_link_error_applies_to_every_signal_of_the_probe() {
     thread::sleep(QUIET_WAIT);
     let never_sent = cluster.latest(FIRST_PROBE, &DC_VOLTAGE).unwrap();
     assert!(
-        matches!(never_sent.current(), Err(ProbeError::Disconnected(_))),
+        matches!(never_sent.current(), Err(ProbeError::Disconnected { .. })),
         "{:?}",
         never_sent.current()
     );
@@ -239,8 +242,8 @@ fn a_signal_the_probe_stops_sending_goes_stale_while_the_new_one_is_current() {
         old.current()
     );
     assert_eq!(
-        new.current().map(|s| s.value),
-        Ok(Value::new(RAIL_MILLIVOLTS, MILLI))
+        new.current().map(|s| s.value).ok(),
+        Some(Value::new(RAIL_MILLIVOLTS, MILLI))
     );
 }
 
@@ -249,8 +252,9 @@ fn a_fresh_sample_is_current() {
     assert_eq!(
         latest(Some(FRESH_AGE), None)
             .current()
-            .map(|s| s.value.mantissa),
-        Ok(ROOM_TENTHS)
+            .map(|s| s.value.mantissa)
+            .ok(),
+        Some(ROOM_TENTHS)
     );
 }
 
@@ -258,10 +262,13 @@ fn a_fresh_sample_is_current() {
 fn an_error_makes_the_held_sample_not_current() {
     let failed = latest(
         Some(STALE_AGE),
-        Some(ProbeError::Disconnected("no frames for 5 s".into())),
+        Some(ProbeError::Disconnected {
+            why: "no frames for 5 s".into(),
+            source: None,
+        }),
     );
     assert!(
-        matches!(failed.current(), Err(ProbeError::Disconnected(_))),
+        matches!(failed.current(), Err(ProbeError::Disconnected { .. })),
         "{:?}",
         failed.current()
     );
@@ -269,7 +276,10 @@ fn an_error_makes_the_held_sample_not_current() {
 
 #[test]
 fn no_sample_yet_is_not_current() {
-    assert_eq!(latest(None, None).current(), Err(ProbeError::Timeout));
+    assert!(matches!(
+        latest(None, None).current(),
+        Err(ProbeError::Timeout)
+    ));
 }
 
 #[test]
@@ -306,7 +316,7 @@ fn the_cluster_carries_each_probe_declared_maximum_interval_and_name() {
 #[test]
 fn a_probe_index_the_cluster_does_not_have_has_no_latest() {
     let cluster = Cluster::start(vec![Box::new(Steady(ROOM_TENTHS))]).unwrap();
-    assert_eq!(cluster.latest(SECOND_PROBE, &TEMPERATURE), None);
+    assert!(cluster.latest(SECOND_PROBE, &TEMPERATURE).is_none());
 }
 
 #[test]
@@ -324,7 +334,10 @@ fn a_sample_stamped_in_the_future_is_current_with_no_age() {
         max_interval: TEST_MAX_INTERVAL,
     };
     assert_eq!(early.age(), Some(Duration::ZERO));
-    assert_eq!(early.current().map(|s| s.value.mantissa), Ok(ROOM_TENTHS));
+    assert_eq!(
+        early.current().map(|s| s.value.mantissa).ok(),
+        Some(ROOM_TENTHS)
+    );
 }
 
 struct Named(&'static str);

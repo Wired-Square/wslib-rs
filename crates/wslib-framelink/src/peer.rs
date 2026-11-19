@@ -35,8 +35,12 @@ pub enum PeerParseError {
         "{0:?} is neither a socket address, such as 192.168.1.42:120, nor {CAN_PREFIX}<bus>{DEVICE_SEPARATOR}<device-id>"
     )]
     Unrecognised(String),
-    #[error("{peer:?}: {why}")]
-    Bus { peer: String, why: BusParseError },
+    #[error("{peer:?} names no CAN bus")]
+    Bus {
+        peer: String,
+        #[source]
+        why: BusParseError,
+    },
     #[error("{0:?}: name the device id after '{DEVICE_SEPARATOR}'")]
     NoDeviceId(String),
     #[error("{0:?} is not a FrameLink device id: hex, up to {DEVICE_ID_MAX:X}")]
@@ -164,7 +168,11 @@ mod tests {
                 why: BusParseError::Empty,
             }
         );
-        let why = refused.to_string();
+        assert_eq!(refused.to_string(), "\"can:@028F08\" names no CAN bus");
+        let why = std::error::Error::source(&refused)
+            .and_then(|s| s.downcast_ref::<BusParseError>())
+            .expect("the bus's parse error")
+            .to_string();
         assert!(
             why.contains(&wslib_can_bus::name_the_bus(
                 "the CAN bus",

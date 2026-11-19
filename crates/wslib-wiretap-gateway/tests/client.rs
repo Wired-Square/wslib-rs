@@ -147,12 +147,12 @@ async fn a_refusal_reads_as_the_gateways_error_text() {
     });
     let gateway = client(&base_url, "k");
     let refused = gateway.databases().await.unwrap_err();
-    assert_eq!(
-        refused,
-        ClientError::Status {
-            code: 404,
-            error: Some("invalid database name 'X'".into())
-        }
+    assert!(
+        matches!(
+            &refused,
+            ClientError::Status { code: 404, error: Some(error) } if error == "invalid database name 'X'"
+        ),
+        "{refused:?}"
     );
     assert_eq!(refused.to_string(), "invalid database name 'X'");
     let failed = gateway.health().await.unwrap_err();
@@ -166,12 +166,12 @@ async fn an_unanswered_request_names_its_cause() {
     drop(closed);
     let err = client(&base_url, "").health().await.unwrap_err();
     assert!(matches!(err, ClientError::Transport(_)));
-    let text = err.to_string();
-    assert!(
-        text.starts_with("API request failed: error sending request")
-            && text.matches(": ").count() > 1,
-        "{text}"
-    );
+    assert_eq!(err.to_string(), "API request failed");
+    let reqwest = std::error::Error::source(&err)
+        .and_then(|s| s.downcast_ref::<reqwest::Error>())
+        .expect("reqwest's error");
+    assert!(reqwest.is_connect(), "{reqwest:?}");
+    assert!(std::error::Error::source(reqwest).is_some(), "{reqwest:?}");
 }
 
 #[tokio::test]
@@ -179,9 +179,12 @@ async fn a_malformed_answer_is_a_decode_error() {
     let (base_url, _) = gateway(|_| ok(json!({})));
     let err = client(&base_url, "").databases().await.unwrap_err();
     assert!(matches!(err, ClientError::Decode(_)));
+    assert_eq!(err.to_string(), "API response decode failed");
     assert!(
-        err.to_string().starts_with("API response decode failed: "),
-        "{err}"
+        std::error::Error::source(&err)
+            .and_then(|s| s.downcast_ref::<reqwest::Error>())
+            .is_some_and(reqwest::Error::is_decode),
+        "{err:?}"
     );
 }
 
@@ -378,14 +381,14 @@ async fn an_inventory_for_a_bus_needs_the_bus_echoed() {
         let (entries, _) = db.db("site", Protocol::Can).inventory(query).await?;
         Ok::<_, ClientError>(entries.len())
     };
-    assert_eq!(inventory(&current, Some(1)).await, Ok(1));
+    assert_eq!(inventory(&current, Some(1)).await.unwrap(), 1);
     let ignored = inventory(&older, Some(1)).await.unwrap_err();
-    assert_eq!(ignored, ClientError::BusIgnored(1));
+    assert!(matches!(ignored, ClientError::BusIgnored(1)), "{ignored:?}");
     assert_eq!(
         ignored.to_string(),
         "the gateway ignored bus 1: it predates bus filters"
     );
-    assert_eq!(inventory(&older, None).await, Ok(1));
+    assert_eq!(inventory(&older, None).await.unwrap(), 1);
 }
 
 #[tokio::test]
@@ -405,13 +408,13 @@ async fn payloads_for_a_bus_send_it_and_need_it_echoed() {
         let db = client(base_url, "");
         db.db("site", Protocol::Can).payloads(filter, 10).await
     };
-    assert_eq!(payloads(&current, Some(1)).await, Ok(vec![vec![1]]));
+    assert_eq!(payloads(&current, Some(1)).await.unwrap(), vec![vec![1]]);
     assert_eq!(log.lock().unwrap()[0].json()["bus"], 1);
-    assert_eq!(
+    assert!(matches!(
         payloads(&older, Some(1)).await,
         Err(ClientError::BusIgnored(1))
-    );
-    assert_eq!(payloads(&older, None).await, Ok(vec![vec![1]]));
+    ));
+    assert_eq!(payloads(&older, None).await.unwrap(), vec![vec![1]]);
 }
 
 #[tokio::test]
@@ -449,12 +452,12 @@ async fn a_query_answer_for_a_bus_needs_the_bus_echoed() {
             .await?;
         Ok::<_, ClientError>(result.stats.bus)
     };
-    assert_eq!(answer(&current, Some(1)).await, Ok(Some(1)));
-    assert_eq!(
+    assert_eq!(answer(&current, Some(1)).await.unwrap(), Some(1));
+    assert!(matches!(
         answer(&older, Some(1)).await,
         Err(ClientError::BusIgnored(1))
-    );
-    assert_eq!(answer(&older, None).await, Ok(None));
+    ));
+    assert_eq!(answer(&older, None).await.unwrap(), None);
 }
 
 #[tokio::test]
@@ -711,7 +714,10 @@ fn a_modbus_message_over_255_bytes_counts_every_byte() {
 #[test]
 fn a_row_that_is_not_hex_is_refused_by_its_text() {
     let err = frame(json!({ "data_hex": "zz" })).unwrap_err();
-    assert_eq!(err, ClientError::BadHex("zz".into()));
+    assert!(
+        matches!(&err, ClientError::BadHex(text) if text == "zz"),
+        "{err:?}"
+    );
     assert_eq!(err.to_string(), "bad data_hex 'zz'");
 }
 
@@ -904,20 +910,21 @@ async fn an_unassignment_of_nothing_on_an_older_gateway_is_done() {
 async fn any_other_admin_answer_is_the_gateways_error() {
     let (base_url, _) = gateway(|_| (500, json!({ "error": "database unavailable" }).to_string()));
     let gateway = client(&base_url, "");
-    let refused = ClientError::Status {
-        code: 500,
-        error: Some("database unavailable".into()),
+    let unavailable = |refused: ClientError| {
+        assert!(
+            matches!(
+                &refused,
+                ClientError::Status { code: 500, error: Some(error) } if error == "database unavailable"
+            ),
+            "{refused:?}"
+        );
     };
-    assert_eq!(
-        gateway.assign_catalogue(&assign()).await.unwrap_err(),
-        refused
-    );
-    assert_eq!(
+    unavailable(gateway.assign_catalogue(&assign()).await.unwrap_err());
+    unavailable(
         gateway
             .unassign_catalogue(&unassign(None))
             .await
             .unwrap_err(),
-        refused
     );
-    assert_eq!(gateway.daemons().await.unwrap_err(), refused);
+    unavailable(gateway.daemons().await.unwrap_err());
 }

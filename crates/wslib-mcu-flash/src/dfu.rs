@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use crate::error::{FlashError, Result};
+use crate::error::{FlashError, Result, failed};
 use crate::image;
 use crate::ports::{SerialPort, TtySettle};
 use crate::progress::{FlashProgress, FlashStage, check_cancel};
@@ -179,7 +179,7 @@ fn detach(
     progress.on_progress(&format!("Detaching {} into DFU mode", friendly_name(info)));
     let (device, interface) = open_interface(info, interface_number)?;
     let dfu = dfu_nusb::DfuNusb::open(device, interface, 0)
-        .map_err(|e| FlashError::Message(format!("DFU runtime handshake failed: {e}")))?
+        .map_err(|e| failed("DFU runtime handshake failed", e))?
         .into_sync_dfu();
     // A device may drop off the bus before acknowledging DETACH; the wait for DFU mode decides.
     if let Err(e) = dfu.detach() {
@@ -212,7 +212,7 @@ fn download(
     ));
 
     let mut dfu = dfu_nusb::DfuNusb::open(device, interface, alt)
-        .map_err(|e| FlashError::Message(format!("DFU handshake failed: {e}")))?
+        .map_err(|e| failed("DFU handshake failed", e))?
         .into_sync_dfu();
     if let Some(address) = address {
         dfu.override_address(address);
@@ -264,7 +264,7 @@ fn download(
         if progress.cancelled() {
             FlashError::Cancelled
         } else {
-            FlashError::Message(format!("DFU download failed: {e}"))
+            failed("DFU download failed", e)
         }
     })?;
 
@@ -286,11 +286,12 @@ fn open_interface(
 ) -> Result<(nusb::Device, nusb::Interface)> {
     let device = info
         .open()
-        .map_err(|e| FlashError::Message(format!("Failed to open USB device: {e}")))?;
+        .map_err(|e| failed("Failed to open USB device", e))?;
     let interface = device.claim_interface(interface_number).map_err(|e| {
-        FlashError::Message(format!(
-            "Failed to claim DFU interface {interface_number}: {e}"
-        ))
+        failed(
+            format!("Failed to claim DFU interface {interface_number}"),
+            e,
+        )
     })?;
     Ok((device, interface))
 }
@@ -372,7 +373,7 @@ fn find_dfu(usb_serial: &str) -> Result<Option<(nusb::DeviceInfo, u8, DfuMode)>>
 }
 
 fn enumerate() -> Result<impl Iterator<Item = nusb::DeviceInfo>> {
-    nusb::list_devices().map_err(|e| FlashError::Message(format!("Failed to enumerate USB: {e}")))
+    nusb::list_devices().map_err(|e| failed("Failed to enumerate USB", e))
 }
 
 fn identifier(info: &nusb::DeviceInfo) -> String {
@@ -492,7 +493,7 @@ mod tests {
                 (calls == 3).then_some(calls)
             },
         );
-        assert_eq!(found, Ok(Some(3)));
+        assert!(matches!(found, Ok(Some(3))), "{found:?}");
     }
 
     #[test]
@@ -503,7 +504,7 @@ mod tests {
             &LogProgress::default(),
             || None,
         );
-        assert_eq!(found, Ok(None));
+        assert!(matches!(found, Ok(None)), "{found:?}");
     }
 
     #[test]
@@ -518,7 +519,7 @@ mod tests {
                 None
             },
         );
-        assert_eq!(found, Err(FlashError::Cancelled));
+        assert!(matches!(found, Err(FlashError::Cancelled)), "{found:?}");
         assert_eq!(calls, 2);
     }
 
@@ -571,6 +572,6 @@ mod tests {
             Duration::ZERO,
             &CancelAfter(AtomicUsize::new(3)),
         );
-        assert_eq!(outcome, Err(FlashError::Cancelled));
+        assert!(matches!(outcome, Err(FlashError::Cancelled)), "{outcome:?}");
     }
 }

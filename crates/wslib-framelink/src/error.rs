@@ -3,13 +3,13 @@ use std::time::Duration;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
-    #[error("I/O error: {0}")]
+    #[error("I/O failed")]
     Io(#[from] std::io::Error),
 
-    #[error("frame error: {0}")]
+    #[error("malformed frame")]
     Frame(#[from] wslib_framelink_protocol::Error),
 
-    #[error(transparent)]
+    #[error("the board definition failed")]
     Board(#[from] wslib_framelink_board::Error),
 
     #[error("connection closed")]
@@ -29,6 +29,16 @@ pub enum Error {
     #[error("write locked: {0}")]
     WriteLocked(String),
 
+    /// Unlocking after a WRITE_LOCKED refusal failed; the source is the
+    /// failure, an [`Error`].
+    #[error("write locked: the unlock after WRITE_LOCKED failed")]
+    UnlockFailed(#[source] Box<dyn std::error::Error + Send + Sync>),
+
+    /// The device's WRITE_CHALLENGE reply doesn't parse; the source is the
+    /// protocol's error.
+    #[error("the write challenge does not parse")]
+    Challenge(#[source] wslib_framelink_protocol::Error),
+
     #[error("the device refused message 0x{request:02X}: {}", wslib_framelink_protocol::types::error_name(*.code))]
     Nack { request: u8, code: u8 },
 
@@ -42,7 +52,7 @@ pub enum Error {
     MissingIdentity(&'static str),
 
     #[cfg(feature = "can")]
-    #[error(transparent)]
+    #[error("the CAN bus did not open")]
     CanOpen(#[from] wslib_can_bus::OpenError),
 
     /// Only a build without the `can` feature returns it.
@@ -68,15 +78,15 @@ pub enum Error {
     },
 
     #[cfg(feature = "discovery")]
-    #[error("mDNS: {0}")]
+    #[error("mDNS failed")]
     Mdns(#[from] wslib_mdns::Error),
 
     #[cfg(feature = "discovery")]
-    #[error("device registry file: {0}")]
+    #[error("device registry file is unreadable")]
     RegistryFile(#[from] serde_json::Error),
 
     #[cfg(feature = "ble")]
-    #[error("BLE: {0}")]
+    #[error("BLE failed")]
     Ble(#[from] btleplug::Error),
 
     #[cfg(feature = "ble")]
@@ -97,22 +107,33 @@ pub enum Error {
     CharacteristicNotFound(uuid::Uuid),
 
     #[cfg(feature = "ble")]
-    #[error("characteristic write failed ({uuid}): {source}")]
+    #[error("characteristic write failed ({uuid})")]
     CharacteristicWrite {
         uuid: uuid::Uuid,
         source: btleplug::Error,
     },
 
     #[cfg(feature = "ble")]
-    #[error("notification subscribe failed ({uuid}): {cause}")]
-    NotifySubscribe { uuid: uuid::Uuid, cause: String },
+    #[error("notification subscribe failed ({uuid})")]
+    NotifySubscribe {
+        uuid: uuid::Uuid,
+        source: btleplug::Error,
+    },
+
+    #[cfg(feature = "ble")]
+    #[error("notification subscribe failed ({0}): the characteristic does not support NOTIFY")]
+    NotifyUnsupported(uuid::Uuid),
+
+    #[cfg(feature = "ble")]
+    #[error("the notifications for {0} ended")]
+    NotificationsEnded(uuid::Uuid),
 
     #[cfg(feature = "ble")]
     #[error("BLE link dropped")]
     BleLinkDropped,
 
     #[cfg(feature = "smp")]
-    #[error("SMP: {0}")]
+    #[error("SMP failed")]
     Smp(#[from] wslib_mcumgr::Error),
 
     #[cfg(feature = "smp")]
@@ -130,4 +151,82 @@ pub enum Error {
     #[cfg(feature = "wifi-prov")]
     #[error("device reported a Wi-Fi provisioning error (status code 0x03)")]
     WifiProvFailed,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error as _;
+
+    use super::*;
+
+    #[test]
+    fn an_io_failure_says_only_its_own_layer() {
+        let failed = Error::from(std::io::Error::other("the cause"));
+
+        assert_eq!(failed.to_string(), "I/O failed");
+        assert!(
+            failed
+                .source()
+                .and_then(|s| s.downcast_ref::<std::io::Error>())
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn a_board_failure_is_its_own_layer_over_the_boards_error() {
+        let refused = wslib_framelink_board::parse_board_def("not toml =").unwrap_err();
+
+        let failed = Error::from(refused);
+
+        assert_eq!(failed.to_string(), "the board definition failed");
+        assert!(
+            failed
+                .source()
+                .and_then(|s| s.downcast_ref::<wslib_framelink_board::Error>())
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn a_failed_unlock_keeps_the_failure_typed() {
+        let failed = Error::UnlockFailed(Box::new(Error::Timeout(Duration::from_secs(1))));
+
+        assert_eq!(
+            failed.to_string(),
+            "write locked: the unlock after WRITE_LOCKED failed"
+        );
+        assert!(matches!(
+            failed.source().and_then(|s| s.downcast_ref::<Error>()),
+            Some(Error::Timeout(_))
+        ));
+    }
+
+    #[test]
+    fn a_malformed_challenge_keeps_the_protocols_error() {
+        let refused = wslib_framelink_protocol::dsig::parse_challenge_response(&[]).unwrap_err();
+
+        let failed = Error::Challenge(refused);
+
+        assert_eq!(failed.to_string(), "the write challenge does not parse");
+        assert!(
+            failed
+                .source()
+                .and_then(|s| s.downcast_ref::<wslib_framelink_protocol::Error>())
+                .is_some()
+        );
+    }
+
+    #[cfg(feature = "smp")]
+    #[test]
+    fn an_smp_failure_says_only_its_own_layer() {
+        let failed = Error::from(wslib_mcumgr::Error::Timeout);
+
+        assert_eq!(failed.to_string(), "SMP failed");
+        assert!(matches!(
+            failed
+                .source()
+                .and_then(|s| s.downcast_ref::<wslib_mcumgr::Error>()),
+            Some(wslib_mcumgr::Error::Timeout)
+        ));
+    }
 }

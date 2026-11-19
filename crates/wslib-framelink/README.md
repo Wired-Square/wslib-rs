@@ -75,7 +75,7 @@ None is on by default.
     build turns on:
 
     ```toml
-    wslib-can-bus = { version = "0.2", registry = "wired-square", features = ["slcan"] }
+    wslib-can-bus = { version = "0.3", registry = "wired-square", features = ["slcan"] }
     ```
 
 - `smp` (with `discovery`): `Discovery::open_smp_udp` and `open_smp`, SMP
@@ -88,5 +88,5 @@ None is on by default.
 serialise as they did before the move; `tests/goldens.rs` pins them.
 
 ```toml
-wslib-framelink = { version = "0.5", registry = "wired-square" }
+wslib-framelink = { version = "0.6", registry = "wired-square" }
 ```

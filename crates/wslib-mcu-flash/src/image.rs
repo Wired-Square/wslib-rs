@@ -6,7 +6,7 @@ use std::path::Path;
 
 use ihex::Record;
 
-use crate::error::{FlashError, Result};
+use crate::error::{FlashError, Result, failed};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WriteSpan {
@@ -15,15 +15,15 @@ pub struct WriteSpan {
 }
 
 pub fn parse_intel_hex(bytes: &[u8]) -> Result<Vec<WriteSpan>> {
-    let text = std::str::from_utf8(bytes)
-        .map_err(|e| FlashError::Message(format!("Intel HEX file is not valid UTF-8: {e}")))?;
+    let text =
+        std::str::from_utf8(bytes).map_err(|e| failed("Intel HEX file is not valid UTF-8", e))?;
 
     let mut upper: u32 = 0;
     let mut spans: Vec<WriteSpan> = Vec::new();
 
     for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
         let record = Record::from_record_string(line)
-            .map_err(|e| FlashError::Message(format!("Intel HEX parse error: {e}")))?;
+            .map_err(|e| failed("Intel HEX record does not parse", e))?;
         match record {
             Record::Data { offset, value } => {
                 let address = upper.wrapping_add(offset as u32);
@@ -111,8 +111,7 @@ fn parse_dfuse_first_element(body: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn read(path: &Path) -> Result<Vec<u8>> {
-    std::fs::read(path)
-        .map_err(|e| FlashError::Message(format!("Failed to read {}: {e}", path.display())))
+    std::fs::read(path).map_err(|e| failed(format!("Failed to read {}", path.display()), e))
 }
 
 fn has_extension(path: &Path, ext: &str) -> bool {
@@ -155,6 +154,34 @@ pub fn pad_word_with_ff(data: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hex_file_that_is_not_utf8_keeps_the_decoders_error() {
+        let refused = parse_intel_hex(&[0xff]).unwrap_err();
+
+        assert_eq!(refused.to_string(), "Intel HEX file is not valid UTF-8");
+        assert!(
+            std::error::Error::source(&refused)
+                .and_then(|s| s.downcast_ref::<std::str::Utf8Error>())
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn an_unreadable_image_names_its_path_and_keeps_the_io_error() {
+        let path = std::env::temp_dir().join(format!("wslib-flash-absent-{}", std::process::id()));
+
+        let refused = load_flat(&path).unwrap_err();
+
+        assert_eq!(
+            refused.to_string(),
+            format!("Failed to read {}", path.display())
+        );
+        let source = std::error::Error::source(&refused)
+            .and_then(|s| s.downcast_ref::<std::io::Error>())
+            .expect("the io::Error");
+        assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+    }
 
     const CONTIGUOUS: &[u8] = b":020000040800F2\n\
                                :04000000DEADBEEFC4\n\

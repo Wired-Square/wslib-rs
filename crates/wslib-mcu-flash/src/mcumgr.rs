@@ -9,7 +9,7 @@ use std::time::Duration;
 use futures_core::Stream;
 use wslib_mcumgr::{Session, UploadOptions};
 
-use crate::error::{FlashError, Result};
+use crate::error::{FlashError, Result, failed};
 use crate::image;
 use crate::progress::{FlashProgress, FlashStage, check_cancel};
 
@@ -111,7 +111,7 @@ async fn next_unless_cancelled<S: Stream + Unpin>(
 }
 
 fn smp(step: &'static str) -> impl Fn(wslib_mcumgr::Error) -> FlashError {
-    move |e| FlashError::Message(format!("SMP {step} failed: {e}"))
+    move |e| failed(format!("SMP {step} failed"), e)
 }
 
 #[cfg(test)]
@@ -440,7 +440,7 @@ mod tests {
 
         let result = run(&device, &image, Activation::Test, &mut sink).await;
 
-        assert_eq!(result, Err(FlashError::Cancelled));
+        assert!(matches!(result, Err(FlashError::Cancelled)), "{result:?}");
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(device.written.lock().unwrap().len() < image.len());
         assert!(
@@ -465,7 +465,7 @@ mod tests {
 
         let result = run(&device, &mcuboot_image(CHUNK), Activation::Test, &mut sink).await;
 
-        assert_eq!(result, Err(FlashError::Cancelled));
+        assert!(matches!(result, Err(FlashError::Cancelled)), "{result:?}");
         assert!(started.elapsed() < Duration::from_secs(2));
         assert!(device.seen().contains(&Seen::Chunk));
     }
@@ -477,9 +477,15 @@ mod tests {
 
         let err = run(&device, &[0; 256], Activation::Test, &mut sink)
             .await
-            .unwrap_err()
-            .to_string();
+            .unwrap_err();
 
-        assert!(err.contains("not an MCUboot image"), "{err}");
+        assert_eq!(err.to_string(), "SMP upload failed");
+        let source = std::error::Error::source(&err)
+            .and_then(|s| s.downcast_ref::<wslib_mcumgr::Error>())
+            .expect("the SMP error");
+        assert!(
+            matches!(source, wslib_mcumgr::Error::NotMcuboot(_)),
+            "{source:?}"
+        );
     }
 }

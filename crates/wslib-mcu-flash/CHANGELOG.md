@@ -1,8 +1,15 @@
 # Changelog
 
-## 0.3.1
+## 0.4.0
 
-- On wslib-file-atomic 0.2.
+- On wslib-file-atomic 0.2, and on wslib-mcumgr 0.2 behind `mcumgr`.
+- `FlashError::Failed { why, source }`: a step that espflash, serialport,
+  nusb, dfu-nusb, the OS, ihex, SMP or the STM32 bootloader failed, with
+  this crate's sentence and that error, boxed, as the `source()`. It was
+  `Message` with the error's text; `Message` keeps the crate's own
+  sentences.
+- `FlashError` is no longer `Clone`, `PartialEq` or `Eq`, and
+  `From<String>` is gone.
 
 ## 0.3.0
 

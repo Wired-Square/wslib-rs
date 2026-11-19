@@ -433,7 +433,10 @@ mod tests {
         assert_eq!(endpoint, tty("/dev/ttyUSB1", Some(&id)));
 
         let err = resolve(ChipFamily::Esp32, UsbAccess::Native, Some(&id), &[]).unwrap_err();
-        assert_eq!(err, FlashError::NotAttached("/dev/ttyUSB1".into()));
+        assert!(
+            matches!(&err, FlashError::NotAttached(id) if id == "/dev/ttyUSB1"),
+            "{err:?}"
+        );
     }
 
     #[test]
@@ -504,7 +507,10 @@ mod tests {
     fn a_missing_serial_is_a_typed_not_attached_error() {
         for usb in [UsbAccess::Native, UsbAccess::CdcInterface { interface: 1 }] {
             let err = resolve(ChipFamily::Esp32, usb, Some(&serial("GONE")), &[]).unwrap_err();
-            assert_eq!(err, FlashError::NotAttached("usb:GONE".into()));
+            assert!(
+                matches!(&err, FlashError::NotAttached(id) if id == "usb:GONE"),
+                "{err:?}"
+            );
             assert_eq!(err.to_string(), "USB device \"usb:GONE\" not attached");
         }
     }

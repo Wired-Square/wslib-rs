@@ -8,6 +8,7 @@ mod db;
 mod frames;
 
 use std::collections::HashMap;
+use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -21,16 +22,18 @@ pub use admin::AssignOutcome;
 pub use db::{Db, bus_echoed};
 pub use frames::{ArchiveFrame, FrameCursor};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum ClientError {
-    /// The request never got an answer; the cause chain, as text.
-    Transport(String),
+    /// The request never got an answer; the source is reqwest's error.
+    Transport(reqwest::Error),
     /// A non-2xx answer, with the body's `error` when it had one.
     Status {
         code: u16,
         error: Option<String>,
     },
-    Decode(String),
+    /// The answer did not decode; the source is reqwest's or serde_json's
+    /// error.
+    Decode(Box<dyn Error + Send + Sync>),
     Request(RequestError),
     BadHex(String),
     BusIgnored(u8),
@@ -39,7 +42,7 @@ pub enum ClientError {
 impl fmt::Display for ClientError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Transport(cause) => write!(f, "API request failed: {cause}"),
+            Self::Transport(_) => f.write_str("API request failed"),
             Self::Status {
                 error: Some(error), ..
             } => f.write_str(error),
@@ -47,7 +50,7 @@ impl fmt::Display for ClientError {
                 Ok(status) => write!(f, "HTTP {status}"),
                 Err(_) => write!(f, "HTTP {code}"),
             },
-            Self::Decode(cause) => write!(f, "API response decode failed: {cause}"),
+            Self::Decode(_) => f.write_str("API response decode failed"),
             Self::Request(e) => e.fmt(f),
             Self::BadHex(data_hex) => write!(f, "bad data_hex '{data_hex}'"),
             Self::BusIgnored(bus) => {
@@ -57,25 +60,20 @@ impl fmt::Display for ClientError {
     }
 }
 
-impl std::error::Error for ClientError {}
+impl Error for ClientError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Transport(e) => Some(e),
+            Self::Decode(e) => Some(&**e),
+            Self::Status { .. } | Self::Request(_) | Self::BadHex(_) | Self::BusIgnored(_) => None,
+        }
+    }
+}
 
 impl From<RequestError> for ClientError {
     fn from(e: RequestError) -> Self {
         Self::Request(e)
     }
-}
-
-/// `reqwest::Error` displays as "error sending request" and keeps refused,
-/// reset or timed out for `source()`.
-fn cause_chain(e: &reqwest::Error) -> String {
-    let mut out = e.to_string();
-    let mut source = std::error::Error::source(e);
-    while let Some(s) = source {
-        out.push_str(": ");
-        out.push_str(&s.to_string());
-        source = s.source();
-    }
-    out
 }
 
 #[derive(Debug, Clone, Default)]
@@ -142,9 +140,7 @@ impl GatewayClient {
             builder = builder.connect_timeout(timeout);
         }
         Ok(Self {
-            http: builder
-                .build()
-                .map_err(|e| ClientError::Transport(cause_chain(&e)))?,
+            http: builder.build().map_err(ClientError::Transport)?,
             endpoint: Endpoint::new(base_url, api_key),
             label: String::new(),
             running: Registry::default(),
@@ -284,10 +280,7 @@ impl Drop for Listed<'_> {
 
 /// The answer, whatever its status.
 async fn answer(request: reqwest::RequestBuilder) -> Result<reqwest::Response, ClientError> {
-    request
-        .send()
-        .await
-        .map_err(|e| ClientError::Transport(cause_chain(&e)))
+    request.send().await.map_err(ClientError::Transport)
 }
 
 /// The answer if it is a success, else its status and `error` text.
@@ -313,5 +306,5 @@ async fn decode<T: DeserializeOwned>(response: reqwest::Response) -> Result<T, C
     response
         .json()
         .await
-        .map_err(|e| ClientError::Decode(cause_chain(&e)))
+        .map_err(|e| ClientError::Decode(Box::new(e)))
 }

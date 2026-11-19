@@ -500,6 +500,13 @@ async fn an_adapter_that_fails_to_open_is_can_open() {
         "{:?}",
         refused.err()
     );
+    let refused = refused.err().unwrap();
+    assert_eq!(refused.to_string(), "the CAN bus did not open");
+    assert!(
+        std::error::Error::source(&refused)
+            .and_then(|s| s.downcast_ref::<OpenError>())
+            .is_some()
+    );
 }
 
 #[tokio::test]

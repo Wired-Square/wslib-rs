@@ -6,6 +6,26 @@
   `BusConfig`, `CanMode` and `CanBus` it re-exports, and on wslib-can 0.2,
   wslib-isotp 0.2 and wslib-file-atomic 0.2, and on wslib-mdns 0.2, whose
   `Error` is `Error::Mdns`'s.
+- On wslib-mcumgr 0.2, whose `Error` is `Error::Smp`'s.
+- `Error::UnlockFailed`: unlocking after a WRITE_LOCKED refusal failed,
+  with that failure, boxed, as its `source()`. It was `WriteLocked` with
+  the failure's text; `WriteLocked` keeps the crate's own sentences.
+- `Error::Challenge`: the device's WRITE_CHALLENGE reply doesn't parse,
+  with wslib-framelink-protocol's error as its `source()`. It was
+  `Protocol` with the error's text.
+- `Error::NotifySubscribe { uuid, source }` holds btleplug's error in place
+  of its text. A characteristic without NOTIFY is
+  `Error::NotifyUnsupported`, and a notification stream that ends is
+  `Error::NotificationsEnded`; both were `NotifySubscribe` with a sentence.
+- `Error::Io`, `Frame`, `Mdns`, `RegistryFile`, `Ble`, `Smp` and
+  `CharacteristicWrite` describe their own layer only ("I/O failed",
+  "malformed frame", "mDNS failed", and so on); the error is the
+  `source()`. `Error::Board` says "the board definition failed" and
+  `Error::CanOpen` "the CAN bus did not open", with the board's error and
+  the `OpenError` as their `source()`, in place of passing the inner
+  error's text and source through.
+- `PeerParseError::Bus` says "{peer} names no CAN bus", with the
+  `BusParseError` as its `source()`.
 
 ## 0.5.0
 

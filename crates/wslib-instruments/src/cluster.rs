@@ -17,7 +17,7 @@ use crate::{
 
 const POLL_DEADLINE: Duration = Duration::from_secs(1);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Latest {
     pub sample: Option<Sample>,
     pub error: Option<ProbeError>,

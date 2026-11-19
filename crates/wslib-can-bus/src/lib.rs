@@ -30,10 +30,10 @@ mod usb;
 
 pub use bus::{
     BUS_FORMS, BusKind, BusParseError, CanBus, DEVICE_SEPARATOR, GVRET_PORT, GVRET_PREFIX,
-    PATH_SEPARATOR, PortDirectory, SLCAN_PREFIX, SerialPort, form_count, forms_of, name_the_bus,
-    port_forms,
+    PATH_SEPARATOR, PortDirectory, PortParseError, SLCAN_PREFIX, SerialPort, form_count, forms_of,
+    name_the_bus, port_forms,
 };
 pub use config::{BusConfig, CanMode};
-pub use error::{OpenError, refusal};
+pub use error::{OpenCause, OpenError, refusal};
 #[cfg(feature = "task")]
 pub use open::open;

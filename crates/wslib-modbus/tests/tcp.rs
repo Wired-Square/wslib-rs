@@ -1,6 +1,9 @@
 mod support;
 
-use std::time::{Duration, Instant, SystemTime};
+use std::{
+    error::Error,
+    time::{Duration, Instant, SystemTime},
+};
 
 use tokio::{net::TcpStream, time::sleep};
 
@@ -86,6 +89,30 @@ async fn a_short_reply_is_returned_as_received() {
         server.script([Action::Short(1)]);
         let mut tcp = ModbusTcp::new(server.endpoint(), quick());
         assert_eq!(read_words(&mut tcp, holding(4, 3)).await, [4]);
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_reply_from_another_unit_is_a_violation_carrying_tokio_modbus_error() {
+    within(async {
+        let server = FakeServer::start().await;
+        server.script([Action::OtherUnit]);
+        let mut tcp = ModbusTcp::new(server.endpoint(), quick());
+
+        let error = tcp.read(holding(0, 1)).await.unwrap_err();
+        let RequestError::Transport(transport @ TransportError::Violation(_)) = &error else {
+            panic!("expected a violation, got {error:?}");
+        };
+        assert_eq!(transport.to_string(), "protocol error");
+        let cause = transport.source().unwrap();
+        assert!(
+            matches!(
+                cause.downcast_ref::<tokio_modbus::ProtocolError>(),
+                Some(tokio_modbus::ProtocolError::HeaderMismatch { .. })
+            ),
+            "{cause:?}"
+        );
     })
     .await
 }
@@ -219,7 +246,7 @@ async fn a_refused_connect_is_told_apart_from_a_resolve_failure() {
             &error,
             TransportError::Resolve { endpoint, reason: ResolveError::Io(_) } if endpoint == "127.0.0.1"
         ));
-        assert!(error.to_string().starts_with("cannot resolve 127.0.0.1: "));
+        assert_eq!(error.to_string(), "cannot resolve 127.0.0.1");
     })
     .await
 }

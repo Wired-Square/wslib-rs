@@ -17,7 +17,7 @@ use wslib_can::CanError;
 pub(crate) fn refused(request: &'static str) -> impl Fn(io::Error) -> CanError {
     move |e| match e.kind() {
         io::ErrorKind::ConnectionAborted => CanError::Closed,
-        kind => CanError::Read(io::Error::new(kind, format!("{request}: {e}"))),
+        _ => CanError::Request { request, source: e },
     }
 }
 

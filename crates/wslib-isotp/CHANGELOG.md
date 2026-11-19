@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- `SendFailed::Refused` and `Io` name only their own layer, and return the
+  `SendRefused` or `io::Error` from `source()`.
+
 ## 0.1.0
 
 - A sans-IO ISO-TP (ISO 15765-2) codec for normal addressing on classic

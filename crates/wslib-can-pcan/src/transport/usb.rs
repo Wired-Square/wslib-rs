@@ -108,8 +108,8 @@ async fn probe_as<C: Claim>(
 ) -> Result<DeviceInfo, CanError> {
     let mut claimed = timeout_at(deadline, claim::<C>(device))
         .await
-        .unwrap_or_else(|_| Err(io::ErrorKind::TimedOut.into()))
-        .map_err(not_opened(device))?;
+        .unwrap_or_else(|_| Err(io::Error::from(io::ErrorKind::TimedOut).into()))
+        .map_err(unclaimed(device))?;
     timeout_at(deadline, claimed.identify())
         .await
         .unwrap_or_else(|_| Err(CanError::Read(io::ErrorKind::TimedOut.into())))
@@ -209,9 +209,7 @@ impl Device for Classic {
             message_in: mut bulk_in,
             message_out,
             rev,
-        } = claim(&pcan.device)
-            .await
-            .map_err(not_opened(&pcan.device))?;
+        } = claim(&pcan.device).await.map_err(unclaimed(&pcan.device))?;
         let info = start(&mut commands, btr, rev, options.listen_only).await?;
         let transfer = MESSAGE_BYTES.next_multiple_of(bulk_in.max_packet_size());
         for _ in 0..IN_FLIGHT {
@@ -300,7 +298,7 @@ impl Device for Ucan {
             firmware,
             model,
             high_speed,
-        } = claim(&pcan.device).await.map_err(&not_opened)?;
+        } = claim(&pcan.device).await.map_err(unclaimed(&pcan.device))?;
         let endpoints = firmware.endpoints();
         let mut data_in = pipe
             .interface
@@ -513,9 +511,34 @@ fn send_blocking(endpoint: &mut Endpoint<Bulk, Out>, transfer: Vec<u8>) -> io::R
     Ok(completion.status?)
 }
 
+enum Unclaimed {
+    Usb(io::Error),
+    Identify(CanError),
+}
+
+impl From<io::Error> for Unclaimed {
+    fn from(error: io::Error) -> Self {
+        Self::Usb(error)
+    }
+}
+
+impl From<nusb::Error> for Unclaimed {
+    fn from(error: nusb::Error) -> Self {
+        Self::Usb(error.into())
+    }
+}
+
+fn unclaimed(device: &PcanDevice) -> impl Fn(Unclaimed) -> CanError {
+    let not_opened = not_opened(device);
+    move |error| match error {
+        Unclaimed::Usb(source) => not_opened(source),
+        Unclaimed::Identify(error) => error,
+    }
+}
+
 /// An adapter claimed, by family.
 trait Claim: Sized + Send {
-    fn attach(found: &UsbDevice) -> impl Future<Output = io::Result<Self>> + Send;
+    fn attach(found: &UsbDevice) -> impl Future<Output = Result<Self, Unclaimed>> + Send;
 
     /// As `%08X`.
     fn serial(&mut self) -> impl Future<Output = Option<String>> + Send;
@@ -531,7 +554,7 @@ struct ClassicClaim {
 }
 
 impl Claim for ClassicClaim {
-    async fn attach(found: &UsbDevice) -> io::Result<Self> {
+    async fn attach(found: &UsbDevice) -> Result<Self, Unclaimed> {
         let interface = found.open().await?.claim_interface(0).await?;
         Ok(Self {
             commands: CommandPipe {
@@ -564,8 +587,8 @@ struct UcanClaim {
 }
 
 impl Claim for UcanClaim {
-    async fn attach(found: &UsbDevice) -> io::Result<Self> {
-        let model = model(found).ok_or(io::ErrorKind::NotFound)?;
+    async fn attach(found: &UsbDevice) -> Result<Self, Unclaimed> {
+        let model = model(found).ok_or(io::Error::from(io::ErrorKind::NotFound))?;
         let device = found.open().await?;
         let number = device
             .active_configuration()
@@ -587,7 +610,7 @@ impl Claim for UcanClaim {
         };
         let firmware = ucan::identify(&mut pipe)
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+            .map_err(Unclaimed::Identify)?;
         pipe.command = Some(pipe.interface.endpoint(firmware.endpoints().command_out)?);
         Ok(Self {
             pipe,
@@ -606,17 +629,18 @@ impl Claim for UcanClaim {
     }
 }
 
-async fn attach<C: Claim>(found: &UsbDevice) -> io::Result<C> {
+async fn attach<C: Claim>(found: &UsbDevice) -> Result<C, Unclaimed> {
     use crate::usb::{bound_driver, foreign_driver};
     let remedy = "install PEAK-Drivers, or bind WinUSB to it";
-    C::attach(found)
-        .await
-        .map_err(|e| foreign_driver(e, bound_driver(found), remedy))
+    C::attach(found).await.map_err(|error| match error {
+        Unclaimed::Usb(e) => Unclaimed::Usb(foreign_driver(e, bound_driver(found), remedy)),
+        identify => identify,
+    })
 }
 
 /// Among the selector's model, by serial number where the selector has one —
 /// the USB string first, then each adapter's own — else by bus and address.
-async fn claim<C: Claim>(device: &PcanDevice) -> io::Result<C> {
+async fn claim<C: Claim>(device: &PcanDevice) -> Result<C, Unclaimed> {
     let adapters: Vec<UsbDevice> = nusb::list_devices()
         .await?
         .filter(|found| model(found) == Some(device.model))
@@ -625,7 +649,7 @@ async fn claim<C: Claim>(device: &PcanDevice) -> io::Result<C> {
         let found = adapters
             .iter()
             .find(|found| bus(found) == device.bus && found.device_address() == device.address)
-            .ok_or(io::ErrorKind::NotFound)?;
+            .ok_or(io::Error::from(io::ErrorKind::NotFound))?;
         return attach(found).await;
     };
     if let Some(found) = adapters
@@ -642,7 +666,7 @@ async fn claim<C: Claim>(device: &PcanDevice) -> io::Result<C> {
             return Ok(claimed);
         }
     }
-    Err(io::ErrorKind::NotFound.into())
+    Err(io::Error::from(io::ErrorKind::NotFound).into())
 }
 
 fn model(found: &UsbDevice) -> Option<PcanModel> {
@@ -656,4 +680,34 @@ fn futures_are_send(pcan: PcanOptions) {
     fn is_send<T: Send>(_: &T) {}
     is_send(&probe(&pcan.device, Duration::ZERO));
     is_send(&open(pcan, CanOptions::default()));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_adapter_refused_by_usb_did_not_open_and_one_that_did_not_identify_says_why() {
+        let device = PcanDevice {
+            serial: Some("0000002A".into()),
+            bus: 1,
+            address: 2,
+            product: PcanModel::UsbFd.to_string(),
+            model: PcanModel::UsbFd,
+        };
+        let refused = unclaimed(&device)(io::Error::from(io::ErrorKind::NotFound).into());
+        assert!(
+            matches!(&refused, CanError::Open { device, source } if device == "pcan 0000002A" && source.kind() == io::ErrorKind::NotFound),
+            "{refused:?}"
+        );
+        let short = CanError::Handshake("the firmware info is short");
+        let unidentified = unclaimed(&device)(Unclaimed::Identify(short));
+        assert!(
+            matches!(
+                unidentified,
+                CanError::Handshake("the firmware info is short")
+            ),
+            "{unidentified:?}"
+        );
+    }
 }

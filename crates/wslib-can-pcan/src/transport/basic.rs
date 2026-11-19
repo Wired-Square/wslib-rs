@@ -21,7 +21,7 @@ use wslib_can::{
 };
 
 use super::{BusWatch, PcanDevice, PcanOptions, check, not_opened, timing};
-use crate::pcan_usb::CLOCK_HZ;
+use crate::{pcan_usb::CLOCK_HZ, usb::refused};
 
 #[cfg(target_os = "windows")]
 mod dll;
@@ -211,25 +211,27 @@ fn btr0btr1(pcan: &PcanOptions) -> Result<u16, CanError> {
 
 /// A call's status as `refused` maps a USB request's: the adapter gone is
 /// `Closed`, anything else names the call.
-fn called(call: &str, status: u32) -> Result<(), CanError> {
+fn called(call: &'static str, status: u32) -> Result<(), CanError> {
+    checked(status).map_err(refused(call))
+}
+
+fn checked(status: u32) -> io::Result<()> {
     if status == status::OK {
         return Ok(());
     }
     Err(match status & status::HANDLE_FIELD {
-        status::ILLHW => CanError::Closed,
-        status::HWINUSE => CanError::Read(io::Error::new(
+        status::ILLHW => io::ErrorKind::ConnectionAborted.into(),
+        status::HWINUSE => io::Error::new(
             io::ErrorKind::ResourceBusy,
-            format!("{call}: another program holds the adapter (PCAN-View?)"),
-        )),
-        _ => CanError::Read(io::Error::other(format!(
-            "{call}: PCAN-Basic error {status:#x}"
-        ))),
+            "another program holds the adapter (PCAN-View?)",
+        ),
+        _ => io::Error::other(format!("PCAN-Basic error {status:#x}")),
     })
 }
 
 /// A read's or `CAN_GetStatus`'s status: bus state and lost frames are news,
 /// anything else ends the read.
-fn reported(call: &str, status: u32) -> Result<u32, CanError> {
+fn reported(call: &'static str, status: u32) -> Result<u32, CanError> {
     if status & !status::NOT_FAILURES != 0 {
         called(call, status)?;
     }
@@ -332,9 +334,9 @@ impl<A: Api> Started<A> {
         called("PCAN_RECEIVE_EVENT", api.watch(self.handle))
     }
 
-    fn restart(&self) -> io::Result<()> {
+    fn restart(&self) -> Result<(), CanError> {
         self.api.uninitialize(self.handle);
-        self.initialize().map_err(io::Error::other)
+        self.initialize()
     }
 }
 
@@ -454,7 +456,7 @@ impl<A: Api> Device for Basic<A> {
         loop {
             let status = api.write(*handle, &msg);
             if status & (status::XMTFULL | status::QXMTFULL) == 0 {
-                return called("CAN_Write", status).map_err(io::Error::other);
+                return checked(status);
             }
             if Instant::now() >= deadline {
                 return Err(io::ErrorKind::TimedOut.into());
@@ -652,18 +654,32 @@ mod tests {
         use status::*;
         assert!(reported("CAN_Read", QRCVEMPTY | BUSOFF | QOVERRUN).is_ok());
         assert!(matches!(reported("CAN_Read", ILLHW), Err(CanError::Closed)));
-        let Err(CanError::Read(busy)) = called("CAN_Initialize", HWINUSE) else {
-            panic!("in use is a refusal");
+        let refused = called("CAN_Initialize", HWINUSE).unwrap_err();
+        assert_eq!(refused.to_string(), "CAN_Initialize failed");
+        let CanError::Request {
+            request: "CAN_Initialize",
+            source: busy,
+        } = &refused
+        else {
+            panic!("in use is a refusal: {refused:?}");
         };
         assert_eq!(busy.kind(), io::ErrorKind::ResourceBusy);
         assert_eq!(
             busy.to_string(),
-            "CAN_Initialize: another program holds the adapter (PCAN-View?)"
+            "another program holds the adapter (PCAN-View?)"
         );
-        let Err(CanError::Read(client)) = reported("CAN_Read", 0x1c00) else {
+        let Err(CanError::Request {
+            request: "CAN_Read",
+            source: client,
+        }) = reported("CAN_Read", 0x1c00)
+        else {
             panic!("ILLCLIENT is no ILLHW");
         };
-        assert_eq!(client.to_string(), "CAN_Read: PCAN-Basic error 0x1c00");
+        assert_eq!(client.to_string(), "PCAN-Basic error 0x1c00");
+        assert_eq!(
+            checked(ILLHW).unwrap_err().kind(),
+            io::ErrorKind::ConnectionAborted
+        );
     }
 
     #[test]
@@ -916,9 +932,8 @@ mod tests {
             .err()
             .expect("refused");
         assert!(
-            error
-                .to_string()
-                .contains("another program holds the adapter")
+            matches!(&error, CanError::Request { request: "CAN_Initialize", source } if source.kind() == io::ErrorKind::ResourceBusy),
+            "{error:?}"
         );
     }
 

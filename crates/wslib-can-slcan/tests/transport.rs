@@ -3,7 +3,7 @@ use std::{future::Future, time::Duration};
 use tokio::time::timeout;
 use wslib_can::{CanError, CanOptions};
 use wslib_can_slcan::{self as slcan, SlcanOptions};
-use wslib_serial::{LineSettings, Parity};
+use wslib_serial::{LineSettings, Parity, SerialError};
 
 const LINE: LineSettings = LineSettings {
     baud: 115_200,
@@ -53,11 +53,15 @@ async fn a_missing_path_is_the_callers_open_error() {
 }
 
 #[tokio::test]
-async fn invalid_line_settings_are_a_config_error() {
+async fn invalid_line_settings_are_the_serial_ports_refusal() {
     let mut options = slcan_options(MISSING);
     options.line.data_bits = 9;
+    let bad = options.line;
     let error = within(open_err(options)).await;
-    assert!(matches!(error, CanError::Config(_)), "{error:?}");
+    assert!(
+        matches!(&error, CanError::Serial(SerialError::InvalidSettings(line)) if *line == bad),
+        "{error:?}"
+    );
 }
 
 #[tokio::test]
@@ -101,7 +105,13 @@ async fn a_probe_of_a_missing_path_or_bad_settings_fails_before_asking_anything(
         ..LINE
     };
     let error = within(slcan::probe(MISSING, bad, Duration::from_secs(2))).await;
-    assert!(matches!(error, Err(CanError::Config(_))), "{error:?}");
+    assert!(
+        matches!(
+            error,
+            Err(CanError::Serial(SerialError::InvalidSettings(_)))
+        ),
+        "{error:?}"
+    );
 }
 
 /// serialport can't open a macOS pty: it sets the rate with `IOSSIOSPEED`,

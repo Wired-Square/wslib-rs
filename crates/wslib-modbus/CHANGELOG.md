@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.3
+
+- A tokio-modbus protocol error is wslib-tcp's `TransportError::Violation`,
+  with tokio-modbus's `ProtocolError` as its source, in place of `Protocol`
+  and a sentence. wslib-tcp's floor is 0.1.2.
+- A `WriteOutcome::Failed` detail and a verify read's problem write the
+  request error and each of its causes.
+
 ## 0.2.2
 
 - serde's floor is 1.0.228.

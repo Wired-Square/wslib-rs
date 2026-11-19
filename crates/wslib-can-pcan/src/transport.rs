@@ -411,7 +411,7 @@ impl BusWatch {
     }
 
     /// A restart the device refuses is tried again a wait later.
-    async fn recover(&mut self, restart: impl Future<Output = io::Result<()>>) {
+    async fn recover<E>(&mut self, restart: impl Future<Output = Result<(), E>>) {
         if !self.restart_due() {
             return;
         }
@@ -706,7 +706,10 @@ mod tests {
 
         usb.broken = Some((function::SN, io::ErrorKind::TimedOut));
         let error = start(&mut usb, BTR_500K, 84, false).await.unwrap_err();
-        assert!(matches!(&error, CanError::Read(e) if e.to_string().starts_with("SN")));
+        assert!(
+            matches!(&error, CanError::Request { request: "SN", source } if source.kind() == io::ErrorKind::TimedOut),
+            "{error:?}"
+        );
     }
 
     #[tokio::test]

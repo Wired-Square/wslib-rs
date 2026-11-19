@@ -1,4 +1,8 @@
-use std::time::{Duration, SystemTime};
+use std::{
+    error::Error,
+    iter,
+    time::{Duration, SystemTime},
+};
 
 use crate::{ModbusWrite, WriteBank, group_contiguous};
 use tokio_modbus::prelude::{Request, Response};
@@ -22,6 +26,15 @@ pub enum WriteOutcome {
     Confirmed,
     Unconfirmed(String),
     Failed(String),
+}
+
+const CAUSE_SEPARATOR: &str = ": ";
+
+fn chain(error: &(dyn Error + 'static)) -> String {
+    iter::successors(Some(error), |&e| e.source())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(CAUSE_SEPARATOR)
 }
 
 /// The words as received: a short reply stays short, and a coil reads as 0 or 1.
@@ -93,7 +106,7 @@ impl ModbusTcp {
         let mut link = match self.acquire().await {
             Ok(link) => link,
             Err(e) => {
-                report.outcome = WriteOutcome::Failed(e.to_string());
+                report.outcome = WriteOutcome::Failed(chain(&e));
                 report.transport_lost = true;
                 return (report, Some(e));
             }
@@ -210,7 +223,8 @@ impl Batch<'_> {
     }
 
     fn fail(&mut self, first: &ModbusWrite, step: &str, e: RequestError) -> bool {
-        self.report.outcome = WriteOutcome::Failed(format!("{}: {step}{e}", describe(first)));
+        self.report.outcome =
+            WriteOutcome::Failed(format!("{}: {step}{}", describe(first), chain(&e)));
         if let RequestError::Transport(error) = e {
             self.lost = Some(error);
         }
@@ -273,7 +287,7 @@ impl Batch<'_> {
                     }
                 }
                 Err(e) => {
-                    problems.push(format!("{}: verify read: {e}", describe(&run[0])));
+                    problems.push(format!("{}: verify read: {}", describe(&run[0]), chain(&e)));
                     if let RequestError::Transport(error) = e {
                         self.lost = Some(error);
                         break;

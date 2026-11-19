@@ -6,7 +6,8 @@
 //! `MSG_CONFIRM`, which is how the kernel marks the socket's own frames.
 
 use std::{
-    io, mem,
+    error::Error,
+    fmt, io, mem,
     os::fd::{AsRawFd, RawFd},
     ptr,
     sync::{Arc, Mutex},
@@ -51,11 +52,52 @@ pub async fn open(sc: SocketCanOptions, options: CanOptions) -> Result<CanTask, 
     wslib_can::open::<SocketCan>(config, options).await
 }
 
+/// Why [`bitrates`] read no rates.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum BitratesError {
+    /// No interface has the name.
+    Interface {
+        interface: String,
+        source: io::Error,
+    },
+    /// The netlink query failed; the source is socketcan's error.
+    Netlink {
+        interface: String,
+        source: Box<dyn Error + Send + Sync>,
+    },
+}
+
+impl fmt::Display for BitratesError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Interface { interface, .. } => write!(f, "cannot find {interface}"),
+            Self::Netlink { interface, .. } => write!(f, "cannot read {interface}'s rates"),
+        }
+    }
+}
+
+impl Error for BitratesError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Interface { source, .. } => Some(source),
+            Self::Netlink { source, .. } => Some(&**source),
+        }
+    }
+}
+
 /// One netlink round trip; a netlink failure is `Err`, not `None`.
-pub fn bitrates(interface: &str) -> io::Result<Bitrates> {
-    let details = CanInterface::open(interface)?
+pub fn bitrates(interface: &str) -> Result<Bitrates, BitratesError> {
+    let details = CanInterface::open(interface)
+        .map_err(|e| BitratesError::Interface {
+            interface: interface.to_owned(),
+            source: e.into(),
+        })?
         .details()
-        .map_err(|e| io::Error::other(e.to_string()))?;
+        .map_err(|e| BitratesError::Netlink {
+            interface: interface.to_owned(),
+            source: Box::new(e),
+        })?;
     Ok(Bitrates {
         nominal: details.can.bit_timing.map(|t| t.bitrate),
         data: details.can.data_bit_timing.map(|t| t.bitrate),

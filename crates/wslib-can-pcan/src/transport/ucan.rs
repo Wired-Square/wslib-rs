@@ -531,7 +531,10 @@ mod tests {
         let error = start(&mut pipe, &info, 0, timings(&pcan).unwrap(), true, true)
             .await
             .unwrap_err();
-        assert!(matches!(&error, CanError::Read(e) if e.to_string().starts_with("TIMING_SLOW")));
+        assert!(
+            matches!(&error, CanError::Request { request: "TIMING_SLOW", source } if source.kind() == io::ErrorKind::TimedOut),
+            "{error:?}"
+        );
 
         let mut pipe = FakePipe {
             broken: Some((0x00c, io::ErrorKind::ConnectionAborted)),

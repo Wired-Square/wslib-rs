@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+
+- On wslib-serial 0.2.
+- A port's open or read failure in a monitor's state message writes the
+  error and each of its causes.
+
 ## 0.3.0
 
 - On wslib-mcu-flash 0.3, so `PortKey` is its `PortIdentity`.

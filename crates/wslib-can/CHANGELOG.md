@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.4
+
+- `CanError::Open` and `Read` name only their own layer. The `io::Error`
+  comes only through `source()`, which `Read` now returns too.
+- `CanError::Request`: a request the device didn't take, named, with its
+  `io::Error` as the source.
+- `serial`: `CanError::Serial`, carrying wslib-serial's `SerialError`.
+
 ## 0.1.3
 
 - `testing`: `loopback`, an in-memory bus for tests. A `LoopbackBus` hands

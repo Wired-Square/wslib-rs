@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.0
+
+- On wslib-serial 0.2, whose `DelimiterOptions` it re-exports.
+
 ## 0.3.1
 
 - Takes `wslib-quantity` 0.2.0.

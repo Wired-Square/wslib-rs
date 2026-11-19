@@ -320,20 +320,44 @@ fn gvret_endpoint(s: &str, endpoint: &str) -> Result<(String, u16), String> {
     }
 }
 
-fn port_path_refusal(path: &str) -> String {
-    match SerialPort::at(path) {
-        Some(port) => {
-            format!(
+/// Why text is not a [`SerialPort`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PortParseError {
+    /// A path, not a name; `Some` holds the port the path opens.
+    Path(Option<SerialPort>),
+    /// A name containing [`DEVICE_SEPARATOR`].
+    DeviceSeparator(String),
+    Empty,
+}
+
+impl fmt::Display for PortParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PortParseError::Path(Some(port)) => write!(
+                f,
                 "write {SLCAN_PREFIX}{port}, the port's name under {}",
                 port.directory.path()
-            )
+            ),
+            PortParseError::Path(None) => write!(f, "name the serial port as {}", port_forms()),
+            PortParseError::DeviceSeparator(name) => write!(
+                f,
+                "{name}: a port name can't contain '{DEVICE_SEPARATOR}', which starts the device id; \
+                 name the port by a udev alias without one"
+            ),
+            PortParseError::Empty => write!(
+                f,
+                "name the serial port as {}, e.g. {SLCAN_PREFIX}{EXAMPLE_PORT}",
+                port_forms()
+            ),
         }
-        None => format!("name the serial port as {}", port_forms()),
     }
 }
 
+impl Error for PortParseError {}
+
 impl FromStr for SerialPort {
-    type Err = String;
+    type Err = PortParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let (directory, name) = DIRECTORIES
@@ -346,19 +370,13 @@ impl FromStr for SerialPort {
             })
             .unwrap_or((PortDirectory::Devices, s));
         if name.contains(PATH_SEPARATOR) {
-            return Err(port_path_refusal(name));
+            return Err(PortParseError::Path(SerialPort::at(name)));
         }
         if name.contains(DEVICE_SEPARATOR) {
-            return Err(format!(
-                "{name}: a port name can't contain '{DEVICE_SEPARATOR}', which starts the device id; \
-                 name the port by a udev alias without one"
-            ));
+            return Err(PortParseError::DeviceSeparator(name.to_owned()));
         }
         if name.is_empty() {
-            return Err(format!(
-                "name the serial port as {}, e.g. {SLCAN_PREFIX}{EXAMPLE_PORT}",
-                port_forms()
-            ));
+            return Err(PortParseError::Empty);
         }
         Ok(SerialPort {
             directory,
@@ -423,6 +441,8 @@ pub enum BusParseError {
     Empty,
     /// Text that names no bus, and why.
     Invalid(String),
+    /// An SLCAN bus whose port is no [`SerialPort`].
+    Port { bus: String, source: PortParseError },
 }
 
 impl fmt::Display for BusParseError {
@@ -430,11 +450,19 @@ impl fmt::Display for BusParseError {
         match self {
             BusParseError::Empty => f.write_str(&name_the_bus("the CAN bus", BUS_FORMS)),
             BusParseError::Invalid(why) => f.write_str(why),
+            BusParseError::Port { bus, .. } => write!(f, "{bus} names no serial port"),
         }
     }
 }
 
-impl Error for BusParseError {}
+impl Error for BusParseError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            BusParseError::Port { source, .. } => Some(source),
+            BusParseError::Empty | BusParseError::Invalid(_) => None,
+        }
+    }
+}
 
 impl FromStr for CanBus {
     type Err = BusParseError;
@@ -443,32 +471,41 @@ impl FromStr for CanBus {
         if s.is_empty() {
             return Err(BusParseError::Empty);
         }
-        parse_bus(s).map_err(BusParseError::Invalid)
+        parse_bus(s)
     }
 }
 
-fn parse_bus(s: &str) -> Result<CanBus, String> {
-    let s = without_controls(s)?;
+fn parse_bus(s: &str) -> Result<CanBus, BusParseError> {
+    let s = without_controls(s).map_err(BusParseError::Invalid)?;
     if let Some(serial) = usb_serial(s, GSUSB) {
-        return serial.map(|serial| CanBus::GsUsb { serial });
+        return serial
+            .map(|serial| CanBus::GsUsb { serial })
+            .map_err(BusParseError::Invalid);
     }
     if let Some(serial) = usb_serial(s, PCAN) {
-        return serial.map(|serial| CanBus::Pcan { serial });
+        return serial
+            .map(|serial| CanBus::Pcan { serial })
+            .map_err(BusParseError::Invalid);
     }
     if let Some(endpoint) = s.strip_prefix(GVRET_PREFIX) {
-        return gvret_endpoint(s, endpoint).map(|(host, port)| CanBus::Gvret { host, port });
+        return gvret_endpoint(s, endpoint)
+            .map(|(host, port)| CanBus::Gvret { host, port })
+            .map_err(BusParseError::Invalid);
     }
     match s.strip_prefix(SLCAN_PREFIX) {
         Some(port) => port
             .parse()
             .map(|port| CanBus::Slcan { port })
-            .map_err(|why| format!("{s}: {why}")),
-        None if s.contains(PATH_SEPARATOR) => Err(format!(
+            .map_err(|source| BusParseError::Port {
+                bus: s.to_owned(),
+                source,
+            }),
+        None if s.contains(PATH_SEPARATOR) => Err(BusParseError::Invalid(format!(
             "{s}: an interface name can't contain '{PATH_SEPARATOR}'"
-        )),
-        None if s.contains(DEVICE_SEPARATOR) => Err(format!(
+        ))),
+        None if s.contains(DEVICE_SEPARATOR) => Err(BusParseError::Invalid(format!(
             "{s}: an interface name can't contain '{DEVICE_SEPARATOR}', which starts the device id"
-        )),
+        ))),
         None => Ok(CanBus::SocketCan {
             interface: s.to_owned(),
         }),

@@ -220,12 +220,12 @@ struct OnBus {
 impl OnBus {
     async fn write(&self, bytes: Vec<u8>) -> io::Result<()> {
         let port = self.port.clone();
-        spawn_blocking(move || {
+        let written = spawn_blocking(move || {
             let mut port = port.lock().unwrap_or_else(PoisonError::into_inner);
             port.write_all(&bytes).and_then(|()| port.flush())
         })
-        .await
-        .map_err(io::Error::other)?
+        .await;
+        serial::finished(written)?
     }
 }
 

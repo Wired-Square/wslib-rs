@@ -130,6 +130,26 @@ fn a_port_key_reads_back_from_its_display() {
 }
 
 #[tokio::test]
+async fn a_port_that_does_not_open_is_backed_off_from_with_each_cause() {
+    let bench = Bench::new();
+    let mut console = bench.monitors.subscribe(path(), None, Bounds::default());
+    let wanted = format!(
+        "open {PATH}: cannot open {PATH}: {}",
+        std::io::Error::from(std::io::ErrorKind::NotFound)
+    );
+    until(&mut console, |u| {
+        matches!(
+            u,
+            Update::State {
+                state: MonitorState::Backoff,
+                message: Some(message),
+            } if *message == wanted
+        )
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn a_subscriber_is_told_the_monitors_state_before_anything_else() {
     let bench = Bench::new();
     let mut console = bench.monitors.subscribe(path(), None, Bounds::default());

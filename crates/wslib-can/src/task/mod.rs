@@ -170,11 +170,14 @@ impl BusState {
 #[non_exhaustive]
 pub enum CanError {
     /// `device` is the path, interface, `host:port` or USB selector.
-    #[error("cannot open {device}: {source}")]
+    #[error("cannot open {device}")]
     Open { device: String, source: io::Error },
     #[cfg(feature = "tcp")]
     #[error(transparent)]
     Connect(wslib_tcp::TransportError),
+    #[cfg(feature = "serial")]
+    #[error(transparent)]
+    Serial(wslib_serial::SerialError),
     /// The device didn't answer as its protocol says.
     #[error("handshake failed: {0}")]
     Handshake(&'static str),
@@ -186,8 +189,14 @@ pub enum CanError {
     Closed,
     #[error("device stopped answering")]
     Unresponsive,
-    #[error("read failed: {0}")]
-    Read(io::Error),
+    #[error("read failed")]
+    Read(#[source] io::Error),
+    /// A request the device didn't take, by its protocol's name for it.
+    #[error("{request} failed")]
+    Request {
+        request: &'static str,
+        source: io::Error,
+    },
 }
 
 #[cfg(test)]
@@ -210,6 +219,32 @@ mod tests {
         assert!(!options.wait_for_device);
         assert_eq!(options.events, 64);
         assert_eq!(options.writes, 32);
+    }
+
+    #[test]
+    fn an_error_names_only_its_own_layer_and_keeps_its_cause() {
+        let cause = |error: &CanError| {
+            std::error::Error::source(error)
+                .unwrap()
+                .downcast_ref::<io::Error>()
+                .unwrap()
+                .kind()
+        };
+        let open = CanError::Open {
+            device: "can0".into(),
+            source: io::ErrorKind::NotFound.into(),
+        };
+        assert_eq!(open.to_string(), "cannot open can0");
+        assert_eq!(cause(&open), io::ErrorKind::NotFound);
+        let read = CanError::Read(io::ErrorKind::BrokenPipe.into());
+        assert_eq!(read.to_string(), "read failed");
+        assert_eq!(cause(&read), io::ErrorKind::BrokenPipe);
+        let request = CanError::Request {
+            request: "BT_CONST",
+            source: io::ErrorKind::TimedOut.into(),
+        };
+        assert_eq!(request.to_string(), "BT_CONST failed");
+        assert_eq!(cause(&request), io::ErrorKind::TimedOut);
     }
 
     #[test]

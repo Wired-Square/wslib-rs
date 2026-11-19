@@ -745,7 +745,7 @@ async fn a_probe_connect_gets_no_longer_than_the_probe() {
 
 #[cfg(feature = "serial")]
 mod serial {
-    use wslib_serial::{LineSettings, Parity};
+    use wslib_serial::{LineSettings, Parity, SerialError};
 
     use super::*;
 
@@ -780,13 +780,16 @@ mod serial {
     }
 
     #[tokio::test]
-    async fn invalid_line_settings_are_a_config_error() {
+    async fn invalid_line_settings_are_the_serial_ports_refusal() {
         let bad = LineSettings {
             data_bits: 9,
             ..LINE
         };
         let error = within(open_err(link("/nonexistent/gvret", bad))).await;
-        assert!(matches!(error, CanError::Config(_)), "{error:?}");
+        assert!(
+            matches!(&error, CanError::Serial(SerialError::InvalidSettings(line)) if *line == bad),
+            "{error:?}"
+        );
     }
 
     /// serialport can't open a macOS pty: it sets the rate with `IOSSIOSPEED`,

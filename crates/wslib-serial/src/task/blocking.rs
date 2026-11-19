@@ -2,10 +2,10 @@
 //! write waits for at most one read. serialport opens every port read-write,
 //! and a Windows one always exclusively; without `write` no write code exists.
 
-use std::{io, mem, time::Duration};
+use std::{io, mem, panic, time::Duration};
 
 use serialport::{DataBits, FlowControl, StopBits};
-use tokio::task::{JoinHandle, spawn_blocking};
+use tokio::task::{JoinError, JoinHandle, spawn_blocking};
 
 use super::{LineSettings, Parity, SerialError, SerialOptions, check};
 
@@ -132,7 +132,7 @@ impl SerialPort {
     #[cfg(feature = "write")]
     async fn idle(&mut self) -> io::Result<Boxed> {
         if let State::Reading(_) = self.state {
-            self.unread = Some(self.next_read().await.map_err(io::Error::other)?);
+            self.unread = Some(self.read_in_flight().await?);
         }
         let _ = self.written().await;
         match mem::replace(&mut self.state, State::Gone) {
@@ -174,7 +174,7 @@ impl SerialPort {
         };
         let joined = handle.await;
         self.state = State::Gone;
-        let (port, written) = joined.map_err(io::Error::other)?;
+        let (port, written) = finished(joined)?;
         self.state = State::Idle(port);
         written
     }
@@ -188,15 +188,29 @@ impl SerialPort {
             }
             other => other,
         };
-        let State::Reading(handle) = &mut self.state else {
+        let State::Reading(_) = self.state else {
             return Err(SerialError::Closed);
+        };
+        self.read_in_flight().await.map_err(SerialError::Read)
+    }
+
+    async fn read_in_flight(&mut self) -> io::Result<io::Result<Vec<u8>>> {
+        let State::Reading(handle) = &mut self.state else {
+            return Err(io::ErrorKind::NotConnected.into());
         };
         let joined = handle.await;
         self.state = State::Gone;
-        let (port, read) = joined.map_err(|e| SerialError::Read(io::Error::other(e)))?;
+        let (port, read) = finished(joined)?;
         self.state = State::Idle(port);
         Ok(read)
     }
+}
+
+fn finished<T>(joined: Result<T, JoinError>) -> io::Result<T> {
+    joined.or_else(|e| match e.try_into_panic() {
+        Ok(payload) => panic::resume_unwind(payload),
+        Err(_) => Err(io::ErrorKind::Interrupted.into()),
+    })
 }
 
 fn read_once(mut port: Boxed, len: usize) -> (Boxed, io::Result<Vec<u8>>) {
@@ -206,4 +220,25 @@ fn read_once(mut port: Boxed, len: usize) -> (Boxed, io::Result<Vec<u8>>) {
         buf
     });
     (port, read)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::panic::AssertUnwindSafe;
+
+    use super::*;
+
+    const PANIC: &str = "the blocking call panicked";
+
+    #[tokio::test]
+    async fn a_blocking_call_that_panicked_resumes_its_panic() {
+        let joined = spawn_blocking(|| panic::panic_any(PANIC)).await;
+        let payload = panic::catch_unwind(AssertUnwindSafe(|| finished::<()>(joined))).unwrap_err();
+        assert_eq!(payload.downcast_ref::<&str>(), Some(&PANIC));
+    }
+
+    #[tokio::test]
+    async fn a_blocking_call_that_returned_is_its_result() {
+        assert_eq!(finished(spawn_blocking(|| 1).await).unwrap(), 1);
+    }
 }

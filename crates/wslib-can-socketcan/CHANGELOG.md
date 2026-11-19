@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0
+
+- `transport`: `bitrates` fails with `BitratesError`, in place of an
+  `io::Error`: `Interface` for a name no interface has, with its
+  `io::Error`, and `Netlink` with socketcan's error as its source, not its
+  text.
+
 ## 0.1.1
 
 - `docs/socketcan.md` gives the SocketCAN frame layouts. No code change.

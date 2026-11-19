@@ -29,10 +29,10 @@ pub enum SendFailed {
     TooManyWaits,
     #[error("flow control with reserved status {0:#x}")]
     ReservedStatus(u8),
-    #[error("send refused: {0}")]
-    Refused(SendRefused),
-    #[error("send failed: {0}")]
-    Io(io::Error),
+    #[error("send refused")]
+    Refused(#[source] SendRefused),
+    #[error("send failed")]
+    Io(#[source] io::Error),
     /// The adapter's queue had no room within N_As. The frame was not sent.
     #[error("the adapter's queue had no room within N_As")]
     AdapterTimeout,
@@ -152,5 +152,30 @@ impl Shared {
             return Ok(());
         }
         self.unless_interrupted(generation, sleep(gap)).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error;
+
+    use super::*;
+
+    #[test]
+    fn a_refused_or_failed_send_names_only_its_own_layer_and_keeps_its_cause() {
+        let refused = SendFailed::Refused(SendRefused::QueueFull);
+        assert_eq!(refused.to_string(), "send refused");
+        assert_eq!(
+            refused.source().unwrap().downcast_ref::<SendRefused>(),
+            Some(&SendRefused::QueueFull)
+        );
+        let failed = SendFailed::Io(io::ErrorKind::BrokenPipe.into());
+        assert_eq!(failed.to_string(), "send failed");
+        let cause = failed
+            .source()
+            .unwrap()
+            .downcast_ref::<io::Error>()
+            .unwrap();
+        assert_eq!(cause.kind(), io::ErrorKind::BrokenPipe);
     }
 }

@@ -1,6 +1,6 @@
 use std::{error::Error, io};
 
-use super::{OpenError, refusal};
+use super::{OpenCause, OpenError, refusal};
 use crate::bus::{BUS_FORMS, CanBus, name_the_bus};
 
 fn can0() -> CanBus {
@@ -70,17 +70,41 @@ fn socketcan_off_linux_says_it_needs_linux_and_names_the_buses_this_build_opens(
 }
 
 #[test]
-fn a_failed_open_names_the_bus_and_keeps_its_cause() {
+fn a_failed_open_names_only_the_bus_and_keeps_its_cause_typed() {
     let error = OpenError::Open {
         bus: can0(),
-        source: io::Error::new(io::ErrorKind::NotFound, "no such device"),
+        source: OpenCause::Io(io::Error::new(io::ErrorKind::NotFound, "no such device")),
     };
     assert_eq!(error.kind(), io::ErrorKind::NotFound);
-    assert_eq!(error.to_string(), "can0: no such device");
-    assert_eq!(
-        error.source().map(ToString::to_string).as_deref(),
-        Some("no such device")
+    assert_eq!(error.to_string(), "can0 did not open");
+    let cause = error.source().unwrap().downcast_ref::<io::Error>().unwrap();
+    assert_eq!(cause.to_string(), "no such device");
+}
+
+#[cfg(feature = "task")]
+#[test]
+fn an_adapter_that_did_not_open_is_its_can_error_and_its_kind() {
+    use wslib_can::CanError;
+
+    let error = OpenError::Open {
+        bus: "slcan=ttyACM0".parse().unwrap(),
+        source: OpenCause::Adapter(CanError::Open {
+            device: "/dev/ttyACM0".into(),
+            source: io::ErrorKind::NotFound.into(),
+        }),
+    };
+    assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    assert_eq!(error.to_string(), "slcan=ttyACM0 did not open");
+    let cause = error.source().unwrap().downcast_ref::<CanError>().unwrap();
+    assert!(
+        matches!(cause, CanError::Open { device, .. } if device == "/dev/ttyACM0"),
+        "{cause:?}"
     );
+    let closed = OpenError::Open {
+        bus: can0(),
+        source: OpenCause::Adapter(CanError::Closed),
+    };
+    assert_eq!(closed.kind(), io::ErrorKind::Other);
 }
 
 #[test]

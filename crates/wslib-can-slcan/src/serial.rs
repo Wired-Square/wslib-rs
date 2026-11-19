@@ -1,9 +1,9 @@
 //! The serial port SLCAN reads a device through: read-write and exclusive.
 
-use std::io;
+use std::{io, panic};
 
 use tokio::{
-    task::spawn_blocking,
+    task::{JoinError, spawn_blocking},
     time::{Instant, timeout_at},
 };
 use wslib_can::CanError;
@@ -26,7 +26,10 @@ pub(crate) async fn open_before(
 ) -> Result<SerialPort, CanError> {
     let owned = path.to_owned();
     match timeout_at(deadline, spawn_blocking(move || open(&owned, line))).await {
-        Ok(opened) => opened.map_err(|e| CanError::Read(io::Error::other(e)))?,
+        Ok(opened) => finished(opened).map_err(|source| CanError::Open {
+            device: path.to_owned(),
+            source,
+        })?,
         Err(_) => Err(CanError::Open {
             device: path.to_owned(),
             source: io::ErrorKind::TimedOut.into(),
@@ -53,6 +56,13 @@ fn error(error: SerialError) -> CanError {
         },
         SerialError::Closed => CanError::Closed,
         SerialError::Read(e) => CanError::Read(e),
-        e => CanError::Config(e.to_string()),
+        e => CanError::Serial(e),
     }
+}
+
+pub(crate) fn finished<T>(joined: Result<T, JoinError>) -> io::Result<T> {
+    joined.or_else(|e| match e.try_into_panic() {
+        Ok(payload) => panic::resume_unwind(payload),
+        Err(_) => Err(io::ErrorKind::Interrupted.into()),
+    })
 }

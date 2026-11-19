@@ -101,7 +101,7 @@ pub enum SerialEvent {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum SerialError {
-    #[error("cannot open {path}: {source}")]
+    #[error("cannot open {path}")]
     Open { path: String, source: io::Error },
     #[error("{0} baud is not supported")]
     UnsupportedBaud(u32),
@@ -110,8 +110,8 @@ pub enum SerialError {
     /// The read returned zero: the line went away.
     #[error("line closed")]
     Closed,
-    #[error("read failed: {0}")]
-    Read(io::Error),
+    #[error("read failed")]
+    Read(#[source] io::Error),
 }
 
 /// Owns the task: dropping it stops the task and closes the port.
@@ -408,6 +408,26 @@ mod tests {
         assert!(open(io::Error::from_raw_os_error(libc::ENODEV)).absent());
         assert!(!open(io::ErrorKind::PermissionDenied.into()).absent());
         assert!(!SerialError::Closed.absent());
+    }
+
+    #[test]
+    fn an_open_or_read_failure_names_only_its_own_layer_and_keeps_its_cause() {
+        let cause = |error: &SerialError| {
+            std::error::Error::source(error)
+                .unwrap()
+                .downcast_ref::<io::Error>()
+                .unwrap()
+                .kind()
+        };
+        let open = SerialError::Open {
+            path: "/dev/ttyUSB0".into(),
+            source: io::ErrorKind::PermissionDenied.into(),
+        };
+        assert_eq!(open.to_string(), "cannot open /dev/ttyUSB0");
+        assert_eq!(cause(&open), io::ErrorKind::PermissionDenied);
+        let read = SerialError::Read(io::ErrorKind::BrokenPipe.into());
+        assert_eq!(read.to_string(), "read failed");
+        assert_eq!(cause(&read), io::ErrorKind::BrokenPipe);
     }
 
     #[test]

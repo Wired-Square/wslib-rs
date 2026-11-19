@@ -1,6 +1,6 @@
 [package]
 name = "wslib-isotp"
-version = "0.1.0"
+version = "0.1.1"
 description = "ISO-TP (ISO 15765-2) over classic CAN: a sans-IO codec for segmenting, reassembly and flow control, and an async link over a wslib-can adapter."
 readme = "README.md"
 edition.workspace = true

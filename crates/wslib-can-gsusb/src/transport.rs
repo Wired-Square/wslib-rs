@@ -860,7 +860,10 @@ mod tests {
         assert!(matches!(error, CanError::Closed));
         usb.broken = Some((Breq::BtConst, io::ErrorKind::ConnectionReset));
         let error = start(&usb, &options(500_000), false).await.err().unwrap();
-        assert!(matches!(&error, CanError::Read(e) if e.to_string().starts_with("BT_CONST")));
+        assert!(
+            matches!(&error, CanError::Request { request: "BT_CONST", source } if source.kind() == io::ErrorKind::ConnectionReset),
+            "{error:?}"
+        );
     }
 
     fn host(echo_id: u32, arb_id: u32, fd: bool, len: usize) -> HostFrame {

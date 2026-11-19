@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0
+
+- `From<LineSettingsError> for String` is gone, so `?` keeps a
+  `LineSettingsError` typed.
+- `SerialError::Open` and `Read` name only their own layer. The `io::Error`
+  comes only through `source()`, which `Read` now returns too.
+- A port read on the blocking pool (on Windows, and with `write`) resumes a
+  blocking call's panic on the caller, as an inline call would, in place of
+  an `io::Error` holding its text. A call the runtime cancels before it runs
+  fails as `Interrupted`.
+
 ## 0.1.3
 
 - `SerialWriter::set_dtr` and `set_rts`, and the same on `SerialPort`: a

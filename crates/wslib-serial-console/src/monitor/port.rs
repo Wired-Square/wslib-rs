@@ -1,5 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
+    error::Error,
+    iter,
     sync::{Arc, Mutex, OnceLock},
 };
 
@@ -21,6 +23,14 @@ use super::{
 use crate::{COLOURS, MonitorState, Participant, Span};
 
 const RESET_PULSE: Duration = Duration::from_millis(10);
+const CAUSE_SEPARATOR: &str = ": ";
+
+fn chain(error: &(dyn Error + 'static)) -> String {
+    iter::successors(Some(error), |&e| e.source())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(CAUSE_SEPARATOR)
+}
 
 pub(super) enum Command {
     Write { bytes: Vec<u8>, by: Option<String> },
@@ -210,7 +220,7 @@ impl Port {
                 Ok(path) => {
                     self.set_status(MonitorState::Opening, Some(path.clone()));
                     match opener.open(&path, self.baud) {
-                        Err(e) => (MonitorState::Backoff, format!("open {path}: {e}")),
+                        Err(e) => (MonitorState::Backoff, format!("open {path}: {}", chain(&e))),
                         Ok(link) => {
                             backoff.reset();
                             *lock(&self.open) = Some(path.clone());
@@ -287,7 +297,9 @@ impl Port {
                         let spans = echoes.echoed(&bytes);
                         self.output(bytes, spans);
                     }
-                    Some(SerialEvent::Disconnected { error, .. }) => break Ended::Lost(format!("read {path}: {error}")),
+                    Some(SerialEvent::Disconnected { error, .. }) => {
+                        break Ended::Lost(format!("read {path}: {}", chain(&error)));
+                    }
                     None => break Ended::Lost(format!("read {path}: the line closed")),
                 },
             }

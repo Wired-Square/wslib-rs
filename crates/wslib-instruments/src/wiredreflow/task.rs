@@ -9,7 +9,7 @@ use tokio::sync::oneshot;
 use wslib_can::{CanEvent, CanOptions, CanTask, TimeMapping};
 
 use super::{
-    bus::{Bus, BusError, CanBus, failed, feature, refused},
+    bus::{Bus, BusError, CanBus, chain, failed, feature, refused},
     frame::RawFrame,
 };
 use crate::worker::{RELEASE_WITHIN, Worker};
@@ -59,12 +59,12 @@ fn translated(event: CanEvent) -> Option<Read> {
             error,
             retry_in: Some(_),
             ..
-        } => Some(Err(BusError::Lost(error.to_string()))),
+        } => Some(Err(BusError::Lost(chain(&error)))),
         CanEvent::Disconnected {
             error,
             retry_in: None,
             ..
-        } => Some(Err(BusError::Ended(error.to_string()))),
+        } => Some(Err(BusError::Ended(chain(&error)))),
         _ => None,
     }
 }

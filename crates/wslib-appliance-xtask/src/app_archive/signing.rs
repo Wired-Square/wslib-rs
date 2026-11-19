@@ -401,6 +401,29 @@ mod tests {
     }
 
     #[test]
+    fn a_root_the_verifier_refuses_says_what_it_said() {
+        const ECDSA_SHA256: [u8; 10] = [0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02];
+        const SHA384: u8 = 0x03;
+        let dir = tempfile::tempdir().unwrap();
+        keys(dir.path()).unwrap();
+        let root = fs::read_to_string(dir.path().join("root.pem")).unwrap();
+        let mut der = pem::certificates(&root).unwrap().remove(0).to_vec();
+        let outer = der
+            .windows(ECDSA_SHA256.len())
+            .rposition(|window| window == ECDSA_SHA256)
+            .expect("the outer signature algorithm");
+        der[outer + ECDSA_SHA256.len() - 1] = SHA384;
+        let mismatched = dir.path().join("mismatched.pem");
+        fs::write(&mismatched, pem::encode(pem::CERTIFICATE, &der)).unwrap();
+        let chain = Chain::read(&dir.path().join("leaf.pem")).unwrap();
+        let refused = chain.refusal(&Root::File(mismatched)).unwrap_err();
+        assert!(
+            refused.contains(": the certificate does not verify: "),
+            "{refused}"
+        );
+    }
+
+    #[test]
     fn a_leaf_of_another_root_says_what_the_verifier_said() {
         let (ours, theirs) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         keys(ours.path()).unwrap();

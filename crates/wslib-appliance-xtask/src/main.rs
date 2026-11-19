@@ -315,6 +315,32 @@ mod tests {
     use super::*;
     use model::{EXAMPLE, checked, docker_only, with_docker, with_every_package_knob};
 
+    #[derive(Debug)]
+    struct Layer(&'static str, Option<Box<Layer>>);
+
+    impl std::fmt::Display for Layer {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.0)
+        }
+    }
+
+    impl Error for Layer {
+        fn source(&self) -> Option<&(dyn Error + 'static)> {
+            self.1
+                .as_deref()
+                .map(|cause| cause as &(dyn Error + 'static))
+        }
+    }
+
+    #[test]
+    fn an_error_is_written_with_each_of_its_causes() {
+        let error = Layer(
+            "signing failed",
+            Some(Box::new(Layer("the disk is on fire", None))),
+        );
+        assert_eq!(chain(&error), "signing failed: the disk is on fire");
+    }
+
     /// Every artefact of every shape: the example, everything on, and an image
     /// with no package.
     fn every_artefact() -> Vec<(&'static str, Artefact)> {

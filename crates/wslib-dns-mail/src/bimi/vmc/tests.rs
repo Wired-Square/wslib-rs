@@ -390,6 +390,10 @@ fn an_untrusted_root_fails_the_chain() {
         panic!("{:?}", verification.problems);
     };
     assert_eq!(*refusal, ChainRefusal::Untrusted);
+    assert_eq!(
+        chain.unwrap().to_string(),
+        "the chain doesn't lead to a trusted root"
+    );
     let error = cause.as_deref().expect("the verifier's refusal");
     assert!(matches!(error, ChainError::Untrusted(_)), "{error:?}");
     assert!(
@@ -452,6 +456,69 @@ fn a_problem_is_reported_once() {
         5,
         "{:?}",
         verification.problems
+    );
+}
+
+#[test]
+fn problems_that_say_different_things_are_both_reported() {
+    let mut verification = VmcVerification::default();
+    for message in ["no certificates", "bad base64"] {
+        verification.problem(VmcProblem::Parse {
+            message: message.into(),
+        });
+        verification.problem(VmcProblem::LogotypeInvalid {
+            message: message.into(),
+        });
+    }
+    assert_eq!(
+        verification.problems.len(),
+        4,
+        "{:?}",
+        verification.problems
+    );
+}
+
+#[test]
+fn a_chain_the_verifier_cannot_read_is_invalid() {
+    const ECDSA_SHA256: [u8; 10] = [0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02];
+    const SHA384: u8 = 0x03;
+    let (chain, root) = issue(Mark::default());
+    let mut certificates: Vec<Vec<u8>> = CertificateDer::pem_slice_iter(chain.as_bytes())
+        .map(|der| der.unwrap().to_vec())
+        .collect();
+    let leaf = &mut certificates[0];
+    let outer = leaf
+        .windows(ECDSA_SHA256.len())
+        .rposition(|window| window == ECDSA_SHA256)
+        .expect("the outer signature algorithm");
+    leaf[outer + ECDSA_SHA256.len() - 1] = SHA384;
+    let mismatched: String = certificates
+        .iter()
+        .map(|der| wslib_crypto_x509::pem::encode(wslib_crypto_x509::pem::CERTIFICATE, der))
+        .collect();
+    let verification = verify_vmc(
+        mismatched.as_bytes(),
+        "example.com",
+        "default",
+        None,
+        &options(&root),
+    );
+    let chain = verification
+        .problems
+        .iter()
+        .find(|p| matches!(p, VmcProblem::Chain { .. }));
+    let Some(problem @ VmcProblem::Chain { refusal, cause }) = chain else {
+        panic!("{:?}", verification.problems);
+    };
+    assert_eq!(*refusal, ChainRefusal::Invalid);
+    assert!(
+        matches!(cause.as_deref(), Some(ChainError::Invalid(_))),
+        "{cause:?}"
+    );
+    assert_eq!(problem.to_string(), "the verifier refuses the chain");
+    assert_eq!(
+        ChainRefusal::from(&ChainError::Invalid(Box::new(std::io::Error::other("bad")))),
+        ChainRefusal::Invalid
     );
 }
 

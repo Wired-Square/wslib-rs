@@ -6,6 +6,9 @@
   (`Untrusted` or `Invalid`) in place of the verifier's text in `message`,
   and `cause` the verifier's `ChainError`, typed, on the live value only. A
   serialised problem carries the refusal and reads back with no cause.
+  Its `Display` is "the chain doesn't lead to a trusted root" for
+  `Untrusted`, with no verifier's text after it, and "the verifier refuses
+  the chain" for `Invalid`.
 - `VmcProblem`, `VmcVerification`, `Finding`, `Detail`, `DomainReport`,
   `DkimCheck`, `DmarcCheck`, `MxCheck` and `SpfCheck` no longer derive
   `PartialEq` and `Eq`.

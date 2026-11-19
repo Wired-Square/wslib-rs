@@ -3,7 +3,6 @@
 //! (draft-fetch-validation-vmc-wchuang; the BIMI Group's Mark Certificate
 //! Requirements).
 
-use std::mem;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -122,7 +121,8 @@ pub enum VmcProblem {
     Parse {
         message: String,
     },
-    /// The chain doesn't lead to a trusted root. `cause` is the verifier's
+    /// The verifier refused the chain: it doesn't lead to a trusted root, or
+    /// is otherwise invalid, as `refusal` says. `cause` is the verifier's
     /// refusal, on the live value only: a serialised problem reads back
     /// without it.
     Chain {
@@ -326,13 +326,23 @@ impl VmcVerification {
 }
 
 fn same_problem(a: &VmcProblem, b: &VmcProblem) -> bool {
-    use VmcProblem::{Chain, LogotypeInvalid, Parse, UnknownMarkType};
-    match (a, b) {
-        (Parse { message: a }, Parse { message: b })
-        | (LogotypeInvalid { message: a }, LogotypeInvalid { message: b }) => a == b,
-        (Chain { refusal: a, .. }, Chain { refusal: b, .. }) => a == b,
-        (UnknownMarkType { value: a }, UnknownMarkType { value: b }) => a == b,
-        _ => mem::discriminant(a) == mem::discriminant(b),
+    use VmcProblem::*;
+    match a {
+        Parse { message } => matches!(b, Parse { message: other } if other == message),
+        Chain { refusal, .. } => matches!(b, Chain { refusal: other, .. } if other == refusal),
+        Expired => matches!(b, Expired),
+        NotYetValid => matches!(b, NotYetValid),
+        WrongEku => matches!(b, WrongEku),
+        SanMismatch => matches!(b, SanMismatch),
+        UnknownMarkType { value } => {
+            matches!(b, UnknownMarkType { value: other } if other == value)
+        }
+        NoLogotype => matches!(b, NoLogotype),
+        LogotypeNotCompressed => matches!(b, LogotypeNotCompressed),
+        LogotypeInvalid { message } => {
+            matches!(b, LogotypeInvalid { message: other } if other == message)
+        }
+        MissingSct => matches!(b, MissingSct),
     }
 }
 

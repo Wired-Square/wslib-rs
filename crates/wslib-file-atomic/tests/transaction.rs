@@ -785,7 +785,7 @@ fn a_recover_error_says_only_its_own_part_and_carries_its_cause() {
         io::ErrorKind::PermissionDenied,
         "the disk is gone",
     ));
-    assert_eq!(io.to_string(), "recovery failed");
+    assert_eq!(io.to_string(), "the transaction could not be finished");
     let cause = io.source().and_then(|e| e.downcast_ref::<io::Error>());
     assert_eq!(
         cause.map(io::Error::kind),

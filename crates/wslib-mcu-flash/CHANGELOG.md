@@ -16,6 +16,8 @@
 - `FlashError::IdentityMismatch` gains `unread`, its `source()`: why the
   chip's MAC could not be read. ESP flash-size detection that fails is
   `Failed` with espflash's error.
+- `mcumgr`: the progress line for a device whose SMP buffers could not be
+  learned writes each cause of wslib-mcumgr's error, not its message alone.
 
 ## 0.3.0
 

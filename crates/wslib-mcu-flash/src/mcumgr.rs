@@ -52,7 +52,7 @@ pub async fn flash(
         "Asking the device for its SMP buffers",
     );
     if let Err(e) = session.negotiate_params().await {
-        progress.on_progress(&format!("Keeping the default chunk size: {e}"));
+        progress.on_progress(&format!("Keeping the default chunk size: {}", chain(&e)));
     }
     check_cancel(progress)?;
 
@@ -110,6 +110,13 @@ async fn next_unless_cancelled<S: Stream + Unpin>(
     }
 }
 
+fn chain(error: &(dyn std::error::Error + 'static)) -> String {
+    std::iter::successors(Some(error), |e| e.source())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(": ")
+}
+
 fn smp(step: &'static str) -> impl Fn(wslib_mcumgr::Error) -> FlashError {
     move |e| failed(format!("SMP {step} failed"), e)
 }
@@ -131,6 +138,18 @@ mod tests {
     const CMD_PARAMS: u8 = 6;
     const CHUNK: usize = 64;
     const HASH: [u8; 32] = [0xAB; 32];
+
+    #[test]
+    fn a_progress_line_writes_each_cause() {
+        let refused = smp("params")(Error::Io(std::io::Error::other("the link dropped")));
+        assert_eq!(
+            chain(&refused),
+            format!(
+                "SMP params failed: {}: the link dropped",
+                std::error::Error::source(&refused).unwrap()
+            )
+        );
+    }
 
     #[derive(Debug, PartialEq)]
     enum Seen {

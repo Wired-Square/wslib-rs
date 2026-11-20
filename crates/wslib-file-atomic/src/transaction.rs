@@ -60,10 +60,11 @@ pub enum CommitError {
     /// Before it: every target is untouched, and anything left is a pending
     /// record [`recover`] rolls back.
     RolledBack(io::Error),
-    /// After it: the committed record is left, and [`recover`] rolls it forward,
-    /// unless the failure was syncing the record's directory and a power cut
-    /// then undoes the commit, leaving every target as it was. Rolling forward
-    /// failed as [`recover`] would have.
+    /// After it: the committed record is left, and [`recover`] rolls it
+    /// forward. The error is rolling forward's, failing as [`recover`] would
+    /// have, or, before any target changed, syncing the record's directory,
+    /// after which a power cut can undo the commit and leave every target as
+    /// it was.
     Committed(RecoverError),
 }
 
@@ -99,7 +100,7 @@ impl fmt::Display for RecoverError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Refused(_) => "recovery would not act on a file",
-            Self::Io(_) => "recovery failed",
+            Self::Io(_) => "the transaction could not be finished",
         })
     }
 }

@@ -2,8 +2,15 @@
 
 ## 0.2.0
 
-- Pins `wslib-appliance-core` at 0.2.0. On wslib-appliance-store 0.2 and
-  wslib-file-atomic 0.2.
+- Pins `wslib-appliance-core` at 0.2.0. On wslib-appliance-store 0.2,
+  wslib-file-atomic 0.2 and wslib-service 0.2.
+- `LocalError::Refused`, `Store` and `Serve` say only what failed, and give
+  the `Refused`, `StoreError` or `ServeError` through `source()`, rather
+  than being that error.
+- `LocalError::Unreadable` is a control endpoint's directory whose metadata
+  could not be read, and `LocalError::GroupLookup` an endpoint's group that
+  could not be looked up, each with the `io::Error` as `source`; both were a
+  `Refused` carrying that error's text.
 
 ## 0.1.6
 

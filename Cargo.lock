@@ -8143,7 +8143,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-config"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "clap",
  "serde",
@@ -8978,7 +8978,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-service"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "libc",
  "thiserror 2.0.21",

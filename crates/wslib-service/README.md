@@ -59,7 +59,9 @@ fn main() -> ExitCode {
   service serves. `$NOTIFY_SOCKET` and `$WATCHDOG_USEC` are left set.
 - **An error, a panic, ending unasked or overrunning is logged** through
   `tracing`, or to stderr before a subscriber is installed; an error with
-  `{:#}`, so an anyhow chain is whole. On Windows an error or a panic also
+  each cause its `source()` gives. `main`'s error is anything that converts
+  into `Box<dyn Error + Send + Sync>`, kept typed as the source of
+  `Failure::Ended`. On Windows an error or a panic also
   goes to the Application event log under the service's name, registered as
   its event source on first start. While `main` runs the panic hook logs where
   a panic happened; the previous hook is restored once it returns. It is

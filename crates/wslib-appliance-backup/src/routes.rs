@@ -269,10 +269,10 @@ impl<S: Sections, H: HostHalf> Engine<S, H> {
         tokio::task::spawn_blocking(move || {
             let sealed = snapshot.seal(&passphrase, &provenance)?;
             wslib_file_atomic::write_private(&file, sealed.as_bytes())
-                .map_err(|e| BackupError::Internal(format!("writing {}: {e}", file.display())))
+                .map_err(|source| BackupError::Unwritten { path: file, source })
         })
         .await
-        .map_err(BackupError::internal)?
+        .map_err(BackupError::unjoined)?
     }
 
     async fn snapshot(
@@ -752,23 +752,25 @@ pub(crate) fn bundle_sized() -> DefaultBodyLimit {
 pub async fn reload_outbound_trust(app: &ApplianceState, did: &str) -> Option<String> {
     app.outbound.reload(&app.store).await.err().map(|e| {
         format!(
-            "What this box trusts for outbound connections was {did} but not reloaded ({e}); \
-             it applies at the next restart."
+            "What this box trusts for outbound connections was {did} but not reloaded ({}); \
+             it applies at the next restart.",
+            backend::chain(&e)
         )
     })
 }
 
 fn pair_not_installed(e: &TlsError) -> String {
     match e {
-        TlsError::Unfinished { because, next } => format!(
+        TlsError::Unfinished { next, source } => format!(
             "The serving certificate this backup carried was written but not finished \
-             ({because}); this box is still serving its own. Installing it again serves it at \
-             once, and {next}."
+             ({}); this box is still serving its own. Installing it again serves it at \
+             once, and {next}.",
+            backend::chain(&**source)
         ),
         e => format!(
             "The serving certificate this backup carried was not installed — {}. This box \
              is still serving its own.",
-            e.to_string().trim_end_matches('.')
+            backend::chain(e).trim_end_matches('.')
         ),
     }
 }

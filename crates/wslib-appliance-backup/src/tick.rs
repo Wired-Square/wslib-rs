@@ -8,6 +8,7 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 
 use chrono::{DateTime, Utc};
+use wslib_appliance_core::backend;
 use wslib_appliance_core::{Actor, ApplianceState, CancellationToken, audit};
 use wslib_appliance_types::backup::{BackupSchedule, BackupState};
 
@@ -105,13 +106,13 @@ impl<S: Sections, H: HostHalf> Engine<S, H> {
             .store
             .secret(PASSPHRASE_SECRET)
             .await
-            .map_err(|e| e.to_string())?
+            .map_err(|e| backend::chain(&e))?
             .ok_or("no passphrase is set, so there is nothing to seal a backup with")?;
         let erasures_before = self.erasures();
         let sealed = self
             .seal(app, &passphrase, BTreeSet::new())
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| backend::chain(&e))?;
 
         let file = schedule::file_name(&self.name, now);
         let (this, keep, written) = (self.clone(), wanted.keep, file.clone());

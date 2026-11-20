@@ -115,6 +115,36 @@ fn chain(error: &(dyn Error + 'static)) -> String {
         .join(CAUSE_SEPARATOR)
 }
 
+#[derive(Debug)]
+struct Within {
+    what: String,
+    source: Box<dyn Error>,
+}
+
+impl std::fmt::Display for Within {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.what)
+    }
+}
+
+impl Error for Within {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&*self.source)
+    }
+}
+
+fn within<E: Into<Box<dyn Error>>>(
+    what: impl std::fmt::Display,
+) -> impl FnOnce(E) -> Box<dyn Error> {
+    let what = what.to_string();
+    move |e| {
+        Box::new(Within {
+            what,
+            source: e.into(),
+        })
+    }
+}
+
 /// Every file the chassis owns: only these are ever reported as drift, and a
 /// product must not edit any of them.
 fn chassis_owned(checked: &Checked) -> Result<Vec<Artefact>, RenderError> {
@@ -339,6 +369,19 @@ mod tests {
             Some(Box::new(Layer("the disk is on fire", None))),
         );
         assert_eq!(chain(&error), "signing failed: the disk is on fire");
+    }
+
+    #[test]
+    fn what_was_being_done_is_a_layer_over_the_error_behind_it() {
+        let failed = within("/srv/key.pem")(std::io::Error::from(std::io::ErrorKind::NotFound));
+        assert_eq!(failed.to_string(), "/srv/key.pem");
+        assert_eq!(
+            failed
+                .source()
+                .and_then(|e| e.downcast_ref::<std::io::Error>())
+                .map(std::io::Error::kind),
+            Some(std::io::ErrorKind::NotFound)
+        );
     }
 
     /// Every artefact of every shape: the example, everything on, and an image

@@ -13,15 +13,13 @@ use wslib_appliance_types::tls::{CertificateReport, CertificateView, MAX_PEM_LEN
 use wslib_crypto_x509::pem::{self, CERTIFICATE, PRIVATE_KEY};
 use wslib_crypto_x509::{Error, Warning};
 
-use super::{TlsError, chain};
+use super::TlsError;
 
 /// Read a certificate's DER.
 pub(super) fn read(der: &[u8]) -> Result<wslib_crypto_x509::CertificateView, TlsError> {
-    wslib_crypto_x509::inspect(der).map_err(|e| {
-        TlsError::Pem(format!(
-            "this is not a certificate this build can read: {}",
-            decoding(e)
-        ))
+    wslib_crypto_x509::inspect(der).map_err(|e| TlsError::Unusable {
+        what: Wanted::Certificate.noun(),
+        source: Box::new(e),
     })
 }
 
@@ -225,9 +223,13 @@ pub(crate) fn read_authority(
 pub(super) fn check_pair(leaf: &Leaf, key_pem: &str) -> Result<(), TlsError> {
     within_length(key_pem)?;
     let key = pem::private_key(key_pem).map_err(|e| refused(e, Wanted::PrivateKey))?;
-    let provider = super::provider().map_err(|e| TlsError::Internal(e.to_string()))?;
-    let matches = wslib_crypto::key_matches(&provider, &key, &leaf.read.spki)
-        .map_err(|e| TlsError::Pem(format!("this private key is not usable: {}", chain(&e))))?;
+    let provider = super::provider().map_err(|e| TlsError::Failed(Box::new(e)))?;
+    let matches = wslib_crypto::key_matches(&provider, &key, &leaf.read.spki).map_err(|e| {
+        TlsError::Unusable {
+            what: Wanted::PrivateKey.noun(),
+            source: Box::new(e),
+        }
+    })?;
     if matches {
         Ok(())
     } else {
@@ -318,21 +320,13 @@ fn refused(e: Error, wanted: Wanted) -> TlsError {
         Error::MoreThanOneKey => "that is more than one private key. Paste the one that belongs \
                                   to the certificate, and nothing else."
             .to_string(),
-        e => format!(
-            "the {} could not be decoded: {}",
-            wanted.noun(),
-            decoding(e)
-        ),
+        e => {
+            return TlsError::Unusable {
+                what: wanted.noun(),
+                source: Box::new(e),
+            };
+        }
     })
-}
-
-/// What the decoder said, without the reader's own prefix.
-fn decoding(e: Error) -> String {
-    match e {
-        Error::Malformed(why) => why,
-        Error::Decode(cause) => chain(&*cause),
-        e => chain(&e),
-    }
 }
 
 #[cfg(test)]
@@ -391,15 +385,31 @@ mod tests {
         let undecodable = "-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----\n";
         let decoder = pem::certificates(undecodable).unwrap_err();
         let decoder = std::error::Error::source(&decoder).expect("the decoder's error");
-        let refused = parse(undecodable).err().expect("refused").to_string();
-        assert!(refused.contains(&decoder.to_string()), "{refused}");
+        let refused = parse(undecodable).err().expect("refused");
+        assert_eq!(refused.to_string(), "the certificate is not usable");
+        assert!(
+            std::error::Error::source(&refused)
+                .and_then(|e| e.downcast_ref::<Error>())
+                .is_some(),
+            "{refused:?}"
+        );
+        let said = crate::redact::chain(&refused);
+        assert!(said.contains(&decoder.to_string()), "{said}");
 
         let leaf = parse(&certificate(|_| {})).expect("parses");
         let garbage = "-----BEGIN PRIVATE KEY-----\nMAA=\n-----END PRIVATE KEY-----\n";
-        let refused = check_pair(&leaf, garbage).unwrap_err().to_string();
+        let refused = check_pair(&leaf, garbage).unwrap_err();
+        assert_eq!(refused.to_string(), "the private key is not usable");
         assert!(
-            refused.contains("will not load the key: "),
-            "the provider's own words follow: {refused}"
+            std::error::Error::source(&refused)
+                .and_then(|e| e.downcast_ref::<wslib_crypto::Error>())
+                .is_some(),
+            "{refused:?}"
+        );
+        let said = crate::redact::chain(&refused);
+        assert!(
+            said.contains("will not load the key: "),
+            "the provider's own words follow: {said}"
         );
     }
 

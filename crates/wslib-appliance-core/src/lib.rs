@@ -99,7 +99,7 @@ pub mod backend {
     pub use crate::ingress::serve_ingress;
     pub use crate::logs::{close_audit_queue, logs_writing_to};
     pub use crate::reauth::prove_password;
-    pub use crate::redact::foreign;
+    pub use crate::redact::{chain, foreign};
     pub use crate::routes::logs::LogsRung;
     pub use crate::state::Listening;
 
@@ -125,10 +125,12 @@ pub mod backend {
 
     #[cfg(feature = "sessions")]
     pub fn sessions(state: &ApplianceState) -> Result<&wslib_appliance_auth::Sessions, ApiError> {
-        state
-            .sessions
-            .get()
-            .ok_or_else(|| ApiError::internal("issue a session", &"this backend keeps no sessions"))
+        state.sessions.get().ok_or_else(|| {
+            ApiError::internal(
+                "issue a session",
+                &crate::error::Fault("this backend keeps no sessions"),
+            )
+        })
     }
 
     pub fn signed_in(who: &Identity) -> Result<&User, ApiError> {
@@ -711,7 +713,7 @@ async fn healthz(State(app): State<ApplianceState>) -> Result<impl IntoResponse,
     app.store
         .setting(HEALTH_PROBE)
         .await
-        .map_err(|e| ApiError::unavailable("reach the database", &crate::tls::chain(&e)))?;
+        .map_err(|e| ApiError::unavailable("reach the database", &e))?;
 
     Ok((
         [(
@@ -787,7 +789,7 @@ mod tests {
             tokio::task::yield_now().await;
             Err(ServeError::Bind {
                 address: "[::]:443".into(),
-                because: "in use".into(),
+                source: std::io::ErrorKind::AddrInUse.into(),
             })
         };
 

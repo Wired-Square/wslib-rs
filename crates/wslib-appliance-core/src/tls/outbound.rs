@@ -44,9 +44,8 @@ impl Outbound {
     pub(crate) async fn load(store: &Store, os: OsStore) -> Result<Self, ServeError> {
         let trust = read(store)
             .await
-            .map_err(|e| ServeError::Trust(e.to_string()))?;
-        let trusting =
-            os(super::provider()?, trust).map_err(|e| ServeError::Trust(e.to_string()))?;
+            .map_err(|e| ServeError::Trust(Box::new(e)))?;
+        let trusting = os(super::provider()?, trust).map_err(|e| ServeError::Trust(Box::new(e)))?;
         Ok(Self {
             trusting: Arc::new(trusting),
             reloading: tokio::sync::Mutex::new(()),
@@ -107,13 +106,16 @@ impl Outbound {
     pub(crate) async fn inspect(&self, target: &str) -> Result<Peer, TlsError> {
         let presented = self.trusting.inspect(target).await.map_err(unreachable)?;
         let (host, port) = (presented.host, presented.port);
-        let certificate = inspect::read(&presented.end_entity)
-            .map(|read| inspect::view(&read))
-            .map_err(|e| {
-                TlsError::Unreachable(format!(
-                    "{host}:{port} presented a certificate this appliance cannot read — {e}"
-                ))
-            })?;
+        let certificate = match inspect::read(&presented.end_entity) {
+            Ok(read) => inspect::view(&read),
+            Err(e) => {
+                return Err(TlsError::Unreadable {
+                    host,
+                    port,
+                    source: Box::new(e),
+                });
+            }
+        };
         Ok(Peer {
             certificate,
             host,
@@ -122,18 +124,13 @@ impl Outbound {
     }
 }
 
-/// The probe's own sentences, but a failed connection's cause redacted.
 fn unreachable(e: ProbeError) -> TlsError {
     match e {
-        ProbeError::Failed { host, port, source } => TlsError::Unreachable(format!(
-            "{host}:{port} presented no certificate: {}",
-            crate::redact::foreign(&super::chain(&source))
-        )),
         e @ (ProbeError::NotHttps { .. }
         | ProbeError::NoHost { .. }
         | ProbeError::BadPort { .. }
-        | ProbeError::NotAServerName { .. }) => TlsError::Target(e.to_string()),
-        e => TlsError::Unreachable(e.to_string()),
+        | ProbeError::NotAServerName { .. }) => TlsError::Target(Box::new(e)),
+        e => TlsError::Unreachable(Box::new(e)),
     }
 }
 
@@ -160,11 +157,13 @@ async fn read(store: &Store) -> Result<Trust, StoreError> {
 }
 
 fn anchor(trust: &mut Trust, ca: &TrustedCa) -> Result<(), String> {
-    let leaf = parse(&ca.pem).map_err(|e| e.to_string())?;
+    let leaf = parse(&ca.pem).map_err(|e| crate::redact::chain(&e))?;
     if Ok(leaf.sha256()) != canonical_sha256(&ca.sha256) {
         return Err("the row's fingerprint is not the certificate's".to_string());
     }
-    trust.anchor(&leaf.into_der()).map_err(|e| super::chain(&e))
+    trust
+        .anchor(&leaf.into_der())
+        .map_err(|e| crate::redact::chain(&e))
 }
 
 /// A pasted SHA-256 fingerprint (bare, colon- or space-separated, either case)
@@ -588,9 +587,14 @@ mod tests {
             .await
             .expect_err("nothing to inspect");
         assert!(matches!(why, TlsError::Unreachable(_)), "{why}");
-        let why = why.to_string();
+        assert_eq!(why.to_string(), "the host could not be looked at");
+        assert!(matches!(
+            std::error::Error::source(&why).and_then(|e| e.downcast_ref::<ProbeError>()),
+            Some(ProbeError::Failed { .. })
+        ));
+        let why = crate::redact::chain(&why);
         assert!(
-            why.starts_with(&format!(
+            why.contains(&format!(
                 "127.0.0.1:{} presented no certificate: ",
                 addr.port()
             )),

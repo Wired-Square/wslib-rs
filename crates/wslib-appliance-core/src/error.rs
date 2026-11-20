@@ -107,9 +107,10 @@ pub enum ApiError {
 }
 
 impl ApiError {
-    /// A 500 whose cause reaches the journal, not the client. `context` completes
-    /// "could not …" and is rendered, so it is a literal.
-    pub fn internal(context: &'static str, because: &dyn std::fmt::Display) -> Self {
+    /// A 500 whose cause, with each of its own, reaches the journal, not the
+    /// client. `context` completes "could not …" and is rendered, so it is a
+    /// literal.
+    pub fn internal(context: &'static str, because: &(dyn std::error::Error + 'static)) -> Self {
         Self::Internal {
             context,
             because: redact::foreign(because),
@@ -117,7 +118,7 @@ impl ApiError {
     }
 
     /// A 503, with the same redaction and the same "could not …" phrasing.
-    pub fn unavailable(context: &'static str, because: &dyn std::fmt::Display) -> Self {
+    pub fn unavailable(context: &'static str, because: &(dyn std::error::Error + 'static)) -> Self {
         Self::Unavailable {
             context,
             because: redact::foreign(because),
@@ -219,6 +220,17 @@ fn refuses(parameter: &str) -> bool {
     })
 }
 
+#[derive(Debug)]
+pub(crate) struct Fault(pub(crate) &'static str);
+
+impl std::fmt::Display for Fault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl std::error::Error for Fault {}
+
 fn escaped(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
@@ -248,30 +260,35 @@ impl From<StoreError> for ApiError {
             StoreError::BadCursor(_) => {
                 Self::BadRequest("that cursor did not come from this appliance".to_string())
             }
-            other => Self::internal("reach the database", &crate::tls::chain(&other)),
+            other => Self::internal("reach the database", &other),
         }
     }
 }
 
-/// Certificate refusals only: a warning installs, and its report carries the sentence.
+/// Certificate refusals only: a warning installs, and its report carries the
+/// sentence. A refusal's body is the error with each of its causes.
 impl From<crate::tls::TlsError> for ApiError {
     fn from(e: crate::tls::TlsError) -> Self {
         use crate::tls::TlsError::*;
         match e {
-            Pem(_) | Mismatched | Unloadable(_) | Target(_) => Self::BadRequest(e.to_string()),
+            Pem(_) | Unusable { .. } | Mismatched | Unloadable(_) | Target(_) => {
+                Self::BadRequest(redact::chain(&e))
+            }
 
             TooLong { .. } => Self::PayloadTooLarge(e.to_string()),
 
             // 503 rather than 403: nothing about the caller is wrong.
-            Unsupported(_) => Self::Unsupported(e.to_string()),
+            Unsupported(_) | RecordRefused(_) => Self::Unsupported(redact::chain(&e)),
 
-            Unreachable(_) => Self::BadGateway(e.to_string()),
+            Unreachable(_) | Unreadable { .. } => Self::BadGateway(redact::chain(&e)),
 
             Unwritable { .. } => Self::internal("write the certificate", &e),
 
             // Transient: installing again serves it now.
             Unfinished { .. } => Self::unavailable("finish installing the certificate", &e),
-            Internal(_) => Self::internal("read or write the certificate", &e),
+            Corrupt { .. } | Internal(_) | Failed(_) => {
+                Self::internal("read or write the certificate", &e)
+            }
         }
     }
 }
@@ -309,7 +326,7 @@ impl From<AuthError> for ApiError {
                 Self::BadRequest(e.to_string())
             }
             AuthError::Store(e) => e.into(),
-            other => Self::internal("complete the sign-in", &crate::tls::chain(&other)),
+            other => Self::internal("complete the sign-in", &other),
         }
     }
 }
@@ -370,7 +387,7 @@ mod tests {
     async fn an_internal_failure_names_the_attempt_and_nothing_underneath_it() {
         let error = ApiError::internal(
             "reach the database",
-            &"no such column: sekrit_value in /var/lib/x.db",
+            &std::io::Error::other("no such column: sekrit_value in /var/lib/x.db"),
         );
         let response = error.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
@@ -387,7 +404,9 @@ mod tests {
     fn an_internal_cause_is_sanitised_as_it_is_built_not_as_it_is_logged() {
         let ApiError::Internal { because, .. } = ApiError::internal(
             "notify",
-            &"error sending request for url (https://hook:s3cr3t@example.invalid/x)",
+            &std::io::Error::other(
+                "error sending request for url (https://hook:s3cr3t@example.invalid/x)",
+            ),
         ) else {
             panic!("internal builds an Internal")
         };
@@ -431,6 +450,33 @@ mod tests {
                     if because == "the password could not be hashed: out of memory"
             ),
             "{failed:?}"
+        );
+    }
+
+    #[test]
+    fn a_certificate_refusals_body_is_its_sentence_with_each_cause() {
+        let refused = ApiError::from(crate::tls::TlsError::Unloadable(Box::new(
+            std::io::Error::other("rustls says no"),
+        )));
+        assert!(
+            matches!(
+                &refused,
+                ApiError::BadRequest(body)
+                    if body == "this appliance cannot serve that pair: rustls says no"
+            ),
+            "{refused:?}"
+        );
+        let unwritten = ApiError::from(crate::tls::TlsError::Unwritable {
+            path: "/srv/tls/key.pem".into(),
+            source: std::io::Error::other("the disk is full"),
+        });
+        assert!(
+            matches!(
+                &unwritten,
+                ApiError::Internal { context: "write the certificate", because }
+                    if because == "could not write /srv/tls/key.pem: the disk is full"
+            ),
+            "{unwritten:?}"
         );
     }
 

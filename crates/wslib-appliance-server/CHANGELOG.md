@@ -2,7 +2,10 @@
 
 ## 0.2.0
 
-- Pins `wslib-appliance-core` at 0.2.0. On wslib-appliance-store 0.2.
+- Pins `wslib-appliance-core` at 0.2.0. On wslib-appliance-store 0.2,
+  wslib-appliance-config 0.2 and wslib-service 0.2.
+- A refused ingress bind is `ServeError::Bind` with the `io::Error` as
+  `source`.
 
 ## 0.1.6
 

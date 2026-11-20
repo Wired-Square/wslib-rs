@@ -9,6 +9,8 @@
   key, as its source.
 - `StoreError::Database` says the migration chains were refused, and gives
   wslib-db-sqlite's error through `source()`, rather than being that error.
+- `StoreError::Db` and `StoreError::Migrate` say only that the query or the
+  migration failed, and give sqlx's error through `source()`.
 - On wslib-db-sqlite 0.3.
 
 ## 0.1.3

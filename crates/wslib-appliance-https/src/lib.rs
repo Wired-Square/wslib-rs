@@ -24,7 +24,7 @@
 //!         // `wslib_build_id::build_version!()` in a real product.
 //!         let server = Server::new(store, Branding::unbranded(), "1.0.0 (abc1234)", logs);
 //!         server.ui(bootstrap.ui.clone()).serve(&bootstrap, stop).await?;
-//!         Ok::<_, Box<dyn std::error::Error>>(())
+//!         Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
 //!     })
 //!     .map_or_else(std::process::ExitCode::from, |()| std::process::ExitCode::SUCCESS)
 //! # }

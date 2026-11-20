@@ -11,16 +11,18 @@ use wslib_service::Daemon;
 
 const CHILD: &str = "WSLIB_SERVICE_CHILD";
 
-/// An error with a cause it shows only in the alternate form, as anyhow's do.
-struct Said(&'static str, Option<&'static str>);
+#[derive(Debug)]
+struct Said(&'static str, Option<Box<Said>>);
 
 impl fmt::Display for Said {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.0)?;
-        match self.1 {
-            Some(cause) if f.alternate() => write!(f, ": {cause}"),
-            _ => Ok(()),
-        }
+        f.write_str(self.0)
+    }
+}
+
+impl std::error::Error for Said {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.1.as_deref().map(|cause| cause as _)
     }
 }
 
@@ -75,7 +77,7 @@ fn child() {
                     std::future::pending().await
                 }
                 "returns" => Ok("unasked"),
-                "fails" => Err(Said("boom", Some("the cause"))),
+                "fails" => Err(Said("boom", Some(Box::new(Said("the cause", None))))),
                 "panics" => panic!("boom"),
                 other => panic!("no such child: {other}"),
             }

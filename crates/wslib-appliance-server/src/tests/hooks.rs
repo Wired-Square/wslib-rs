@@ -417,7 +417,7 @@ mod socket {
             .await
             .expect("fails at once");
         assert!(
-            matches!(&failed, Err(ServeError::Socket { path, .. }) if path.ends_with("hooks.sock")),
+            matches!(&failed, Err(ServeError::SocketFailed { path, .. }) if path.ends_with("hooks.sock")),
             "{failed:?}"
         );
     }

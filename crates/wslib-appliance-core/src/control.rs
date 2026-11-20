@@ -48,18 +48,29 @@ const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(5);
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ServeError {
-    #[error("the TLS certificate ({}) or key ({}) could not be loaded: {because}", cert.display(), key.display())]
+    #[error("the TLS certificate ({}) or key ({}) could not be loaded", cert.display(), key.display())]
     Tls {
         cert: PathBuf,
         key: PathBuf,
-        because: String,
+        source: Box<dyn std::error::Error + Send + Sync>,
     },
 
-    #[error("could not listen on {address}: {because}")]
-    Bind { address: String, because: String },
+    #[error("could not listen on {address}")]
+    Bind {
+        address: String,
+        source: std::io::Error,
+    },
 
+    /// Refused before anything was bound. Carries the sentence.
     #[error("the socket at {} could not be created: {because}", path.display())]
     Socket { path: PathBuf, because: String },
+
+    /// The socket, its directory or its security could not be made.
+    #[error("the socket at {} could not be created", path.display())]
+    SocketFailed {
+        path: PathBuf,
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 
     #[error(
         "something may be listening on the socket at {}, or this user may not connect to it; remove it if nothing is",
@@ -72,11 +83,11 @@ pub enum ServeError {
     #[error("another process already holds the control pipe {}", name.display())]
     PipeInUse { name: PathBuf },
 
-    #[error("could not read what this appliance trusts for outbound connections: {0}")]
-    Trust(String),
+    #[error("could not read what this appliance trusts for outbound connections")]
+    Trust(#[source] Box<dyn std::error::Error + Send + Sync>),
 
-    #[error("serving: {0}")]
-    Serving(String),
+    #[error("serving failed")]
+    Serving(#[source] Box<dyn std::error::Error + Send + Sync>),
 
     /// A programming error.
     #[error("routes for a backend with no accounts were mounted on one whose callers are accounts")]
@@ -346,7 +357,7 @@ async fn serve_endpoint(
     let (listener, _unlink) = bind_socket(path)?;
     // Read back rather than assumed: a socket takes its directory's group on
     // macOS, and on Linux the process's unless the directory is setgid.
-    let bound = std::fs::metadata(path).map_err(|e| socket_error(path, &e))?;
+    let bound = std::fs::metadata(path).map_err(|e| socket_error(path, e))?;
     tracing::info!(
         path = %path.display(),
         %ceiling,
@@ -358,10 +369,10 @@ async fn serve_endpoint(
 }
 
 #[cfg(unix)]
-fn socket_error(path: &Path, e: &std::io::Error) -> ServeError {
-    ServeError::Socket {
+fn socket_error(path: &Path, e: std::io::Error) -> ServeError {
+    ServeError::SocketFailed {
         path: path.to_path_buf(),
-        because: e.to_string(),
+        source: Box::new(e),
     }
 }
 
@@ -374,11 +385,11 @@ pub(crate) fn bind_socket(
     use std::os::unix::fs::PermissionsExt;
 
     clear_stale_socket(path)?;
-    let listener = tokio::net::UnixListener::bind(path).map_err(|e| socket_error(path, &e))?;
+    let listener = tokio::net::UnixListener::bind(path).map_err(|e| socket_error(path, e))?;
     let unlink = Unlink::new(path);
     // A world-writable socket hands its listener's authority to any local account.
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o660))
-        .map_err(|e| socket_error(path, &e))?;
+        .map_err(|e| socket_error(path, e))?;
     Ok((listener, unlink))
 }
 
@@ -433,7 +444,7 @@ where
     let serving = server.serve(router.into_make_service_with_connect_info::<C>());
     until_stopped(serving, handle, stop, GRACE)
         .await
-        .map_err(|e| ServeError::Serving(crate::redact::foreign(&e)))
+        .map_err(|e| ServeError::Serving(Box::new(e)))
 }
 
 /// Removes a socket this process bound however serving ends, including when the
@@ -500,7 +511,7 @@ fn clear_stale_socket(path: &Path) -> Result<(), ServeError> {
                 path = %path.display(),
                 "removing a socket left behind by an earlier run"
             );
-            std::fs::remove_file(path).map_err(|e| refused(e.to_string()))
+            std::fs::remove_file(path).map_err(|e| socket_error(path, e))
         }
         _ => Err(ServeError::SocketInUse {
             path: path.to_path_buf(),
@@ -511,6 +522,39 @@ fn clear_stale_socket(path: &Path) -> Result<(), ServeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_serve_error_says_its_own_layer_and_keeps_its_cause() {
+        let serving = ServeError::Serving(Box::new(std::io::Error::other("the listener closed")));
+        assert_eq!(serving.to_string(), "serving failed");
+        assert!(
+            std::error::Error::source(&serving)
+                .and_then(|e| e.downcast_ref::<std::io::Error>())
+                .is_some()
+        );
+
+        let trust = ServeError::Trust(Box::new(rustls::Error::General("no roots".into())));
+        assert_eq!(
+            trust.to_string(),
+            "could not read what this appliance trusts for outbound connections"
+        );
+        assert!(matches!(
+            std::error::Error::source(&trust).and_then(|e| e.downcast_ref::<rustls::Error>()),
+            Some(rustls::Error::General(_))
+        ));
+
+        let bind = ServeError::Bind {
+            address: "[::]:443".into(),
+            source: std::io::ErrorKind::AddrInUse.into(),
+        };
+        assert_eq!(bind.to_string(), "could not listen on [::]:443");
+        assert_eq!(
+            std::error::Error::source(&bind)
+                .and_then(|e| e.downcast_ref::<std::io::Error>())
+                .map(std::io::Error::kind),
+            Some(std::io::ErrorKind::AddrInUse)
+        );
+    }
     #[cfg(unix)]
     use crate::probe::{NAMELESS_UID, Probe, WHO};
 
@@ -967,9 +1011,21 @@ mod tests {
         )
         .await
         .expect("fails rather than serving");
+        let Err(failed @ ServeError::SocketFailed { .. }) = served else {
+            panic!("a socket that did not bind: {served:?}");
+        };
+        assert_eq!(
+            failed.to_string(),
+            format!(
+                "the socket at {} could not be created",
+                blocked.join("control.sock").display()
+            )
+        );
         assert!(
-            matches!(served, Err(ServeError::Socket { .. })),
-            "{served:?}"
+            std::error::Error::source(&failed)
+                .and_then(|e| e.downcast_ref::<std::io::Error>())
+                .is_some(),
+            "{failed:?}"
         );
         assert!(!bound.exists(), "the socket that bound is unlinked");
     }
@@ -990,7 +1046,7 @@ mod tests {
         .await;
         assert!(!removed.exists(), "nothing remade the directory");
         assert!(
-            matches!(served, Ok(Err(ServeError::Socket { .. }))),
+            matches!(served, Ok(Err(ServeError::SocketFailed { .. }))),
             "{served:?}"
         );
     }

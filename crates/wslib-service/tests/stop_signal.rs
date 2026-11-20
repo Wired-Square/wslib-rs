@@ -27,7 +27,7 @@ fn a_sigterm_sent_while_starting_stops_the_service_once_it_polls_its_stop() {
                 .await
                 .expect("the signal stopped it");
             stopped.store(true, Ordering::SeqCst);
-            Ok::<_, String>(())
+            Ok::<_, std::io::Error>(())
         }
     });
     ran.expect("asked to stop, so a success");

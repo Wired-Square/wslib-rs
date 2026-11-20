@@ -2639,8 +2639,60 @@ fn every_backup_error_answers_the_status_the_table_documents() {
         StatusCode::PAYLOAD_TOO_LARGE
     );
     assert_eq!(
-        status(BackupError::Internal("x".into())),
-        StatusCode::INTERNAL_SERVER_ERROR
+        status(BackupError::KdfParameters(Box::new(std::io::Error::other(
+            "x"
+        )))),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        status(BackupError::Derive(Box::new(std::io::Error::other("x")))),
+        StatusCode::BAD_REQUEST
+    );
+    for internal in [
+        BackupError::Internal("x".into()),
+        BackupError::Failed(Box::new(std::io::Error::other("x"))),
+        BackupError::Unwritten {
+            path: "/x".into(),
+            source: std::io::Error::other("x"),
+        },
+        BackupError::Panicked,
+        BackupError::Cancelled,
+    ] {
+        assert_eq!(status(internal), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+}
+
+#[test]
+fn a_backup_error_says_its_own_layer_and_keeps_its_cause() {
+    let failed = BackupError::failed(std::io::Error::other("the disk is full"));
+    assert_eq!(failed.to_string(), "this backup could not be written");
+    assert!(
+        std::error::Error::source(&failed)
+            .and_then(|e| e.downcast_ref::<std::io::Error>())
+            .is_some()
+    );
+
+    let store = BackupError::from(wslib_appliance_store::StoreError::NoSuchUser("u".into()));
+    assert_eq!(store.to_string(), "the store failed");
+    assert!(matches!(
+        std::error::Error::source(&store)
+            .and_then(|e| e.downcast_ref::<wslib_appliance_store::StoreError>()),
+        Some(wslib_appliance_store::StoreError::NoSuchUser(_))
+    ));
+
+    let unwritten = BackupError::Unwritten {
+        path: "/srv/backup.bundle".into(),
+        source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+    };
+    assert_eq!(
+        unwritten.to_string(),
+        "this backup could not be written to /srv/backup.bundle"
+    );
+    assert_eq!(
+        std::error::Error::source(&unwritten)
+            .and_then(|e| e.downcast_ref::<std::io::Error>())
+            .map(std::io::Error::kind),
+        Some(std::io::ErrorKind::PermissionDenied)
     );
 }
 
@@ -2864,7 +2916,7 @@ fn a_pair_that_was_not_installed_says_which_pair_the_box_serves() {
         "{rolled_back}"
     );
     let committed = pair_not_installed(&TlsError::Unfinished {
-        because: "renaming: in the way".into(),
+        source: Box::new(std::io::Error::other("renaming: in the way")),
         next: "the next write, backup read or start finishes it from /var/lib/key.pem.txn, or a \
                start that cannot sets it aside and serves the pair on disk, making a fresh one \
                only if that will not load"

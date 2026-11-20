@@ -5,8 +5,12 @@
 - An error that stops a command writes each of its causes, and a
   certificate, chain or key that will not read writes the decoder's or the
   verifier's own words.
-- Renders for `wslib-appliance-store` 0.2.0 and `wslib-appliance-server`
-  0.2.0.
+- A file it cannot read, parse or write, an image, entry or key that will
+  not read, and an ELF that cannot be scanned keep the error behind them as
+  its cause, under what was being read; a gate's or a manifest's problem
+  writes each cause.
+- Renders for `wslib-appliance-config` 0.2.0, `wslib-appliance-store` 0.2.0
+  and `wslib-appliance-server` 0.2.0.
 - On wslib-crypto 0.2, wslib-crypto-x509 0.2 and wslib-crypto-ca 0.3.
 
 ## 0.2.8

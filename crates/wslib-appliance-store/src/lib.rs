@@ -72,7 +72,7 @@ pub const SESSION_SECRETS_TABLE: &str = "platform_session_secrets";
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum StoreError {
-    #[error("database: {0}")]
+    #[error("the database query failed")]
     Db(#[from] sqlx::Error),
 
     /// A settings key inside the `secret.` or `box.` namespace, handed to
@@ -84,7 +84,7 @@ pub enum StoreError {
     )]
     Reserved(String),
 
-    #[error("migration: {0}")]
+    #[error("migrating the database failed")]
     Migrate(#[from] MigrateError),
 
     /// [`Store::open_existing`] found no file.
@@ -317,6 +317,23 @@ mod tests {
 
     fn spawnable<F: Future + Send + 'static>(future: F) -> F {
         future
+    }
+
+    #[test]
+    fn a_query_or_migration_failure_says_only_its_layer_and_keeps_sqlxs_error() {
+        let db = StoreError::from(sqlx::Error::RowNotFound);
+        assert_eq!(db.to_string(), "the database query failed");
+        assert!(matches!(
+            std::error::Error::source(&db).and_then(|e| e.downcast_ref::<sqlx::Error>()),
+            Some(sqlx::Error::RowNotFound)
+        ));
+
+        let migrate = StoreError::from(MigrateError::VersionMissing(7));
+        assert_eq!(migrate.to_string(), "migrating the database failed");
+        assert!(matches!(
+            std::error::Error::source(&migrate).and_then(|e| e.downcast_ref::<MigrateError>()),
+            Some(MigrateError::VersionMissing(7))
+        ));
     }
 
     #[test]

@@ -34,7 +34,7 @@ mod checks;
 pub mod testing;
 
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -72,16 +72,30 @@ pub fn install_logs(path: &Path, crates: &[&str]) -> Result<Logs, LocalError> {
 #[non_exhaustive]
 pub enum LocalError {
     /// A path of the installer's layout, or the log file, that fails its check.
-    #[error(transparent)]
+    #[error("a path of the service's layout was refused")]
     Refused(#[from] Refused),
+
+    /// A control endpoint's directory whose metadata could not be read.
+    #[error("could not read the control endpoint directory {}", path.display())]
+    Unreadable {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    /// The group a control endpoint is for could not be looked up.
+    #[error("looking up the group {group} failed")]
+    GroupLookup {
+        group: String,
+        source: std::io::Error,
+    },
 
     #[error("there is no control endpoint to serve")]
     NoEndpoints,
 
-    #[error(transparent)]
+    #[error("the store failed")]
     Store(#[from] StoreError),
 
-    #[error(transparent)]
+    #[error("serving failed")]
     Serve(#[from] ServeError),
 }
 
@@ -194,5 +208,40 @@ impl Service {
         backend::close_audit_queue(backend::logs(&built.state));
         backend::join_tasks(built.tasks, deadline).await;
         Ok(served?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error;
+
+    use super::*;
+
+    #[test]
+    fn a_wrapped_error_says_only_its_own_layer_and_is_the_source() {
+        let refused = LocalError::from(Refused::new("/var/lib/widgets", "it is a symbolic link"));
+        assert_eq!(
+            refused.to_string(),
+            "a path of the service's layout was refused"
+        );
+        let inner = refused
+            .source()
+            .and_then(|e| e.downcast_ref::<Refused>())
+            .expect("the refusal");
+        assert_eq!(inner.because, "it is a symbolic link");
+
+        let store = LocalError::from(StoreError::NoSuchUser("u1".to_string()));
+        assert_eq!(store.to_string(), "the store failed");
+        assert!(matches!(
+            store.source().and_then(|e| e.downcast_ref::<StoreError>()),
+            Some(StoreError::NoSuchUser(_))
+        ));
+
+        let serve = LocalError::from(ServeError::NoCryptoProvider);
+        assert_eq!(serve.to_string(), "serving failed");
+        assert!(matches!(
+            serve.source().and_then(|e| e.downcast_ref::<ServeError>()),
+            Some(ServeError::NoCryptoProvider)
+        ));
     }
 }

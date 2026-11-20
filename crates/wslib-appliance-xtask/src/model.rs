@@ -135,11 +135,17 @@ pub struct Package {
 /// Why an `appliance.toml` could not be turned into a scaffold.
 #[derive(Debug, thiserror::Error)]
 pub enum ModelError {
-    #[error("{}: {because}", path.display())]
-    Read { path: PathBuf, because: String },
+    #[error("cannot read {}", path.display())]
+    Read {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 
-    #[error("{}: {because}", path.display())]
-    Parse { path: PathBuf, because: String },
+    #[error("cannot parse {}", path.display())]
+    Parse {
+        path: PathBuf,
+        source: toml::de::Error,
+    },
 
     #[error(
         "{}: {}\n  - {}",
@@ -248,13 +254,13 @@ impl Appliance {
     /// Read one, refusing it if it could not produce a working box, and hand
     /// back its warnings.
     pub fn load(path: &Path) -> Result<(Checked, Vec<String>), ModelError> {
-        let text = std::fs::read_to_string(path).map_err(|e| ModelError::Read {
+        let text = std::fs::read_to_string(path).map_err(|source| ModelError::Read {
             path: path.to_path_buf(),
-            because: e.to_string(),
+            source,
         })?;
-        let parse_error = |e: toml::de::Error| ModelError::Parse {
+        let parse_error = |source: toml::de::Error| ModelError::Parse {
             path: path.to_path_buf(),
-            because: e.to_string(),
+            source,
         };
         let retired = retired_keys(&toml::from_str(&text).map_err(parse_error)?);
         if !retired.is_empty() {
@@ -558,8 +564,9 @@ impl Docker {
             Ok(text) => text,
             Err(e) => {
                 report.problem(format!(
-                    "{MANIFEST} beside appliance.toml cannot be read: {e} — [targets.docker] \
-                     labels the image with it"
+                    "{MANIFEST} beside appliance.toml cannot be read: {} — [targets.docker] \
+                     labels the image with it",
+                    crate::chain(e)
                 ));
                 return None;
             }
@@ -568,8 +575,9 @@ impl Docker {
             Ok(label) => label,
             Err(e) => {
                 report.problem(format!(
-                    "{MANIFEST} is not a manifest without its image: {e} — the console fills \
-                     `image` from the image it loaded"
+                    "{MANIFEST} is not a manifest without its image: {} — the console fills \
+                     `image` from the image it loaded",
+                    crate::chain(&e)
                 ));
                 return None;
             }
@@ -577,7 +585,7 @@ impl Docker {
         let before = report.problems.len();
         match AppManifest::from_label(label.clone(), image).validate() {
             Ok(()) | Err(ManifestError::Repository) => {}
-            Err(e) => report.problem(format!("{MANIFEST}: {e}")),
+            Err(e) => report.problem(format!("{MANIFEST}: {}", crate::chain(&e))),
         }
         if label.name != name {
             report.problem(format!(

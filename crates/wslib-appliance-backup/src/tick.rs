@@ -112,7 +112,7 @@ impl<S: Sections, H: HostHalf> Engine<S, H> {
         let sealed = self
             .seal(app, &passphrase, BTreeSet::new())
             .await
-            .map_err(|e| backend::chain(&e))?;
+            .map_err(|e| e.to_string())?;
 
         let file = schedule::file_name(&self.name, now);
         let (this, keep, written) = (self.clone(), wanted.keep, file.clone());

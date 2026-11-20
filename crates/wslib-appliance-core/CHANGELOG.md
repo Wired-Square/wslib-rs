@@ -21,7 +21,8 @@
 - `ServeError::Tls`, `Trust` and `Serving` hold the error behind them as
   `source` in place of its text; `Bind` holds the `io::Error`.
   `ServeError::Tls::named` is a pair named in the configuration, whose
-  sentence tells the operator to correct the files or unset the setting.
+  sentence tells the operator to unset the setting that names it to have
+  the appliance manage its own pair.
   `ServeError::SocketFailed` is a socket, its directory or its security that
   could not be made, with the error as `source`; `Socket` keeps this crate's
   own sentences. A start whose pair panicked or was cancelled on the

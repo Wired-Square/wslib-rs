@@ -43,9 +43,7 @@ const CONNECTIONS: usize = 32;
 /// between requests.
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(5);
 
-const NAMED: &str = "; they were named in this appliance's configuration, so it will not move \
-                     them aside and make its own: correct them, or unset the setting to have the \
-                     appliance manage its own pair";
+const NAMED: &str = "; unset the setting that names them to have the appliance manage its own pair";
 
 /// Why the appliance could not start listening. A variant about a file or a
 /// listener names its path or address.

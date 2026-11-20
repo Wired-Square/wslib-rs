@@ -736,6 +736,32 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn an_unreachable_database_is_journalled_with_each_cause() {
+        let probe = probe::Probe::new().await;
+        probe.store().close().await;
+        let logs = crate::logs(&[]).ring().clone();
+        let _logging = tracing::subscriber::set_default(logs.subscriber());
+
+        let response = probe.https("/healthz", None).await;
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        let records = logs.snapshot().records;
+        let failed = records
+            .iter()
+            .find(|r| r.message == "request failed")
+            .unwrap_or_else(|| panic!("nothing journalled: {records:?}"));
+        let because = failed
+            .fields
+            .iter()
+            .find_map(|(name, value)| (name == "because").then_some(value))
+            .unwrap_or_else(|| panic!("no cause: {:?}", failed.fields));
+        let cause = because.strip_prefix("the database query failed: ");
+        assert!(cause.is_some_and(|cause| !cause.is_empty()), "{because}");
+    }
+
     #[test]
     fn a_build_id_follows_the_page_as_well_as_the_version() {
         let page = |asset: &[u8]| build_id("0.1.0 (gabc-dirty)", Some(asset));

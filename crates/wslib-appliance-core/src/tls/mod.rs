@@ -536,7 +536,7 @@ mod tests {
                 .expect_err("a named pair this cannot use is refused");
             assert!(
                 e.to_string().ends_with(
-                    "correct them, or unset the setting to have the appliance manage its own pair"
+                    "unset the setting that names them to have the appliance manage its own pair"
                 ),
                 "{e}"
             );
@@ -653,11 +653,10 @@ mod tests {
         assert_eq!(
             crate::redact::chain(&refused),
             "the TLS certificate (/srv/tls/cert.pem) or key (/srv/tls/key.pem) could not be \
-             loaded; they were named in this appliance's configuration, so it will not move \
-             them aside and make its own: correct them, or unset the setting to have the \
-             appliance manage its own pair: /srv/tls/cert.pem and /srv/tls/key.pem were named, \
-             so they are not moved aside and replaced: rustls will not serve the pair: \
-             unexpected error: rustls says no"
+             loaded; unset the setting that names them to have the appliance manage its own \
+             pair: /srv/tls/cert.pem and /srv/tls/key.pem were named, so they are not moved \
+             aside and replaced: rustls will not serve the pair: unexpected error: rustls says \
+             no"
         );
 
         let managed = ServeError::Tls {
@@ -1464,10 +1463,8 @@ mod tests {
         assert_eq!(
             e.to_string(),
             format!(
-                "the TLS certificate ({}) or key ({}) could not be loaded; they were named in \
-                 this appliance's configuration, so it will not move them aside and make its \
-                 own: correct them, or unset the setting to have the appliance manage its own \
-                 pair",
+                "the TLS certificate ({}) or key ({}) could not be loaded; unset the setting \
+                 that names them to have the appliance manage its own pair",
                 named.cert.display(),
                 named.key.display()
             )

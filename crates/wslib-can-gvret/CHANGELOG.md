@@ -18,8 +18,11 @@
   for any other `SerialError`. A handshake's write that fails is
   `CanError::Write`, in place of `CanError::Read`.
 - A write of pending output, such as a keepalive ask, before a read that
-  fails is that read's `CanError::Write`. It was dropped, and a serial one
-  that panicked left the read saying `Closed`.
+  fails is that read's error: `CanError::Write`, including the socket not
+  becoming writable, or `Panicked` or `Cancelled` for a blocking serial
+  write that panicked or was cancelled, as for a read waited on behind it.
+  It was dropped, and a serial one that panicked left the read saying
+  `Closed`.
 
 ## 0.1.1
 

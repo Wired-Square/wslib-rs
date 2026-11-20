@@ -40,9 +40,7 @@ pub(crate) async fn read(
     outbound: &mut Vec<u8>,
 ) -> Result<Vec<u8>, CanError> {
     if !outbound.is_empty() {
-        port.write(outbound)
-            .await
-            .map_err(|e| CanError::Write(unwritten(e)))?;
+        port.write(outbound).await.map_err(error)?;
     }
     port.read().await.map_err(error)
 }
@@ -55,6 +53,7 @@ pub(crate) fn error(error: SerialError) -> CanError {
         },
         SerialError::Closed => CanError::Closed,
         SerialError::Read(e) => CanError::Read(e),
+        SerialError::Write(e) => CanError::Write(WriteFailed::Io(e)),
         SerialError::Panicked => CanError::Panicked,
         SerialError::Cancelled => CanError::Cancelled,
         e => CanError::Serial(e),
@@ -146,7 +145,7 @@ pub(crate) mod tests {
         assert!(matches!(error(SerialError::Cancelled), CanError::Cancelled));
         let written = error(SerialError::Write(io::ErrorKind::BrokenPipe.into()));
         assert!(
-            matches!(written, CanError::Serial(SerialError::Write(_))),
+            matches!(&written, CanError::Write(WriteFailed::Io(e)) if e.kind() == io::ErrorKind::BrokenPipe),
             "{written:?}"
         );
         assert!(matches!(

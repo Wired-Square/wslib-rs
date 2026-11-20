@@ -12,9 +12,9 @@
 - `SerialError::Panicked`: a blocking call on the port panicked, on Windows
   or with `write`, in a read, a write or a DTR or RTS change. A read's is
   the task's `Disconnected`, and the task reopens as after any loss. A
-  write's or a control line's is that call's answer. A write that waits for
-  a read that panicked is `Write` with `NotConnected`, the next read
-  reporting the read's `Panicked`.
+  write's or a control line's is that call's answer. A write or control
+  change that waits for a read in flight that panicked answers with the
+  read's `Panicked`, or `Cancelled`, and takes none of its bytes.
 - `SerialError::Cancelled`: the runtime cancelled a blocking call on the
   port before it ran.
 - `SerialPort`: a write cancelled once started, which still runs, answers

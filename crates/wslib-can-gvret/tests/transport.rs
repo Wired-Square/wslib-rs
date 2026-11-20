@@ -889,7 +889,7 @@ mod serial {
         /// serialport reads a pty's hang-up as `POLLHUP`, which it reports as
         /// `BrokenPipe` rather than zero bytes.
         #[tokio::test]
-        async fn a_hang_up_is_closed_or_a_read_or_write_error() {
+        async fn a_hang_up_is_closed_or_a_read_error() {
             within(async {
                 let device = FakeGvret::pty(Behaviour::default());
                 let mut task = open(&device, None).await;
@@ -898,7 +898,6 @@ mod serial {
                 match lost(&mut task).await {
                     CanError::Closed => {}
                     CanError::Read(e) => assert_eq!(e.kind(), io::ErrorKind::BrokenPipe, "{e}"),
-                    CanError::Write(WriteFailed::Io(_)) => {}
                     other => panic!("{other:?}"),
                 }
                 assert!(task.next_event().await.is_none());

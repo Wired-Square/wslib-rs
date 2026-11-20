@@ -286,7 +286,7 @@ impl Wire {
                 tokio::select! {
                     biased;
                     ready = stream.writable(), if !outbound.is_empty() => {
-                        ready.map_err(CanError::Read)?;
+                        ready.map_err(|e| CanError::Write(WriteFailed::Io(e)))?;
                         push(stream, outbound).map_err(|e| CanError::Write(WriteFailed::Io(e)))?;
                     }
                     ready = stream.readable() => {

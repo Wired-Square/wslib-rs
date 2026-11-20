@@ -267,6 +267,8 @@ mod tests {
     use super::*;
 
     const ALIAS_V1: &str = "platform-x-usb-0:1.4:1.0-port0";
+    const ALIAS_V2: &str = "platform-x-usbv2-0:1.4:1.0-port0";
+    const SIBLING: &str = "platform-x-usb-0:1.4:1.2-port0";
 
     #[cfg(feature = "ports")]
     #[test]
@@ -283,9 +285,6 @@ mod tests {
                 .is_some_and(|e| e.kind() == serialport::ErrorKind::NoDevice)
         );
     }
-    const ALIAS_V2: &str = "platform-x-usbv2-0:1.4:1.0-port0";
-    const SIBLING: &str = "platform-x-usb-0:1.4:1.2-port0";
-    const ACM_PATH: &str = "platform-x-usb-0:2:1.0";
 
     fn serial(s: &str) -> PortIdentity {
         PortIdentity::UsbSerial(s.into())
@@ -412,6 +411,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn by_path_index_groups_aliases_under_their_canonical_tty() {
+        const ACM_PATH: &str = "platform-x-usb-0:2:1.0";
         let root = tempfile::tempdir().unwrap();
         let by_path = root.path().join("serial/by-path");
         std::fs::create_dir_all(&by_path).unwrap();

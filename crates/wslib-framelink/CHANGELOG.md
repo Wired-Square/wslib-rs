@@ -11,6 +11,8 @@
   refusal failed; `UnlockFailure::cause` and its `source()` are the
   `Error` the unlock ended with. It was `WriteLocked` with the failure's
   text; `WriteLocked` keeps the crate's own sentences.
+- `Error::Panicked` and `Error::Cancelled` are new: a background task
+  panicked, or the runtime cancelled one before it finished.
 - `DiscoveryEvent::Error` gains `cause`, the error behind the event on the
   live value (not serialised): a failed BLE or mDNS init attempt, a BLE
   scan that could not start, and a BLE adapter given up on carry theirs in

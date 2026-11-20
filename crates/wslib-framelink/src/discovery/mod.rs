@@ -375,8 +375,8 @@ impl Discovery {
     }
 }
 
-/// Each failure is reported as an `Error` event, for a subscriber already
-/// listening.
+/// Each failure but the last is reported as an `Error` event, for a
+/// subscriber already listening; the last is the returned error.
 async fn init_with_backoff<T, F, Fut>(
     label: &'static str,
     event_tx: &broadcast::Sender<DiscoveryEvent>,

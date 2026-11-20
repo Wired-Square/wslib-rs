@@ -610,7 +610,7 @@ mod writes {
     fn spawn_write(
         writer: &SerialWriter,
         bytes: Vec<u8>,
-    ) -> tokio::task::JoinHandle<Result<std::io::Result<()>, WriteRefused>> {
+    ) -> tokio::task::JoinHandle<Result<Result<(), SerialError>, WriteRefused>> {
         let writer = writer.clone();
         tokio::spawn(async move { writer.write(bytes).await })
     }
@@ -730,7 +730,7 @@ mod writes {
         tcflow(&slave, libc::TCOOFF);
         let failed = within(writer.write(b"lost".to_vec())).await;
         match failed {
-            Ok(Err(e)) => assert_eq!(e.kind(), ErrorKind::TimedOut, "{e}"),
+            Ok(Err(SerialError::Write(e))) => assert_eq!(e.kind(), ErrorKind::TimedOut, "{e}"),
             other => panic!("{other:?}"),
         }
         tcflow(&slave, libc::TCOON);

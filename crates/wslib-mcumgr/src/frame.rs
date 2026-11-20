@@ -20,7 +20,7 @@ pub(crate) fn encode<T: Serialize>(
     payload: &T,
 ) -> Result<Vec<u8>, Error> {
     let mut frame = vec![0; HEADER_LEN];
-    ciborium::into_writer(payload, &mut frame).map_err(|e| Error::Encode(e.to_string()))?;
+    ciborium::into_writer(payload, &mut frame).map_err(|e| Error::Unencodable(Box::new(e)))?;
     let len = u16::try_from(frame.len() - HEADER_LEN)
         .map_err(|_| Error::Encode(format!("{}-byte payload overflows the header", frame.len())))?;
     frame[..HEADER_LEN].copy_from_slice(&Header::new(op, group, command, seq, len).encode());
@@ -28,6 +28,11 @@ pub(crate) fn encode<T: Serialize>(
 }
 
 pub(crate) fn decode<T: DeserializeOwned>(frame: &[u8]) -> Result<(Header, T), Error> {
+    let (header, payload) = split(frame)?;
+    Ok((header, body(payload, None)?))
+}
+
+fn split(frame: &[u8]) -> Result<(Header, &[u8]), Error> {
     let header = Header::decode(frame)?;
     let payload = frame
         .get(HEADER_LEN..HEADER_LEN + usize::from(header.len))
@@ -38,8 +43,14 @@ pub(crate) fn decode<T: DeserializeOwned>(frame: &[u8]) -> Result<(Header, T), E
                 frame.len() - HEADER_LEN
             ))
         })?;
-    let body = ciborium::from_reader(payload).map_err(|e| Error::Decode(e.to_string()))?;
-    Ok((header, body))
+    Ok((header, payload))
+}
+
+fn body<T: DeserializeOwned>(payload: &[u8], context: Option<&str>) -> Result<T, Error> {
+    ciborium::from_reader(payload).map_err(|e| Error::Undecodable {
+        context: context.map(str::to_owned),
+        source: Box::new(e),
+    })
 }
 
 /// A reply's result, or [`Error::Rejected`] if it carries a non-zero `rc`
@@ -60,7 +71,8 @@ pub(crate) fn decode_reply<T: DeserializeOwned>(frame: &[u8], context: &str) -> 
         rc: i32,
     }
 
-    let (_, status): (_, Status) = decode(frame)?;
+    let (_, payload) = split(frame)?;
+    let status: Status = body(payload, Some(context))?;
     if let Some(err) = status.err {
         return Err(Error::Rejected {
             rc: err.rc,
@@ -79,9 +91,7 @@ pub(crate) fn decode_reply<T: DeserializeOwned>(frame: &[u8], context: &str) -> 
             reason,
         });
     }
-    decode(frame)
-        .map(|(_, body)| body)
-        .map_err(|e| Error::Decode(format!("{context}: {e}")))
+    body(payload, Some(context))
 }
 
 /// A CBOR byte string; serde alone would write a `Vec<u8>` as an array.
@@ -199,6 +209,83 @@ mod tests {
         let ok = [0xa2, 0x63, b'o', b'f', b'f', 0x04, 0x62, b'r', b'c', 0x00];
         let ack: Off = decode_reply(&reply(Version::V1, &ok), "upload").unwrap();
         assert_eq!(ack.off, 4);
+    }
+
+    #[test]
+    fn a_reply_whose_cbor_does_not_decode_names_the_request_and_keeps_ciboriums_error() {
+        let refused = decode_reply::<Off>(&reply(Version::V1, &[0xff]), "upload").unwrap_err();
+
+        assert_eq!(
+            refused.to_string(),
+            "the SMP payload does not decode in the reply to upload"
+        );
+        let source = std::error::Error::source(&refused).expect("a source");
+        assert!(
+            source
+                .downcast_ref::<ciborium::de::Error<std::io::Error>>()
+                .is_some(),
+            "{source:?}"
+        );
+    }
+
+    #[derive(Serialize)]
+    struct TextOff {
+        off: &'static str,
+    }
+
+    #[test]
+    fn a_reply_whose_body_does_not_fit_names_the_request() {
+        let mut wrong = Vec::new();
+        ciborium::into_writer(&TextOff { off: "x" }, &mut wrong).unwrap();
+
+        let refused = decode_reply::<Off>(&reply(Version::V1, &wrong), "upload").unwrap_err();
+
+        assert!(
+            matches!(&refused, Error::Undecodable { context: Some(c), .. } if c == "upload"),
+            "{refused:?}"
+        );
+        assert!(
+            std::error::Error::source(&refused)
+                .and_then(|s| s.downcast_ref::<ciborium::de::Error<std::io::Error>>())
+                .is_some()
+        );
+    }
+
+    struct Refusing;
+
+    impl Serialize for Refusing {
+        fn serialize<S: Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+            Err(serde::ser::Error::custom("refused"))
+        }
+    }
+
+    #[test]
+    fn a_payload_ciborium_refuses_keeps_its_error_as_the_source() {
+        let refused = encode(Op::Write, Group::Fs, 0, 0, &Refusing).unwrap_err();
+
+        assert_eq!(
+            refused.to_string(),
+            "the SMP payload does not encode as CBOR"
+        );
+        let source = std::error::Error::source(&refused).expect("a source");
+        assert!(
+            source
+                .downcast_ref::<ciborium::ser::Error<std::io::Error>>()
+                .is_some(),
+            "{source:?}"
+        );
+    }
+
+    #[test]
+    fn an_io_failure_says_only_its_own_layer() {
+        let failed = Error::from(std::io::Error::other("the cause"));
+
+        assert_eq!(failed.to_string(), "I/O failed");
+        assert!(
+            std::error::Error::source(&failed)
+                .and_then(|s| s.downcast_ref::<std::io::Error>())
+                .is_some()
+        );
     }
 
     #[test]

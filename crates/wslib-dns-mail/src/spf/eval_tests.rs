@@ -210,15 +210,15 @@ fn targets_without_a_message_are_counted_but_not_queried() {
     let walked = tree(&dns, "example.com");
     assert_eq!(walked.accounting.lookups, 3);
     let outcomes: Vec<&TermOutcome> = walked.root.lookups.iter().map(|l| &l.outcome).collect();
-    assert_eq!(
+    assert!(matches!(
         outcomes[0],
         &TermOutcome::NotEvaluated(NotEvaluated::NeedsMessage)
-    );
+    ));
     assert!(matches!(outcomes[1], TermOutcome::Record(_)));
-    assert_eq!(
+    assert!(matches!(
         outcomes[2],
         &TermOutcome::NotEvaluated(NotEvaluated::NeedsClient)
-    );
+    ));
 }
 
 #[test]

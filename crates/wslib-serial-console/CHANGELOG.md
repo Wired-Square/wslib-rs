@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.1
+
+- On wslib-serial 0.2.
+- `monitor` takes wslib-mcu-flash 0.3 or 0.4; `PortIdentity` is the same in
+  both.
+- A port's open, read, write or reset failure, and a port listing's, in a
+  monitor's state message writes the error and each of its causes.
+- `test-support`: `FakeDevice::lose` ends the line with a `SerialError`, as a
+  read that failed would. A device that `fail_writes` refuses each write
+  and control line with `SerialError::Write`, its cause `WRITES_REFUSED`.
+
 ## 0.3.0
 
 - On wslib-mcu-flash 0.3, so `PortKey` is its `PortIdentity`.

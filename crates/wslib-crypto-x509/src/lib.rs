@@ -31,7 +31,7 @@ pub use inspect::{
 pub use mint::mint;
 pub use names::SubjectAltName;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum Error {
     /// Longer than [`pem::MAX_LEN`], refused before it was parsed.
@@ -57,16 +57,18 @@ pub enum Error {
     /// A private key with a passphrase on it.
     Encrypted,
     MoreThanOneKey,
-    /// Base64, DER or a certificate that does not decode.
+    /// Decodes, but not as what was wanted, in this crate's words.
     Malformed(String),
+    /// Base64, DER or a certificate the decoder refuses: its error.
+    Decode(Box<dyn std::error::Error + Send + Sync>),
     /// Text that is not a subject alternative name.
     Name {
         name: String,
         reason: &'static str,
     },
     NoNames,
-    /// The certificate could not be made or signed.
-    Mint(String),
+    /// The certificate could not be made or signed: rcgen's or wslib-crypto's error.
+    Mint(Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl fmt::Display for Error {
@@ -90,12 +92,30 @@ impl fmt::Display for Error {
             }
             Self::Encrypted => f.write_str("the private key is encrypted"),
             Self::MoreThanOneKey => f.write_str("more than one private key"),
-            Self::Malformed(e) => write!(f, "does not decode: {e}"),
+            Self::Malformed(why) => write!(f, "does not decode: {why}"),
+            Self::Decode(_) => f.write_str("does not decode"),
             Self::Name { name, reason } => write!(f, "{name:?} is not a usable name: {reason}"),
             Self::NoNames => f.write_str("a certificate needs at least one name"),
-            Self::Mint(e) => write!(f, "making the certificate: {e}"),
+            Self::Mint(_) => f.write_str("making the certificate failed"),
         }
     }
 }
 
-impl std::error::Error for Error {}
+impl Error {
+    fn decode(e: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::Decode(Box::new(e))
+    }
+
+    fn mint(e: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::Mint(Box::new(e))
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Decode(e) | Self::Mint(e) => Some(&**e),
+            _ => None,
+        }
+    }
+}

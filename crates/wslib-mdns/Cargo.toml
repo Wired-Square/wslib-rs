@@ -1,6 +1,6 @@
 [package]
 name = "wslib-mdns"
-version = "0.1.1"
+version = "0.2.0"
 description = "DNS-SD on the local network: validated service names, adverts that withdraw on drop, an in-process responder and browser over mdns-sd, avahi over D-Bus, and a fake avahi for tests."
 readme = "README.md"
 edition.workspace = true

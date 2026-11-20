@@ -525,7 +525,7 @@ fn reset_frame(seq: u8) -> Result<Vec<u8>, Error> {
 fn ack_or_lost(frame: &[u8], off: usize) -> Result<Option<UploadAck>, Error> {
     match decode_reply(frame, &format!("upload chunk at {off}")) {
         Ok(ack) => Ok(Some(ack)),
-        Err(Error::Decode(e)) => {
+        Err(e @ (Error::Decode(_) | Error::Undecodable { .. })) => {
             warn!("an undecodable upload ack: {e}");
             Ok(None)
         }

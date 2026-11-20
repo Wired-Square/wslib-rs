@@ -214,9 +214,9 @@ impl State {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum CodeError {
-    #[error("no randomness for a pairing code: {0}")]
+    #[error("no randomness for a pairing code")]
     Random(#[source] io::Error),
-    #[error("the pairing code's state at {}: {source}", path.display())]
+    #[error("the pairing code's state at {} could not be read or written", path.display())]
     Io { path: PathBuf, source: io::Error },
     #[error("the pairing code's state at {} is not one this crate wrote", path.display())]
     Corrupt { path: PathBuf },
@@ -232,6 +232,38 @@ mod tests {
         assert_eq!(code.expose(), "ABCDEFGHIJKLMNOPQRSTUVWXYZ");
         assert!("ABCDEFGHIJKLMNOPQRSTUVWXY1".parse::<PairingCode>().is_err());
         assert!("ABCDEFGHIJKLMNOPQRSTUVWXY".parse::<PairingCode>().is_err());
+    }
+
+    #[test]
+    fn a_state_out_of_reach_names_its_path_and_keeps_the_os_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("absent").join("code");
+        let three = NonZeroU32::new(3).unwrap();
+        let err = OneTimeCode::issue(&path, three).unwrap_err();
+        let lock = wslib_file_atomic::beside(&path, "lock");
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "the pairing code's state at {} could not be read or written",
+                lock.display()
+            )
+        );
+        let source = std::error::Error::source(&err).expect("the OS error");
+        assert_eq!(
+            source.downcast_ref::<io::Error>().map(io::Error::kind),
+            Some(io::ErrorKind::NotFound)
+        );
+    }
+
+    #[test]
+    fn no_randomness_says_only_that_and_keeps_the_os_error() {
+        let err = CodeError::Random(io::Error::from(io::ErrorKind::Unsupported));
+        assert_eq!(err.to_string(), "no randomness for a pairing code");
+        let source = std::error::Error::source(&err).expect("the OS error");
+        assert_eq!(
+            source.downcast_ref::<io::Error>().map(io::Error::kind),
+            Some(io::ErrorKind::Unsupported)
+        );
     }
 
     #[test]

@@ -133,7 +133,7 @@ impl LocalApi {
 }
 
 fn parse<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, Error> {
-    serde_json::from_slice(body).map_err(|e| Error::Malformed(e.to_string()))
+    serde_json::from_slice(body).map_err(Error::Json)
 }
 
 /// HTTP/1.0, so the answer is never chunked and ends when tailscaled closes.
@@ -145,7 +145,7 @@ async fn exchange(socket: &Path, request: &str) -> Result<Vec<u8>, Error> {
         .await
         .map_err(|e| match e.kind() {
             // A socket left behind by a tailscaled that exited refuses.
-            io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused => Error::Absent,
+            io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused => Error::Absent(e),
             _ => Error::Io(e),
         })?;
     stream.write_all(request.as_bytes()).await?;
@@ -159,7 +159,7 @@ async fn exchange(socket: &Path, request: &str) -> Result<Vec<u8>, Error> {
 
 #[cfg(not(unix))]
 async fn exchange(_: &Path, _: &str) -> Result<Vec<u8>, Error> {
-    Err(Error::Absent)
+    Err(Error::Unsupported)
 }
 
 fn answer(raw: &[u8]) -> Option<(u16, &[u8])> {
@@ -177,14 +177,19 @@ fn answer(raw: &[u8]) -> Option<(u16, &[u8])> {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Nothing listens on the socket: tailscaled isn't running.
-    Absent,
+    /// Nothing listens on the socket: tailscaled isn't running. The connect's
+    /// error is the source.
+    Absent(io::Error),
+    /// Off Unix, where this crate has no way to reach tailscaled.
+    Unsupported,
     /// tailscaled took longer than the timeout.
     Silent,
     /// tailscaled answered with a status outside 2xx; `said` is the first line of its body.
     Refused { status: u16, said: String },
-    /// The answer was not HTTP, was over 1 MiB, or held JSON of another shape.
+    /// The answer was not HTTP or was over 1 MiB.
     Malformed(String),
+    /// The answer's body was not the JSON expected.
+    Json(serde_json::Error),
     /// The socket failed otherwise.
     Io(io::Error),
 }
@@ -192,10 +197,12 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Absent => f.write_str("tailscaled is not running"),
+            Self::Absent(_) => f.write_str("tailscaled is not running"),
+            Self::Unsupported => f.write_str("tailscaled can be reached only on Unix"),
             Self::Silent => f.write_str("tailscaled did not answer in time"),
             Self::Refused { status, said } => write!(f, "tailscaled refused ({status}): {said}"),
             Self::Malformed(why) => write!(f, "tailscaled's answer could not be read: {why}"),
+            Self::Json(_) => f.write_str("tailscaled's answer is not the JSON expected"),
             Self::Io(_) => f.write_str("tailscaled could not be reached"),
         }
     }
@@ -204,8 +211,9 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Io(e) => Some(e),
-            _ => None,
+            Self::Absent(e) | Self::Io(e) => Some(e),
+            Self::Json(e) => Some(e),
+            Self::Unsupported | Self::Silent | Self::Refused { .. } | Self::Malformed(_) => None,
         }
     }
 }
@@ -263,5 +271,23 @@ mod tests {
         );
         assert_eq!(answer(b"HTTP/1.0 200 OK\r\n"), None);
         assert_eq!(answer(b"garbage\r\n\r\n"), None);
+    }
+
+    #[test]
+    fn off_unix_is_unsupported_with_no_cause() {
+        assert_eq!(
+            Error::Unsupported.to_string(),
+            "tailscaled can be reached only on Unix"
+        );
+        assert!(std::error::Error::source(&Error::Unsupported).is_none());
+    }
+
+    #[cfg(not(unix))]
+    #[tokio::test]
+    async fn every_call_off_unix_is_unsupported() {
+        assert!(matches!(
+            LocalApi::default().status().await,
+            Err(Error::Unsupported)
+        ));
     }
 }

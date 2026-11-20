@@ -22,7 +22,7 @@ impl io::Write for Captured {
     }
 }
 
-fn boom() -> Result<(), String> {
+fn boom() -> io::Result<()> {
     panic!("boom")
 }
 

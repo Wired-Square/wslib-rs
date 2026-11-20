@@ -59,7 +59,7 @@ pub(super) enum Root {
 }
 
 impl Root {
-    pub(super) fn given_or_wired_square(given: Option<PathBuf>) -> Result<Self, String> {
+    pub(super) fn given_or_wired_square(given: Option<PathBuf>) -> Result<Self, Failed> {
         given
             .map(Self::File)
             .or_else(|| {
@@ -73,18 +73,19 @@ impl Root {
                     "no root to check the signer against: give --root, or the Wired Square Apps \
                      root's PEM in {WIRED_SQUARE_ROOT}"
                 )
+                .into()
             })
     }
 
-    fn certificate(&self) -> Result<(CertificateDer<'static>, String), String> {
+    fn certificate(&self) -> Result<(CertificateDer<'static>, String), Failed> {
         let (pem, named) = match self {
             Self::File(path) => (
-                fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?,
+                fs::read_to_string(path).map_err(crate::within(path.display()))?,
                 path.display().to_string(),
             ),
             Self::Pem(pem) => (pem.clone(), format!("the root in {WIRED_SQUARE_ROOT}")),
         };
-        let mut certificates = pem::certificates(&pem).map_err(|e| format!("{named}: {e}"))?;
+        let mut certificates = pem::certificates(&pem).map_err(crate::within(&named))?;
         Ok((certificates.swap_remove(0), named))
     }
 }
@@ -96,21 +97,21 @@ pub(super) struct Chain {
 }
 
 impl Chain {
-    pub(super) fn read(path: &Path) -> Result<Self, String> {
+    pub(super) fn read(path: &Path) -> Result<Self, Failed> {
         fs::read_to_string(path)
-            .map_err(|e| e.to_string())
-            .and_then(|pem| pem::certificates(&pem).map_err(|e| e.to_string()))
+            .map_err(Failed::from)
+            .and_then(|pem| pem::certificates(&pem).map_err(Failed::from))
             .map(|certificates| Self {
                 path: path.to_path_buf(),
                 certificates,
             })
-            .map_err(|e| format!("{}: {e}", path.display()))
+            .map_err(crate::within(path.display()))
     }
 
     /// Why its leaf is not a code-signing leaf of `root` now, if it is not.
-    pub(super) fn refusal(&self, root: &Root) -> Result<Option<String>, String> {
+    pub(super) fn refusal(&self, root: &Root) -> Result<Option<String>, Failed> {
         let (root, named) = root.certificate()?;
-        let anchor = chain::trust_anchor(&root).map_err(|e| format!("{named}: {e}"))?;
+        let anchor = chain::trust_anchor(&root).map_err(crate::within(&named))?;
         let [leaf, intermediates @ ..] = self.certificates.as_slice() else {
             unreachable!("pem::certificates gives at least one");
         };
@@ -125,8 +126,9 @@ impl Chain {
         .err()
         .map(|e| {
             format!(
-                "{} is not a code-signing leaf of {named}: {e}",
-                self.path.display()
+                "{} is not a code-signing leaf of {named}: {}",
+                self.path.display(),
+                crate::chain(&e)
             )
         }))
     }
@@ -217,20 +219,20 @@ enum Key {
 
 impl Key {
     /// The key at `path`, or on stdin for `-`: PKCS#8, SEC1 or PKCS#1 PEM.
-    fn read(path: &Path) -> Result<Self, String> {
+    fn read(path: &Path) -> Result<Self, Failed> {
         let mut text = Zeroizing::new(String::new());
         match path == Path::new("-") {
             true => io::stdin().read_to_string(&mut text),
             false => fs::File::open(path).and_then(|mut file| file.read_to_string(&mut text)),
         }
-        .map_err(|e| e.to_string())
-        .and_then(|_| pem::private_key(&text).map_err(|e| e.to_string()))
-        .and_then(|key| to_pkcs8(&key).map_err(|e| e.to_string()))
+        .map_err(Failed::from)
+        .and_then(|_| pem::private_key(&text).map_err(Failed::from))
+        .and_then(|key| to_pkcs8(&key).map_err(Failed::from))
         .and_then(|key| Self::from_pkcs8(key.secret_pkcs8_der()))
-        .map_err(|e| format!("{}: {e}", path.display()))
+        .map_err(crate::within(path.display()))
     }
 
-    fn from_pkcs8(der: &[u8]) -> Result<Self, String> {
+    fn from_pkcs8(der: &[u8]) -> Result<Self, Failed> {
         if let Ok(key) = p256::ecdsa::SigningKey::from_pkcs8_der(der) {
             return Ok(Self::P256(key));
         }
@@ -362,4 +364,84 @@ pub(super) fn keys(dir: &Path) -> Result<(), Failed> {
         leaf_path.display()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const UNDECODABLE: &str = "-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----\n";
+
+    #[test]
+    fn a_chain_that_does_not_read_says_what_the_decoder_said() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("chain.pem");
+        fs::write(&path, UNDECODABLE).unwrap();
+        let decoder = pem::certificates(UNDECODABLE).unwrap_err();
+        let decoder = std::error::Error::source(&decoder).expect("the decoder's error");
+        let refused = Chain::read(&path).err().expect("refused");
+        assert_eq!(refused.to_string(), path.display().to_string());
+        assert!(
+            refused
+                .source()
+                .and_then(|e| e.downcast_ref::<wslib_crypto_x509::Error>())
+                .is_some(),
+            "{refused:?}"
+        );
+        let refused = crate::chain(&*refused);
+        assert!(refused.ends_with(&format!(": {decoder}")), "{refused}");
+    }
+
+    #[test]
+    fn a_key_that_does_not_convert_says_what_the_decoder_said() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("key.pem");
+        fs::write(
+            &path,
+            "-----BEGIN EC PRIVATE KEY-----\nMAA=\n-----END EC PRIVATE KEY-----\n",
+        )
+        .unwrap();
+        let refused = crate::chain(&*Key::read(&path).err().expect("refused"));
+        assert!(
+            refused.contains("the private key is malformed: "),
+            "{refused}"
+        );
+    }
+
+    #[test]
+    fn a_root_the_verifier_refuses_says_what_it_said() {
+        const ECDSA_SHA256: [u8; 10] = [0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02];
+        const SHA384: u8 = 0x03;
+        let dir = tempfile::tempdir().unwrap();
+        keys(dir.path()).unwrap();
+        let root = fs::read_to_string(dir.path().join("root.pem")).unwrap();
+        let mut der = pem::certificates(&root).unwrap().remove(0).to_vec();
+        let outer = der
+            .windows(ECDSA_SHA256.len())
+            .rposition(|window| window == ECDSA_SHA256)
+            .expect("the outer signature algorithm");
+        der[outer + ECDSA_SHA256.len() - 1] = SHA384;
+        let mismatched = dir.path().join("mismatched.pem");
+        fs::write(&mismatched, pem::encode(pem::CERTIFICATE, &der)).unwrap();
+        let chain = Chain::read(&dir.path().join("leaf.pem")).unwrap();
+        let refused = crate::chain(&*chain.refusal(&Root::File(mismatched)).unwrap_err());
+        assert!(
+            refused.contains(": the certificate does not verify: "),
+            "{refused}"
+        );
+    }
+
+    #[test]
+    fn a_leaf_of_another_root_says_what_the_verifier_said() {
+        let (ours, theirs) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        keys(ours.path()).unwrap();
+        keys(theirs.path()).unwrap();
+        let chain = Chain::read(&ours.path().join("leaf.pem")).unwrap();
+        let root = Root::File(theirs.path().join("root.pem"));
+        let refused = chain.refusal(&root).unwrap().expect("not their leaf");
+        assert!(
+            refused.contains("the certificate is not issued under a trusted anchor: "),
+            "{refused}"
+        );
+    }
 }

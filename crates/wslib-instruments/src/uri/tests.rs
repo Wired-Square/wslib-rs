@@ -78,14 +78,23 @@ fn a_signal_the_meter_cannot_produce_is_refused_naming_it() {
 
 #[test]
 fn an_unknown_selector_names_the_signals_the_scheme_offers() {
-    let error = "121gw:121GW/voltage"
-        .parse::<ProbeUri>()
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("Thermocouple"), "{error}");
+    let error = "121gw:121GW/voltage".parse::<ProbeUri>().unwrap_err();
+    let text = error.to_string();
+    assert!(text.contains("Thermocouple"), "{text}");
+    assert!(text.ends_with("and not a signal key"), "{text}");
+    let ProbeUriError::UnknownSignal { source, .. } = &error else {
+        panic!("{error:?}");
+    };
     assert!(
-        error.contains("expected 4-6 dot-separated segments"),
-        "{error}"
+        std::error::Error::source(&error)
+            .and_then(|s| s.downcast_ref::<wslib_framelink_protocol::Error>())
+            == Some(source)
+    );
+    assert!(
+        source
+            .to_string()
+            .contains("expected 4-6 dot-separated segments"),
+        "{source}"
     );
 }
 
@@ -351,9 +360,21 @@ fn a_device_id_reads_as_six_hex_digits_everywhere() {
     );
 }
 
+fn with_causes(error: &(dyn std::error::Error + 'static)) -> String {
+    std::iter::successors(Some(error), |e| e.source())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(": ")
+}
+
 fn refusal(bad: &str) -> String {
-    match bad.parse::<ProbeUri>() {
-        Err(ProbeUriError::Target(why)) => why,
+    let error = bad.parse::<ProbeUri>().expect_err(bad);
+    match &error {
+        ProbeUriError::Target(why) => why.clone(),
+        ProbeUriError::Bus { bus, source } => {
+            assert_eq!(error.to_string(), format!("{bus:?} names no CAN bus"));
+            with_causes(source)
+        }
         other => panic!("{bad}: {other:?}"),
     }
 }
@@ -404,11 +425,20 @@ fn an_slcan_port_named_by_id_opens_under_dev_serial_by_id_and_round_trips() {
 }
 
 #[test]
+fn a_bus_whose_port_does_not_parse_is_refused_with_the_ports_reason() {
+    let why = refusal("wiredreflow:slcan=");
+    assert!(
+        why.starts_with("slcan= names no serial port: name the serial port as "),
+        "{why}"
+    );
+}
+
+#[test]
 fn a_port_name_containing_an_at_sign_is_refused_because_at_starts_the_device_id() {
-    let why = "slcan=by-id:usb-Foo@Bar_X-if00"
+    let refused = "slcan=by-id:usb-Foo@Bar_X-if00"
         .parse::<CanBus>()
-        .unwrap_err()
-        .to_string();
+        .unwrap_err();
+    let why = std::error::Error::source(&refused).unwrap().to_string();
     assert!(why.contains("can't contain '@'"), "{why}");
     let why = refusal("wiredreflow:slcan=by-id:usb-Foo@Bar_X-if00@028F08");
     assert!(

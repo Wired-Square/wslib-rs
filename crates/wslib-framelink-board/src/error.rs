@@ -1,16 +1,16 @@
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
-    #[error("TOML parse error: {0}")]
+    #[error("TOML parse failed")]
     Toml(#[from] toml_edit::de::Error),
 
-    #[error("TOML parse error: {0}")]
+    #[error("TOML parse failed")]
     TomlDocument(#[from] toml_edit::TomlError),
 
-    #[error(transparent)]
+    #[error("a signal key is malformed")]
     SignalKey(#[from] wslib_framelink_protocol::Error),
 
-    #[error("{section} key '{key}': {source}")]
+    #[error("{section} key '{key}' is not a number")]
     Key {
         section: &'static str,
         key: String,
@@ -40,6 +40,6 @@ pub enum Error {
         available: Vec<String>,
     },
 
-    #[error(transparent)]
+    #[error("I/O failed")]
     Io(#[from] std::io::Error),
 }

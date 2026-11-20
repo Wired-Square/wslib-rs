@@ -275,7 +275,7 @@ pub(super) fn outgoing(frame: &CanFrame, channel: u8) -> Vec<u8> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use std::time::Duration;
 
     use wslib_can::BusState;
@@ -297,7 +297,7 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct FakePipe {
+    pub(in crate::transport) struct FakePipe {
         log: Vec<Op>,
         info: Vec<u8>,
         broken: Option<(u16, io::ErrorKind)>,
@@ -531,7 +531,10 @@ mod tests {
         let error = start(&mut pipe, &info, 0, timings(&pcan).unwrap(), true, true)
             .await
             .unwrap_err();
-        assert!(matches!(&error, CanError::Read(e) if e.to_string().starts_with("TIMING_SLOW")));
+        assert!(
+            matches!(&error, CanError::Request { request: "TIMING_SLOW", source } if source.kind() == io::ErrorKind::TimedOut),
+            "{error:?}"
+        );
 
         let mut pipe = FakePipe {
             broken: Some((0x00c, io::ErrorKind::ConnectionAborted)),

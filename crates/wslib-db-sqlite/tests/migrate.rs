@@ -135,6 +135,16 @@ async fn a_failing_migration_in_a_later_chain_rolls_back_an_earlier_chains_too()
         matches!(&failed, Err(Error::Migrate { chain, source: MigrateError::ExecuteMigration(_, 1001) }) if chain == "app"),
         "{failed:?}"
     );
+    let failed = failed.expect_err("refused");
+    assert_eq!(failed.to_string(), "migration chain app failed");
+    let source = std::error::Error::source(&failed).expect("the migration's error");
+    assert!(
+        matches!(
+            source.downcast_ref::<MigrateError>(),
+            Some(MigrateError::ExecuteMigration(_, 1001))
+        ),
+        "{source:?}"
+    );
 
     let db = Database::open_existing(&path, &chains(&LIB[..1], APP).await)
         .await

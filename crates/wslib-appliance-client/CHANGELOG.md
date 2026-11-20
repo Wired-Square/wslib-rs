@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- `ConnectError::Io` says the pipe could not be opened or checked, and gives
+  the `io::Error` through `source()`, rather than being that error.
+
 ## 0.1.1
 
 - windows-sys's floor is 0.61.2.

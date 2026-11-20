@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0
+
+- `Error::Generate` and `Error::Malformed` carry the `rsa`, `pkcs8` or
+  decoder error, boxed, in place of its text, and return it from
+  `source()`. `Error::Load` returns its `rustls::Error` from `source()`.
+  Each message names only its own part.
+- rustls's `std` feature is on, for `rustls::Error`'s `Error` impl.
+
 ## 0.1.4
 
 - `KeyAlgorithm::generate` leaves no unwiped copy of an RSA key behind: its

@@ -1,6 +1,6 @@
 [package]
 name = "wslib-tcp"
-version = "0.1.1"
+version = "0.1.2"
 description = "A TCP connect that resolves its endpoint every time and tries each address within one budget."
 readme = "README.md"
 edition.workspace = true

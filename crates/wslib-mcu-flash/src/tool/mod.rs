@@ -14,7 +14,7 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 
-use crate::error::{FlashError, Result};
+use crate::error::{FlashError, Result, failed};
 use crate::progress::FlashProgress;
 
 #[cfg(feature = "dfu-util")]
@@ -84,7 +84,7 @@ pub async fn run_cmd_streaming(
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| FlashError::Message(format!("failed to spawn {label}: {e}")))?;
+        .map_err(|e| failed(format!("failed to spawn {label}"), e))?;
 
     let (tx, mut rx) = mpsc::unbounded_channel();
     relay(child.stdout.take(), tx.clone(), Line::Out);
@@ -116,7 +116,7 @@ pub async fn run_cmd_streaming(
     let status = child
         .wait()
         .await
-        .map_err(|e| FlashError::Message(format!("{label} wait failed: {e}")))?;
+        .map_err(|e| failed(format!("{label} wait failed"), e))?;
 
     if !status.success() {
         return Err(FlashError::Message(format!(
@@ -187,7 +187,7 @@ mod tests {
         let mut sink = CancelOnFirstLine::default();
         let started = std::time::Instant::now();
         let result = run_cmd_streaming(&mut cmd, "sh", &mut sink).await;
-        assert_eq!(result, Err(FlashError::Cancelled));
+        assert!(matches!(result, Err(FlashError::Cancelled)), "{result:?}");
         assert!(started.elapsed() < Duration::from_secs(5));
         wait_until_gone(pid_from(&sink.0)).await;
     }

@@ -10,7 +10,7 @@
 //! let password = Path::new("/var/lib/app/password");
 //! let staged = Options::new().staging_suffix("next").stage(password, b"rotated")?;
 //! staged.promote()?;
-//! # Ok::<(), std::io::Error>(())
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! The staged name is fixed, so writers to one path are serialised by the
@@ -29,8 +29,8 @@ mod transaction;
 mod windows;
 
 pub use transaction::{
-    CommitError, RecordIdentity, Recovered, Refused, Transaction, recover, recover_expecting,
-    recover_identified,
+    CommitError, RecordIdentity, RecoverError, Recovered, Refused, Transaction, recover,
+    recover_expecting, recover_identified,
 };
 #[cfg(windows)]
 pub use windows::administrators_read_and_delete;
@@ -85,8 +85,10 @@ fn remove_if_there(path: &Path) -> io::Result<()> {
 /// several files with [`Staged::promote_unsynced`] syncs once, after the last.
 pub fn sync_dir(dir: &Path) -> io::Result<()> {
     #[cfg(test)]
-    if tests::SYNC_FAILS.get() {
-        return Err(io::Error::other("the directory sync failed"));
+    match tests::SYNCS_BEFORE_FAILING.get() {
+        Some(0) => return Err(io::Error::other("the directory sync failed")),
+        Some(left) => tests::SYNCS_BEFORE_FAILING.set(Some(left - 1)),
+        None => {}
     }
     #[cfg(unix)]
     {
@@ -376,27 +378,16 @@ impl PromoteError {
 
 impl fmt::Display for PromoteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Unmoved { error, .. } => write!(
-                f,
-                "the staged file was not renamed over its target: {error}"
-            ),
-            Self::Unsynced(error) => {
-                write!(f, "renamed, but its directory was not synced: {error}")
-            }
-        }
+        f.write_str(match self {
+            Self::Unmoved { .. } => "the staged file was not renamed over its target",
+            Self::Unsynced(_) => "renamed, but its directory was not synced",
+        })
     }
 }
 
 impl error::Error for PromoteError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         Some(self.io())
-    }
-}
-
-impl From<PromoteError> for io::Error {
-    fn from(e: PromoteError) -> Self {
-        io::Error::new(e.io().kind(), e)
     }
 }
 
@@ -475,7 +466,7 @@ mod tests {
     use super::*;
 
     thread_local! {
-        pub(super) static SYNC_FAILS: Cell<bool> = const { Cell::new(false) };
+        pub(super) static SYNCS_BEFORE_FAILING: Cell<Option<usize>> = const { Cell::new(None) };
     }
 
     #[test]
@@ -486,12 +477,42 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("app.key");
 
-        SYNC_FAILS.set(true);
+        SYNCS_BEFORE_FAILING.set(Some(0));
         let failed = write_private(&path, b"first");
-        SYNC_FAILS.set(false);
+        SYNCS_BEFORE_FAILING.set(None);
         assert_eq!(failed.unwrap_err().to_string(), "the directory sync failed");
         write_private(&path, b"retried").unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"retried");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_commit_whose_record_rename_is_not_synced_is_committed_and_left_for_recovery() {
+        let dir =
+            std::env::temp_dir().join(format!("wslib-file-atomic-unsynced-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("app.key");
+        fs::write(&target, b"old").unwrap();
+        let mut transaction = Transaction::begin(&dir, "tls").unwrap();
+        transaction.stage(&target, b"new", &Options::new()).unwrap();
+
+        SYNCS_BEFORE_FAILING.set(Some(1));
+        let committed = transaction.commit();
+        SYNCS_BEFORE_FAILING.set(None);
+        let Err(CommitError::Committed(RecoverError::Io(unsynced))) = committed else {
+            panic!("{committed:?}");
+        };
+        assert_eq!(unsynced.to_string(), "the directory sync failed");
+        assert!(
+            fs::read_to_string(dir.join("tls.txn"))
+                .unwrap()
+                .starts_with("committed\n")
+        );
+        assert_eq!(fs::read(&target).unwrap(), b"old");
+
+        assert_eq!(recover(&dir, "tls").unwrap(), Recovered::RolledForward);
+        assert_eq!(fs::read(&target).unwrap(), b"new");
         fs::remove_dir_all(&dir).unwrap();
     }
 }

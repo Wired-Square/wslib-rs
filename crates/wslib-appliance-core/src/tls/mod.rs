@@ -13,6 +13,8 @@
 pub(crate) mod inspect;
 pub(crate) mod outbound;
 
+use std::error::Error;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -34,17 +36,23 @@ const ALWAYS: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
 
 const NO_PAIR: &str = "this installation serves no TLS certificate";
 
-const NAMED: &str = "These files were named in this appliance's configuration, so it will not \
-                     move them aside and make its own";
-
-/// Why something about a certificate could not be done. Every variant's
-/// `Display` is a sentence for an operator, since it reaches a Settings screen.
+/// Why something about a certificate could not be done. Each variant's
+/// `Display` is a sentence for an operator, completed by the causes its
+/// `source()` gives, since it reaches a Settings screen.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum TlsError {
     /// The text is not what it should be. Carries the sentence.
     #[error("{0}")]
     Pem(String),
+
+    /// The text did not decode as the certificate or key it should hold, or
+    /// the crypto provider will not load the key.
+    #[error("the {what} is not usable")]
+    Unusable {
+        what: &'static str,
+        source: Box<dyn Error + Send + Sync>,
+    },
 
     /// Longer than `MAX_PEM_LEN`, refused before anything parsed it.
     #[error("a certificate or key may be at most {limit} bytes, and that is {actual}")]
@@ -58,37 +66,62 @@ pub enum TlsError {
     Mismatched,
 
     /// rustls will not serve the pair, for a reason only rustls knows.
-    #[error("this appliance cannot serve that pair: {0}")]
-    Unloadable(String),
+    #[error("this appliance cannot serve that pair")]
+    Unloadable(#[source] Box<dyn Error + Send + Sync>),
 
-    /// This appliance may not write these files, serves no pair, or refuses
-    /// the record an interrupted write left.
+    /// This appliance may not write these files, or serves no pair. Carries
+    /// the sentence.
     #[error("{0}")]
     Unsupported(String),
 
+    /// The record an interrupted write left, which this appliance will not act
+    /// on.
+    #[error("this appliance will not act on the record an interrupted write left")]
+    RecordRefused(#[source] Box<dyn Error + Send + Sync>),
+
     /// Writing went wrong, which is this box and not the caller.
-    #[error("could not write {}: {because}", path.display())]
-    Unwritable { path: PathBuf, because: String },
+    #[error("could not write {}", path.display())]
+    Unwritable { path: PathBuf, source: io::Error },
 
     /// Written past the commit point but not finished; the listener serves the
     /// old pair.
-    #[error(
-        "the pair was written but not finished ({because}); installing it again serves it, and \
-         {next}"
-    )]
-    Unfinished { because: String, next: String },
+    #[error("the pair was written but not finished; installing it again serves it, and {next}")]
+    Unfinished {
+        next: String,
+        source: Box<dyn Error + Send + Sync>,
+    },
 
-    /// Where a look at a host was aimed is not a place. Carries the sentence.
-    #[error("{0}")]
-    Target(String),
+    /// Where a look at a host was aimed is not a place.
+    #[error("that is not a host to look at")]
+    Target(#[source] Box<dyn Error + Send + Sync>),
 
-    /// A dialled host presented no readable certificate.
-    #[error("{0}")]
-    Unreachable(String),
+    /// A dialled host presented no certificate.
+    #[error("the host could not be looked at")]
+    Unreachable(#[source] Box<dyn Error + Send + Sync>),
 
-    /// Anything else, which is this daemon being broken.
+    /// A dialled host presented a certificate this appliance cannot read.
+    #[error("{host}:{port} presented a certificate this appliance cannot read")]
+    Unreadable {
+        host: String,
+        port: u16,
+        source: Box<dyn Error + Send + Sync>,
+    },
+
+    /// The certificate on disk cannot be read, which is this daemon being
+    /// broken.
+    #[error("the certificate on disk at {} is unusable", path.display())]
+    Corrupt {
+        path: PathBuf,
+        source: Box<dyn Error + Send + Sync>,
+    },
+
+    /// Anything else, which is this daemon being broken. Carries the sentence.
     #[error("{0}")]
     Internal(String),
+
+    /// Reading or writing the pair failed, which is this daemon being broken.
+    #[error("the serving pair could not be read or written")]
+    Failed(#[source] Box<dyn Error + Send + Sync>),
 }
 
 /// The served pair and its two files, if any, on
@@ -120,17 +153,17 @@ impl Tls {
         };
         let alias = alias.map(str::to_string);
         let provider = provider()?;
-        let serving =
-            tokio::task::spawn_blocking(move || start(provider, location, alias.as_deref()))
-                .await
-                .map_err(|e| format!("loading the pair: {e}"))
-                .and_then(|started| started)
-                .map_err(|because| ServeError::Tls {
-                    cert: settings.cert.clone(),
-                    key: settings.key.clone(),
-                    because,
-                })?
-                .with_alpn(vec![b"h2".to_vec(), b"http/1.1".to_vec()]);
+        let started =
+            tokio::task::spawn_blocking(move || start(provider, location, alias.as_deref())).await;
+        let serving = started
+            .unwrap_or_else(|e| Err(unjoined(e)))
+            .map_err(|source| ServeError::Tls {
+                cert: settings.cert.clone(),
+                key: settings.key.clone(),
+                named: settings.named,
+                source: Box::new(source),
+            })?
+            .with_alpn(vec![b"h2".to_vec(), b"http/1.1".to_vec()]);
         let listener = RustlsConfig::from_config(serving.config());
         Ok(Self {
             served: Some(Served {
@@ -231,12 +264,19 @@ impl Tls {
     }
 }
 
+fn unjoined(e: tokio::task::JoinError) -> ServingError {
+    match e.is_panic() {
+        true => ServingError::Panicked,
+        false => ServingError::Cancelled,
+    }
+}
+
 /// Load or mint the pair at `location`. Blocks.
 fn start(
     provider: Arc<CryptoProvider>,
     location: Location,
     alias: Option<&str>,
-) -> Result<Serving, String> {
+) -> Result<Serving, ServingError> {
     if !location.is_named() {
         for stale in [location.cert(), location.key()] {
             if let Err(e) = wslib_file_atomic::discard(stale, "new") {
@@ -251,7 +291,6 @@ fn start(
         || sans(names_for(box_name().as_deref(), alias)),
         KeyAlgorithm::EcP256,
     )
-    .map_err(|e| unusable(&e))
 }
 
 fn box_name() -> Option<String> {
@@ -296,31 +335,6 @@ fn ours(pair: wslib_tls::ServingPair) -> ServingPair {
     }
 }
 
-/// Why the pair will not load, or an interrupted write of it will not finish,
-/// as the journal says it.
-fn unusable(e: &ServingError) -> String {
-    match e {
-        ServingError::Named { source, .. } => match **source {
-            ServingError::RecordRefused { .. } | ServingError::Recover { .. } => {
-                format!("{source}. {NAMED}")
-            }
-            _ => format!(
-                "{}. {NAMED}: correct them, or unset the setting to have the appliance manage \
-                 its own pair",
-                unusable(source)
-            ),
-        },
-        ServingError::HalfPair { present, missing } => format!(
-            "{} is there and {} is not — a half-supplied pair is not completed with a \
-             generated file, because the two would not match",
-            present.display(),
-            missing.display(),
-        ),
-        ServingError::Refused(e) => format!("the pair on disk will not load: {e}"),
-        e => e.to_string(),
-    }
-}
-
 /// [`TlsError::Unsupported`] for a directory this appliance cannot write.
 fn cannot_write(directory: &Path, kind: std::io::ErrorKind) -> TlsError {
     TlsError::Unsupported(format!(
@@ -331,39 +345,27 @@ fn cannot_write(directory: &Path, kind: std::io::ErrorKind) -> TlsError {
 }
 
 fn tls_error(e: ServingError, location: &Location) -> TlsError {
+    let next = e.next_step().unwrap_or_default();
     match e {
         ServingError::Unwritable { directory, kind } => cannot_write(&directory, kind),
-        ServingError::Refused(e) => TlsError::Unloadable(e.to_string()),
+        ServingError::Refused(e) => TlsError::Unloadable(Box::new(e)),
         ServingError::Mismatched => TlsError::Mismatched,
-        e @ ServingError::RecordRefused { .. } => TlsError::Unsupported(e.to_string()),
-        ServingError::Unfinished { ref source, .. } => TlsError::Unfinished {
-            because: crate::redact::foreign(source),
-            next: e.next_step().unwrap_or_default(),
+        e @ ServingError::RecordRefused { .. } => TlsError::RecordRefused(Box::new(e)),
+        ServingError::Unfinished { source, .. } => TlsError::Unfinished {
+            next,
+            source: Box::new(source),
         },
-        ServingError::Write { path, source, .. } => TlsError::Unwritable {
-            path,
-            because: crate::redact::foreign(&source),
-        },
+        ServingError::Write { path, source, .. } => TlsError::Unwritable { path, source },
         ServingError::Interrupted { record } => TlsError::Internal(format!(
             "a write of the serving pair was interrupted and {} records it; start the \
              appliance and stop it again before sealing",
             record.display()
         )),
-        e @ ServingError::HalfPair { .. } => TlsError::Internal(unusable(&e)),
-        ServingError::NoCertificate { path } => TlsError::Internal(format!(
-            "the file at {} holds no certificate",
-            path.display()
-        )),
-        ServingError::Certificate(e) => TlsError::Internal(format!(
-            "the certificate on disk at {} is not PEM: {e}",
-            location.cert().display()
-        )),
-        ServingError::Unreadable { path, source } => TlsError::Internal(format!(
-            "could not read {}: {}",
-            path.display(),
-            crate::redact::foreign(&source)
-        )),
-        e => TlsError::Internal(e.to_string()),
+        ServingError::Certificate(source) => TlsError::Corrupt {
+            path: location.cert().to_path_buf(),
+            source: Box::new(source),
+        },
+        e => TlsError::Failed(Box::new(e)),
     }
 }
 
@@ -532,7 +534,17 @@ mod tests {
             let e = Tls::load_or_mint(&named, None)
                 .await
                 .expect_err("a named pair this cannot use is refused");
-            assert!(e.to_string().contains("named in this appliance"), "{e}");
+            assert!(
+                e.to_string().ends_with(
+                    "unset the setting that names them to have the appliance manage its own pair"
+                ),
+                "{e}"
+            );
+            let said = crate::redact::chain(&e);
+            assert!(said.contains("were named"), "{said}");
+            if theirs.len() == 1 {
+                assert!(said.contains("because the two would not match"), "{said}");
+            }
             for file in theirs {
                 assert_eq!(
                     std::fs::read_to_string(dir.path().join(file)).unwrap(),
@@ -599,12 +611,74 @@ mod tests {
         assert_eq!(offline.key_pem.expose(), served.key_pem.expose());
 
         std::fs::write(dir.path().join("cert.pem"), "no certificate in here").unwrap();
-        let hollow = pair_at(&settings).unwrap_err().to_string();
+        let hollow = pair_at(&settings).unwrap_err();
+        assert!(matches!(hollow, TlsError::Failed(_)), "{hollow:?}");
+        let hollow = crate::redact::chain(&hollow);
         assert!(hollow.contains("holds no certificate"), "{hollow}");
 
         std::fs::remove_file(dir.path().join("cert.pem")).unwrap();
-        let half = pair_at(&settings).unwrap_err().to_string();
-        assert!(half.contains("half-supplied"), "{half}");
+        let half = pair_at(&settings).unwrap_err();
+        assert!(
+            matches!(
+                half.source().and_then(|e| e.downcast_ref::<ServingError>()),
+                Some(ServingError::HalfPair { .. })
+            ),
+            "{half:?}"
+        );
+        let said = crate::redact::chain(&half);
+        assert!(
+            said.ends_with(
+                "a half-supplied pair is not completed with a generated file, because the two \
+                 would not match"
+            ),
+            "{said}"
+        );
+    }
+
+    #[test]
+    fn a_named_pair_rustls_will_not_serve_says_so_and_what_to_do() {
+        let location = Location::named("/srv/tls/cert.pem", "/srv/tls/key.pem");
+        let refused = ServeError::Tls {
+            cert: location.cert().to_path_buf(),
+            key: location.key().to_path_buf(),
+            named: true,
+            source: Box::new(ServingError::Named {
+                cert: location.cert().to_path_buf(),
+                key: location.key().to_path_buf(),
+                source: Box::new(ServingError::Refused(rustls::Error::General(
+                    "rustls says no".into(),
+                ))),
+            }),
+        };
+        assert_eq!(
+            crate::redact::chain(&refused),
+            "the TLS certificate (/srv/tls/cert.pem) or key (/srv/tls/key.pem) could not be \
+             loaded; unset the setting that names them to have the appliance manage its own \
+             pair: /srv/tls/cert.pem and /srv/tls/key.pem were named, so they are not moved \
+             aside and replaced: rustls will not serve the pair: unexpected error: rustls says \
+             no"
+        );
+
+        let managed = ServeError::Tls {
+            cert: location.cert().to_path_buf(),
+            key: location.key().to_path_buf(),
+            named: false,
+            source: Box::new(ServingError::Mismatched),
+        };
+        assert_eq!(
+            managed.to_string(),
+            "the TLS certificate (/srv/tls/cert.pem) or key (/srv/tls/key.pem) could not be loaded"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_start_that_panicked_or_was_cancelled_on_the_blocking_pool_says_which() {
+        let panicked = tokio::spawn(async { panic!("boom") }).await.unwrap_err();
+        assert!(matches!(unjoined(panicked), ServingError::Panicked));
+        let pending = tokio::spawn(std::future::pending::<()>());
+        pending.abort();
+        let cancelled = pending.await.unwrap_err();
+        assert!(matches!(unjoined(cancelled), ServingError::Cancelled));
     }
 
     /// An orphaned key would make every later start refuse the half pair, and
@@ -758,12 +832,15 @@ mod tests {
             installed.expect_err("an install over a record anybody could have left"),
             read.expect_err("a read over a record anybody could have left"),
         ] {
-            assert!(matches!(e, TlsError::Unsupported(_)), "{e}");
-            assert!(e.to_string().contains("aside by hand"), "{e}");
+            assert!(matches!(e, TlsError::RecordRefused(_)), "{e}");
+            let said = crate::redact::chain(&e);
+            assert!(said.contains("aside by hand"), "{said}");
+            assert!(said.contains("may be written by others"), "{said}");
         }
         let e = started.expect_err("a start over a record anybody could have left");
-        assert!(e.to_string().contains("may be written by others"), "{e}");
-        assert!(e.to_string().contains("named in this appliance"), "{e}");
+        let said = crate::redact::chain(&e);
+        assert!(said.contains("may be written by others"), "{said}");
+        assert!(said.contains("were named"), "{said}");
         assert!(dir.path().join("key.pem.txn").exists());
     }
 
@@ -816,8 +893,9 @@ mod tests {
         let e = Tls::load_or_mint(&named, None)
             .await
             .expect_err("a record nobody vouches for");
-        assert!(e.to_string().contains("aside by hand"), "{e}");
-        assert!(e.to_string().contains("named in this appliance"), "{e}");
+        let said = crate::redact::chain(&e);
+        assert!(said.contains("aside by hand"), "{said}");
+        assert!(said.contains("were named"), "{said}");
         assert!(dir.path().join("key.pem.txn").exists());
     }
 
@@ -859,7 +937,8 @@ mod tests {
         let e = Tls::load_or_mint(&named, None)
             .await
             .expect_err("their record is not set aside");
-        assert!(e.to_string().contains("key.pem.txn"), "{e}");
+        let said = crate::redact::chain(&e);
+        assert!(said.contains("key.pem.txn"), "{said}");
         assert_eq!(listing(&dir), before);
     }
 
@@ -1300,5 +1379,99 @@ mod tests {
         .await
         .expect("mints");
         assert!(sans(&minted).contains(&"widget.local".to_string()));
+    }
+
+    #[test]
+    fn a_tls_error_says_its_own_layer_and_keeps_the_serving_error_as_its_cause() {
+        let location = Location::managed("/srv/tls/cert.pem", "/srv/tls/key.pem");
+        let rustls = || rustls::Error::General("rustls says no".into());
+        let refused = |why: &str| wslib_file_atomic::Refused::new("/srv/tls/key.pem.txn", why);
+
+        let unloadable = tls_error(ServingError::Refused(rustls()), &location);
+        assert_eq!(
+            unloadable.to_string(),
+            "this appliance cannot serve that pair"
+        );
+        assert!(matches!(
+            unloadable.source().and_then(|e| e.downcast_ref::<rustls::Error>()),
+            Some(rustls::Error::General(why)) if why == "rustls says no"
+        ));
+
+        let unreadable = tls_error(
+            ServingError::Unreadable {
+                path: location.cert().to_path_buf(),
+                source: std::io::Error::other("the disk is on fire"),
+            },
+            &location,
+        );
+        assert_eq!(
+            unreadable.to_string(),
+            "the serving pair could not be read or written"
+        );
+        assert!(matches!(
+            unreadable
+                .source()
+                .and_then(|e| e.downcast_ref::<ServingError>()),
+            Some(ServingError::Unreadable { .. })
+        ));
+
+        let corrupt = tls_error(
+            ServingError::Certificate(wslib_crypto_x509::Error::Decode(Box::new(
+                std::io::Error::other("the ink ran"),
+            ))),
+            &location,
+        );
+        assert_eq!(
+            corrupt.to_string(),
+            "the certificate on disk at /srv/tls/cert.pem is unusable"
+        );
+        assert!(
+            corrupt
+                .source()
+                .and_then(|e| e.downcast_ref::<wslib_crypto_x509::Error>())
+                .is_some()
+        );
+
+        let record = tls_error(
+            ServingError::RecordRefused {
+                record: location.record(),
+                source: refused("planted"),
+            },
+            &location,
+        );
+        assert_eq!(
+            record.to_string(),
+            "this appliance will not act on the record an interrupted write left"
+        );
+        assert!(
+            crate::redact::chain(&record).ends_with(": planted"),
+            "{}",
+            crate::redact::chain(&record)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pair_that_will_not_load_is_the_source_of_the_start_refusal() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("cert.pem"), "theirs").expect("write");
+        std::fs::write(dir.path().join("key.pem"), "theirs").expect("write");
+        let named = wslib_appliance_config::Tls::supplied(
+            dir.path().join("cert.pem"),
+            dir.path().join("key.pem"),
+        );
+        let e = Tls::load_or_mint(&named, None).await.expect_err("refused");
+        assert_eq!(
+            e.to_string(),
+            format!(
+                "the TLS certificate ({}) or key ({}) could not be loaded; unset the setting \
+                 that names them to have the appliance manage its own pair",
+                named.cert.display(),
+                named.key.display()
+            )
+        );
+        assert!(matches!(
+            e.source().and_then(|e| e.downcast_ref::<ServingError>()),
+            Some(ServingError::Named { .. })
+        ));
     }
 }

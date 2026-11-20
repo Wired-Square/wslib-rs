@@ -72,15 +72,14 @@ impl KeyAlgorithm {
 
     /// A new private key as PKCS#8 DER, which implements `Zeroize`; blocks, as RSA takes seconds.
     pub fn generate(self) -> Result<PrivatePkcs8KeyDer<'static>, Error> {
-        let failed = |e: &dyn fmt::Display| Error::Generate(e.to_string());
-        let rsa = |bits| rsa::RsaPrivateKey::new(&mut OsRng, bits).map_err(|e| failed(&e));
+        let rsa = |bits| rsa::RsaPrivateKey::new(&mut OsRng, bits).map_err(Error::generate);
         let document = match self {
             Self::EcP256 => p256::SecretKey::random(&mut OsRng).to_pkcs8_der(),
             Self::EcP384 => p384::SecretKey::random(&mut OsRng).to_pkcs8_der(),
             Self::Rsa2048 => rsa_pkcs8(&rsa(2048)?),
             Self::Rsa4096 => rsa_pkcs8(&rsa(4096)?),
         }
-        .map_err(|e| failed(&e))?;
+        .map_err(Error::generate)?;
         Ok(PrivatePkcs8KeyDer::from(document.as_bytes().to_vec()))
     }
 
@@ -108,21 +107,20 @@ impl KeyAlgorithm {
 
 /// A private key of one of the [`KeyAlgorithm`]s as PKCS#8 DER, which implements `Zeroize`; a PKCS#8 key is copied as it is.
 pub fn to_pkcs8(key: &PrivateKeyDer<'_>) -> Result<PrivatePkcs8KeyDer<'static>, Error> {
-    let malformed = |e: &dyn fmt::Display| Error::Malformed(e.to_string());
     let document = match key {
         PrivateKeyDer::Pkcs8(key) => return Ok(key.clone_key()),
         PrivateKeyDer::Sec1(key) => {
             let der = key.secret_sec1_der();
             let curve = sec1::EcPrivateKey::from_der(der)
-                .map_err(|e| malformed(&e))?
+                .map_err(Error::malformed)?
                 .parameters
                 .and_then(|parameters| parameters.named_curve());
             match curve {
                 Some(SECP256R1) => p256::SecretKey::from_sec1_der(der)
-                    .map_err(|e| malformed(&e))?
+                    .map_err(Error::malformed)?
                     .to_pkcs8_der(),
                 Some(SECP384R1) => p384::SecretKey::from_sec1_der(der)
-                    .map_err(|e| malformed(&e))?
+                    .map_err(Error::malformed)?
                     .to_pkcs8_der(),
                 _ => return Err(Error::Unsupported),
             }
@@ -130,7 +128,7 @@ pub fn to_pkcs8(key: &PrivateKeyDer<'_>) -> Result<PrivatePkcs8KeyDer<'static>, 
         // Wrapped as it is: the rsa crate's own encoder leaves an unwiped PKCS#1 copy behind.
         PrivateKeyDer::Pkcs1(key) => {
             let der = key.secret_pkcs1_der();
-            let rsa = pkcs1::RsaPrivateKey::from_der(der).map_err(|e| malformed(&e))?;
+            let rsa = pkcs1::RsaPrivateKey::from_der(der).map_err(Error::malformed)?;
             if rsa.version() != pkcs1::Version::TwoPrime
                 || !matches!(modulus_bits(rsa.modulus.as_bytes()), Some(2048 | 4096))
             {
@@ -141,7 +139,7 @@ pub fn to_pkcs8(key: &PrivateKeyDer<'_>) -> Result<PrivatePkcs8KeyDer<'static>, 
         }
         _ => return Err(Error::Unsupported),
     }
-    .map_err(|e| malformed(&e))?;
+    .map_err(Error::malformed)?;
     Ok(PrivatePkcs8KeyDer::from(document.as_bytes().to_vec()))
 }
 
@@ -196,14 +194,14 @@ impl FromStr for KeyAlgorithm {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Generating a key failed.
-    Generate(String),
+    /// Generating a key failed: the `rsa` or `pkcs8` crate's error.
+    Generate(Box<dyn std::error::Error + Send + Sync>),
     /// The provider would not load the key.
     Load(rustls::Error),
     /// Not a P-256, P-384, RSA-2048 or RSA-4096 key.
     Unsupported,
-    /// The private key's DER does not parse.
-    Malformed(String),
+    /// The private key's DER does not parse: the decoder's error.
+    Malformed(Box<dyn std::error::Error + Send + Sync>),
     /// The provider's key does not offer the scheme its algorithm signs with.
     NoScheme(KeyAlgorithm),
     /// The provider gives no public key, and the key is not a PKCS#8 one this crate can read it from.
@@ -219,10 +217,10 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Generate(e) => write!(f, "generating a key: {e}"),
-            Self::Load(e) => write!(f, "the crypto provider will not load the key: {e}"),
+            Self::Generate(_) => f.write_str("generating a key failed"),
+            Self::Load(_) => f.write_str("the crypto provider will not load the key"),
             Self::Unsupported => f.write_str("not a P-256, P-384, RSA-2048 or RSA-4096 key"),
-            Self::Malformed(e) => write!(f, "the private key is malformed: {e}"),
+            Self::Malformed(_) => f.write_str("the private key is malformed"),
             Self::NoScheme(algorithm) => write!(
                 f,
                 "the key does not offer {:?}, which {algorithm} signs with",
@@ -244,7 +242,25 @@ impl fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {}
+impl Error {
+    fn generate(e: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::Generate(Box::new(e))
+    }
+
+    fn malformed(e: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::Malformed(Box::new(e))
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Generate(e) | Self::Malformed(e) => Some(&**e),
+            Self::Load(e) => Some(e),
+            _ => None,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -273,5 +289,39 @@ mod tests {
             KeyAlgorithm::EcP384
         );
         assert!("ed25519".parse::<KeyAlgorithm>().is_err());
+    }
+
+    #[test]
+    fn a_malformed_key_says_so_and_carries_the_decoders_error() {
+        let e = to_pkcs8(&PrivateKeyDer::Sec1(vec![0x30, 0x00].into())).unwrap_err();
+        assert!(matches!(e, Error::Malformed(_)), "{e:?}");
+        assert_eq!(e.to_string(), "the private key is malformed");
+        let source = std::error::Error::source(&e).expect("a source");
+        assert!(
+            source.downcast_ref::<pkcs8::der::Error>().is_some(),
+            "{source:?}"
+        );
+    }
+
+    #[test]
+    fn a_key_the_provider_refuses_says_so_and_carries_rustls_error() {
+        let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
+        let garbage = PrivateKeyDer::Pkcs8(vec![0x30, 0x00].into());
+        let e = Signer::new(provider, &garbage).unwrap_err();
+        assert!(matches!(e, Error::Load(_)), "{e:?}");
+        assert_eq!(e.to_string(), "the crypto provider will not load the key");
+        let source = std::error::Error::source(&e).expect("a source");
+        assert!(
+            source.downcast_ref::<rustls::Error>().is_some(),
+            "{source:?}"
+        );
+    }
+
+    #[test]
+    fn a_failed_generation_says_so_and_carries_its_cause() {
+        let e = Error::generate(rsa::Error::NprimesTooSmall);
+        assert_eq!(e.to_string(), "generating a key failed");
+        let source = std::error::Error::source(&e).expect("a source");
+        assert!(source.downcast_ref::<rsa::Error>().is_some(), "{source:?}");
     }
 }

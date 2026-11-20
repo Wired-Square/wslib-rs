@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.0
+
+- A tokio-modbus protocol error is wslib-tcp's `TransportError::Violation`,
+  with tokio-modbus's `ProtocolError` as its source, in place of `Protocol`
+  and a sentence. wslib-tcp's floor is 0.1.2.
+- `WriteOutcome::Failed` carries a `WriteFailure`, and `Unconfirmed` the
+  `VerifyProblem`s, in place of text. Each names its `WriteTarget`, and the
+  `TransportError` or `RequestError` that failed is its `source()`, held in
+  an `Arc`. `WriteReport` and `WriteOutcome` are no longer `PartialEq` or
+  `Eq`.
+- `set_frame_disabled` fails with `FrameEditError`: `Toml`, with
+  toml_edit's error as its `source()`, or `NoFrame`, in place of a
+  sentence.
+- `RequestError::Transport` says "the request got no usable answer", with
+  the `TransportError` as its `source()`, in place of passing its text and
+  source through. `ManifestError::Toml` says "manifest is not valid TOML",
+  with toml's error as its `source()`.
+
 ## 0.2.2
 
 - serde's floor is 1.0.228.

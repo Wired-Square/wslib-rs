@@ -66,6 +66,9 @@ fn reading_a_pair_offline_with_no_crypto_provider_is_an_internal_error() {
     std::fs::write(&settings.key, KEY).unwrap();
 
     let refused = pair_at(&settings).expect_err("refused");
-    assert!(matches!(refused, TlsError::Internal(_)), "{refused:?}");
-    assert!(refused.to_string().contains("install one"), "{refused}");
+    assert!(matches!(refused, TlsError::Failed(_)), "{refused:?}");
+    assert!(matches!(
+        std::error::Error::source(&refused).and_then(|e| e.downcast_ref::<ServeError>()),
+        Some(ServeError::NoCryptoProvider)
+    ));
 }

@@ -44,7 +44,9 @@ if verified && stored.is_some_and(needs_rehash) {
   to set a new password.
 - **Blocking.** `hash`, `rehash`, `verify` and `verify_absent` take tens of
   milliseconds. With the `tokio` feature, `wslib_auth_password::tokio` has
-  async versions that run on `spawn_blocking`.
+  async versions that run on `spawn_blocking`. Its `verify` and
+  `verify_absent` return `Result<bool, PasswordError>`, an error if the work
+  panicked or the runtime shut down first: sign in only on `Ok(true)`.
 
 argon2 is slow in a debug build. A consumer whose tests hash a lot can set
 `[profile.dev.package.argon2] opt-level = 3` in its own workspace.

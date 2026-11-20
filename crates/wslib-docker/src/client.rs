@@ -351,11 +351,11 @@ pub enum DockerError {
 impl fmt::Display for DockerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unreachable(e) => write!(f, "docker is unreachable: {e}"),
-            Self::Http(e) => write!(f, "docker's HTTP failed: {e}"),
+            Self::Unreachable(_) => f.write_str("docker is unreachable"),
+            Self::Http(_) => f.write_str("docker's HTTP failed"),
             Self::Timeout => f.write_str("docker took too long"),
             Self::Refused { status, message } => write!(f, "docker answered {status}: {message}"),
-            Self::Json(e) => write!(f, "docker's answer is not JSON: {e}"),
+            Self::Json(_) => f.write_str("docker's answer is not JSON"),
             Self::Name(name) => write!(f, "{name:?} is not a docker name"),
         }
     }
@@ -497,6 +497,22 @@ fn loaded(stream: &[u8]) -> Result<Vec<String>, DockerError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failure_says_its_own_layer_and_keeps_the_cause_typed() {
+        let unreachable = DockerError::from(io::Error::from(io::ErrorKind::PermissionDenied));
+        assert_eq!(unreachable.to_string(), "docker is unreachable");
+        let source = std::error::Error::source(&unreachable).unwrap();
+        assert_eq!(
+            source.downcast_ref::<io::Error>().unwrap().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        let json =
+            DockerError::Json(serde_json::from_slice::<serde_json::Value>(b"{").unwrap_err());
+        assert_eq!(json.to_string(), "docker's answer is not JSON");
+        let source = std::error::Error::source(&json).unwrap();
+        assert!(source.is::<serde_json::Error>());
+    }
 
     #[test]
     fn a_load_names_tagged_and_untagged_images() {

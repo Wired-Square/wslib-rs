@@ -3,7 +3,7 @@ use std::{future::Future, time::Duration};
 use tokio::time::timeout;
 use wslib_can::{CanError, CanOptions};
 use wslib_can_slcan::{self as slcan, SlcanOptions};
-use wslib_serial::{LineSettings, Parity};
+use wslib_serial::{LineSettings, Parity, SerialError};
 
 const LINE: LineSettings = LineSettings {
     baud: 115_200,
@@ -53,11 +53,15 @@ async fn a_missing_path_is_the_callers_open_error() {
 }
 
 #[tokio::test]
-async fn invalid_line_settings_are_a_config_error() {
+async fn invalid_line_settings_are_the_serial_ports_refusal() {
     let mut options = slcan_options(MISSING);
     options.line.data_bits = 9;
+    let bad = options.line;
     let error = within(open_err(options)).await;
-    assert!(matches!(error, CanError::Config(_)), "{error:?}");
+    assert!(
+        matches!(&error, CanError::Serial(SerialError::InvalidSettings(line)) if *line == bad),
+        "{error:?}"
+    );
 }
 
 #[tokio::test]
@@ -101,7 +105,13 @@ async fn a_probe_of_a_missing_path_or_bad_settings_fails_before_asking_anything(
         ..LINE
     };
     let error = within(slcan::probe(MISSING, bad, Duration::from_secs(2))).await;
-    assert!(matches!(error, Err(CanError::Config(_))), "{error:?}");
+    assert!(
+        matches!(
+            error,
+            Err(CanError::Serial(SerialError::InvalidSettings(_)))
+        ),
+        "{error:?}"
+    );
 }
 
 /// serialport can't open a macOS pty: it sets the rate with `IOSSIOSPEED`,
@@ -123,7 +133,9 @@ mod pty {
         sync::{Notify, mpsc},
         task::JoinHandle,
     };
-    use wslib_can::{CanEvent, CanFrame, CanRead, CanTask, DeviceInfo, SendRefused, Unsupported};
+    use wslib_can::{
+        CanEvent, CanFrame, CanRead, CanTask, DeviceInfo, SendRefused, Unsupported, WriteFailed,
+    };
     use wslib_can_slcan::BELL;
 
     use super::*;
@@ -142,6 +154,7 @@ mod pty {
         after_open: &'static str,
         /// Sent ahead of every answer, as by a channel left open.
         streaming: &'static str,
+        suspended: bool,
     }
 
     impl Default for Behaviour {
@@ -152,6 +165,7 @@ mod pty {
                 silent: false,
                 after_open: "",
                 streaming: "",
+                suspended: false,
             }
         }
     }
@@ -194,6 +208,9 @@ mod pty {
                 assert_eq!(opened, 0, "openpty");
                 assert_eq!(libc::ttyname_r(slave, name.as_mut_ptr(), name.len()), 0);
                 assert_ne!(libc::fcntl(master, libc::F_SETFL, libc::O_NONBLOCK), -1);
+                if behaviour.suspended {
+                    assert_eq!(libc::tcflow(slave, libc::TCOOFF), 0);
+                }
                 let path = CStr::from_ptr(name.as_ptr()).to_str().expect("utf-8 path");
                 (
                     File::from(OwnedFd::from_raw_fd(master)),
@@ -660,6 +677,22 @@ mod pty {
             assert!(info.fd);
             assert_eq!(info.firmware.as_deref(), Some("2490643"));
             assert_eq!(info.hardware.as_deref(), Some("Multiboard STM32G431"));
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_probe_whose_ask_cannot_be_written_fails_with_the_write() {
+        within(async {
+            let device = FakeSlcan::start(Behaviour {
+                suspended: true,
+                ..Behaviour::default()
+            });
+            let error = probe(&device, PROBE).await.unwrap_err();
+            assert!(
+                matches!(&error, CanError::Write(WriteFailed::Io(e)) if e.kind() == io::ErrorKind::TimedOut),
+                "{error:?}"
+            );
         })
         .await
     }

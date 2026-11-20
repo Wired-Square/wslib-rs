@@ -26,11 +26,14 @@
 //!             }
 //!             let _held = wslib_service::private_directory(&layout.state_dir)?;
 //!             serve(stop).await?;
-//!             Ok::<_, Box<dyn std::error::Error>>(())
+//!             Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
 //!         })
 //!         .map_or_else(ExitCode::from, |()| ExitCode::SUCCESS)
 //! }
 //! ```
+//!
+//! `main`'s error is logged with each cause its `source()` gives, and is the
+//! source of [`Failure::Ended`].
 //!
 //! An app with a serve loop of its own takes `stop` as the future it ends on,
 //! polled once it is listening:
@@ -113,6 +116,7 @@ mod unix;
 mod windows;
 
 use std::any::Any;
+use std::error::Error;
 use std::fmt::Display;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
@@ -130,9 +134,11 @@ pub use tokio_util::sync::CancellationToken;
 
 const DEFAULT_GRACE: Duration = Duration::from_secs(15);
 const TEARDOWN: Duration = Duration::from_secs(1);
+const CAUSE_SEPARATOR: &str = ": ";
 
 type Value = Box<dyn Any + Send>;
-type Main = Box<dyn FnOnce(Stop) -> Pin<Box<dyn Future<Output = Result<Value, String>>>> + Send>;
+type Ended = Box<dyn Error + Send + Sync>;
+type Main = Box<dyn FnOnce(Stop) -> Pin<Box<dyn Future<Output = Result<Value, Ended>>>> + Send>;
 
 /// A service to run as `name`, under whichever service manager started it.
 #[derive(Clone, Debug)]
@@ -251,13 +257,13 @@ impl Daemon {
         F: FnOnce(Stop) -> Fut + Send + 'static,
         Fut: Future<Output = Result<T, E>> + 'static,
         T: Send + 'static,
-        E: Display,
+        E: Into<Box<dyn Error + Send + Sync>>,
     {
         let main: Main = Box::new(|stop| {
             Box::pin(async {
                 match main(stop).await {
                     Ok(value) => Ok(Box::new(value) as Value),
-                    Err(e) => Err(format!("{e:#}")),
+                    Err(e) => Err(e.into()),
                 }
             })
         });
@@ -329,7 +335,7 @@ fn drive(
         Ok(runtime) => runtime,
         Err(e) => {
             let failure = Failure::Runtime(e);
-            error(name, &failure);
+            error(name, chain(&failure));
             return Err(failure);
         }
     };
@@ -397,8 +403,15 @@ fn drive(
         Ok(Some(Ok(value))) if asked => return Ok(value),
         Ok(Some(Ok(_))) => Failure::Unasked,
     };
-    error(name, &failure);
+    error(name, chain(&failure));
     Err(failure)
+}
+
+fn chain(error: &(dyn Error + 'static)) -> String {
+    std::iter::successors(Some(error), |&e| e.source())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(CAUSE_SEPARATOR)
 }
 
 fn panic_message(panic: &(dyn Any + Send)) -> &str {
@@ -631,8 +644,8 @@ impl std::fmt::Debug for Ready {
 #[non_exhaustive]
 pub enum Failure {
     /// `main` returned this error, before or after the stop.
-    #[error("the service ended in error: {0}")]
-    Ended(String),
+    #[error("the service ended in error")]
+    Ended(#[source] Box<dyn Error + Send + Sync>),
 
     #[error("the service ended without being asked to stop")]
     Unasked,
@@ -645,13 +658,18 @@ pub enum Failure {
     #[error("the service did not end within its grace of {0:?} once stopped")]
     Overran(Duration),
 
-    #[error("could not start a runtime: {0}")]
-    Runtime(std::io::Error),
+    #[error("could not start a runtime")]
+    Runtime(#[source] std::io::Error),
 
     /// The service control manager's dispatcher failed, other than by the
     /// process not having been started by it.
-    #[error("could not run as a Windows service: {0}")]
-    ServiceManager(std::io::Error),
+    #[error("could not run as a Windows service")]
+    ServiceManager(#[source] Box<dyn Error + Send + Sync>),
+
+    /// The service control manager's dispatcher returned without having
+    /// started the service.
+    #[error("the service control manager never started the service")]
+    NeverStarted,
 }
 
 impl From<Failure> for ExitCode {
@@ -818,6 +836,46 @@ mod tests {
         ready.send(Some("x"));
         ready.send(None);
         assert_eq!(*told.0.lock().unwrap(), [r#"ready Some("x")"#]);
+    }
+
+    #[test]
+    fn an_error_main_returns_is_the_source_of_ended() {
+        let ran = drive(
+            "widgets",
+            GRACE,
+            CancellationToken::new(),
+            Box::new(|_stop| {
+                Box::pin(async {
+                    Err(Box::new(std::io::Error::other("the disk is on fire")) as Ended)
+                })
+            }),
+            |token| Stop::new(Manager::Signals, token, Told::default()),
+        );
+        let Err(failure @ Failure::Ended(_)) = ran else {
+            panic!("ended in error: {ran:?}");
+        };
+        assert_eq!(failure.to_string(), "the service ended in error");
+        let source = failure.source().expect("a source");
+        let io = source
+            .downcast_ref::<std::io::Error>()
+            .expect("main's own error");
+        assert_eq!(io.to_string(), "the disk is on fire");
+        assert_eq!(
+            chain(&failure),
+            "the service ended in error: the disk is on fire"
+        );
+    }
+
+    #[test]
+    fn a_runtime_that_would_not_start_is_the_source_not_the_sentence() {
+        let failure = Failure::Runtime(std::io::Error::other("no threads"));
+        assert_eq!(failure.to_string(), "could not start a runtime");
+        assert!(
+            failure
+                .source()
+                .and_then(|e| e.downcast_ref::<std::io::Error>())
+                .is_some()
+        );
     }
 
     #[test]

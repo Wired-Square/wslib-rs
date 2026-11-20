@@ -189,18 +189,18 @@ fn a_chain_that_does_not_hold_says_why() {
         )
     };
 
-    assert_eq!(
+    assert!(matches!(
         verify(&intermediates, Purpose::SERVER_AUTH, at(1_900_000_000)),
         Err(ChainError::Expired)
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         verify(&intermediates, Purpose::SERVER_AUTH, at(1_700_000_000)),
         Err(ChainError::NotYetValid)
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         verify(&intermediates, Purpose::CODE_SIGNING, january()),
         Err(ChainError::WrongPurpose)
-    );
+    ));
     assert!(matches!(
         verify(&[], Purpose::SERVER_AUTH, january()),
         Err(ChainError::Untrusted(_))
@@ -220,12 +220,25 @@ fn a_chain_that_does_not_hold_says_why() {
         matches!(refused, Err(ChainError::Untrusted(_))),
         "{refused:?}"
     );
+    let untrusted = refused.unwrap_err();
+    assert_eq!(
+        untrusted.to_string(),
+        "the certificate is not issued under a trusted anchor"
+    );
+    let source =
+        std::error::Error::source(&untrusted).and_then(|e| e.downcast_ref::<webpki::Error>());
+    assert!(
+        matches!(source, Some(webpki::Error::InvalidSignatureForPublicKey)),
+        "{untrusted:?}"
+    );
 
     let not_a_certificate = CertificateDer::from(vec![0x30, 0x00]);
-    assert!(matches!(
-        chain::trust_anchor(&not_a_certificate),
-        Err(ChainError::Invalid(_))
-    ));
+    let invalid = chain::trust_anchor(&not_a_certificate).unwrap_err();
+    assert!(matches!(invalid, ChainError::Invalid(_)), "{invalid:?}");
+    assert_eq!(invalid.to_string(), "the certificate does not verify");
+    let source =
+        std::error::Error::source(&invalid).and_then(|e| e.downcast_ref::<webpki::Error>());
+    assert!(source.is_some(), "{invalid:?}");
 }
 
 fn der_sequence(contents: &AlgorithmIdentifier) -> Vec<u8> {
@@ -300,10 +313,10 @@ fn a_code_signing_leaf_must_allow_digital_signatures_when_it_limits_its_key() {
             algorithms,
         )
     };
-    assert_eq!(verify(vec![]), Ok(()));
-    assert_eq!(verify(vec![KeyUsagePurpose::DigitalSignature]), Ok(()));
-    assert_eq!(
+    assert!(verify(vec![]).is_ok());
+    assert!(verify(vec![KeyUsagePurpose::DigitalSignature]).is_ok());
+    assert!(matches!(
         verify(vec![KeyUsagePurpose::KeyEncipherment]),
         Err(ChainError::WrongKeyUsage)
-    );
+    ));
 }

@@ -190,14 +190,14 @@ fn derive(passphrase: &str, kdf: &Kdf, ceiling: Ceiling) -> Result<Derived, Back
         kdf.p_cost,
         Some(KEY_LEN + COMMITMENT_LEN),
     )
-    .map_err(|e| BackupError::Malformed(format!("unusable KDF parameters — {e}")))?;
+    .map_err(|e| BackupError::KdfParameters(Box::new(e)))?;
 
     // argon2 frees the memory it allocates itself unwiped, zeroize feature or not.
     let mut memory = Zeroizing::new(vec![Block::default(); params.block_count()]);
     let mut material = Zeroizing::new([0u8; KEY_LEN + COMMITMENT_LEN]);
     Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
         .hash_password_into_with_memory(passphrase.as_bytes(), &salt, &mut *material, &mut **memory)
-        .map_err(|e| BackupError::Passphrase(format!("could not derive a key — {e}")))?;
+        .map_err(|e| BackupError::Derive(Box::new(e)))?;
 
     let mut key = Zeroizing::new([0u8; KEY_LEN]);
     key.copy_from_slice(&material[..KEY_LEN]);
@@ -230,7 +230,7 @@ impl std::io::Write for Wiping {
 
 fn random<const N: usize>() -> Result<[u8; N], BackupError> {
     let mut bytes = [0u8; N];
-    getrandom::fill(&mut bytes).map_err(BackupError::internal)?;
+    getrandom::fill(&mut bytes).map_err(BackupError::failed)?;
     Ok(bytes)
 }
 
@@ -279,7 +279,7 @@ fn seal_at(
         &mut GzEncoder::new(plaintext, Compression::default()),
         &mut compressed,
     )
-    .map_err(BackupError::internal)?;
+    .map_err(BackupError::failed)?;
 
     let (key, commitment) = derive(passphrase, &kdf, Ceiling::General)?;
     let commitment = B64.encode(commitment);
@@ -292,7 +292,7 @@ fn seal_at(
                 aad: &aad(&header, &commitment),
             },
         )
-        .map_err(|_| BackupError::internal("the snapshot could not be sealed"))?;
+        .map_err(|_| BackupError::Internal("the snapshot could not be sealed".to_string()))?;
 
     let envelope = Envelope {
         header,
@@ -301,7 +301,7 @@ fn seal_at(
         commitment,
         sealed: B64.encode(sealed),
     };
-    let text = serde_json::to_string(&envelope).map_err(BackupError::internal)?;
+    let text = serde_json::to_string(&envelope).map_err(BackupError::failed)?;
     within_the_cap(text.len())?;
     Ok(text)
 }
@@ -392,7 +392,7 @@ pub(crate) fn open(
         &mut GzDecoder::new(&compressed[..]).take(MAX_BUNDLE_LEN as u64 + 1),
         &mut plaintext,
     )
-    .map_err(BackupError::internal)?;
+    .map_err(BackupError::failed)?;
     within_the_cap(plaintext.0.len())?;
 
     Ok((envelope.header, plaintext.0))

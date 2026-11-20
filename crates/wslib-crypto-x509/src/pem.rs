@@ -50,7 +50,7 @@ pub fn certificates(pem: &str) -> Result<Vec<CertificateDer<'static>>, Error> {
     }
     let certificates = CertificateDer::pem_slice_iter(sections(pem, |_| true)?.as_bytes())
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| Error::Malformed(e.to_string()))?;
+        .map_err(Error::decode)?;
     if certificates.is_empty() {
         return Err(none_decodes());
     }
@@ -66,7 +66,7 @@ pub fn private_key(pem: &str) -> Result<PrivateKeyDer<'static>, Error> {
     let tidy = sections(pem, |_| true)?;
     let mut keys = PrivateKeyDer::pem_slice_iter(tidy.as_bytes());
     let key = match keys.next() {
-        Some(key) => key.map_err(|e| Error::Malformed(e.to_string()))?,
+        Some(key) => key.map_err(Error::decode)?,
         None => return Err(missing(pem, PRIVATE_KEY)),
     };
     if let Some(second) = keys.next() {
@@ -223,20 +223,16 @@ mod tests {
     fn a_private_key_beside_the_certificate_is_refused_so_it_is_never_served() {
         let pem = certificate(|_| {});
         for combined in [format!("{}{pem}", key_pem()), format!("{pem}{}", key_pem())] {
-            assert_eq!(
+            assert!(matches!(
                 certificates(&combined),
-                Err(Error::Beside {
-                    label: PRIVATE_KEY.to_string()
-                })
-            );
+                Err(Error::Beside { label }) if label == PRIVATE_KEY
+            ));
         }
         let crl = format!("{pem}-----BEGIN X509 CRL-----\nMIIB\n-----END X509 CRL-----\n");
-        assert_eq!(
+        assert!(matches!(
             certificates(&crl),
-            Err(Error::Beside {
-                label: "X509 CRL".to_string()
-            })
-        );
+            Err(Error::Beside { label }) if label == "X509 CRL"
+        ));
     }
 
     #[test]
@@ -273,7 +269,7 @@ mod tests {
         let legacy = "-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\n\
                       DEK-Info: AES-128-CBC,00\n\nMIIB\n-----END RSA PRIVATE KEY-----\n";
         for encrypted in [pkcs8, legacy] {
-            assert_eq!(private_key(encrypted), Err(Error::Encrypted));
+            assert!(matches!(private_key(encrypted), Err(Error::Encrypted)));
         }
     }
 
@@ -284,14 +280,14 @@ mod tests {
             Ok(PrivateKeyDer::Pkcs8(_))
         ));
         let two = format!("{}{}", key_pem(), key_pem());
-        assert_eq!(private_key(&two), Err(Error::MoreThanOneKey));
-        assert_eq!(
+        assert!(matches!(private_key(&two), Err(Error::MoreThanOneKey)));
+        assert!(matches!(
             private_key(&certificate(|_| {})),
             Err(Error::Missing {
                 wanted: PRIVATE_KEY,
-                found: CERTIFICATE.to_string()
-            })
-        );
+                found,
+            }) if found == CERTIFICATE
+        ));
     }
 
     #[test]
@@ -300,15 +296,35 @@ mod tests {
         let unterminated = pem.trim_end();
         let crlf = unterminated.replace('\n', "\r\n");
         for pasted in [unterminated, &crlf] {
-            assert_eq!(private_key(pasted), private_key(&pem));
+            assert_eq!(private_key(pasted).unwrap(), private_key(&pem).unwrap());
         }
     }
 
     #[test]
+    fn base64_that_does_not_decode_says_so_and_carries_the_decoders_error() {
+        let pem = "-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----\n";
+        let refused = certificates(pem).unwrap_err();
+        assert!(matches!(refused, Error::Decode(_)), "{refused:?}");
+        assert_eq!(refused.to_string(), "does not decode");
+        let source = std::error::Error::source(&refused)
+            .and_then(|e| e.downcast_ref::<rustls_pki_types::pem::Error>());
+        assert!(source.is_some(), "{refused:?}");
+    }
+
+    #[test]
     fn text_that_is_not_pem_at_all_says_so() {
-        assert_eq!(certificates("\u{0}\u{1}not text"), Err(Error::NotPem));
-        assert_eq!(private_key("\u{0}\u{1}not text"), Err(Error::NotPem));
-        assert_eq!(normalise("\u{0}\u{1}not text"), Err(Error::NotPem));
+        assert!(matches!(
+            certificates("\u{0}\u{1}not text"),
+            Err(Error::NotPem)
+        ));
+        assert!(matches!(
+            private_key("\u{0}\u{1}not text"),
+            Err(Error::NotPem)
+        ));
+        assert!(matches!(
+            normalise("\u{0}\u{1}not text"),
+            Err(Error::NotPem)
+        ));
     }
 
     #[test]
@@ -331,12 +347,10 @@ mod tests {
             .take(3)
             .collect::<Vec<_>>()
             .join("\n");
-        assert_eq!(
+        assert!(matches!(
             normalise(&half),
-            Err(Error::Unterminated {
-                label: CERTIFICATE.to_string()
-            })
-        );
+            Err(Error::Unterminated { label }) if label == CERTIFICATE
+        ));
     }
 
     #[test]
@@ -357,8 +371,14 @@ mod tests {
                 .collect::<String>()
         };
         let pem = certificate(|_| {});
-        assert_eq!(certificates(&indent(&pem)), certificates(&pem));
-        assert_eq!(private_key(&indent(&key_pem())), private_key(&key_pem()));
+        assert_eq!(
+            certificates(&indent(&pem)).unwrap(),
+            certificates(&pem).unwrap()
+        );
+        assert_eq!(
+            private_key(&indent(&key_pem())).unwrap(),
+            private_key(&key_pem()).unwrap()
+        );
     }
 
     #[test]
@@ -403,6 +423,9 @@ mod tests {
     fn an_encoded_private_key_reads_back_as_the_same_key() {
         let key = wslib_crypto::KeyAlgorithm::EcP384.generate().unwrap();
         let pem = encode_private_key(&key);
-        assert_eq!(private_key(&pem), Ok(PrivateKeyDer::Pkcs8(key.clone_key())));
+        assert_eq!(
+            private_key(&pem).unwrap(),
+            PrivateKeyDer::Pkcs8(key.clone_key())
+        );
     }
 }

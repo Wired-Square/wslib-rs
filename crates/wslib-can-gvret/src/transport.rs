@@ -9,9 +9,10 @@ use tokio::{
     time::{Instant, sleep, sleep_until, timeout_at},
 };
 use wslib_can::{
-    CanError, CanFrame, CanOptions, CanTask, Device, DeviceInfo, Direction, Limits, Received, Stamp,
+    CanError, CanFrame, CanOptions, CanTask, Device, DeviceInfo, Direction, Limits, Received,
+    Stamp, WriteFailed,
 };
-#[cfg(feature = "serial")]
+#[cfg(all(feature = "serial", not(target_os = "ios")))]
 use wslib_serial::{LineSettings, SerialPort};
 
 use crate::{
@@ -28,7 +29,7 @@ pub enum Link {
         connect_timeout: Duration,
     },
     /// Opened read-write and exclusive.
-    #[cfg(feature = "serial")]
+    #[cfg(all(feature = "serial", not(target_os = "ios")))]
     Serial { path: String, line: LineSettings },
 }
 
@@ -139,7 +140,7 @@ impl Device for Gvret {
         }
     }
 
-    async fn write(&mut self, frame: &CanFrame) -> io::Result<()> {
+    async fn write(&mut self, frame: &CanFrame) -> Result<(), WriteFailed> {
         encode_transmit_into(
             &mut self.outbound,
             frame.arb_id,
@@ -175,12 +176,12 @@ impl Gvret {
     /// A close or a read error is the caller's error; silence is not.
     async fn handshake(&mut self, probe_timeout: Duration) -> Result<(), CanError> {
         self.outbound.extend_from_slice(&SYNC);
-        self.flush().await.map_err(CanError::Read)?;
+        self.flush().await.map_err(CanError::Write)?;
         sleep(SETTLE).await;
         self.outbound.extend_from_slice(&REQ_DEV_INFO);
         self.ask_keepalive()?;
         self.outbound.extend_from_slice(&REQ_NUM_BUSES);
-        self.flush().await.map_err(CanError::Read)?;
+        self.flush().await.map_err(CanError::Write)?;
 
         let deadline = Instant::now() + probe_timeout;
         while self.info.buses.is_none() {
@@ -241,14 +242,14 @@ impl Gvret {
         Ok(())
     }
 
-    async fn flush(&mut self) -> io::Result<()> {
+    async fn flush(&mut self) -> Result<(), WriteFailed> {
         self.wire.flush(&mut self.outbound).await
     }
 }
 
 enum Wire {
     Tcp(TcpStream),
-    #[cfg(feature = "serial")]
+    #[cfg(all(feature = "serial", not(target_os = "ios")))]
     Serial(SerialPort),
 }
 
@@ -269,7 +270,7 @@ impl Wire {
                 let _ = stream.set_nodelay(true);
                 Ok(Self::Tcp(stream))
             }
-            #[cfg(feature = "serial")]
+            #[cfg(all(feature = "serial", not(target_os = "ios")))]
             Link::Serial { path, line } => match deadline {
                 Some(deadline) => crate::serial::open_before(path, *line, deadline).await,
                 None => crate::serial::open(path, *line),
@@ -285,8 +286,8 @@ impl Wire {
                 tokio::select! {
                     biased;
                     ready = stream.writable(), if !outbound.is_empty() => {
-                        ready.map_err(CanError::Read)?;
-                        let _ = push(stream, outbound);
+                        ready.map_err(|e| CanError::Write(WriteFailed::Io(e)))?;
+                        push(stream, outbound).map_err(|e| CanError::Write(WriteFailed::Io(e)))?;
                     }
                     ready = stream.readable() => {
                         ready.map_err(CanError::Read)?;
@@ -300,28 +301,28 @@ impl Wire {
                     }
                 }
             },
-            #[cfg(feature = "serial")]
+            #[cfg(all(feature = "serial", not(target_os = "ios")))]
             Self::Serial(port) => crate::serial::read(port, outbound).await,
         }
     }
 
     /// A failed write drops what was pending: the next read decides the link.
-    async fn flush(&mut self, outbound: &mut Vec<u8>) -> io::Result<()> {
+    async fn flush(&mut self, outbound: &mut Vec<u8>) -> Result<(), WriteFailed> {
         match self {
             Self::Tcp(stream) => {
                 while !outbound.is_empty() {
-                    stream.writable().await?;
-                    push(stream, outbound)?;
+                    stream.writable().await.map_err(WriteFailed::Io)?;
+                    push(stream, outbound).map_err(WriteFailed::Io)?;
                 }
                 Ok(())
             }
-            #[cfg(feature = "serial")]
-            Self::Serial(port) => port.write(outbound).await,
+            #[cfg(all(feature = "serial", not(target_os = "ios")))]
+            Self::Serial(port) => port.write(outbound).await.map_err(crate::serial::unwritten),
         }
     }
 
     async fn close(self) {
-        #[cfg(feature = "serial")]
+        #[cfg(all(feature = "serial", not(target_os = "ios")))]
         if let Self::Serial(port) = self {
             port.close().await;
         }

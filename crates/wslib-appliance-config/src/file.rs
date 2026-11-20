@@ -55,16 +55,16 @@ impl FileConfig {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound && !explicit => {
                 return Ok(Self::default());
             }
-            Err(e) => {
+            Err(source) => {
                 return Err(ConfigError::Read {
                     path: path.to_path_buf(),
-                    because: e.to_string(),
+                    source,
                 });
             }
         };
-        toml::from_str(&text).map_err(|e| ConfigError::Parse {
+        toml::from_str(&text).map_err(|source| ConfigError::Parse {
             path: path.to_path_buf(),
-            because: e.to_string(),
+            source,
         })
     }
 

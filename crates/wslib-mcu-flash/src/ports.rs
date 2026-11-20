@@ -182,7 +182,7 @@ mod host {
     use std::collections::HashMap;
 
     use super::SerialPort;
-    use crate::error::{FlashError, Result};
+    use crate::error::{FlashError, Result, failed};
     use crate::identity::PortIdentity;
 
     #[cfg(target_os = "linux")]
@@ -245,8 +245,7 @@ mod host {
     }
 
     pub fn resolve_identity(id: &PortIdentity) -> Result<String> {
-        let ports = enumerate()
-            .map_err(|e| FlashError::Message(format!("serialport enumeration failed: {e}")))?;
+        let ports = enumerate().map_err(|e| failed("serialport enumeration failed", e))?;
         super::ports_for_identity(&ports, id)
             .first()
             .map(|p| p.path.clone())
@@ -255,7 +254,7 @@ mod host {
 
     impl From<serialport::Error> for FlashError {
         fn from(e: serialport::Error) -> Self {
-            FlashError::Message(format!("serialport: {e}"))
+            failed("The serial port failed", e)
         }
     }
 }
@@ -270,7 +269,22 @@ mod tests {
     const ALIAS_V1: &str = "platform-x-usb-0:1.4:1.0-port0";
     const ALIAS_V2: &str = "platform-x-usbv2-0:1.4:1.0-port0";
     const SIBLING: &str = "platform-x-usb-0:1.4:1.2-port0";
-    const ACM_PATH: &str = "platform-x-usb-0:2:1.0";
+
+    #[cfg(feature = "ports")]
+    #[test]
+    fn a_serialport_error_is_this_layers_sentence_over_serialports_error() {
+        let failed = FlashError::from(serialport::Error::new(
+            serialport::ErrorKind::NoDevice,
+            "the port went away",
+        ));
+
+        assert_eq!(failed.to_string(), "The serial port failed");
+        assert!(
+            std::error::Error::source(&failed)
+                .and_then(|s| s.downcast_ref::<serialport::Error>())
+                .is_some_and(|e| e.kind() == serialport::ErrorKind::NoDevice)
+        );
+    }
 
     fn serial(s: &str) -> PortIdentity {
         PortIdentity::UsbSerial(s.into())
@@ -369,8 +383,12 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_missing_topology_port_is_not_attached_on_linux() {
-        let expected = FlashError::NotAttached(format!("usb-path:{ALIAS_V1}"));
-        assert_eq!(not_attached(&usb_path(ALIAS_V1)), expected);
+        let missing = not_attached(&usb_path(ALIAS_V1));
+        let expected = format!("usb-path:{ALIAS_V1}");
+        assert!(
+            matches!(&missing, FlashError::NotAttached(id) if *id == expected),
+            "{missing:?}"
+        );
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -383,13 +401,17 @@ mod tests {
 
     #[test]
     fn other_missing_identities_are_not_attached() {
-        let expected = FlashError::NotAttached("/dev/ttyUSB1".into());
-        assert_eq!(not_attached(&tty("/dev/ttyUSB1")), expected);
+        let missing = not_attached(&tty("/dev/ttyUSB1"));
+        assert!(
+            matches!(&missing, FlashError::NotAttached(id) if id == "/dev/ttyUSB1"),
+            "{missing:?}"
+        );
     }
 
     #[cfg(unix)]
     #[test]
     fn by_path_index_groups_aliases_under_their_canonical_tty() {
+        const ACM_PATH: &str = "platform-x-usb-0:2:1.0";
         let root = tempfile::tempdir().unwrap();
         let by_path = root.path().join("serial/by-path");
         std::fs::create_dir_all(&by_path).unwrap();

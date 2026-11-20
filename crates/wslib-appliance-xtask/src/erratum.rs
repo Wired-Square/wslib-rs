@@ -19,11 +19,10 @@ const SECTION_HEADER: usize = 64;
 const TRUNCATED: &str = "the ELF headers run past the end of the file";
 
 /// The address of every unpatched site's `ADRP` in the aarch64 ELF at `path`.
-pub fn unpatched_sites(path: &Path) -> Result<Vec<u64>, String> {
-    std::fs::read(path)
-        .map_err(|e| e.to_string())
-        .and_then(|elf| scan_elf(&elf))
-        .map_err(|e| format!("{}: {e}", path.display()))
+pub fn unpatched_sites(path: &Path) -> Result<Vec<u64>, Box<dyn std::error::Error>> {
+    let scanned =
+        || -> Result<Vec<u64>, Box<dyn std::error::Error>> { Ok(scan_elf(&std::fs::read(path)?)?) };
+    scanned().map_err(crate::within(path.display()))
 }
 
 fn scan_elf(elf: &[u8]) -> Result<Vec<u64>, String> {

@@ -252,12 +252,16 @@ fn a_broken_policy_says_whether_rua_saves_it() {
             FindingCode::DmarcPolicyNone
         ]
     );
-    assert_eq!(
-        missing[0].detail,
-        Detail::Policy {
-            tag: "p".into(),
-            treated_as_none: true
-        }
+    assert!(
+        matches!(
+            &missing[0].detail,
+            Detail::Policy {
+                tag,
+                treated_as_none: true
+            } if tag == "p"
+        ),
+        "{:?}",
+        missing[0].detail
     );
     let invalid = check("v=DMARC1; p=block");
     assert_eq!(
@@ -267,12 +271,16 @@ fn a_broken_policy_says_whether_rua_saves_it() {
             FindingCode::DmarcNoAggregateReports
         ]
     );
-    assert_eq!(
-        invalid[0].detail,
-        Detail::Policy {
-            tag: "p".into(),
-            treated_as_none: false
-        }
+    assert!(
+        matches!(
+            &invalid[0].detail,
+            Detail::Policy {
+                tag,
+                treated_as_none: false
+            } if tag == "p"
+        ),
+        "{:?}",
+        invalid[0].detail
     );
 }
 
@@ -510,7 +518,7 @@ fn dane_findings_per_mx_host() {
 fn a_non_validating_resolver_skips_tlsa() {
     let dns = good_mx().with_tlsa(TLSA_NAME, tlsa(3, vec![0xab; 32]));
     let check = block_on(check_mx(&dns, "example.com", &[]));
-    assert_eq!(check.mx.hosts[0].tlsa, None);
+    assert!(check.mx.hosts[0].tlsa.is_none());
     assert_eq!(dns.queries(TLSA_NAME, RecordType::Tlsa), 0);
 }
 
@@ -780,15 +788,22 @@ fn a_servfail_in_a_zone_with_ds_records_is_a_suspected_bogus() {
         .filter(|finding| finding.code == FindingCode::DnssecSuspectedBogus)
         .collect();
     assert_eq!(suspected.len(), 1);
-    assert_eq!(
-        suspected[0].detail,
-        Detail::SuspectedBogus {
-            zone: "example.com".into(),
-            ds: vec![ds],
-        }
+    assert!(
+        matches!(
+            &suspected[0].detail,
+            Detail::SuspectedBogus { zone, ds: found } if zone == "example.com" && *found == [ds.clone()]
+        ),
+        "{:?}",
+        suspected[0].detail
     );
     assert!(
         !codes(&dnssec_report(&failing()).findings).contains(&FindingCode::DnssecSuspectedBogus)
+    );
+    let timing_out = signed_domain()
+        .with_error("_dmarc.example.com", RecordType::Txt, LookupError::Timeout)
+        .with_ds("example.com", ds);
+    assert!(
+        !codes(&dnssec_report(&timing_out).findings).contains(&FindingCode::DnssecSuspectedBogus)
     );
 }
 

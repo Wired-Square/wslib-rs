@@ -1,5 +1,8 @@
 use std::{error::Error, fmt, io};
 
+#[cfg(feature = "task")]
+use wslib_can::{CanError, WriteFailed};
+
 use crate::bus::{BUS_FORMS, CanBus, name_the_bus};
 
 /// Why a bus didn't open.
@@ -20,7 +23,49 @@ pub enum OpenError {
     /// CAN FD was asked of a GVRET device, which has none.
     NoFd(CanBus),
     /// Finding the adapter, or opening it, failed.
-    Open { bus: CanBus, source: io::Error },
+    Open { bus: CanBus, source: OpenCause },
+}
+
+/// Why [`OpenError::Open`] failed: finding the adapter, or the adapter's open.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum OpenCause {
+    Io(io::Error),
+    #[cfg(feature = "task")]
+    Adapter(CanError),
+}
+
+impl OpenCause {
+    /// The `io::Error`'s kind; for the adapter's error, that of the
+    /// `io::Error` it holds (a failed write's and a GVRET connect's too),
+    /// else `Other`.
+    pub fn kind(&self) -> io::ErrorKind {
+        match self {
+            OpenCause::Io(e) => e.kind(),
+            #[cfg(feature = "task")]
+            OpenCause::Adapter(
+                CanError::Open { source, .. }
+                | CanError::Read(source)
+                | CanError::Request { source, .. }
+                | CanError::Write(WriteFailed::Io(source)),
+            ) => source.kind(),
+            #[cfg(feature = "gvret")]
+            OpenCause::Adapter(CanError::Connect(
+                wslib_can_gvret::TransportError::Connect { source, .. }
+                | wslib_can_gvret::TransportError::Io(source),
+            )) => source.kind(),
+            #[cfg(feature = "task")]
+            OpenCause::Adapter(_) => io::ErrorKind::Other,
+        }
+    }
+
+    fn error(&self) -> &(dyn Error + 'static) {
+        match self {
+            OpenCause::Io(e) => e,
+            #[cfg(feature = "task")]
+            OpenCause::Adapter(e) => e,
+        }
+    }
 }
 
 impl OpenError {
@@ -59,7 +104,7 @@ impl OpenError {
                 format!("{bus}: this adapter sets the bus's rates; give CAN FD's data bitrate")
             }
             OpenError::NoFd(bus) => format!("{bus}: a GVRET device has no CAN FD"),
-            OpenError::Open { bus, source } => format!("{bus}: {source}"),
+            OpenError::Open { bus, .. } => format!("{bus} did not open"),
         }
     }
 }
@@ -73,7 +118,7 @@ impl fmt::Display for OpenError {
 impl Error for OpenError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            OpenError::Open { source, .. } => Some(source),
+            OpenError::Open { source, .. } => Some(source.error()),
             OpenError::FeatureOff(_)
             | OpenError::Unreachable(_)
             | OpenError::NoBitrate(_)

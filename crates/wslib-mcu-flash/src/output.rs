@@ -4,7 +4,7 @@ use std::path::Path;
 
 use wslib_file_atomic::{Options, Readers};
 
-use crate::error::{FlashError, Result};
+use crate::error::{Result, failed};
 
 /// Fills a file staged beside `path` and renames it over `path` only when
 /// `fill` succeeds, so a failed or cancelled read leaves `path` as it was.
@@ -20,7 +20,6 @@ pub(crate) fn replace_with(path: &Path, fill: impl FnOnce(&mut File) -> Result<(
         });
     match failure {
         Some(e) => Err(e),
-        None => written
-            .map_err(|e| FlashError::Message(format!("Failed to write {}: {e}", path.display()))),
+        None => written.map_err(|e| failed(format!("Failed to write {}", path.display()), e)),
     }
 }

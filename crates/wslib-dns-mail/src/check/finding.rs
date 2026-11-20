@@ -12,7 +12,7 @@ use crate::dmarc::Policy;
 use crate::spf::tree::TermPath;
 
 /// One way a domain's records break a specification or a common practice.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Finding {
     pub code: FindingCode,
@@ -195,7 +195,7 @@ impl fmt::Display for FindingCode {
 }
 
 /// The facts behind a finding, shaped by what it's about.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case", tag = "kind"))]
 #[non_exhaustive]

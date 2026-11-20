@@ -46,6 +46,7 @@ pub enum Action {
     Delay(Duration),
     /// Answer as `Reply` does, then close.
     ReplyThenClose,
+    OtherUnit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,7 +199,11 @@ async fn serve(mut stream: TcpStream, connection: usize, state: &Mutex<State>) {
         }
         let mut adu = header[..4].to_vec();
         adu.extend((reply.len() as u16 + 1).to_be_bytes());
-        adu.push(unit);
+        adu.push(if action == Action::OtherUnit {
+            unit.wrapping_add(1)
+        } else {
+            unit
+        });
         adu.extend(reply);
         if stream.write_all(&adu).await.is_err() || action == Action::ReplyThenClose {
             return;

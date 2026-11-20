@@ -1,7 +1,8 @@
 use std::ffi::CStr;
-use std::io;
 use std::mem::MaybeUninit;
 use std::os::fd::{AsFd, AsRawFd};
+use std::str::Utf8Error;
+use std::{fmt, io};
 
 /// Who is at the other end of a Unix socket, as the kernel recorded it at
 /// `connect()`: the effective ids, so `sudo` shows as the account it ran as.
@@ -118,12 +119,44 @@ pub fn account_name(uid: u32) -> io::Result<Option<String>> {
                 // SAFETY: on success `found` is `entry`, filled in, and its
                 // `pw_name` is a NUL-terminated string inside `buffer`.
                 let name = unsafe { CStr::from_ptr((*found).pw_name) };
-                return name
-                    .to_str()
-                    .map(|name| Some(name.to_owned()))
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e));
+                return decoded(name).map(Some);
             }
             error => return Err(io::Error::from_raw_os_error(error)),
         }
+    }
+}
+
+fn decoded(name: &CStr) -> io::Result<String> {
+    name.to_str()
+        .map(str::to_owned)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, NotUtf8(e)))
+}
+
+#[derive(Debug)]
+struct NotUtf8(Utf8Error);
+
+impl fmt::Display for NotUtf8 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("the account name is not UTF-8")
+    }
+}
+
+impl std::error::Error for NotUtf8 {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_name_that_is_not_utf8_keeps_the_decoders_error() {
+        let error = decoded(c"caf\xe9").unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(error.to_string(), "the account name is not UTF-8");
+        let source = std::error::Error::source(&error).unwrap();
+        assert!(source.is::<Utf8Error>());
     }
 }

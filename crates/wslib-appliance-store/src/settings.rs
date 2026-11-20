@@ -282,9 +282,24 @@ mod tests {
             .await
             .expect_err("a map keyed by tuples is not JSON");
         assert!(
-            matches!(&e, StoreError::Unreadable { table: "settings", what: "document", because }
-                if because.starts_with("backup.schedule: ")),
+            matches!(
+                &e,
+                StoreError::Unreadable {
+                    table: "settings",
+                    what: "document",
+                    ..
+                }
+            ),
             "{e:?}"
+        );
+        assert_eq!(e.to_string(), "unreadable document in settings");
+        let source = std::error::Error::source(&e).expect("the database's refusal");
+        assert!(
+            matches!(
+                source.downcast_ref::<wslib_db_sqlite::Error>(),
+                Some(wslib_db_sqlite::Error::Serialise { key, .. }) if key == "backup.schedule"
+            ),
+            "{source:?}"
         );
     }
 

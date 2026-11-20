@@ -39,7 +39,7 @@ impl Default for WalkLimits {
 }
 
 /// A domain's SPF record, everything it reaches, and the cost.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SpfTree {
     pub root: SpfNode,
@@ -47,7 +47,7 @@ pub struct SpfTree {
 }
 
 /// The SPF records at one domain and the lookups its terms made.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SpfNode {
     pub domain: String,
@@ -64,7 +64,7 @@ impl SpfNode {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TermLookup {
     /// Index into the record's terms.
@@ -78,7 +78,7 @@ pub struct TermLookup {
     pub outcome: TermOutcome,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum TermOutcome {
@@ -94,7 +94,7 @@ pub enum TermOutcome {
     NotEvaluated(NotEvaluated),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Exchange {
     pub host: String,

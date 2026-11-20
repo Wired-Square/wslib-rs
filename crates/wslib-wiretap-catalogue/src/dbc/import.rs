@@ -7,6 +7,8 @@ use std::collections::HashMap;
 use std::fmt::Write;
 use wslib_wiretap_protocol::format_frame_id;
 
+use crate::DocumentError;
+
 /// Format an f64 as a TOML float, ensuring a decimal point is always present.
 /// Rust's Display for f64 omits the decimal for whole numbers (e.g. `72057600000000000`),
 /// which TOML parsers interpret as integers — exceeding JavaScript's safe integer range.
@@ -108,9 +110,8 @@ struct MuxCaseTree {
 }
 
 /// Convert DBC file content to WireTAP TOML catalogue content.
-pub fn convert_dbc_to_toml(dbc_content: &str) -> Result<String, String> {
-    let dbc = can_dbc::Dbc::try_from(dbc_content)
-        .map_err(|e| format!("Failed to parse DBC file: {:?}", e))?;
+pub fn convert_dbc_to_toml(dbc_content: &str) -> Result<String, DocumentError> {
+    let dbc = can_dbc::Dbc::try_from(dbc_content).map_err(|e| DocumentError::Dbc(Box::new(e)))?;
 
     // Build lookup tables
     let comment_map = build_comment_map(&dbc.comments);

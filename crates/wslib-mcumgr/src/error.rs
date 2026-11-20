@@ -1,11 +1,11 @@
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
-    #[error("I/O error: {0}")]
+    #[error("I/O failed")]
     Io(#[from] std::io::Error),
 
     #[cfg(feature = "ble")]
-    #[error("BLE: {0}")]
+    #[error("BLE failed")]
     Ble(#[from] btleplug::Error),
 
     #[cfg(feature = "ble")]
@@ -18,11 +18,24 @@ pub enum Error {
     #[error("SMP encode failed: {0}")]
     Encode(String),
 
+    /// ciborium refused the payload; the source is its error.
+    #[error("the SMP payload does not encode as CBOR")]
+    Unencodable(#[source] Box<dyn std::error::Error + Send + Sync>),
+
     #[error("every sequence number awaits a reply")]
     SequenceExhausted,
 
     #[error("SMP decode failed: {0}")]
     Decode(String),
+
+    /// A payload's CBOR doesn't decode; `context` names the request a reply
+    /// answers, and the source is ciborium's error.
+    #[error("the SMP payload does not decode{}", .context.as_ref().map(|c| format!(" in the reply to {c}")).unwrap_or_default())]
+    Undecodable {
+        context: Option<String>,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 
     /// `group` is set for a version 2 group error, whose `rc` is that group's.
     #[error("the device rejected {reason}: rc {rc}{}", .group.map(|g| format!(" in group {g}")).unwrap_or_default())]

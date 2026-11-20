@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0
+
+- `Error::Absent` holds the connect's `io::Error`, `NotFound` or
+  `ConnectionRefused`, as its `source()`.
+- `Error::Unsupported`: off Unix every call answers with it, with no
+  `source()`, in place of `Absent`.
+- `Error::Json`: the answer's body was not the JSON expected, with
+  serde_json's error as its `source()`. It was `Malformed` with the error's
+  text; `Malformed` keeps the crate's own sentences.
+
 ## 0.1.1
 
 - The `testing` feature builds off Unix, with no `testing` module: it

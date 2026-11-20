@@ -1,6 +1,9 @@
 use std::io;
 
-use crate::{bus::CanBus, error::OpenError};
+use crate::{
+    bus::CanBus,
+    error::{OpenCause, OpenError},
+};
 
 const NO_SERIAL: &str = "(no serial)";
 const LIST_SEPARATOR: &str = ", ";
@@ -13,9 +16,9 @@ pub(crate) fn only_adapter<D>(
 ) -> Result<D, OpenError> {
     let failed = |source| OpenError::Open {
         bus: bus.clone(),
-        source,
+        source: OpenCause::Io(source),
     };
-    let found = found.map_err(|e| failed(io::Error::other(e)))?;
+    let found = found.map_err(failed)?;
     let listed = found
         .iter()
         .map(|device| serial_of(device).unwrap_or(NO_SERIAL))

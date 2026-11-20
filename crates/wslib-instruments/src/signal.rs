@@ -43,8 +43,8 @@ pub fn slug(key: &SignalKey) -> String {
     format_signal_key(key)
 }
 
-pub fn parse(slug: &str) -> Result<SignalKey, String> {
-    parse_signal_key(slug).map_err(|e| e.to_string())
+pub fn parse(slug: &str) -> Result<SignalKey, wslib_framelink_protocol::Error> {
+    parse_signal_key(slug)
 }
 
 pub fn derived_name(key: &SignalKey) -> String {

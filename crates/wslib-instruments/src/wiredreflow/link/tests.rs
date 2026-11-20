@@ -1,5 +1,6 @@
 use std::{
     collections::VecDeque,
+    error::Error as _,
     io,
     sync::{
         Arc, Mutex,
@@ -9,11 +10,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+use wslib_can_bus::{OpenCause, OpenError};
+
 use crate::{
-    probe::{Probe, ProbeError},
+    probe::{Probe, ProbeError, StartError},
     uri::ProbeUri,
     wiredreflow::{
-        bus::{Bus, BusError, CanBus},
+        bus::{Bus, BusError, CanBus, Cause},
         frame::{CJ1, CJ2, RawFrame, TC1, TC1_FAULT, TC2, TC2_FAULT},
         link::{Opener, Timing, WiredReflowProbe, discover},
     },
@@ -34,6 +37,23 @@ const WINDOW: Duration = Duration::from_millis(100);
 const SETTLE: Duration = Duration::from_millis(100);
 const DEADLINE: Duration = Duration::from_secs(1);
 const WITHIN_SILENCE: Duration = Duration::from_millis(100);
+const CLOSED: &str = "device closed";
+const REFUSED: &str = "the device refused 500 kbit/s";
+
+fn closed() -> Cause {
+    Arc::new(io::Error::new(io::ErrorKind::BrokenPipe, CLOSED))
+}
+
+fn is_closed(error: &ProbeError) -> bool {
+    matches!(
+        error,
+        ProbeError::Disconnected { why, source: Some(source) }
+            if why == "the CAN adapter was lost"
+                && source
+                    .downcast_ref::<io::Error>()
+                    .is_some_and(|e| e.to_string() == CLOSED)
+    )
+}
 
 type Step = Result<Option<RawFrame>, BusError>;
 type Script = Arc<Mutex<VecDeque<Step>>>;
@@ -123,13 +143,37 @@ fn no_board_on_the_bus_is_not_found_naming_the_bus() {
 
 #[test]
 fn an_adapter_lost_while_listening_is_named_as_the_reason_nothing_was_found() {
-    let mut bus = Scripted(script(vec![Err(BusError::Lost("device closed".into()))]));
+    let mut bus = Scripted(script(vec![Err(BusError::Lost(closed()))]));
     let error = discover(&mut bus, &can0(), WINDOW).unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::NotFound);
     let text = error.to_string();
     assert!(
-        text.contains("can0") && text.contains("device closed"),
+        text.contains("can0") && text.contains("lost while listening"),
         "{text}"
+    );
+    assert!(
+        error
+            .source()
+            .and_then(|s| s.downcast_ref::<io::Error>())
+            .is_some_and(|e| e.to_string() == CLOSED),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_bus_that_ends_while_listening_fails_discovery_with_its_cause() {
+    let refused: Cause = Arc::new(io::Error::other(REFUSED));
+    let mut bus = Scripted(script(vec![Err(BusError::Ended(Some(refused)))]));
+
+    let error = discover(&mut bus, &can0(), WINDOW).unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "can0 ended while listening for a WiredReflow"
+    );
+    assert_eq!(
+        error.source().map(ToString::to_string),
+        Some(REFUSED.to_owned())
     );
 }
 
@@ -196,7 +240,7 @@ fn silence_is_reported_once_and_the_next_frame_clears_it() {
     let (mut probe, shared) = probe(vec![broadcast(THERMOCOUPLE_ID, &ROOM)]);
     assert!(probe.next(deadline()).is_ok());
     assert!(
-        matches!(probe.next(deadline()), Err(ProbeError::Disconnected(why)) if why.contains("no WiredReflow frames"))
+        matches!(probe.next(deadline()), Err(ProbeError::Disconnected { why, source: None }) if why.contains("no WiredReflow frames"))
     );
     assert!(
         matches!(
@@ -217,7 +261,7 @@ fn a_batch_queued_before_a_lost_adapter_is_delivered_and_the_loss_follows() {
     let (mut probe, _) = probe(vec![
         broadcast(THERMOCOUPLE_ID, &ROOM),
         broadcast(FAULT_ID, &CLEAR),
-        Err(BusError::Lost("device closed".into())),
+        Err(BusError::Lost(closed())),
     ]);
     thread::sleep(SETTLE);
     let keys: Vec<_> = probe
@@ -227,17 +271,13 @@ fn a_batch_queued_before_a_lost_adapter_is_delivered_and_the_loss_follows() {
         .map(|s| s.key)
         .collect();
     assert!(keys.contains(&TC1), "{keys:?}");
-    assert!(
-        matches!(probe.next(deadline()), Err(ProbeError::Disconnected(why)) if why.contains("device closed"))
-    );
+    assert!(matches!(probe.next(deadline()), Err(error) if is_closed(&error)));
 }
 
 #[test]
 fn a_lost_adapter_is_reported_and_reading_carries_on_when_it_returns() {
-    let (mut probe, shared) = probe(vec![Err(BusError::Lost("device closed".into()))]);
-    assert!(
-        matches!(probe.next(deadline()), Err(ProbeError::Disconnected(why)) if why.contains("device closed"))
-    );
+    let (mut probe, shared) = probe(vec![Err(BusError::Lost(closed()))]);
+    assert!(matches!(probe.next(deadline()), Err(error) if is_closed(&error)));
     shared
         .lock()
         .unwrap()
@@ -247,14 +287,15 @@ fn a_lost_adapter_is_reported_and_reading_carries_on_when_it_returns() {
 
 #[test]
 fn an_ended_bus_is_reported_and_the_probe_says_its_link_stopped() {
-    let (mut probe, _) = probe(vec![Err(BusError::Ended(
-        "the device refused 500 kbit/s".into(),
-    ))]);
+    let refused: Cause = Arc::new(io::Error::other(REFUSED));
+    let (mut probe, _) = probe(vec![Err(BusError::Ended(Some(refused)))]);
+    assert!(matches!(
+        probe.next(deadline()),
+        Err(ProbeError::Disconnected { why, source: Some(source) })
+            if why == "the CAN adapter ended" && source.to_string() == REFUSED
+    ));
     assert!(
-        matches!(probe.next(deadline()), Err(ProbeError::Disconnected(why)) if why.contains("refused"))
-    );
-    assert!(
-        matches!(probe.next(deadline()), Err(ProbeError::Disconnected(why)) if why.contains("link thread stopped"))
+        matches!(probe.next(deadline()), Err(ProbeError::Disconnected { why, .. }) if why.contains("link thread stopped"))
     );
 }
 
@@ -278,7 +319,10 @@ fn dropping_the_probe_releases_the_bus_before_it_returns() {
     assert!(released.load(Ordering::Relaxed));
 }
 
-fn started(steps: Vec<Step>, device: Option<u32>) -> (io::Result<WiredReflowProbe>, Script) {
+fn started(
+    steps: Vec<Step>,
+    device: Option<u32>,
+) -> (Result<WiredReflowProbe, StartError>, Script) {
     let shared = script(steps);
     let bus = Scripted(Arc::clone(&shared));
     let opener: Opener = Box::new(move || Ok(Box::new(bus) as Box<dyn Bus>));
@@ -342,36 +386,52 @@ fn a_named_device_skips_discovery_and_the_probe_starts_at_once() {
 #[test]
 fn a_bus_that_fails_to_open_on_the_link_thread_fails_the_start_with_its_error() {
     let opener: Opener = Box::new(|| {
-        Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "slcan=ttyACM0: busy",
-        ))
+        Err(StartError::Bus(OpenError::Open {
+            bus: can0(),
+            source: OpenCause::Io(io::Error::new(io::ErrorKind::PermissionDenied, "busy")),
+        }))
     });
     let error = WiredReflowProbe::start_with(opener, &can0(), None, WINDOW, FAST)
         .err()
         .unwrap();
     assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
-    assert!(error.to_string().contains("busy"), "{error}");
+    assert_eq!(error.to_string(), "the CAN bus did not open");
+    assert!(
+        matches!(
+            error.source().and_then(|s| s.downcast_ref::<OpenError>()),
+            Some(OpenError::Open { .. })
+        ),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn an_opener_that_panics_on_the_link_thread_is_a_panicked_start() {
+    let opener: Opener = Box::new(|| panic!("the bus's open panicked"));
+
+    let error = WiredReflowProbe::start_with(opener, &can0(), None, WINDOW, FAST)
+        .err()
+        .unwrap();
+
+    assert!(matches!(error, StartError::Panicked), "{error:?}");
 }
 
 fn lost() -> Step {
-    Err(BusError::Lost("device closed".into()))
+    Err(BusError::Lost(closed()))
 }
 
 #[test]
 fn a_lost_adapter_is_reported_once_per_episode_and_a_frame_ends_the_episode() {
     let (mut probe, shared) = probe(vec![lost(), lost(), broadcast(THERMOCOUPLE_ID, &ROOM)]);
     thread::sleep(SETTLE);
-    assert!(
-        matches!(probe.next(deadline()), Err(ProbeError::Disconnected(why)) if why.contains("device closed"))
-    );
+    assert!(matches!(probe.next(deadline()), Err(error) if is_closed(&error)));
     assert!(
         probe.next(deadline()).is_ok(),
         "the second loss of the episode is not reported"
     );
     shared.lock().unwrap().push_back(lost());
     assert!(
-        matches!(probe.next(deadline()), Err(ProbeError::Disconnected(why)) if why.contains("device closed")),
+        matches!(probe.next(deadline()), Err(error) if is_closed(&error)),
         "a loss after the board came back starts a new episode"
     );
 }

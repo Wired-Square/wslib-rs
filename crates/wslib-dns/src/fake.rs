@@ -22,9 +22,9 @@ use crate::{
 ///     .with_txt("example.com", ["v=spf1 -all"])
 ///     .with_error("_dmarc.example.com", RecordType::Txt, LookupError::ServFail);
 /// assert_eq!(dns.txt("example.com").await.unwrap().records[0].joined(), "v=spf1 -all");
-/// assert_eq!(dns.mx("example.com").await, Err(LookupError::NoData));
-/// assert_eq!(dns.txt("_dmarc.example.com").await, Err(LookupError::ServFail));
-/// assert_eq!(dns.txt("example.net").await, Err(LookupError::NxDomain));
+/// assert!(matches!(dns.mx("example.com").await, Err(LookupError::NoData)));
+/// assert!(matches!(dns.txt("_dmarc.example.com").await, Err(LookupError::ServFail)));
+/// assert!(matches!(dns.txt("example.net").await, Err(LookupError::NxDomain)));
 /// assert_eq!(dns.total_queries(), 4);
 /// # });
 /// ```
@@ -292,11 +292,14 @@ mod tests {
                 dns.a("example.com").await.unwrap().records,
                 ["192.0.2.1".parse::<Ipv4Addr>().unwrap()]
             );
-            assert_eq!(dns.txt("example.com").await, Err(LookupError::NoData));
-            assert_eq!(
+            assert!(matches!(
+                dns.txt("example.com").await,
+                Err(LookupError::NoData)
+            ));
+            assert!(matches!(
                 dns.txt("missing.example.com").await,
                 Err(LookupError::NxDomain)
-            );
+            ));
         });
     }
 
@@ -308,9 +311,18 @@ mod tests {
             .with_failure("example.net", LookupError::Refused);
         block_on(async {
             assert!(dns.txt("example.com").await.is_ok());
-            assert_eq!(dns.mx("example.com").await, Err(LookupError::Timeout));
-            assert_eq!(dns.a("example.net").await, Err(LookupError::Refused));
-            assert_eq!(dns.txt("example.net").await, Err(LookupError::Refused));
+            assert!(matches!(
+                dns.mx("example.com").await,
+                Err(LookupError::Timeout)
+            ));
+            assert!(matches!(
+                dns.a("example.net").await,
+                Err(LookupError::Refused)
+            ));
+            assert!(matches!(
+                dns.txt("example.net").await,
+                Err(LookupError::Refused)
+            ));
         });
     }
 
@@ -376,14 +388,14 @@ mod tests {
         block_on(async {
             assert_eq!(dns.ip("both.example.com").await.unwrap().records.len(), 2);
             assert_eq!(dns.ip("v4.example.com").await.unwrap().records.len(), 1);
-            assert_eq!(
+            assert!(matches!(
                 dns.ip("broken.example.com").await,
                 Err(LookupError::ServFail)
-            );
-            assert_eq!(
+            ));
+            assert!(matches!(
                 dns.ip("missing.example.com").await,
                 Err(LookupError::NxDomain)
-            );
+            ));
         });
     }
 
@@ -396,15 +408,21 @@ mod tests {
         let is_spf = |text: &str| text.starts_with("v=spf1");
         block_on(async {
             assert_eq!(
-                dns.first_txt("example.com", is_spf).await,
-                Ok(Some("v=spf1 -all".into()))
+                dns.first_txt("example.com", is_spf).await.unwrap(),
+                Some("v=spf1 -all".into())
             );
-            assert_eq!(dns.first_txt("plain.example.com", is_spf).await, Ok(None));
-            assert_eq!(dns.first_txt("missing.example.com", is_spf).await, Ok(None));
-            assert_eq!(
+            assert!(matches!(
+                dns.first_txt("plain.example.com", is_spf).await,
+                Ok(None)
+            ));
+            assert!(matches!(
+                dns.first_txt("missing.example.com", is_spf).await,
+                Ok(None)
+            ));
+            assert!(matches!(
                 dns.first_txt("broken.example.com", is_spf).await,
                 Err(LookupError::ServFail)
-            );
+            ));
         });
     }
 
@@ -415,13 +433,13 @@ mod tests {
             .with_ip("www.example.com", ["192.0.2.1".parse().unwrap()])
             .with_failure("broken.example.com", LookupError::Timeout);
         block_on(async {
-            assert_eq!(dns.exists("example.com").await, Ok(true));
-            assert_eq!(dns.exists("www.example.com").await, Ok(true));
-            assert_eq!(dns.exists("missing.example.com").await, Ok(false));
-            assert_eq!(
+            assert!(matches!(dns.exists("example.com").await, Ok(true)));
+            assert!(matches!(dns.exists("www.example.com").await, Ok(true)));
+            assert!(matches!(dns.exists("missing.example.com").await, Ok(false)));
+            assert!(matches!(
                 dns.exists("broken.example.com").await,
                 Err(LookupError::Timeout)
-            );
+            ));
         });
     }
 
@@ -432,10 +450,10 @@ mod tests {
             block_on(dns.delegation("example.com")).unwrap().records,
             ["ns1.example.net"]
         );
-        assert_eq!(
+        assert!(matches!(
             block_on(dns.delegation("example.net")),
             Err(LookupError::NxDomain)
-        );
+        ));
     }
 
     #[test]
@@ -448,11 +466,11 @@ mod tests {
                 crate::present(dns.mx("example.com").await).unwrap().len(),
                 1
             );
-            assert_eq!(crate::present(dns.mx("example.org").await), Ok(Vec::new()));
-            assert_eq!(
+            assert_eq!(crate::present(dns.mx("example.org").await).unwrap(), []);
+            assert!(matches!(
                 crate::present(dns.mx("example.net").await),
                 Err(LookupError::Refused)
-            );
+            ));
         });
     }
 
@@ -531,6 +549,20 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_hop_is_the_chain_errors_source() {
+        let dns = FakeResolver::new()
+            .with_cname("a.example.com", "d.example.com")
+            .with_error("d.example.com", RecordType::Cname, LookupError::ServFail);
+        let error = block_on(dns.cname_chain("a.example.com", 8)).unwrap_err();
+        assert_eq!(error.to_string(), "CNAME lookup of d.example.com failed");
+        let source = std::error::Error::source(&error).unwrap();
+        assert!(matches!(
+            source.downcast_ref::<LookupError>(),
+            Some(LookupError::ServFail)
+        ));
+    }
+
+    #[test]
     fn answers_carry_the_status_set_for_their_name() {
         let dns = FakeResolver::new()
             .with_mx("example.com", 10, "mail.example.com")
@@ -558,7 +590,10 @@ mod tests {
                 dns.tlsa("_25._tcp.mail.example.com").await.unwrap().records[0].usage,
                 3
             );
-            assert_eq!(dns.a("bogus.example.com").await, Err(LookupError::Bogus));
+            assert!(matches!(
+                dns.a("bogus.example.com").await,
+                Err(LookupError::Bogus)
+            ));
         });
         assert!(dns.validates());
         assert!(!FakeResolver::new().validates());

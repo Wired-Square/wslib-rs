@@ -2,9 +2,12 @@
 //! within one budget.
 
 use std::{
+    error::Error,
+    fmt,
     future::Future,
     io,
     net::{IpAddr, SocketAddr},
+    sync::Arc,
     time::Duration,
 };
 
@@ -14,26 +17,62 @@ use tokio::{
 };
 
 /// Why a connection failed or was lost; each message is one short line.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum TransportError {
-    #[error("cannot resolve {endpoint}: {reason}")]
     Resolve {
         endpoint: String,
         reason: ResolveError,
     },
-    #[error("connect to {addr} failed: {source}")]
-    Connect { addr: SocketAddr, source: io::Error },
-    #[error("connect to {addr} timed out after {after:?}")]
-    ConnectTimeout { addr: SocketAddr, after: Duration },
-    #[error("timed out after {after:?}")]
-    Timeout { after: Duration },
-    #[error("connection failed: {0}")]
+    Connect {
+        addr: SocketAddr,
+        source: io::Error,
+    },
+    ConnectTimeout {
+        addr: SocketAddr,
+        after: Duration,
+    },
+    Timeout {
+        after: Duration,
+    },
     Io(io::Error),
-    #[error("connection closed by the device")]
     Closed,
-    #[error("protocol error: {0}")]
+    /// The protocol above the connection, in its own words.
     Protocol(String),
+    /// The protocol above the connection refused what came back, as its own
+    /// error.
+    Violation(Arc<dyn Error + Send + Sync>),
+}
+
+impl fmt::Display for TransportError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Resolve { endpoint, .. } => write!(f, "cannot resolve {endpoint}"),
+            Self::Connect { addr, .. } => write!(f, "connect to {addr} failed"),
+            Self::ConnectTimeout { addr, after } => {
+                write!(f, "connect to {addr} timed out after {after:?}")
+            }
+            Self::Timeout { after } => write!(f, "timed out after {after:?}"),
+            Self::Io(_) => f.write_str("connection failed"),
+            Self::Closed => f.write_str("connection closed by the device"),
+            Self::Protocol(message) => write!(f, "protocol error: {message}"),
+            Self::Violation(_) => f.write_str("protocol error"),
+        }
+    }
+}
+
+impl Error for TransportError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Resolve { reason, .. } => Some(reason),
+            Self::Connect { source, .. } | Self::Io(source) => Some(source),
+            Self::Violation(cause) => Some(&**cause),
+            Self::ConnectTimeout { .. }
+            | Self::Timeout { .. }
+            | Self::Closed
+            | Self::Protocol(_) => None,
+        }
+    }
 }
 
 impl TransportError {
@@ -60,6 +99,7 @@ impl TransportError {
             Self::Io(e) => Self::Io(duplicate_io(e)),
             Self::Closed => Self::Closed,
             Self::Protocol(message) => Self::Protocol(message.clone()),
+            Self::Violation(cause) => Self::Violation(cause.clone()),
         }
     }
 }
@@ -74,8 +114,8 @@ fn duplicate_io(e: &io::Error) -> io::Error {
 /// Why an endpoint gave no address to try.
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveError {
-    #[error("{0}")]
-    Io(io::Error),
+    #[error("lookup failed")]
+    Io(#[source] io::Error),
     #[error("no addresses")]
     NoAddresses,
     #[error("timed out")]
@@ -345,6 +385,59 @@ mod tests {
             matches!(os.duplicate(), TransportError::Connect { source, .. } if source.raw_os_error() == Some(61))
         );
         let custom = TransportError::Io(io::Error::new(io::ErrorKind::BrokenPipe, "gone"));
-        assert_eq!(custom.duplicate().to_string(), custom.to_string());
+        let copy = custom.duplicate();
+        assert_eq!(copy.to_string(), custom.to_string());
+        let source = copy.source().unwrap().downcast_ref::<io::Error>().unwrap();
+        assert_eq!(
+            (source.kind(), source.to_string()),
+            (io::ErrorKind::BrokenPipe, "gone".to_string())
+        );
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("reply does not match")]
+    struct Mismatch;
+
+    fn cause<T: Error + 'static>(error: &dyn Error) -> &T {
+        error.source().unwrap().downcast_ref::<T>().unwrap()
+    }
+
+    #[test]
+    fn each_error_names_only_its_own_layer_and_keeps_its_cause_typed() {
+        let addr: SocketAddr = "127.0.0.1:502".parse().unwrap();
+        let refused = || io::Error::new(io::ErrorKind::ConnectionRefused, "refused");
+        let resolve = TransportError::Resolve {
+            endpoint: "plc.local:502".into(),
+            reason: ResolveError::Io(refused()),
+        };
+        assert_eq!(resolve.to_string(), "cannot resolve plc.local:502");
+        let reason = cause::<ResolveError>(&resolve);
+        assert_eq!(reason.to_string(), "lookup failed");
+        assert_eq!(
+            cause::<io::Error>(reason).kind(),
+            io::ErrorKind::ConnectionRefused
+        );
+
+        let connect = TransportError::Connect {
+            addr,
+            source: refused(),
+        };
+        assert_eq!(connect.to_string(), "connect to 127.0.0.1:502 failed");
+        assert_eq!(
+            cause::<io::Error>(&connect).kind(),
+            io::ErrorKind::ConnectionRefused
+        );
+
+        let io = TransportError::Io(refused());
+        assert_eq!(io.to_string(), "connection failed");
+        assert_eq!(
+            cause::<io::Error>(&io).kind(),
+            io::ErrorKind::ConnectionRefused
+        );
+
+        let violation = TransportError::Violation(Arc::new(Mismatch));
+        assert_eq!(violation.to_string(), "protocol error");
+        cause::<Mismatch>(&violation);
+        cause::<Mismatch>(&violation.duplicate());
     }
 }

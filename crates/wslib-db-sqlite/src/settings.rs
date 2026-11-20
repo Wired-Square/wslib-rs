@@ -383,6 +383,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_document_that_will_not_serialise_names_its_key_and_keeps_serdes_error() {
+        let db = Database::open_in_memory(&[]).await.unwrap();
+        let not_a_map = BTreeMap::from([((1, 2), 3)]);
+        let e = Settings::new(&db)
+            .set_setting_doc("backup.schedule", &not_a_map)
+            .await
+            .expect_err("a map keyed by tuples is not JSON");
+        assert_eq!(
+            e.to_string(),
+            "the document for backup.schedule will not serialise"
+        );
+        let source = std::error::Error::source(&e).expect("serde's error");
+        assert!(source.is::<serde_json::Error>(), "{source:?}");
+    }
+
+    #[tokio::test]
     async fn the_namespaces_are_matched_case_sensitively_and_end_at_their_dot() {
         let db = Database::open_in_memory(&[]).await.unwrap();
         let settings = Settings::new(&db);

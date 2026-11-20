@@ -6,7 +6,7 @@ use super::fetch::FetchFailure;
 use super::fetch::{HttpClients, Reach, get, media_type};
 
 /// The outcome of fetching a domain's MTA-STS policy file (RFC 8461 §3.3).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case", tag = "kind"))]
 #[non_exhaustive]
@@ -157,7 +157,7 @@ mod tests {
 
     #[tokio::test]
     async fn anything_but_a_plain_200_is_refused() {
-        assert_eq!(
+        assert!(matches!(
             failure(response(
                 "404 Not Found",
                 &["Content-Type: text/plain"],
@@ -165,34 +165,32 @@ mod tests {
             ))
             .await,
             FetchFailure::Status { status: 404 }
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             failure(response(
                 "302 Found",
                 &["Location: https://example.com/policy"],
                 b""
             ))
             .await,
-            FetchFailure::Redirect {
-                location: Some("https://example.com/policy".into())
-            }
-        );
-        assert_eq!(
+            FetchFailure::Redirect { location }
+                if location.as_deref() == Some("https://example.com/policy")
+        ));
+        assert!(matches!(
             failure(response(
                 "200 OK",
                 &["Content-Type: text/html"],
                 POLICY.as_bytes()
             ))
             .await,
-            FetchFailure::ContentType {
-                content_type: Some("text/html".into())
-            }
-        );
-        assert_eq!(
+            FetchFailure::ContentType { content_type }
+                if content_type.as_deref() == Some("text/html")
+        ));
+        assert!(matches!(
             failure(response("200 OK", &[], POLICY.as_bytes())).await,
             FetchFailure::ContentType { content_type: None }
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             failure(response(
                 "200 OK",
                 &["Content-Type: text/plain"],
@@ -200,15 +198,15 @@ mod tests {
             ))
             .await,
             FetchFailure::NotUtf8
-        );
+        ));
         let body = vec![b'#'; POLICY_SIZE_LIMIT + 1];
-        assert_eq!(
+        assert!(matches!(
             failure(response("200 OK", &["Content-Type: text/plain"], &body)).await,
             FetchFailure::TooLarge {
                 limit: POLICY_SIZE_LIMIT,
                 decompressed: false
             }
-        );
+        ));
     }
 
     #[tokio::test]
@@ -269,6 +267,6 @@ mod tests {
         else {
             panic!("nothing is sent");
         };
-        assert_eq!(failure, FetchFailure::NotSent);
+        assert!(matches!(failure, FetchFailure::NotSent));
     }
 }

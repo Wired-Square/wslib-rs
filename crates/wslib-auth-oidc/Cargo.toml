@@ -1,6 +1,6 @@
 [package]
 name = "wslib-auth-oidc"
-version = "0.1.0"
+version = "0.2.0"
 description = "Verifies OIDC ID tokens (RS256) against an issuer's JWKS, with a key cache that refetches on rotation without hammering the issuer."
 readme = "README.md"
 edition.workspace = true

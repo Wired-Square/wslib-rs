@@ -3,6 +3,7 @@
 //! (draft-fetch-validation-vmc-wchuang; the BIMI Group's Mark Certificate
 //! Requirements).
 
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use rustls_pki_types::pem::PemObject;
@@ -31,16 +32,46 @@ pub struct VmcTrustAnchors(Vec<TrustAnchor<'static>>);
 
 impl VmcTrustAnchors {
     /// Every certificate in a PEM bundle, as a trust anchor.
-    pub fn from_pem(pem: &[u8]) -> Result<Self, String> {
+    pub fn from_pem(pem: &[u8]) -> Result<Self, TrustAnchorError> {
         let mut anchors = Vec::new();
         for der in CertificateDer::pem_slice_iter(pem) {
-            let der = der.map_err(|error| error.to_string())?;
-            anchors.push(chain::trust_anchor(&der).map_err(|error| error.to_string())?);
+            let der = der.map_err(TrustAnchorError::Pem)?;
+            anchors.push(chain::trust_anchor(&der).map_err(TrustAnchorError::Refused)?);
         }
         if anchors.is_empty() {
-            return Err("no certificates in the bundle".into());
+            return Err(TrustAnchorError::Empty);
         }
         Ok(Self(anchors))
+    }
+}
+
+/// Why [`VmcTrustAnchors::from_pem`] refused a bundle.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum TrustAnchorError {
+    Pem(rustls_pki_types::pem::Error),
+    /// The verifier can't anchor on one of the certificates.
+    Refused(ChainError),
+    Empty,
+}
+
+impl std::fmt::Display for TrustAnchorError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Pem(_) => "the bundle is not valid PEM",
+            Self::Refused(_) => "a certificate in the bundle can't be a trust anchor",
+            Self::Empty => "no certificates in the bundle",
+        })
+    }
+}
+
+impl std::error::Error for TrustAnchorError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Pem(error) => Some(error),
+            Self::Refused(error) => Some(error),
+            Self::Empty => None,
+        }
     }
 }
 
@@ -80,7 +111,7 @@ pub enum MarkCertificateKind {
 }
 
 /// What a mark certificate says and everything wrong with it.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct VmcVerification {
@@ -109,7 +140,7 @@ impl VmcVerification {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case", tag = "kind"))]
 #[non_exhaustive]
@@ -118,9 +149,14 @@ pub enum VmcProblem {
     Parse {
         message: String,
     },
-    /// The chain doesn't lead to a trusted root, in the verifier's words.
+    /// The verifier refused the chain: it doesn't lead to a trusted root, or
+    /// is otherwise invalid, as `refusal` says. `cause` is the verifier's
+    /// refusal, on the live value only: a serialised problem reads back
+    /// without it.
     Chain {
-        message: String,
+        refusal: ChainRefusal,
+        #[cfg_attr(feature = "serde", serde(skip))]
+        cause: Option<Arc<ChainError>>,
     },
     Expired,
     NotYetValid,
@@ -142,14 +178,38 @@ pub enum VmcProblem {
     MissingSct,
 }
 
+/// Why the verifier refused a chain, past its dates and its purpose.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[non_exhaustive]
+pub enum ChainRefusal {
+    /// Not issued under the trust anchors: no known issuer, or a signature
+    /// that does not verify.
+    Untrusted,
+    /// Anything else the verifier refused.
+    Invalid,
+}
+
+impl From<&ChainError> for ChainRefusal {
+    fn from(error: &ChainError) -> Self {
+        match error {
+            ChainError::Untrusted(_) => Self::Untrusted,
+            _ => Self::Invalid,
+        }
+    }
+}
+
 /// Neutral wording; consumers may write their own.
 impl std::fmt::Display for VmcProblem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Parse { message } => write!(f, "not a PEM certificate chain: {message}"),
-            Self::Chain { message } => {
-                write!(f, "the chain doesn't lead to a trusted root: {message}")
-            }
+            Self::Chain {
+                refusal: ChainRefusal::Untrusted,
+                ..
+            } => f.write_str("the chain doesn't lead to a trusted root"),
+            Self::Chain { .. } => f.write_str("the verifier refuses the chain"),
             Self::Expired => f.write_str("the certificate has expired"),
             Self::NotYetValid => f.write_str("the certificate is not yet valid"),
             Self::WrongEku => f.write_str("the extended key usage must be BIMI's alone"),
@@ -277,7 +337,8 @@ pub fn verify_vmc(
             ChainError::NotYetValid => VmcProblem::NotYetValid,
             ChainError::WrongPurpose => VmcProblem::WrongEku,
             error => VmcProblem::Chain {
-                message: error.to_string(),
+                refusal: ChainRefusal::from(&error),
+                cause: Some(Arc::new(error)),
             },
         });
     }
@@ -286,9 +347,30 @@ pub fn verify_vmc(
 
 impl VmcVerification {
     fn problem(&mut self, problem: VmcProblem) {
-        if !self.problems.contains(&problem) {
+        if !self.problems.iter().any(|p| same_problem(p, &problem)) {
             self.problems.push(problem);
         }
+    }
+}
+
+fn same_problem(a: &VmcProblem, b: &VmcProblem) -> bool {
+    use VmcProblem::*;
+    match a {
+        Parse { message } => matches!(b, Parse { message: other } if other == message),
+        Chain { refusal, .. } => matches!(b, Chain { refusal: other, .. } if other == refusal),
+        Expired => matches!(b, Expired),
+        NotYetValid => matches!(b, NotYetValid),
+        WrongEku => matches!(b, WrongEku),
+        SanMismatch => matches!(b, SanMismatch),
+        UnknownMarkType { value } => {
+            matches!(b, UnknownMarkType { value: other } if other == value)
+        }
+        NoLogotype => matches!(b, NoLogotype),
+        LogotypeNotCompressed => matches!(b, LogotypeNotCompressed),
+        LogotypeInvalid { message } => {
+            matches!(b, LogotypeInvalid { message: other } if other == message)
+        }
+        MissingSct => matches!(b, MissingSct),
     }
 }
 

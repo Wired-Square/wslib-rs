@@ -47,5 +47,5 @@ None is on by default; without one there is no socket.
   `CONFIG_MCUMGR_TRANSPORT_BT_REASSEMBLY`.
 
 ```toml
-wslib-mcumgr = { version = "0.1", registry = "wired-square" }
+wslib-mcumgr = { version = "0.2", registry = "wired-square" }
 ```

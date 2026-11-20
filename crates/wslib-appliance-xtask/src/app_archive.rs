@@ -119,7 +119,7 @@ pub(crate) fn run(command: AppArchive) -> Result<ExitCode, Failed> {
                 .iter()
                 .zip(images)
                 .map(|(entry, image)| Ok((tarball(entry)?, image)))
-                .collect::<Result<Vec<_>, String>>()?;
+                .collect::<Result<Vec<_>, Failed>>()?;
             return signing.write(&out, &entries, &images);
         }
         AppArchive::Sign {
@@ -134,7 +134,7 @@ pub(crate) fn run(command: AppArchive) -> Result<ExitCode, Failed> {
                     fs::read(file)
                         .map_err(Failed::from)
                         .and_then(|json| Ok(serde_json::from_slice::<Value>(&json)?))
-                        .map_err(|e| format!("{}: {e}", file.display()))
+                        .map_err(crate::within(file.display()))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let images = match (signing.index, image_dirs.is_empty()) {
@@ -203,24 +203,24 @@ impl Signing {
 
 /// Its arch, and the manifest in its label pinned to its OCI manifest digest,
 /// which is the image ID a containerd-store engine gives it.
-fn entry(image: &Path, registry: Option<&str>) -> Result<Value, String> {
-    let json = |name: &str| -> Result<Value, String> {
-        serde_json::from_slice(&member(image, name)?).map_err(|e| format!("{name}: {e}"))
+fn entry(image: &Path, registry: Option<&str>) -> Result<Value, Failed> {
+    let json = |name: &str| -> Result<Value, Failed> {
+        serde_json::from_slice(&member(image, name)?).map_err(crate::within(name))
     };
     let blob = |digest: &str| json(&format!("blobs/sha256/{}", sha256_hex(digest)?));
-    let field = |value: &Value, pointer: &str| -> Result<String, String> {
+    let field = |value: &Value, pointer: &str| -> Result<String, Failed> {
         value
             .pointer(pointer)
             .and_then(Value::as_str)
             .map(str::to_string)
-            .ok_or_else(|| format!("its index.json has no {pointer}"))
+            .ok_or_else(|| format!("its index.json has no {pointer}").into())
     };
 
-    let derived = || -> Result<Value, String> {
+    let derived = || -> Result<Value, Failed> {
         let index = json("index.json")?;
         let manifests = index["manifests"].as_array().map_or(&[][..], Vec::as_slice);
         let [manifest] = manifests else {
-            return Err(format!("it holds {} images, not one", manifests.len()));
+            return Err(format!("it holds {} images, not one", manifests.len()).into());
         };
         let digest = field(manifest, "/digest")?;
         let mut arch = field(manifest, "/platform/architecture")?;
@@ -252,10 +252,10 @@ fn entry(image: &Path, registry: Option<&str>) -> Result<Value, String> {
         );
         Ok(json!({ "arch": arch, "manifest": label }))
     };
-    derived().map_err(|e| format!("{}: {e}", image.display()))
+    derived().map_err(crate::within(image.display()))
 }
 
-fn member(image: &Path, name: &str) -> Result<Vec<u8>, String> {
+fn member(image: &Path, name: &str) -> Result<Vec<u8>, Failed> {
     let read = || -> io::Result<Option<Vec<u8>>> {
         let mut archive = tar::Archive::new(File::open(image)?);
         for member in archive.entries()? {
@@ -271,8 +271,8 @@ fn member(image: &Path, name: &str) -> Result<Vec<u8>, String> {
     };
     match read() {
         Ok(Some(bytes)) => Ok(bytes),
-        Ok(None) => Err(format!("it holds no {name}")),
-        Err(e) => Err(e.to_string()),
+        Ok(None) => Err(format!("it holds no {name}").into()),
+        Err(e) => Err(e.into()),
     }
 }
 
@@ -314,7 +314,7 @@ fn tarball(entry: &Value) -> Result<String, String> {
 }
 
 fn found_image(entry: &Value, file: &Path, dirs: &[PathBuf]) -> Result<(String, PathBuf), Failed> {
-    let name = tarball(entry).map_err(|e| format!("{}: {e}", file.display()))?;
+    let name = tarball(entry).map_err(crate::within(file.display()))?;
     for dir in dirs {
         if let Some(image) = find(dir, &name)? {
             return Ok((name, image));

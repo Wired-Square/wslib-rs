@@ -52,8 +52,8 @@ pub enum ConnectError {
     NotOurService,
 
     /// Any other failure to look up the service, open the pipe or read its owner.
-    #[error(transparent)]
-    Io(io::Error),
+    #[error("the pipe could not be opened or checked")]
+    Io(#[source] io::Error),
 }
 
 /// Connects to the pipe at `pipe`, a `\\.\pipe\…` path, and returns the
@@ -241,6 +241,21 @@ mod tests {
             LocalFree(descriptor);
             (name, server.unwrap())
         }
+    }
+
+    #[test]
+    fn any_other_failure_says_only_that_and_keeps_the_io_error() {
+        let failed = ConnectError::Io(io::Error::from(io::ErrorKind::PermissionDenied));
+        assert_eq!(
+            failed.to_string(),
+            "the pipe could not be opened or checked"
+        );
+        assert_eq!(
+            std::error::Error::source(&failed)
+                .and_then(|e| e.downcast_ref::<io::Error>())
+                .map(io::Error::kind),
+            Some(io::ErrorKind::PermissionDenied)
+        );
     }
 
     #[tokio::test]

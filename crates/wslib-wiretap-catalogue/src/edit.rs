@@ -25,6 +25,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value as Json};
 use toml_edit::{Array, ArrayOfTables, DocumentMut, InlineTable, Item, Table, Value};
 
+use crate::DocumentError;
 use crate::model::Protocol;
 
 mod typed;
@@ -222,11 +223,14 @@ pub struct VersionBump {
 /// `Err` when there is no `[meta]`, when `version` is not an integer, or on overflow.
 /// Callers treat that as "no bump": this is a convenience, and it must never fail the
 /// operation it is decorating.
-pub fn bump_meta_version(text: &str) -> Result<VersionBump, String> {
+pub fn bump_meta_version(text: &str) -> Result<VersionBump, DocumentError> {
     // `Document` keeps spans; `DocumentMut` discards them (it calls `despan`), and
     // the span is the whole point.
-    let doc = toml_edit::Document::parse(text)
-        .map_err(|e| format!("catalogue is not valid TOML: {e}"))?;
+    let doc = toml_edit::Document::parse(text)?;
+    bumped(text, &doc).map_err(DocumentError::Refused)
+}
+
+fn bumped(text: &str, doc: &toml_edit::Document<&str>) -> Result<VersionBump, String> {
     let meta = doc
         .as_table()
         .get("meta")
@@ -298,21 +302,20 @@ fn insert_meta_version(text: &str, meta: &Table, to: u32) -> Result<VersionBump,
 }
 
 /// Apply one edit to the raw catalogue TOML, preserving comments and formatting.
-/// `Err` carries a UI-friendly message (invalid TOML, missing target, rename
-/// collision); the caller shows it and leaves the document untouched.
-pub fn apply_edit(text: &str, op: EditOp) -> Result<String, String> {
+/// `Err` is [`DocumentError::TomlDocument`] for invalid TOML, or
+/// [`DocumentError::Refused`] naming a missing target or rename collision;
+/// the document is left untouched.
+pub fn apply_edit(text: &str, op: EditOp) -> Result<String, DocumentError> {
     apply_edits(text, std::slice::from_ref(&op))
 }
 
 /// Apply `ops` in order, parsing and printing once. All or nothing: the first
 /// failing op's `Err` is returned. A new catalogue is `apply_edits("", ops)`.
 /// The output keeps the line ending of the input's first line.
-pub fn apply_edits(text: &str, ops: &[EditOp]) -> Result<String, String> {
-    let mut doc = text
-        .parse::<DocumentMut>()
-        .map_err(|e| format!("catalogue is not valid TOML: {e}"))?;
+pub fn apply_edits(text: &str, ops: &[EditOp]) -> Result<String, DocumentError> {
+    let mut doc = text.parse::<DocumentMut>()?;
     for op in ops {
-        apply_op(&mut doc, op)?;
+        apply_op(&mut doc, op).map_err(DocumentError::Refused)?;
     }
     let out = doc.to_string();
     Ok(if first_line_ends_crlf(text) {

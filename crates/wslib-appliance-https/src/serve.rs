@@ -14,7 +14,7 @@ use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use wslib_appliance_config::Bootstrap;
 use wslib_appliance_core::ControlRouter;
-use wslib_appliance_core::backend::{self, ControlEndpoint, foreign, serve_control};
+use wslib_appliance_core::backend::{self, ControlEndpoint, serve_control};
 use wslib_appliance_store::Store;
 use wslib_appliance_types::Role;
 use wslib_http_server::{Bounds, Listener, Tls};
@@ -66,9 +66,9 @@ pub(crate) async fn run(
 
     #[cfg(unix)]
     if let Some(dir) = bootstrap.socket.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| ServeError::Socket {
+        std::fs::create_dir_all(dir).map_err(|e| ServeError::SocketFailed {
             path: bootstrap.socket.clone(),
-            because: e.to_string(),
+            source: Box::new(e),
         })?;
     }
 
@@ -98,11 +98,11 @@ pub(crate) async fn serve_tls(
 ) -> Result<(), ServeError> {
     let listener = Listener::bind(address, Bounds::SERVING)
         .await
-        .map_err(|e| bind_failed(address, &e))?;
+        .map_err(|e| bind_failed(address, e))?;
     port.0.send_replace(listener.local_addr().port());
     wslib_http_server::serve_https(listener, router, tls, stop.cancelled_owned())
         .await
-        .map_err(|e| ServeError::Serving(foreign(&e)))
+        .map_err(serving_failed)
 }
 
 /// `address` is `None` when the redirect is off: the default, and what
@@ -117,10 +117,10 @@ async fn serve_redirect(
     };
     let listener = Listener::bind(address, Bounds::REDIRECT)
         .await
-        .map_err(|e| bind_failed(address, &e))?;
+        .map_err(|e| bind_failed(address, e))?;
     wslib_http_server::serve_redirect(listener, https_port, stop.cancelled_owned())
         .await
-        .map_err(|e| ServeError::Serving(foreign(&e)))
+        .map_err(serving_failed)
 }
 
 /// A port an earlier release's Settings moved the listener to, if not the
@@ -141,11 +141,15 @@ pub(crate) async fn moved_port(store: &Store, configured: u16) -> Option<u16> {
     Some(moved)
 }
 
-fn bind_failed(address: SocketAddr, e: &std::io::Error) -> ServeError {
+fn bind_failed(address: SocketAddr, source: std::io::Error) -> ServeError {
     ServeError::Bind {
         address: address.to_string(),
-        because: foreign(e),
+        source,
     }
+}
+
+fn serving_failed(error: wslib_http_server::ServeError) -> ServeError {
+    ServeError::Serving(Box::new(error))
 }
 
 #[cfg(test)]
@@ -156,6 +160,19 @@ mod tests {
     use std::time::Duration;
     use tempfile::TempDir;
     use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn a_listener_failure_says_only_that_and_keeps_the_servers_error() {
+        let failed =
+            wslib_http_server::ServeError::Io(std::io::Error::other("the listener closed"));
+        let failed = serving_failed(failed);
+        assert_eq!(failed.to_string(), "serving failed");
+        assert!(matches!(
+            std::error::Error::source(&failed)
+                .and_then(|e| e.downcast_ref::<wslib_http_server::ServeError>()),
+            Some(wslib_http_server::ServeError::Io(_))
+        ));
+    }
 
     /// Its control socket's parent is a file (on Windows, not a pipe name).
     fn unbindable_bootstrap(dir: &Path) -> Bootstrap {

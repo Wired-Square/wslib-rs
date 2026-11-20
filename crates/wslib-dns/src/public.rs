@@ -27,7 +27,7 @@ pub const PUBLIC_RESOLVERS: &[PublicResolver] = &[
 ];
 
 /// What each public resolver says about a name's existence.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PublicProbe {
     pub name: String,
@@ -35,7 +35,7 @@ pub struct PublicProbe {
     pub answers: Vec<PublicAnswer>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PublicAnswer {
     pub resolver: String,
@@ -45,12 +45,16 @@ pub struct PublicAnswer {
 impl PublicProbe {
     /// Some resolver answers for the name.
     pub fn seen(&self) -> bool {
-        self.answers.iter().any(|answer| answer.exists == Ok(true))
+        self.answers
+            .iter()
+            .any(|answer| matches!(answer.exists, Ok(true)))
     }
 
     /// Every resolver answered, and none has the name.
     pub fn unseen(&self) -> bool {
-        self.answers.iter().all(|answer| answer.exists == Ok(false))
+        self.answers
+            .iter()
+            .all(|answer| matches!(answer.exists, Ok(false)))
     }
 }
 
@@ -106,5 +110,7 @@ mod tests {
         assert!(probe(&[Ok(false), Ok(false), Ok(false)]).unseen());
         let undecided = probe(&[Ok(false), Err(LookupError::Timeout), Ok(false)]);
         assert!(!undecided.seen() && !undecided.unseen());
+        let one_yes = probe(&[Ok(false), Ok(true), Ok(false)]);
+        assert!(one_yes.seen() && !one_yes.unseen());
     }
 }

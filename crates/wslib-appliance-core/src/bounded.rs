@@ -142,7 +142,7 @@ where
         let permit = Arc::clone(&self.permits)
             .acquire_owned()
             .await
-            .map_err(io::Error::other)?;
+            .expect("a listener never closes its permits");
         let (stream, peer) = self.listener.lock().await.accept().await;
         Ok((Permitted { stream, permit }, self.at(peer)))
     }

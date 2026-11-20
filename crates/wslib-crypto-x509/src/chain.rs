@@ -63,7 +63,7 @@ impl Purpose {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum ChainError {
     Expired,
@@ -72,28 +72,39 @@ pub enum ChainError {
     WrongPurpose,
     /// The end-entity certificate's key usage leaves out what the purpose needs.
     WrongKeyUsage,
-    /// Not issued under the anchors: no known issuer, or a signature that does not verify.
-    Untrusted(String),
-    /// Anything else, in the verifier's words.
-    Invalid(String),
+    /// Not issued under the anchors: no known issuer, or a signature that
+    /// does not verify; the verifier's error.
+    Untrusted(Box<dyn std::error::Error + Send + Sync>),
+    /// Anything else the verifier, or the parser reading a certificate's key
+    /// usage, refused: its error.
+    Invalid(Box<dyn std::error::Error + Send + Sync>),
 }
 
-/// The detail is the verifier's own words, unchanged.
 impl fmt::Display for ChainError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Expired => "the certificate has expired",
+            Self::NotYetValid => "the certificate is not valid yet",
+            Self::WrongPurpose => "the certificate is not for that purpose",
+            Self::WrongKeyUsage => "the certificate's key usage does not allow that purpose",
+            Self::Untrusted(_) => "the certificate is not issued under a trusted anchor",
+            Self::Invalid(_) => "the certificate does not verify",
+        })
+    }
+}
+
+impl std::error::Error for ChainError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Expired => f.write_str("the certificate has expired"),
-            Self::NotYetValid => f.write_str("the certificate is not valid yet"),
-            Self::WrongPurpose => f.write_str("the certificate is not for that purpose"),
-            Self::WrongKeyUsage => {
-                f.write_str("the certificate's key usage does not allow that purpose")
-            }
-            Self::Untrusted(detail) | Self::Invalid(detail) => f.write_str(detail),
+            Self::Untrusted(e) | Self::Invalid(e) => Some(&**e),
+            _ => None,
         }
     }
 }
 
-impl std::error::Error for ChainError {}
+fn invalid(e: impl std::error::Error + Send + Sync + 'static) -> ChainError {
+    ChainError::Invalid(Box::new(e))
+}
 
 fn refused(error: webpki::Error) -> ChainError {
     #[allow(deprecated)]
@@ -104,9 +115,9 @@ fn refused(error: webpki::Error) -> ChainError {
             ChainError::WrongPurpose
         }
         webpki::Error::UnknownIssuer | webpki::Error::InvalidSignatureForPublicKey => {
-            ChainError::Untrusted(error.to_string())
+            ChainError::Untrusted(Box::new(error))
         }
-        error => ChainError::Invalid(error.to_string()),
+        error => invalid(error),
     }
 }
 
@@ -155,9 +166,8 @@ pub fn verify(
 }
 
 fn allows(certificate: &CertificateDer<'_>, usage: KeyUsage) -> Result<(), ChainError> {
-    let invalid = |e: &dyn fmt::Display| ChainError::Invalid(e.to_string());
-    let (_, certificate) = X509Certificate::from_der(certificate).map_err(|e| invalid(&e))?;
-    match key_usages(&certificate).map_err(|e| invalid(&e))? {
+    let (_, certificate) = X509Certificate::from_der(certificate).map_err(invalid)?;
+    match key_usages(&certificate).map_err(invalid)? {
         Some(usages) if !usages.contains(&usage) => Err(ChainError::WrongKeyUsage),
         _ => Ok(()),
     }

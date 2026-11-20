@@ -69,6 +69,6 @@ None is on by default.
   Cargo unifies it in.
 
 ```toml
-wslib-wiretap-gateway = { version = "0.2", registry = "wired-square", features = ["client"] }
+wslib-wiretap-gateway = { version = "0.3", registry = "wired-square", features = ["client"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 ```

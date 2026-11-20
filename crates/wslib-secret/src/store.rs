@@ -31,7 +31,7 @@ pub enum StoreError {
 impl fmt::Display for StoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Backend(source) => write!(f, "secret store failed: {source}"),
+            Self::Backend(_) => f.write_str("secret store failed"),
             Self::Denied => f.write_str("access to the secret store was denied"),
             Self::NotUnicode => f.write_str("the saved secret is not valid UTF-8"),
         }
@@ -220,6 +220,19 @@ mod tests {
             let rendered = format!("{err} {err:?}");
             assert!(!rendered.contains("hunter2"), "leaked: {rendered}");
         }
+    }
+
+    #[test]
+    fn a_failed_backend_says_only_that_and_keeps_its_error() {
+        let err = StoreError::Backend(Box::new(std::io::Error::other("the keyring is locked")));
+        assert_eq!(err.to_string(), "secret store failed");
+        let source = error::Error::source(&err).expect("the backend's error");
+        assert_eq!(
+            source
+                .downcast_ref::<std::io::Error>()
+                .map(ToString::to_string),
+            Some("the keyring is locked".to_string())
+        );
     }
 
     #[cfg(all(feature = "keychain", any(target_os = "macos", target_os = "ios")))]

@@ -15,8 +15,8 @@ struct Claims {
 let verifier = wslib_auth_oidc::Verifier::cognito(http, "ap-southeast-2", pool_id, client_id);
 match verifier.verify::<Claims>(token).await {
     Ok(claims) => { /* signed in as claims.sub */ }
-    Err(wslib_auth_oidc::Error::Unavailable(why)) => { /* 503: the issuer can't be reached */ }
-    Err(wslib_auth_oidc::Error::Rejected(why)) => { /* 401 */ }
+    Err(wslib_auth_oidc::Error::Unavailable { .. }) => { /* 503: the issuer can't be reached */ }
+    Err(wslib_auth_oidc::Error::Rejected { .. }) => { /* 401 */ }
     Err(_) => { /* 401 */ }
 }
 ```
@@ -59,8 +59,9 @@ match verifier.verify::<Claims>(token).await {
 - **`Error`**: `Rejected` (malformed, unknown key, bad signature, wrong
   issuer, audience or use, expired, or claims that don't fit) and
   `Unavailable` (the key isn't cached and the JWKS couldn't be fetched, so the
-  token may be good). Both carry text for the log, `Unavailable`'s naming the
-  JWKS URL; show users a fixed message.
+  token may be good). Each says what failed in this crate's words,
+  `Unavailable`'s naming the JWKS URL, and keeps jsonwebtoken's, serde_json's
+  or reqwest's error as its `source()`; show users a fixed message.
   Nothing is logged.
 
 ## What isn't

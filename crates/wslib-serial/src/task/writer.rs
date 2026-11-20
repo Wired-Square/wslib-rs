@@ -1,11 +1,9 @@
-use std::io;
-
 use tokio::sync::{
     mpsc::{self, error::TrySendError},
     oneshot,
 };
 
-use super::Port;
+use super::{Port, SerialError};
 
 /// Why a write never ran.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -32,7 +30,7 @@ pub struct SerialWriter {
     jobs: Option<mpsc::Sender<Job>>,
 }
 
-type Reply = oneshot::Sender<Result<io::Result<()>, WriteRefused>>;
+type Reply = oneshot::Sender<Result<Result<(), SerialError>, WriteRefused>>;
 
 pub(super) enum Op {
     Write(Vec<u8>),
@@ -52,21 +50,21 @@ impl SerialWriter {
 
     /// `write_all`, answered once the bytes are queued, not sent. A failed
     /// write leaves the line up: the next read decides.
-    pub async fn write(&self, bytes: Vec<u8>) -> Result<io::Result<()>, WriteRefused> {
+    pub async fn write(&self, bytes: Vec<u8>) -> Result<Result<(), SerialError>, WriteRefused> {
         self.run(Op::Write(bytes)).await
     }
 
     /// Asserts DTR when `level` is true, between reads and in turn with writes.
-    pub async fn set_dtr(&self, level: bool) -> Result<io::Result<()>, WriteRefused> {
+    pub async fn set_dtr(&self, level: bool) -> Result<Result<(), SerialError>, WriteRefused> {
         self.run(Op::Dtr(level)).await
     }
 
     /// Asserts RTS when `level` is true, as [`set_dtr`](Self::set_dtr) does DTR.
-    pub async fn set_rts(&self, level: bool) -> Result<io::Result<()>, WriteRefused> {
+    pub async fn set_rts(&self, level: bool) -> Result<Result<(), SerialError>, WriteRefused> {
         self.run(Op::Rts(level)).await
     }
 
-    async fn run(&self, op: Op) -> Result<io::Result<()>, WriteRefused> {
+    async fn run(&self, op: Op) -> Result<Result<(), SerialError>, WriteRefused> {
         let jobs = self.jobs.as_ref().ok_or(WriteRefused::ReadOnly)?;
         let (reply, answer) = oneshot::channel();
         jobs.try_send(Job { op, reply }).map_err(|e| match e {

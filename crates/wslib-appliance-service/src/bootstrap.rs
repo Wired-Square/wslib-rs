@@ -177,17 +177,35 @@ impl LocalEndpoint {
             let dir = self.path.parent().unwrap_or(Path::new(""));
             crate::checks::endpoint_directory(dir, &self.group)
                 .await
-                .map_err(|because| {
-                    LocalError::refused(
-                        dir,
-                        format!(
-                            "it is the control endpoint directory for the group {}, and {because}",
-                            self.group
-                        ),
-                    )
-                })?;
+                .map_err(|unfit| self.unfit(dir, unfit))?;
         }
         Ok(())
+    }
+
+    #[cfg(unix)]
+    fn unfit(&self, dir: &Path, unfit: crate::checks::Unfit) -> LocalError {
+        use crate::checks::Unfit;
+
+        match unfit {
+            Unfit::Refused(because) => LocalError::refused(
+                dir,
+                format!(
+                    "it is the control endpoint directory for the group {}, and {because}",
+                    self.group
+                ),
+            ),
+            Unfit::Unreadable(source) => LocalError::Unreadable {
+                path: dir.to_path_buf(),
+                source,
+            },
+            Unfit::NotLookedUp(source) => LocalError::GroupLookup {
+                group: self.group.clone(),
+                source,
+            },
+            Unfit::LookupPanicked => LocalError::GroupLookupPanicked {
+                group: self.group.clone(),
+            },
+        }
     }
 }
 
@@ -214,7 +232,14 @@ mod tests {
     }
 
     async fn refusal(bootstrap: &LocalBootstrap) -> String {
-        bootstrap.check().await.expect_err("refuses").to_string()
+        refused(bootstrap.check().await.expect_err("refuses"))
+    }
+
+    fn refused(e: LocalError) -> String {
+        match e {
+            LocalError::Refused(refused) => refused.to_string(),
+            other => panic!("not a refusal: {other:?}"),
+        }
     }
 
     #[test]
@@ -331,16 +356,60 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_group_lookup_is_told_apart_from_no_such_group() {
-        let said = crate::checks::group_id("appliance-admin", Duration::from_secs(5), |_| {
+        let unfit = crate::checks::group_id("appliance-admin", Duration::from_secs(5), |_| {
             Err(libc::EIO)
         })
         .await
         .expect_err("refuses");
-        assert!(
-            said.starts_with("looking up the group appliance-admin failed: ")
-                && said.contains(&std::io::Error::from_raw_os_error(libc::EIO).to_string()),
-            "{said}"
+        let dir = tempfile::tempdir().unwrap();
+        let bootstrap = laid_out(dir.path());
+        let e = bootstrap.endpoints[0].unfit(dir.path(), unfit);
+        assert_eq!(
+            e.to_string(),
+            format!(
+                "looking up the group {} failed",
+                bootstrap.endpoints[0].group
+            )
         );
+        let source = std::error::Error::source(&e)
+            .and_then(|e| e.downcast_ref::<std::io::Error>())
+            .expect("the lookup's error");
+        assert_eq!(source.raw_os_error(), Some(libc::EIO));
+    }
+
+    #[tokio::test]
+    async fn an_endpoint_directory_under_a_file_cannot_be_read_rather_than_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("file");
+        std::fs::write(&file, "").unwrap();
+        let unfit = crate::checks::endpoint_directory(&file.join("run"), "admin")
+            .await
+            .expect_err("refuses");
+        assert!(
+            matches!(&unfit, crate::checks::Unfit::Unreadable(e) if e.raw_os_error() == Some(libc::ENOTDIR)),
+            "{unfit:?}"
+        );
+    }
+
+    #[test]
+    fn an_endpoint_directory_that_cannot_be_read_keeps_the_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let bootstrap = laid_out(dir.path());
+        let e = bootstrap.endpoints[0].unfit(
+            dir.path(),
+            crate::checks::Unfit::Unreadable(std::io::Error::from_raw_os_error(libc::EACCES)),
+        );
+        assert_eq!(
+            e.to_string(),
+            format!(
+                "could not read the control endpoint directory {}",
+                dir.path().display()
+            )
+        );
+        let source = std::error::Error::source(&e)
+            .and_then(|e| e.downcast_ref::<std::io::Error>())
+            .expect("the read's error");
+        assert_eq!(source.raw_os_error(), Some(libc::EACCES));
     }
 
     #[cfg(target_os = "macos")]
@@ -382,7 +451,40 @@ mod tests {
         .expect("the deadline, not the lookup, decides")
         .expect_err("refuses");
         release.send(()).ok();
-        assert!(said.contains("did not answer within 20ms"), "{said}");
+        assert!(
+            matches!(&said, crate::checks::Unfit::Refused(said) if said.contains("did not answer within 20ms")),
+            "{said:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_group_lookup_that_panicked_is_its_own_error() {
+        let panicked = crate::checks::group_id(
+            "appliance-admin",
+            Duration::from_secs(5),
+            |_| -> crate::checks::Lookup { panic!("the group lookup panicked") },
+        )
+        .await
+        .expect_err("refuses");
+        assert!(
+            matches!(panicked, crate::checks::Unfit::LookupPanicked),
+            "{panicked:?}"
+        );
+        let endpoint = LocalEndpoint {
+            path: "/run/appliance/admin.sock".into(),
+            ceiling: Role::Admin,
+            group: "appliance-admin".to_string(),
+        };
+        let said = endpoint.unfit(Path::new("/run/appliance"), panicked);
+        assert!(
+            matches!(&said, LocalError::GroupLookupPanicked { group } if group == "appliance-admin"),
+            "{said:?}"
+        );
+        assert_eq!(
+            said.to_string(),
+            "looking up the group appliance-admin panicked"
+        );
+        assert!(std::error::Error::source(&said).is_none());
     }
 
     #[tokio::test]
@@ -491,7 +593,10 @@ mod windows_tests {
     }
 
     fn refusal(bootstrap: &LocalBootstrap) -> String {
-        bootstrap.check_state().expect_err("refuses").to_string()
+        match bootstrap.check_state().expect_err("refuses") {
+            LocalError::Refused(refused) => refused.to_string(),
+            other => panic!("not a refusal: {other:?}"),
+        }
     }
 
     #[test]

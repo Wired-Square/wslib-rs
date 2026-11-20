@@ -15,12 +15,12 @@ use std::{
 };
 
 use tokio::{
-    task::spawn_blocking,
+    task::{JoinError, spawn_blocking},
     time::{Instant, timeout, timeout_at},
 };
 use wslib_can::{
     ARB_MASK_EXT, ARB_MASK_STD, CanError, CanFrame, CanOptions, CanTask, Device, DeviceInfo,
-    Direction, Limits, Received, Stamp,
+    Direction, Limits, Received, Stamp, WriteFailed,
 };
 use wslib_serial::{LineSettings, SerialPort};
 
@@ -181,7 +181,7 @@ impl Device for Slcan {
             .collect())
     }
 
-    async fn write(&mut self, frame: &CanFrame) -> io::Result<()> {
+    async fn write(&mut self, frame: &CanFrame) -> Result<(), WriteFailed> {
         let frame = if frame.rtr {
             Frame::remote(frame.arb_id, frame.extended, frame.dlc())
         } else {
@@ -196,7 +196,11 @@ impl Device for Slcan {
         encode_frame_into(&mut self.outbound, &frame);
         match self.on_bus.as_ref().filter(|_| !self.answers) {
             Some(on_bus) => on_bus.write(mem::take(&mut self.outbound)).await,
-            None => self.port.write(&mut self.outbound).await,
+            None => self
+                .port
+                .write(&mut self.outbound)
+                .await
+                .map_err(serial::unwritten),
         }
     }
 
@@ -218,14 +222,22 @@ struct OnBus {
 }
 
 impl OnBus {
-    async fn write(&self, bytes: Vec<u8>) -> io::Result<()> {
+    async fn write(&self, bytes: Vec<u8>) -> Result<(), WriteFailed> {
         let port = self.port.clone();
-        spawn_blocking(move || {
+        let written = spawn_blocking(move || {
             let mut port = port.lock().unwrap_or_else(PoisonError::into_inner);
             port.write_all(&bytes).and_then(|()| port.flush())
         })
-        .await
-        .map_err(io::Error::other)?
+        .await;
+        written_by(written)
+    }
+}
+
+fn written_by(joined: Result<io::Result<()>, JoinError>) -> Result<(), WriteFailed> {
+    match joined {
+        Ok(written) => written.map_err(WriteFailed::Io),
+        Err(e) if e.is_panic() => Err(WriteFailed::Panicked),
+        Err(_) => Err(WriteFailed::Cancelled),
     }
 }
 
@@ -333,7 +345,7 @@ impl Slcan {
         self.port
             .write(&mut self.outbound)
             .await
-            .map_err(CanError::Read)?;
+            .map_err(|e| CanError::Write(serial::unwritten(e)))?;
         let deadline = Instant::now() + ANSWER_TIMEOUT;
         let mut bytes = mem::take(&mut self.unread);
         loop {
@@ -440,4 +452,40 @@ fn futures_are_send(slcan: SlcanOptions) {
     fn is_send<T: Send>(_: &T) {}
     is_send(&probe(&slcan.path, slcan.line, Duration::ZERO));
     is_send(&open(slcan, CanOptions::default()));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::serial::tests::{cancelled, panicked};
+
+    struct Panicking;
+
+    impl Write for Panicking {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            panic!("write panicked")
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_write_on_the_bus_that_panicked_is_panicked() {
+        let on_bus = OnBus {
+            port: Arc::new(Mutex::new(Box::new(Panicking))),
+            closed: true,
+        };
+        let error = on_bus.write(b"t1230\r".to_vec()).await.unwrap_err();
+        assert!(matches!(error, WriteFailed::Panicked), "{error:?}");
+    }
+
+    #[test]
+    fn a_write_that_panicked_is_panicked_and_one_cancelled_is_cancelled() {
+        let error = written_by(panicked()).unwrap_err();
+        assert!(matches!(error, WriteFailed::Panicked), "{error:?}");
+        let error = written_by(cancelled(Ok(()))).unwrap_err();
+        assert!(matches!(error, WriteFailed::Cancelled), "{error:?}");
+    }
 }

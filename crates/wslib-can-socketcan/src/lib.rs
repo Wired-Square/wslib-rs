@@ -7,4 +7,4 @@ mod transport;
 
 pub use codec::*;
 #[cfg(all(feature = "transport", target_os = "linux"))]
-pub use transport::{Bitrates, SocketCanOptions, bitrates, open};
+pub use transport::{Bitrates, BitratesError, SocketCanOptions, bitrates, open};

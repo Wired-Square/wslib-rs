@@ -1,7 +1,5 @@
 //! The crate's blocking calls, run on tokio's blocking pool.
 
-use std::panic::resume_unwind;
-
 use crate::Error;
 
 /// `work` on a clone of `client` (an [`Op`](crate::Op) or a [`Vault`](crate::Vault)),
@@ -26,10 +24,8 @@ where
     let client = client.clone();
     match ::tokio::task::spawn_blocking(move || work(&client)).await {
         Ok(done) => done,
-        Err(e) => match e.try_into_panic() {
-            Ok(panic) => resume_unwind(panic),
-            Err(_) => Err(Error::Cancelled),
-        },
+        Err(e) if e.is_panic() => Err(Error::Panicked),
+        Err(_) => Err(Error::Cancelled),
     }
 }
 
@@ -46,5 +42,24 @@ mod tests {
         let vaults = blocking(&op, |op| op.vaults()).await.unwrap();
         assert_eq!(vaults[0].name, "Ops");
         assert_eq!(fake.calls().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_call_that_panics_is_an_error_not_a_panic_here() {
+        let op = Op::new(FakeRunner::new(), "ops");
+        let answer = blocking(&op, |_| -> Result<(), Error> { panic!("op went wrong") }).await;
+        assert!(matches!(answer, Err(Error::Panicked)), "{answer:?}");
+    }
+
+    #[test]
+    fn a_call_the_runtime_dropped_before_it_ran_is_cancelled() {
+        let runtime = ::tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let handle = runtime.handle().clone();
+        drop(runtime);
+        let op = Op::new(FakeRunner::new(), "ops");
+        let answer = handle.block_on(blocking(&op, |_| Ok(())));
+        assert!(matches!(answer, Err(Error::Cancelled)), "{answer:?}");
     }
 }

@@ -111,13 +111,13 @@ pub fn loopback_origins(port: u16) -> Vec<String> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum HttpError {
-    #[error("failed to bind MCP listener on {addr}: {source}")]
+    #[error("failed to bind MCP listener on {addr}")]
     Bind {
         addr: SocketAddr,
         #[source]
         source: std::io::Error,
     },
-    #[error("MCP listener I/O error: {0}")]
+    #[error("MCP listener I/O failed")]
     Io(#[from] std::io::Error),
 }
 
@@ -441,6 +441,16 @@ mod tests {
         assert!(
             matches!(err, HttpError::Bind { addr: a, .. } if a == addr),
             "{err}"
+        );
+        assert_eq!(
+            err.to_string(),
+            format!("failed to bind MCP listener on {addr}")
+        );
+        assert_eq!(
+            std::error::Error::source(&err)
+                .and_then(|s| s.downcast_ref::<std::io::Error>())
+                .map(std::io::Error::kind),
+            Some(std::io::ErrorKind::AddrInUse)
         );
     }
 }

@@ -28,7 +28,7 @@ pub use client::FramingStats;
 #[cfg(feature = "can")]
 pub use client::can_link_config;
 pub use device::{Device, DeviceBuilder, DeviceId, Transport};
-pub use error::Error;
+pub use error::{Error, UnlockFailure};
 pub use identify::{DEFAULT_TX_QUEUE_DEPTH, DeviceIdentity};
 pub use peer::{Peer, PeerParseError};
 pub use probe::{Probe, probe, probe_version};

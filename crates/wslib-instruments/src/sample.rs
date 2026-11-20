@@ -123,7 +123,7 @@ mod wire {
                 )
             })?;
             Ok(Self {
-                key: signal::parse(&wire.key)?,
+                key: signal::parse(&wire.key).map_err(|e| e.to_string())?,
                 value: wire.value,
                 at: on_this_clock(wall_clock),
                 wall_clock,

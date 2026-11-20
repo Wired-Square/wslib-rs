@@ -22,7 +22,7 @@ use wslib_framelink_protocol::types::{
 use wslib_framelink_protocol::{bridge, capabilities, dsig, frame_def, generator, xform};
 
 use crate::client::{FrameLinkClient, FrameSender, FramingCounters, FramingStats, Received};
-use crate::{Error, Peer};
+use crate::{Error, Peer, UnlockFailure};
 #[cfg(feature = "can")]
 use {
     wslib_can_bus::CanBus,
@@ -645,9 +645,12 @@ impl FrameLinkSession {
                     })
                 }
             }
-            Err(error @ (Error::Protocol(_) | Error::WriteLocked(_) | Error::PeerVersion(_))) => {
-                Err(error)
-            }
+            Err(
+                error @ (Error::Protocol(_)
+                | Error::WriteLocked(_)
+                | Error::UnlockFailed(_)
+                | Error::PeerVersion(_)),
+            ) => Err(error),
             Err(_) => Ok(FileStep::Unresolved),
         }
     }
@@ -996,7 +999,7 @@ async fn unlock_after_refusal(
         .await
         .map_err(|e| match e {
             Error::WriteLocked(_) | Error::PeerVersion(_) => e,
-            other => Error::WriteLocked(format!("unlock after WRITE_LOCKED failed: {other}")),
+            other => Error::UnlockFailed(UnlockFailure::new(other)),
         })
 }
 
@@ -1061,8 +1064,7 @@ async fn try_unlock(
     if challenge.msg_type == MSG_NACK {
         return Ok(UnlockAttempt::Refused(types::nack_code(&challenge.payload)));
     }
-    let nonce = dsig::parse_challenge_response(&challenge.payload)
-        .map_err(|e| Error::Protocol(format!("challenge parse failed: {e}")))?;
+    let nonce = dsig::parse_challenge_response(&challenge.payload).map_err(Error::Challenge)?;
 
     let verdict = transact(
         sender,

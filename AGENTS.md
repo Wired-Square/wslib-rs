@@ -43,6 +43,17 @@ publishing them.
 - Comments only for what the code cannot say: a non-obvious why, an invariant,
   an external spec. Public docs are one sentence unless the contract is
   subtle.
+- An error's `Display` describes its own layer only. It never writes its
+  cause's text.
+- The cause comes only through `source()`, and stays typed: no error is
+  flattened into a `String`, and none is hidden behind `io::Error::other`
+  where it crosses a public API. A consumer can downcast to the exact origin.
+- A library emits nothing. Everything it tells its consumer is a typed value
+  in its API: a return value, an event stream, a progress callback or
+  stream, or stats. A background task always has a channel the consumer
+  holds. wslib-telemetry is exempt, as the consumer's own tool.
+- The workspace ships no presentation of errors for consumers. wslib-cli's
+  `exit::fail` renders its own command's chain.
 - A dependency earns its place: security-critical code, a spec we would
   otherwise track, a platform binding, the ecosystem's foundation, or more
   than an afternoon's work. Otherwise write it. Turn off default features you

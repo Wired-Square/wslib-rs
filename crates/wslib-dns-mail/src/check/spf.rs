@@ -13,7 +13,7 @@ use crate::{FaultCode, Parsed};
 pub const SPF_LENGTH_LIMIT: usize = 450;
 
 /// A domain's SPF tree and what's wrong with it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SpfCheck {
     pub tree: SpfTree,

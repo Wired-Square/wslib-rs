@@ -1,16 +1,14 @@
-use std::{error::Error, fmt, io, str::FromStr};
+use std::{error::Error, fmt, str::FromStr};
 
 use wslib_can_bus::{BusKind, BusParseError, form_count, forms_of};
 use wslib_framelink_protocol::can_id::{DEVICE_ID_MAX, device_id_text, parse_device_id};
 
-#[cfg(not(feature = "ble"))]
-use crate::probe::ProbeError;
 use crate::{
     gw121::{
         METER_NAME, Target,
         decode::{self, STATUS},
     },
-    probe::Probe,
+    probe::{Probe, StartError},
     sample::Sample,
     selected::Selected,
     signal::{self, SignalKey},
@@ -85,7 +83,18 @@ pub enum ProbeUri {
 pub enum ProbeUriError {
     Unrecognised(String),
     Target(String),
+    /// A WiredReflow's bus that doesn't parse; the source is why.
+    Bus {
+        bus: String,
+        source: BusParseError,
+    },
     Signal(String),
+    /// A selector that is neither one of the probe's signal names, which
+    /// `why` lists, nor a signal key; the source is the key's parse error.
+    UnknownSignal {
+        why: String,
+        source: wslib_framelink_protocol::Error,
+    },
 }
 
 impl fmt::Display for ProbeUriError {
@@ -94,12 +103,25 @@ impl fmt::Display for ProbeUriError {
             ProbeUriError::Unrecognised(text) => {
                 write!(f, "unrecognised probe {text:?}; {}", expected())
             }
-            ProbeUriError::Target(why) | ProbeUriError::Signal(why) => f.write_str(why),
+            ProbeUriError::Bus { bus, .. } => write!(f, "{bus:?} names no CAN bus"),
+            ProbeUriError::Target(why)
+            | ProbeUriError::Signal(why)
+            | ProbeUriError::UnknownSignal { why, .. } => f.write_str(why),
         }
     }
 }
 
-impl Error for ProbeUriError {}
+impl Error for ProbeUriError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            ProbeUriError::Bus { source, .. } => Some(source),
+            ProbeUriError::UnknownSignal { source, .. } => Some(source),
+            ProbeUriError::Unrecognised(_)
+            | ProbeUriError::Target(_)
+            | ProbeUriError::Signal(_) => None,
+        }
+    }
+}
 
 fn expected() -> String {
     if URI_FORMS.is_empty() {
@@ -138,15 +160,18 @@ fn selector(scheme: &Scheme, probe: &str, text: &str) -> Result<SignalKey, Probe
     }
     let key = match (scheme.key_named)(text) {
         Some(key) => key,
-        None => signal::parse(text).map_err(|why| {
+        None => signal::parse(text).map_err(|source| {
             let names: Vec<&str> = (scheme.signals)()
                 .iter()
                 .filter_map(|key| (scheme.display_name)(key))
                 .collect();
-            ProbeUriError::Signal(format!(
-                "{text} is not one of {} and not a signal key: {why}",
-                names.join(LIST_SEPARATOR)
-            ))
+            ProbeUriError::UnknownSignal {
+                why: format!(
+                    "{text} is not one of {} and not a signal key",
+                    names.join(LIST_SEPARATOR)
+                ),
+                source,
+            }
         })?,
     };
     if !(scheme.signals)().contains(&key) {
@@ -279,7 +304,10 @@ impl FromStr for ProbeUri {
             };
             let bus: CanBus = bus_text.parse().map_err(|why| match why {
                 BusParseError::Empty => ProbeUriError::Target(name_the_bus("the CAN bus")),
-                why => ProbeUriError::Target(why.to_string()),
+                source => ProbeUriError::Bus {
+                    bus: bus_text.to_owned(),
+                    source,
+                },
             })?;
             let probe = format!("{WIREDREFLOW}{SCHEME_SEPARATOR}{target}");
             return Ok(ProbeUri::WiredReflow {
@@ -342,9 +370,9 @@ pub fn narrowed(probe: Box<dyn Probe>, keys: &[SignalKey]) -> Box<dyn Probe> {
     }
 }
 
-/// A backend this build leaves out fails with `ErrorKind::Unsupported` around
-/// [`ProbeError::FeatureDisabled`](crate::probe::ProbeError::FeatureDisabled).
-pub fn open(uri: &ProbeUri) -> io::Result<Box<dyn Probe>> {
+/// A backend this build leaves out fails with
+/// [`StartError::FeatureDisabled`].
+pub fn open(uri: &ProbeUri) -> Result<Box<dyn Probe>, StartError> {
     let probe: Box<dyn Probe> = match uri {
         #[cfg(feature = "ble")]
         ProbeUri::Gw121 { target, .. } => {
@@ -352,10 +380,7 @@ pub fn open(uri: &ProbeUri) -> io::Result<Box<dyn Probe>> {
         }
         #[cfg(not(feature = "ble"))]
         ProbeUri::Gw121 { .. } => {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                ProbeError::FeatureDisabled("ble"),
-            ));
+            return Err(StartError::FeatureDisabled("ble"));
         }
         ProbeUri::WiredReflow { bus, device, .. } => {
             Box::new(WiredReflowProbe::start(bus, *device)?)

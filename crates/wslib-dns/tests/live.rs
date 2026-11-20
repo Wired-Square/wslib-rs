@@ -27,14 +27,14 @@ async fn authoritative_servers_answer_from_the_root_down() {
             .records
             .is_empty()
     );
-    assert_eq!(
+    assert!(matches!(
         dns.txt("nothing.example.invalid").await,
         Err(LookupError::NxDomain)
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         dns.delegation("www.example.com").await,
         Err(LookupError::NoData)
-    );
+    ));
 }
 
 #[tokio::test]
@@ -58,11 +58,14 @@ async fn example_com_answers_and_reports_absence_precisely() {
             .any(|txt| txt.joined().starts_with("v=spf1"))
     );
     assert!(spf.ttl.is_some());
-    assert_eq!(dns.cname("example.com").await, Err(LookupError::NoData));
-    assert_eq!(
+    assert!(matches!(
+        dns.cname("example.com").await,
+        Err(LookupError::NoData)
+    ));
+    assert!(matches!(
         dns.txt("nothing.example.invalid").await,
         Err(LookupError::NxDomain)
-    );
+    ));
 }
 
 #[tokio::test]
@@ -89,17 +92,17 @@ async fn a_validation_failure_is_servfail() {
         HickoryOptions::default(),
     )
     .unwrap();
-    assert_eq!(
+    assert!(matches!(
         dns.txt("dnssec-failed.org").await,
         Err(LookupError::ServFail)
-    );
+    ));
 }
 
 #[tokio::test]
 #[ignore = "needs the network"]
 async fn internationalised_names_are_sent_as_a_labels() {
     let error = resolver().txt("bücher.example.invalid").await.unwrap_err();
-    assert_eq!(error, LookupError::NxDomain);
+    assert!(matches!(error, LookupError::NxDomain));
 }
 
 /// Through the system's resolvers, as a deployment would be: a resolver that

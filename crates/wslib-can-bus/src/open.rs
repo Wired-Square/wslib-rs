@@ -1,11 +1,9 @@
-use std::io;
-
 use wslib_can::{CanError, CanOptions, CanTask};
 
 use crate::{
     bus::CanBus,
     config::{BusConfig, CanMode},
-    error::{OpenError, refusal, refused},
+    error::{OpenCause, OpenError, refusal, refused},
 };
 
 /// Opens a wslib-can task on `bus`.
@@ -207,7 +205,7 @@ fn pcan_options(device: wslib_can_pcan::PcanDevice, rates: Rates) -> wslib_can_p
 fn named(bus: &CanBus, opened: Result<CanTask, CanError>) -> Result<CanTask, OpenError> {
     opened.map_err(|e| OpenError::Open {
         bus: bus.clone(),
-        source: io::Error::other(e),
+        source: OpenCause::Adapter(e),
     })
 }
 

@@ -27,8 +27,11 @@ pub enum RenderError {
         placeholder: String,
     },
 
-    #[error("{}: {because}", path.display())]
-    Write { path: PathBuf, because: String },
+    #[error("cannot write {}", path.display())]
+    Write {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 }
 
 /// Fill one template, substituting and checking in a single pass, so a
@@ -130,14 +133,14 @@ pub fn write(root: &Path, artefacts: &[Artefact]) -> Result<(), RenderError> {
     for artefact in artefacts {
         let path = root.join(&artefact.path);
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| RenderError::Write {
+            std::fs::create_dir_all(parent).map_err(|source| RenderError::Write {
                 path: parent.to_path_buf(),
-                because: e.to_string(),
+                source,
             })?;
         }
-        std::fs::write(&path, &artefact.body).map_err(|e| RenderError::Write {
+        std::fs::write(&path, &artefact.body).map_err(|source| RenderError::Write {
             path: path.clone(),
-            because: e.to_string(),
+            source,
         })?;
         if artefact.body.starts_with("#!") {
             make_executable(&path)?;
@@ -152,10 +155,10 @@ pub fn write(root: &Path, artefacts: &[Artefact]) -> Result<(), RenderError> {
 fn make_executable(path: &Path) -> Result<(), RenderError> {
     use std::os::unix::fs::PermissionsExt;
 
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).map_err(|e| {
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).map_err(|source| {
         RenderError::Write {
             path: path.to_path_buf(),
-            because: e.to_string(),
+            source,
         }
     })
 }

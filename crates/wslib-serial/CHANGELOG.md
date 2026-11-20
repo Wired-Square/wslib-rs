@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.0
+
+- `From<LineSettingsError> for String` is gone, so `?` keeps a
+  `LineSettingsError` typed.
+- `SerialError::Open` and `Read` name only their own layer. The `io::Error`
+  comes only through `source()`, which `Read` now returns too.
+- `SerialPort::write`, `set_dtr` and `set_rts`, and `SerialWriter`'s, answer
+  with a `SerialError` in place of an `io::Error`: `Write` holds the
+  `io::Error` of a write, or of a DTR or RTS change, that failed.
+- `SerialError::Panicked`: a blocking call on the port panicked, on Windows
+  or with `write`, in a read, a write or a DTR or RTS change. A read's is
+  the task's `Disconnected`, and the task reopens as after any loss. A
+  write's or a control line's is that call's answer. A write or control
+  change that waits for a read in flight that panicked answers with the
+  read's `Panicked`, or `Cancelled`, and takes none of its bytes.
+- `SerialError::Cancelled`: the runtime cancelled a blocking call on the
+  port before it ran.
+- `SerialPort`: a write cancelled once started, which still runs, answers
+  its failure from the next read, write or control change, where it was
+  dropped and a write that panicked left the next read saying `Closed`. A
+  write that answers so takes none of its bytes.
+
 ## 0.1.3
 
 - `SerialWriter::set_dtr` and `set_rts`, and the same on `SerialPort`: a

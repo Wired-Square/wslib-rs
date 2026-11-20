@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.4
+
+- `Error::Toml` and `Error::TomlDocument` say "TOML parse failed", and
+  `Error::Key` "{section} key '{key}' is not a number"; the parser's error
+  is the `source()`.
+- `Error::SignalKey` says "a signal key is malformed" and `Error::Io` "I/O
+  failed", with wslib-framelink-protocol's and the `io::Error` as their
+  `source()`, in place of passing the inner error's text and source
+  through.
+- `mcu-flash` takes wslib-mcu-flash 0.1 to 0.4; `UsbAccess` is the same in
+  each.
+
 ## 0.3.3
 
 - `mcu-flash` takes wslib-mcu-flash 0.1 to 0.3; `UsbAccess` is the same in

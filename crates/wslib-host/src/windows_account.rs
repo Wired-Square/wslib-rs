@@ -3,6 +3,7 @@ use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::ptr::{null, null_mut};
 use std::str::FromStr;
+use std::string::FromUtf16Error;
 
 use windows_sys::Win32::Foundation::{
     ERROR_INSUFFICIENT_BUFFER, ERROR_NONE_MAPPED, HANDLE, LocalFree,
@@ -125,13 +126,9 @@ impl Sid {
                 &mut kind,
             )
         })?;
-        let text = |units: &[u16], len: u32| {
-            String::from_utf16(&units[..len as usize])
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
-        };
         Ok(Account {
-            domain: text(&domain, domain_len)?,
-            name: text(&name, name_len)?,
+            domain: decoded(&domain[..domain_len as usize])?,
+            name: decoded(&name[..name_len as usize])?,
         })
     }
 
@@ -292,6 +289,44 @@ fn sized(result: i32) -> io::Result<()> {
     }
 }
 
+fn decoded(units: &[u16]) -> io::Result<String> {
+    String::from_utf16(units).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, NotUtf16(e)))
+}
+
+#[derive(Debug)]
+struct NotUtf16(FromUtf16Error);
+
+impl fmt::Display for NotUtf16 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("the account's name or domain is not UTF-16")
+    }
+}
+
+impl std::error::Error for NotUtf16 {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain([0]).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LONE_SURROGATE: u16 = 0xd800;
+
+    #[test]
+    fn a_name_that_is_not_utf16_keeps_the_decoders_error() {
+        let error = decoded(&[u16::from(b'a'), LONE_SURROGATE]).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            error.to_string(),
+            "the account's name or domain is not UTF-16"
+        );
+        let source = std::error::Error::source(&error).unwrap();
+        assert!(source.is::<FromUtf16Error>());
+    }
 }

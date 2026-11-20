@@ -8,7 +8,7 @@
     )
 )]
 
-use std::io;
+use std::{error::Error, fmt, io};
 
 use wslib_can::CanError;
 
@@ -17,7 +17,7 @@ use wslib_can::CanError;
 pub(crate) fn refused(request: &'static str) -> impl Fn(io::Error) -> CanError {
     move |e| match e.kind() {
         io::ErrorKind::ConnectionAborted => CanError::Closed,
-        kind => CanError::Read(io::Error::new(kind, format!("{request}: {e}"))),
+        _ => CanError::Request { request, source: e },
     }
 }
 
@@ -41,13 +41,44 @@ pub(crate) fn bound_driver(found: &nusb::DeviceInfo) -> Option<&str> {
 
 /// nusb's refusal of a device bound to a driver other than WinUSB, which names
 /// neither the driver nor what would work.
-pub(crate) fn foreign_driver(error: io::Error, driver: Option<&str>, remedy: &str) -> io::Error {
+pub(crate) fn foreign_driver(
+    error: io::Error,
+    driver: Option<&str>,
+    remedy: &'static str,
+) -> io::Error {
     match driver {
         Some(driver) if error.kind() == io::ErrorKind::Unsupported => io::Error::new(
             io::ErrorKind::Unsupported,
-            format!("the adapter is bound to the {driver} driver, not WinUSB: {remedy}"),
+            ForeignDriver {
+                driver: driver.to_owned(),
+                remedy,
+                source: error,
+            },
         ),
         _ => error,
+    }
+}
+
+#[derive(Debug)]
+struct ForeignDriver {
+    driver: String,
+    remedy: &'static str,
+    source: io::Error,
+}
+
+impl fmt::Display for ForeignDriver {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { driver, remedy, .. } = self;
+        write!(
+            f,
+            "the adapter is bound to the {driver} driver, not WinUSB: {remedy}"
+        )
+    }
+}
+
+impl Error for ForeignDriver {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.source)
     }
 }
 
@@ -63,6 +94,17 @@ mod tests {
         assert_eq!(
             named.to_string(),
             "the adapter is bound to the libusbK driver, not WinUSB: bind WinUSB to it"
+        );
+        let refused = named
+            .source()
+            .and_then(|cause| cause.downcast_ref::<io::Error>())
+            .unwrap();
+        assert_eq!(
+            (refused.kind(), refused.to_string()),
+            (
+                io::ErrorKind::Unsupported,
+                "incompatible driver".to_string()
+            )
         );
         let unbound = foreign_driver(unsupported(), None, "bind WinUSB to it");
         assert_eq!(unbound.to_string(), "incompatible driver");

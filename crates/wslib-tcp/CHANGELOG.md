@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.2
+
+- Each error's message names only its own layer, and its cause comes only
+  through `source()`, typed: `TransportError::Resolve`, `Connect` and `Io`,
+  and `ResolveError::Io`, no longer write their cause's text.
+- `TransportError::Violation`: the error of the protocol above the
+  connection, held in an `Arc` so that `duplicate` keeps it.
+
 ## 0.1.1
 
 - thiserror's floor is 2.0.20.

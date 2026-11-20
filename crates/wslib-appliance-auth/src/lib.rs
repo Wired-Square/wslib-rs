@@ -114,10 +114,18 @@ pub enum AuthError {
     #[error("the system's random source failed")]
     Random,
 
-    #[error("hashing: {0}")]
-    Hash(String),
+    #[error("the password could not be hashed")]
+    Hash(#[source] Box<dyn std::error::Error + Send + Sync>),
 
-    #[error(transparent)]
+    /// The runtime shut down before the password's blocking work ran.
+    #[error("the runtime shut down before the password was hashed or checked")]
+    Cancelled,
+
+    /// The password's blocking work panicked.
+    #[error("hashing or checking the password panicked")]
+    Panicked,
+
+    #[error("the account store failed")]
     Store(#[from] wslib_appliance_store::StoreError),
 }
 
@@ -139,15 +147,19 @@ where
     T: Send + 'static,
     F: FnOnce() -> T + Send + 'static,
 {
-    tokio::task::spawn_blocking(f)
-        .await
-        .map_err(|e| AuthError::Hash(e.to_string()))
+    tokio::task::spawn_blocking(f).await.map_err(|e| {
+        if e.is_panic() {
+            AuthError::Panicked
+        } else {
+            AuthError::Cancelled
+        }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wslib_appliance_store::Store;
+    use wslib_appliance_store::{Store, StoreError};
     use wslib_appliance_types::Role;
 
     pub(crate) const PASSWORD: &str = "correct horse battery";
@@ -202,5 +214,73 @@ mod tests {
     #[test]
     fn two_tokens_are_never_the_same() {
         assert_ne!(random_bytes::<32>().unwrap(), random_bytes::<32>().unwrap());
+    }
+
+    #[test]
+    fn a_failed_hash_says_only_that_and_keeps_the_hashers_error() {
+        let e = AuthError::from(wslib_auth_password::PasswordError::Hash(Box::new(
+            std::io::Error::other("out of memory"),
+        )));
+        assert_eq!(e.to_string(), "the password could not be hashed");
+        let source = std::error::Error::source(&e).expect("the hasher's error");
+        assert_eq!(
+            source
+                .downcast_ref::<std::io::Error>()
+                .map(ToString::to_string),
+            Some("out of memory".to_string())
+        );
+    }
+
+    #[test]
+    fn a_store_failure_is_its_own_layer_and_the_walk_reaches_the_database() {
+        let refused = || wslib_db_sqlite::Error::InvalidName("Bad".into());
+        let e = AuthError::from(StoreError::from(refused()));
+        assert_eq!(e.to_string(), "the account store failed");
+        let store = std::error::Error::source(&e).expect("the store's error");
+        assert!(
+            matches!(
+                store.downcast_ref::<StoreError>(),
+                Some(StoreError::Database(_))
+            ),
+            "{store:?}"
+        );
+        let database = store.source().expect("the database's refusal");
+        assert!(
+            matches!(
+                database.downcast_ref::<wslib_db_sqlite::Error>(),
+                Some(wslib_db_sqlite::Error::InvalidName(name)) if name == "Bad"
+            ),
+            "{database:?}"
+        );
+    }
+
+    #[test]
+    fn the_password_crates_cancelled_and_panicked_keep_their_meaning() {
+        use wslib_auth_password::PasswordError;
+        assert!(matches!(
+            AuthError::from(PasswordError::Cancelled),
+            AuthError::Cancelled
+        ));
+        assert!(matches!(
+            AuthError::from(PasswordError::Panicked),
+            AuthError::Panicked
+        ));
+    }
+
+    #[tokio::test]
+    async fn password_work_that_panics_is_an_error_not_a_panic() {
+        let answer = off_thread(|| -> () { panic!("argon2 went wrong") }).await;
+        assert!(matches!(answer, Err(AuthError::Panicked)), "{answer:?}");
+    }
+
+    #[test]
+    fn password_work_the_runtime_dropped_before_it_ran_is_cancelled() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let handle = runtime.handle().clone();
+        drop(runtime);
+        let answer = handle.block_on(off_thread(|| ()));
+        assert!(matches!(answer, Err(AuthError::Cancelled)), "{answer:?}");
     }
 }

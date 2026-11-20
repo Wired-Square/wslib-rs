@@ -89,14 +89,14 @@ async fn an_svgz_or_gzip_encoded_logo_is_inflated_first() {
 async fn a_compressed_bomb_and_a_corrupt_stream_are_refused() {
     let bomb = gzip(&vec![b' '; 4 * LOGO_INFLATE_LIMIT]);
     assert!(bomb.len() < LOGO_FETCH_LIMIT);
-    assert_eq!(
+    assert!(matches!(
         failure(response("200 OK", &["Content-Type: image/svg+xml"], &bomb)).await,
         FetchFailure::TooLarge {
             limit: LOGO_INFLATE_LIMIT,
             decompressed: true
         }
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         failure(response(
             "200 OK",
             &["Content-Encoding: gzip"],
@@ -104,38 +104,37 @@ async fn a_compressed_bomb_and_a_corrupt_stream_are_refused() {
         ))
         .await,
         FetchFailure::Undecodable
-    );
+    ));
 }
 
 #[tokio::test]
 async fn a_logo_over_the_cap_is_cut_off_while_streaming() {
     let huge = vec![b' '; LOGO_FETCH_LIMIT + 1];
-    assert_eq!(
+    assert!(matches!(
         failure(response("200 OK", &["Content-Type: image/svg+xml"], &huge)).await,
         FetchFailure::TooLarge {
             limit: LOGO_FETCH_LIMIT,
             decompressed: false
         }
-    );
+    ));
 }
 
 #[tokio::test]
 async fn redirects_and_errors_are_refused() {
-    assert_eq!(
+    assert!(matches!(
         failure(response(
             "302 Found",
             &["Location: https://example.com/logo.svg"],
             b""
         ))
         .await,
-        FetchFailure::Redirect {
-            location: Some("https://example.com/logo.svg".into())
-        }
-    );
-    assert_eq!(
+        FetchFailure::Redirect { location }
+            if location.as_deref() == Some("https://example.com/logo.svg")
+    ));
+    assert!(matches!(
         failure(response("404 Not Found", &[], b"")).await,
         FetchFailure::Status { status: 404 }
-    );
+    ));
 }
 
 #[tokio::test]

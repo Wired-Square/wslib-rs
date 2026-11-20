@@ -1,6 +1,9 @@
 mod support;
 
-use std::time::{Duration, Instant, SystemTime};
+use std::{
+    error::Error,
+    time::{Duration, Instant, SystemTime},
+};
 
 use tokio::{net::TcpStream, time::sleep};
 
@@ -91,6 +94,30 @@ async fn a_short_reply_is_returned_as_received() {
 }
 
 #[tokio::test]
+async fn a_reply_from_another_unit_is_a_violation_carrying_tokio_modbus_error() {
+    within(async {
+        let server = FakeServer::start().await;
+        server.script([Action::OtherUnit]);
+        let mut tcp = ModbusTcp::new(server.endpoint(), quick());
+
+        let error = tcp.read(holding(0, 1)).await.unwrap_err();
+        let RequestError::Transport(transport @ TransportError::Violation(_)) = &error else {
+            panic!("expected a violation, got {error:?}");
+        };
+        assert_eq!(transport.to_string(), "protocol error");
+        let cause = transport.source().unwrap();
+        assert!(
+            matches!(
+                cause.downcast_ref::<tokio_modbus::ProtocolError>(),
+                Some(tokio_modbus::ProtocolError::HeaderMismatch { .. })
+            ),
+            "{cause:?}"
+        );
+    })
+    .await
+}
+
+#[tokio::test]
 async fn an_exception_keeps_the_socket() {
     within(async {
         let server = FakeServer::start().await;
@@ -128,7 +155,11 @@ async fn an_op_timeout_drops_the_socket_and_the_next_request_reconnects() {
             RequestError::Transport(TransportError::Timeout { after }) if after == quick().op_timeout
         ));
         assert!(!error.device_replied());
-        assert_eq!(error.to_string(), "timed out after 200ms");
+        assert_eq!(error.to_string(), "the request got no usable answer");
+        assert_eq!(
+            std::error::Error::source(&error).map(ToString::to_string),
+            Some("timed out after 200ms".to_owned())
+        );
         assert!(!tcp.is_connected());
 
         tcp.read(holding(0, 1)).await.unwrap();
@@ -149,7 +180,11 @@ async fn a_peer_close_is_a_transport_error() {
             error,
             RequestError::Transport(TransportError::Closed)
         ));
-        assert_eq!(error.to_string(), "connection closed by the device");
+        assert_eq!(error.to_string(), "the request got no usable answer");
+        assert_eq!(
+            std::error::Error::source(&error).map(ToString::to_string),
+            Some("connection closed by the device".to_owned())
+        );
         assert!(!tcp.is_connected());
         tcp.read(holding(0, 1)).await.unwrap();
     })
@@ -175,7 +210,11 @@ async fn a_device_that_hangs_up_between_reads_is_reported_as_closed() {
             error,
             RequestError::Transport(TransportError::Closed)
         ));
-        assert_eq!(error.to_string(), "connection closed by the device");
+        assert_eq!(error.to_string(), "the request got no usable answer");
+        assert_eq!(
+            std::error::Error::source(&error).map(ToString::to_string),
+            Some("connection closed by the device".to_owned())
+        );
     })
     .await
 }
@@ -219,7 +258,7 @@ async fn a_refused_connect_is_told_apart_from_a_resolve_failure() {
             &error,
             TransportError::Resolve { endpoint, reason: ResolveError::Io(_) } if endpoint == "127.0.0.1"
         ));
-        assert!(error.to_string().starts_with("cannot resolve 127.0.0.1: "));
+        assert_eq!(error.to_string(), "cannot resolve 127.0.0.1");
     })
     .await
 }

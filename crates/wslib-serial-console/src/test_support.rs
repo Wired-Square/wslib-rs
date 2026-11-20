@@ -15,6 +15,10 @@ use crate::{
     monitor::{Opener, lock},
 };
 
+/// The reason a [`FakeDevice`] that [`fail_writes`](FakeDevice::fail_writes)
+/// gives each write and control line it refuses.
+pub const WRITES_REFUSED: &str = "the device stopped taking bytes";
+
 /// Stops every port's monitor when dropped, so a test that fails doesn't
 /// leave one holding its port.
 pub struct StopReaders(pub Monitors);
@@ -122,6 +126,15 @@ impl FakeDevice {
         });
     }
 
+    /// Ends the line with `error`, as a read that failed would.
+    pub fn lose(&self, error: SerialError) {
+        let _ = self.reads.send(SerialEvent::Disconnected {
+            error,
+            consecutive: 1,
+            retry_in: None,
+        });
+    }
+
     /// What the monitor next put on the line; `None` once it has closed the
     /// port.
     pub async fn next(&mut self) -> Option<Wired> {
@@ -166,17 +179,17 @@ impl FakeLink {
         self.events.recv().await
     }
 
-    pub(crate) fn write(&self, bytes: Vec<u8>) -> io::Result<()> {
+    pub(crate) fn write(&self, bytes: Vec<u8>) -> Result<(), SerialError> {
         self.put(Wired::Bytes(bytes))
     }
 
-    pub(crate) fn set_dtr(&self, level: bool) -> io::Result<()> {
+    pub(crate) fn set_dtr(&self, level: bool) -> Result<(), SerialError> {
         self.put(Wired::Dtr(level))
     }
 
-    fn put(&self, wired: Wired) -> io::Result<()> {
-        self.wire
-            .send(wired)
-            .map_err(|_| io::ErrorKind::BrokenPipe.into())
+    fn put(&self, wired: Wired) -> Result<(), SerialError> {
+        self.wire.send(wired).map_err(|_| {
+            SerialError::Write(io::Error::new(io::ErrorKind::BrokenPipe, WRITES_REFUSED))
+        })
     }
 }

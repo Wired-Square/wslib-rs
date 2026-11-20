@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0
+
+- `Runner::run` answers the crate's `Error`: `CliNotFound` for no `op`,
+  `TimedOut`, or `Io`. `FakeRunner` answers an unscripted call with
+  `Error::Unscripted` itself, and `Error`'s `From<io::Error>` no longer
+  looks inside the `io::Error` for one.
+- A panic in `tokio::blocking`'s call is `Error::Panicked`, in place of a
+  resumed panic.
+
 ## 0.1.1
 
 - A 409 is recognised only by op's `(409) (Conflict)`, so a title or label

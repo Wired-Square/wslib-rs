@@ -152,7 +152,10 @@ async fn a_write_while_the_link_is_down_is_refused_at_once() {
             Err(WriteRefused::Disconnected)
         );
         let verified = writer.write_verified(None, vec![full(500, 7)]).await;
-        assert_eq!(verified, Err(WriteRefused::Disconnected));
+        assert!(
+            matches!(verified, Err(WriteRefused::Disconnected)),
+            "{verified:?}"
+        );
         let coils = writer.write_coils(None, 9, vec![true]).await;
         assert!(matches!(coils, Err(WriteRefused::Disconnected)));
         assert!(began.elapsed() < millis(100));
@@ -236,7 +239,7 @@ async fn writes_are_stopped_once_the_task_is_dropped() {
         });
         sleep(millis(20)).await;
         drop(task);
-        assert_eq!(queued.await.unwrap(), Err(WriteRefused::Stopped));
+        assert!(matches!(queued.await.unwrap(), Err(WriteRefused::Stopped)));
         assert_eq!(write_one(&writer, 500, 7).await, Err(WriteRefused::Stopped));
     })
     .await
@@ -351,9 +354,13 @@ async fn stop_finishes_the_batch_in_flight_and_refuses_the_queued_ones() {
         task.stop().await;
 
         let report = in_flight.await.unwrap().unwrap();
-        assert_eq!(report.outcome, WriteOutcome::Confirmed);
+        assert!(
+            matches!(report.outcome, WriteOutcome::Confirmed),
+            "{:?}",
+            report.outcome
+        );
         assert_eq!(functions(&server), [0x06, 0x03]);
-        assert_eq!(queued.await.unwrap(), Err(WriteRefused::Stopped));
+        assert!(matches!(queued.await.unwrap(), Err(WriteRefused::Stopped)));
         assert_eq!(write_one(&writer, 501, 8).await, Err(WriteRefused::Stopped));
     })
     .await

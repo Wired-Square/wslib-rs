@@ -8050,7 +8050,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "wslib-1password"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -8062,7 +8062,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance"
-version = "0.1.16"
+version = "0.2.0"
 dependencies = [
  "wslib-appliance-auth",
  "wslib-appliance-backup",
@@ -8078,7 +8078,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-auth"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -8095,12 +8095,13 @@ dependencies = [
  "wslib-auth-passkey",
  "wslib-auth-password",
  "wslib-auth-totp",
+ "wslib-db-sqlite",
  "wslib-secret",
 ]
 
 [[package]]
 name = "wslib-appliance-backup"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "argon2",
  "axum",
@@ -8132,7 +8133,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-client"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "thiserror 2.0.21",
  "tokio",
@@ -8142,7 +8143,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-config"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "clap",
  "serde",
@@ -8155,7 +8156,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-core"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "axum",
  "axum-server",
@@ -8204,7 +8205,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-https"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "axum",
  "chrono",
@@ -8232,7 +8233,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-server"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "axum",
  "chrono",
@@ -8255,7 +8256,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-service"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "axum",
  "libc",
@@ -8275,7 +8276,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-store"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "serde",
@@ -8309,7 +8310,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-xtask"
-version = "0.2.8"
+version = "0.2.9"
 dependencies = [
  "chrono",
  "clap",
@@ -8342,7 +8343,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-auth"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -8356,7 +8357,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-auth-oidc"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "jsonwebtoken",
  "reqwest 0.13.5",
@@ -8382,7 +8383,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-auth-password"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "argon2",
  "tokio",
@@ -8427,17 +8428,18 @@ version = "0.1.0"
 
 [[package]]
 name = "wslib-can"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "wslib-backoff",
+ "wslib-serial",
  "wslib-tcp",
 ]
 
 [[package]]
 name = "wslib-can-bus"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "tokio",
  "wslib-can",
@@ -8451,7 +8453,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-can-gsusb"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "nusb 0.2.7",
  "tokio",
@@ -8460,7 +8462,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-can-gvret"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "libc",
  "tokio",
@@ -8471,7 +8473,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-can-pcan"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libloading",
  "nusb 0.2.7",
@@ -8481,7 +8483,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-can-slcan"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "tokio",
@@ -8491,7 +8493,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-can-socketcan"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "libc",
  "socketcan",
@@ -8522,7 +8524,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-crypto"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "p256",
  "p384",
@@ -8538,7 +8540,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-crypto-ca"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "const-oid 0.9.6",
  "rcgen",
@@ -8566,7 +8568,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-crypto-x509"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "const-oid 0.9.6",
  "rcgen",
@@ -8581,7 +8583,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-db-sqlite"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "serde",
@@ -8597,7 +8599,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-dns"
-version = "0.2.5"
+version = "0.3.0"
 dependencies = [
  "hickory-resolver",
  "idna",
@@ -8609,7 +8611,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-dns-mail"
-version = "0.5.4"
+version = "0.6.0"
 dependencies = [
  "flate2",
  "quick-xml 0.38.4",
@@ -8630,7 +8632,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-docker"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "bytes",
  "futures-util",
@@ -8645,7 +8647,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-file-atomic"
-version = "0.1.9"
+version = "0.2.0"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -8653,7 +8655,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-framelink"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "btleplug",
  "futures-util",
@@ -8676,7 +8678,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-framelink-board"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "flate2",
  "serde",
@@ -8721,7 +8723,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-host"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "hmac 0.12.1",
  "libc",
@@ -8767,7 +8769,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-http-server"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "axum",
  "axum-server",
@@ -8788,7 +8790,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-instruments"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "btleplug",
  "futures-util",
@@ -8804,7 +8806,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-isotp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "thiserror 2.0.21",
  "tokio",
@@ -8814,7 +8816,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-mcp"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "axum",
  "ipnet",
@@ -8832,7 +8834,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-mcu-flash"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "ciborium",
@@ -8852,7 +8854,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-mcumgr"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "btleplug",
  "ciborium",
@@ -8869,7 +8871,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-mdns"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "futures-util",
  "libc",
@@ -8880,7 +8882,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-modbus"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "rust_decimal",
  "rust_decimal_macros",
@@ -8908,7 +8910,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-pairing"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "tempfile",
  "thiserror 2.0.21",
@@ -8928,7 +8930,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-secret"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "getrandom 0.4.3",
  "secret-service",
@@ -8944,7 +8946,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-serial"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "libc",
  "serialport",
@@ -8955,7 +8957,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-serial-console"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "axum",
  "futures-util",
@@ -8976,7 +8978,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-service"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "libc",
  "thiserror 2.0.21",
@@ -8992,7 +8994,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-ssh-keys"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -9010,7 +9012,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-systemd-journal"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -9026,7 +9028,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-tailscale"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -9052,7 +9054,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-tcp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "thiserror 2.0.21",
  "tokio",
@@ -9075,7 +9077,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-tls"
-version = "0.2.5"
+version = "0.3.0"
 dependencies = [
  "http",
  "libc",
@@ -9096,7 +9098,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-wiretap-catalogue"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "can-dbc",
  "rust_decimal",
@@ -9118,7 +9120,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-wiretap-gateway"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "reqwest 0.12.28",
  "serde",
@@ -9132,7 +9134,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-wiretap-protocol"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",

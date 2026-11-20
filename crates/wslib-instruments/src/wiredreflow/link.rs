@@ -1,6 +1,5 @@
 use std::{
     collections::BTreeSet,
-    io,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -10,14 +9,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use wslib_framelink_protocol::can_id::device_id_text;
-
 use super::{
     bus::{Bus, BusError, CanBus, open_bus},
     frame::{self, Decoder, RawFrame, SLOT_THERMOCOUPLES, device_of, known_slot},
 };
 use crate::{
-    probe::{Probe, ProbeError},
+    probe::{Probe, ProbeError, StartError},
     sample::{Sample, Stamp},
     signal::SignalKey,
     uri::ProbeUri,
@@ -48,7 +45,11 @@ fn is_thermocouple_broadcast(frame: &RawFrame) -> bool {
     known_slot(frame) == Some(SLOT_THERMOCOUPLES)
 }
 
-pub(crate) fn discover(bus: &mut dyn Bus, on: &CanBus, window: Duration) -> io::Result<u32> {
+pub(crate) fn discover(
+    bus: &mut dyn Bus,
+    on: &CanBus,
+    window: Duration,
+) -> Result<u32, StartError> {
     let started = Instant::now();
     let mut seen = BTreeSet::new();
     let mut lost = None;
@@ -58,37 +59,27 @@ pub(crate) fn discover(bus: &mut dyn Bus, on: &CanBus, window: Duration) -> io::
                 seen.extend(device_of(&frame).filter(|_| is_thermocouple_broadcast(&frame)))
             }
             Ok(None) => {}
-            Err(BusError::Lost(why)) => lost = Some(why),
-            Err(BusError::Ended(why)) => return Err(io::Error::other(why)),
+            Err(BusError::Lost(cause)) => lost = Some(cause),
+            Err(BusError::Ended(source)) => {
+                return Err(StartError::Ended {
+                    on: on.clone(),
+                    source,
+                });
+            }
         }
     }
     let mut devices = seen.into_iter();
     match (devices.next(), devices.next()) {
         (Some(device), None) => Ok(device),
-        (None, _) => {
-            let mut why = format!(
-                "no WiredReflow on {on} within {} s; is it powered and is {on} up?",
-                window.as_secs_f64()
-            );
-            if let Some(reason) = lost {
-                why.push_str(&format!(" The adapter was lost while listening: {reason}"));
-            }
-            Err(io::Error::new(io::ErrorKind::NotFound, why))
-        }
-        (Some(first), Some(second)) => {
-            let ids: Vec<String> = [first, second]
-                .into_iter()
-                .chain(devices)
-                .map(device_id_text)
-                .collect();
-            Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "more than one WiredReflow on {on} ({}); choose one with @<device-id>",
-                    ids.join(", ")
-                ),
-            ))
-        }
+        (None, _) => Err(StartError::NoWiredReflow {
+            on: on.clone(),
+            window,
+            lost,
+        }),
+        (Some(first), Some(second)) => Err(StartError::ManyWiredReflows {
+            on: on.clone(),
+            devices: [first, second].into_iter().chain(devices).collect(),
+        }),
     }
 }
 
@@ -117,16 +108,23 @@ fn link(
                 }
             }
             Ok(None) => {}
-            Err(BusError::Lost(why)) => {
+            Err(BusError::Lost(cause)) => {
                 if !lost {
                     lost = true;
-                    if tx.send(Err(ProbeError::Disconnected(why))).is_err() {
+                    if tx
+                        .send(Err(ProbeError::cut_off("the CAN adapter was lost", cause)))
+                        .is_err()
+                    {
                         return;
                     }
                 }
             }
-            Err(BusError::Ended(why)) => {
-                let _ = tx.send(Err(ProbeError::Disconnected(why)));
+            Err(BusError::Ended(cause)) => {
+                let ended = match cause {
+                    Some(cause) => ProbeError::cut_off("the CAN adapter ended", cause),
+                    None => ProbeError::disconnected("the CAN task ended"),
+                };
+                let _ = tx.send(Err(ended));
                 return;
             }
         }
@@ -136,7 +134,7 @@ fn link(
                 "no WiredReflow frames for {} s",
                 timing.silence.as_secs_f64()
             );
-            if tx.send(Err(ProbeError::Disconnected(silent))).is_err() {
+            if tx.send(Err(ProbeError::disconnected(silent))).is_err() {
                 return;
             }
         }
@@ -152,12 +150,12 @@ pub struct WiredReflowProbe {
     link: Worker,
 }
 
-pub(crate) type Opener = Box<dyn FnOnce() -> io::Result<Box<dyn Bus>> + Send>;
+pub(crate) type Opener = Box<dyn FnOnce() -> Result<Box<dyn Bus>, StartError> + Send>;
 
-type Opened = io::Result<(Box<dyn Bus>, u32)>;
+type Opened = Result<(Box<dyn Bus>, u32), StartError>;
 
 impl WiredReflowProbe {
-    pub fn start(bus: &CanBus, device: Option<u32>) -> io::Result<Self> {
+    pub fn start(bus: &CanBus, device: Option<u32>) -> Result<Self, StartError> {
         let on = bus.clone();
         Self::start_with(
             Box::new(move || open_bus(&on)),
@@ -174,7 +172,7 @@ impl WiredReflowProbe {
         device: Option<u32>,
         window: Duration,
         timing: Timing,
-    ) -> io::Result<Self> {
+    ) -> Result<Self, StartError> {
         let on = bus.clone();
         Self::spawned(bus.clone(), timing, move || {
             let mut opened = opener()?;
@@ -192,7 +190,7 @@ impl WiredReflowProbe {
         device: u32,
         bus: Box<dyn Bus>,
         timing: Timing,
-    ) -> io::Result<Self> {
+    ) -> Result<Self, StartError> {
         Self::spawned(on.clone(), timing, move || Ok((bus, device)))
     }
 
@@ -200,7 +198,7 @@ impl WiredReflowProbe {
         on: CanBus,
         timing: Timing,
         open: impl FnOnce() -> Opened + Send + 'static,
-    ) -> io::Result<Self> {
+    ) -> Result<Self, StartError> {
         let (outcome_tx, outcome) = mpsc::sync_channel(0);
         let (tx, readings) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
@@ -216,10 +214,9 @@ impl WiredReflowProbe {
                     let _ = outcome_tx.send(Err(error));
                 }
             }
-        })?;
-        let device = outcome.recv().map_err(|_| {
-            io::Error::other("the WiredReflow link thread stopped before it opened the bus")
-        })??;
+        })
+        .map_err(StartError::Thread)?;
+        let device = outcome.recv().map_err(|_| StartError::Panicked)??;
         Ok(Self {
             on,
             device,
@@ -267,8 +264,8 @@ impl Probe for WiredReflowProbe {
             Err(RecvTimeoutError::Timeout) => return Err(ProbeError::Timeout),
             Err(RecvTimeoutError::Disconnected) => {
                 thread::sleep(deadline.saturating_duration_since(Instant::now()));
-                return Err(ProbeError::Disconnected(
-                    "the WiredReflow link thread stopped".into(),
+                return Err(ProbeError::disconnected(
+                    "the WiredReflow link thread stopped",
                 ));
             }
         };

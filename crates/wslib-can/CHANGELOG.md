@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.2.0
+
+- `CanError::Open` and `Read` name only their own layer. The `io::Error`
+  comes only through `source()`, which `Read` now returns too.
+- `CanError::Request`: a request the device didn't take, named, with its
+  `io::Error` as the source.
+- `serial`: `CanError::Serial`, carrying wslib-serial's `SerialError`. On
+  iOS, which has no wslib-serial, the feature adds nothing.
+- `CanError::Panicked`: a transport's blocking call panicked. The task
+  reports it as a disconnect and reopens, as for any loss.
+- `CanError::Cancelled` and `WriteFailed::Cancelled`: the runtime cancelled
+  a transport's blocking call, or its blocking write, before it ran.
+- `Device::write` returns `Result<(), WriteFailed>`, and `CanWriter`'s
+  `send`, `submit` and `send_when_ready` answer with a `WriteFailed`, in
+  place of an `io::Error`. `Io` holds the device's `io::Error`, `Panicked` a
+  blocking write that panicked, and, with `serial`, `Serial` a `SerialError`.
+- `CanError::Write` carries the `WriteFailed` of a write outside a send,
+  such as a probe's or a handshake's.
+- `CanError::Connect`, `Serial` and `Write`, and `WriteFailed::Serial`, each
+  name their own layer and return the `TransportError`, `SerialError` or
+  `WriteFailed` from `source()`, in place of passing its message and source
+  through.
+- `testing`: `LoopbackPort::fail_next_write`, the port's next write failing
+  with a given `WriteFailed`.
+
 ## 0.1.3
 
 - `testing`: `loopback`, an in-memory bus for tests. A `LoopbackBus` hands

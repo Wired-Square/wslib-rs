@@ -17,11 +17,11 @@ use tokio::{
 };
 use wslib_can::{
     BusState, CanError, CanFrame, CanOptions, Device, DeviceInfo, Direction, ErrorState, Limits,
-    Received, Stamp,
+    Received, Stamp, WriteFailed,
 };
 
 use super::{BusWatch, PcanDevice, PcanOptions, check, not_opened, timing};
-use crate::pcan_usb::CLOCK_HZ;
+use crate::{pcan_usb::CLOCK_HZ, usb::refused};
 
 #[cfg(target_os = "windows")]
 mod dll;
@@ -211,25 +211,27 @@ fn btr0btr1(pcan: &PcanOptions) -> Result<u16, CanError> {
 
 /// A call's status as `refused` maps a USB request's: the adapter gone is
 /// `Closed`, anything else names the call.
-fn called(call: &str, status: u32) -> Result<(), CanError> {
+fn called(call: &'static str, status: u32) -> Result<(), CanError> {
+    checked(status).map_err(refused(call))
+}
+
+fn checked(status: u32) -> io::Result<()> {
     if status == status::OK {
         return Ok(());
     }
     Err(match status & status::HANDLE_FIELD {
-        status::ILLHW => CanError::Closed,
-        status::HWINUSE => CanError::Read(io::Error::new(
+        status::ILLHW => io::ErrorKind::ConnectionAborted.into(),
+        status::HWINUSE => io::Error::new(
             io::ErrorKind::ResourceBusy,
-            format!("{call}: another program holds the adapter (PCAN-View?)"),
-        )),
-        _ => CanError::Read(io::Error::other(format!(
-            "{call}: PCAN-Basic error {status:#x}"
-        ))),
+            "another program holds the adapter (PCAN-View?)",
+        ),
+        _ => io::Error::other(format!("PCAN-Basic error {status:#x}")),
     })
 }
 
 /// A read's or `CAN_GetStatus`'s status: bus state and lost frames are news,
 /// anything else ends the read.
-fn reported(call: &str, status: u32) -> Result<u32, CanError> {
+fn reported(call: &'static str, status: u32) -> Result<u32, CanError> {
     if status & !status::NOT_FAILURES != 0 {
         called(call, status)?;
     }
@@ -332,9 +334,9 @@ impl<A: Api> Started<A> {
         called("PCAN_RECEIVE_EVENT", api.watch(self.handle))
     }
 
-    fn restart(&self) -> io::Result<()> {
+    fn restart(&self) -> Result<(), CanError> {
         self.api.uninitialize(self.handle);
-        self.initialize().map_err(io::Error::other)
+        self.initialize()
     }
 }
 
@@ -391,13 +393,20 @@ impl<A: Api> Basic<A> {
 }
 
 /// Cancel-safe: a wait cut short is picked up by the next.
-async fn woken<A: Api>(waiter: &mut Option<JoinHandle<()>>, api: &Arc<A>) {
+async fn woken<A: Api>(waiter: &mut Option<JoinHandle<()>>, api: &Arc<A>) -> Result<(), CanError> {
     let waiting = waiter.get_or_insert_with(|| {
         let api = api.clone();
         spawn_blocking(move || api.wait(WAKE_BOUND))
     });
-    let _ = waiting.await;
+    let woken = waiting.await;
     *waiter = None;
+    woken.map_err(|e| {
+        if e.is_panic() {
+            CanError::Panicked
+        } else {
+            CanError::Cancelled
+        }
+    })
 }
 
 impl<A: Api> Device for Basic<A> {
@@ -441,23 +450,23 @@ impl<A: Api> Device for Basic<A> {
             return Ok(received);
         }
         let woken = woken(&mut self.waiter, &self.started.api);
-        if self.bus.wait(woken).await.is_none() {
+        if self.bus.wait(woken).await.transpose()?.is_none() {
             return Ok(received);
         }
         self.drain()
     }
 
-    async fn write(&mut self, frame: &CanFrame) -> io::Result<()> {
+    async fn write(&mut self, frame: &CanFrame) -> Result<(), WriteFailed> {
         let msg = outgoing(frame);
         let deadline = Instant::now() + WRITE_TIMEOUT;
         let Started { api, handle, .. } = &self.started;
         loop {
             let status = api.write(*handle, &msg);
             if status & (status::XMTFULL | status::QXMTFULL) == 0 {
-                return called("CAN_Write", status).map_err(io::Error::other);
+                return checked(status).map_err(WriteFailed::Io);
             }
             if Instant::now() >= deadline {
-                return Err(io::ErrorKind::TimedOut.into());
+                return Err(WriteFailed::Io(io::ErrorKind::TimedOut.into()));
             }
             sleep(WRITE_RETRY).await;
         }
@@ -652,18 +661,32 @@ mod tests {
         use status::*;
         assert!(reported("CAN_Read", QRCVEMPTY | BUSOFF | QOVERRUN).is_ok());
         assert!(matches!(reported("CAN_Read", ILLHW), Err(CanError::Closed)));
-        let Err(CanError::Read(busy)) = called("CAN_Initialize", HWINUSE) else {
-            panic!("in use is a refusal");
+        let refused = called("CAN_Initialize", HWINUSE).unwrap_err();
+        assert_eq!(refused.to_string(), "CAN_Initialize failed");
+        let CanError::Request {
+            request: "CAN_Initialize",
+            source: busy,
+        } = &refused
+        else {
+            panic!("in use is a refusal: {refused:?}");
         };
         assert_eq!(busy.kind(), io::ErrorKind::ResourceBusy);
         assert_eq!(
             busy.to_string(),
-            "CAN_Initialize: another program holds the adapter (PCAN-View?)"
+            "another program holds the adapter (PCAN-View?)"
         );
-        let Err(CanError::Read(client)) = reported("CAN_Read", 0x1c00) else {
+        let Err(CanError::Request {
+            request: "CAN_Read",
+            source: client,
+        }) = reported("CAN_Read", 0x1c00)
+        else {
             panic!("ILLCLIENT is no ILLHW");
         };
-        assert_eq!(client.to_string(), "CAN_Read: PCAN-Basic error 0x1c00");
+        assert_eq!(client.to_string(), "PCAN-Basic error 0x1c00");
+        assert_eq!(
+            checked(ILLHW).unwrap_err().kind(),
+            io::ErrorKind::ConnectionAborted
+        );
     }
 
     #[test]
@@ -734,6 +757,7 @@ mod tests {
         status: Mutex<u32>,
         writes: Mutex<VecDeque<u32>>,
         written: Mutex<Vec<Msg>>,
+        waits_panic: Mutex<u32>,
     }
 
     impl Fake {
@@ -825,6 +849,13 @@ mod tests {
         }
 
         fn wait(&self, _: Duration) {
+            let panics = {
+                let mut left = self.waits_panic.lock().unwrap();
+                let panics = *left > 0;
+                *left = left.saturating_sub(1);
+                panics
+            };
+            assert!(!panics, "the wait panicked");
             std::thread::sleep(Duration::from_millis(1));
         }
     }
@@ -916,9 +947,8 @@ mod tests {
             .err()
             .expect("refused");
         assert!(
-            error
-                .to_string()
-                .contains("another program holds the adapter")
+            matches!(&error, CanError::Request { request: "CAN_Initialize", source } if source.kind() == io::ErrorKind::ResourceBusy),
+            "{error:?}"
         );
     }
 
@@ -977,6 +1007,45 @@ mod tests {
             panic!("a bus report");
         };
         assert_eq!(state.state, ErrorState::Passive);
+    }
+
+    #[tokio::test]
+    async fn a_wait_that_panicked_is_a_loss_that_reopens_the_channel() {
+        let fake = Fake::with_one_usb_channel();
+        let mut task = opened(&fake, options(false, false)).await.unwrap();
+        next(&mut task).await;
+        *fake.waits_panic.lock().unwrap() = 1;
+        let lost = next(&mut task).await;
+        assert!(
+            matches!(
+                lost,
+                CanEvent::Disconnected {
+                    error: CanError::Panicked,
+                    retry_in: Some(_),
+                    ..
+                }
+            ),
+            "{lost:?}"
+        );
+        assert!(matches!(next(&mut task).await, CanEvent::Connected(_)));
+    }
+
+    #[test]
+    fn a_wait_the_runtime_cancelled_is_cancelled() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        let woken = runtime.block_on(async {
+            let (release, held) = std::sync::mpsc::channel::<()>();
+            let busy = spawn_blocking(move || held.recv());
+            let queued = spawn_blocking(|| ());
+            queued.abort();
+            release.send(()).unwrap();
+            busy.await.unwrap().unwrap();
+            woken(&mut Some(queued), &Fake::with_one_usb_channel()).await
+        });
+        assert!(matches!(woken, Err(CanError::Cancelled)), "{woken:?}");
     }
 
     #[tokio::test]

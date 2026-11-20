@@ -40,7 +40,7 @@ impl Sections for MySections {
         sqlx::query("DELETE FROM devices")
             .execute(&mut **tx)
             .await
-            .map_err(|e| BackupError::Internal(e.to_string()))?;
+            .map_err(|e| BackupError::Failed(Box::new(e)))?;
         Ok(())
     }
 }
@@ -61,8 +61,9 @@ let service = service
   left full only if it references `users` with no `ON DELETE` action or with
   `RESTRICT`, so the list of tables is the product's to keep.
 - **`BackupError::Refused(sentence)`** is a refusal an operator should read,
-  answered 409 as it stands; `Internal` is the daemon's own fault, its cause
-  in the journal alone.
+  answered 409 as it stands; `Failed(error)` is the daemon's own fault, the
+  error and each of its causes in the journal alone, and `Internal(sentence)`
+  one stated in a sentence.
 - A bundle is at most `wslib_appliance_types::backup::MAX_BUNDLE_LEN`
   (8 MiB), sealed and as plaintext; a take over it is refused 413.
 

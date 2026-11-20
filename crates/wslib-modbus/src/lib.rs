@@ -60,7 +60,9 @@ pub use task::{PollTask, TaskEvent, TaskOptions, spawn};
 #[cfg(feature = "tcp")]
 pub use tcp::{ModbusTcp, TcpOptions};
 #[cfg(feature = "write")]
-pub use write::{Readback, ReadbackKind, WriteOutcome, WriteReport};
+pub use write::{
+    Readback, ReadbackKind, VerifyProblem, WriteFailure, WriteOutcome, WriteReport, WriteTarget,
+};
 #[cfg(all(feature = "task", feature = "write"))]
 pub use writer::{PollWriter, WriteRefused};
 #[cfg(feature = "tcp")]

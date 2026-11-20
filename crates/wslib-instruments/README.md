@@ -63,8 +63,8 @@ port name can't contain `@`, which starts the device id.
 
 None is on by default, and a default build pulls in no btleplug, tokio or CAN
 backend. A probe whose backend is left out still parses; opening it fails with
-`ErrorKind::Unsupported` around `ProbeError::FeatureDisabled`, naming the
-feature. `URI_FORMS` and `BUS_FORMS` list only what this build opens.
+`StartError::FeatureDisabled`, naming the feature. `URI_FORMS` and
+`BUS_FORMS` list only what this build opens.
 
 - `ble`: the 121GW, over btleplug.
 - `can-slcan`, `can-socketcan`, `can-gsusb`, `can-pcan`, `can-gvret`: a

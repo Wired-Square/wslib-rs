@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.6.0
+
+- On wslib-can-bus 0.3, whose `OpenError` is `Error::CanOpen`'s and whose
+  `BusConfig`, `CanMode` and `CanBus` it re-exports, and on wslib-can 0.2,
+  wslib-isotp 0.2 and wslib-file-atomic 0.2, and on wslib-mdns 0.2, whose
+  `Error` is `Error::Mdns`'s.
+- On wslib-mcumgr 0.2, whose `Error` is `Error::Smp`'s.
+- `Error::UnlockFailed(UnlockFailure)`: unlocking after a WRITE_LOCKED
+  refusal failed; `UnlockFailure::cause` and its `source()` are the
+  `Error` the unlock ended with. It was `WriteLocked` with the failure's
+  text; `WriteLocked` keeps the crate's own sentences.
+- `Error::Panicked` and `Error::Cancelled` are new: a background task
+  panicked, or the runtime cancelled one before it finished.
+- `DiscoveryEvent::Error` gains `cause`, the error behind the event on the
+  live value (not serialised): a failed BLE or mDNS init attempt, a BLE
+  scan that could not start, and a BLE adapter given up on carry theirs in
+  place of its text in `message`. A BLE scanner that panics or is
+  cancelled is an event whose cause is `Error::Panicked` or
+  `Error::Cancelled`. A start's last failed init attempt is its returned
+  error, not an event too. `DiscoveryEvent` is no longer `PartialEq` or
+  `Eq`.
+- `Error::Challenge`: the device's WRITE_CHALLENGE reply doesn't parse,
+  with wslib-framelink-protocol's error as its `source()`. It was
+  `Protocol` with the error's text.
+- `Error::NotifySubscribe { uuid, source }` holds btleplug's error in place
+  of its text. A characteristic without NOTIFY is
+  `Error::NotifyUnsupported`, and a notification stream that ends is
+  `Error::NotificationsEnded`; both were `NotifySubscribe` with a sentence.
+- `Error::Io`, `Frame`, `Mdns`, `RegistryFile`, `Ble`, `Smp` and
+  `CharacteristicWrite` describe their own layer only ("I/O failed",
+  "malformed frame", "mDNS failed", and so on); the error is the
+  `source()`. `Error::Board` says "the board definition failed" and
+  `Error::CanOpen` "the CAN bus did not open", with the board's error and
+  the `OpenError` as their `source()`, in place of passing the inner
+  error's text and source through.
+- `PeerParseError::Bus` says "{peer} names no CAN bus", with the
+  `BusParseError` as its `source()`.
+
 ## 0.5.0
 
 - `SessionConfig::can_bus: BusConfig` replaces `can_bitrate`.

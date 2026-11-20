@@ -18,7 +18,7 @@ use wslib_host::PeerCredentials;
 
 use crate::bounded::{Bounds, Permitted, backed_off, made_bound, permit};
 use crate::deciding::Deciding;
-use crate::{app, head_within, until_stopped};
+use crate::{ServeError, app, head_within, until_stopped};
 
 /// A bound Unix socket held to its [`Bounds`]. One [`bind`](Self::bind) made is
 /// unlinked when it is dropped, as serving does when it ends, while the path
@@ -210,7 +210,7 @@ impl AddrListener<Permitted<UnixStream>, Credentialled> for LocalSocket {
     }
 
     async fn accept_stream(&self) -> io::Result<(Permitted<UnixStream>, Credentialled)> {
-        let permit = permit(&self.permits).await?;
+        let permit = permit(&self.permits).await;
         loop {
             match self.listener.accept().await {
                 Ok((stream, _)) => match wslib_host::peer_credentials(&stream) {
@@ -240,7 +240,7 @@ pub async fn serve_local(
     socket: LocalSocket,
     router: Router,
     stop: impl Future<Output = ()>,
-) -> io::Result<()> {
+) -> Result<(), ServeError> {
     let bounds = socket.bounds;
     tracing::info!(path = %socket.path().display(), "listening");
     let handle = Handle::<Credentialled>::new();

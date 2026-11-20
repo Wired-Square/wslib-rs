@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0
+
+- `StdioError::Panicked` and `StdioError::Cancelled`: the MCP service task
+  panicked, or the runtime cancelled it, in place of `Join`, which held
+  tokio's `JoinError`. `StdioError` is `#[non_exhaustive]`.
+- `StdioError::Initialize` says "MCP initialise failed", with rmcp's
+  `ServerInitializeError` as its `source()`. `HttpError::Bind` says "failed
+  to bind MCP listener on {addr}" and `HttpError::Io` "MCP listener I/O
+  failed"; the `io::Error` is the `source()`.
+
 ## 0.2.1
 
 - Rust 1.99 floor.

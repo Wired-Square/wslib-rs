@@ -14,7 +14,6 @@
 //! `<PREFIX>_APP_SOCKET` with `<PREFIX>_CONSOLE_UID`, both or neither, with an
 //! optional `<PREFIX>_HOOKS_SOCKET` beside them.
 
-use std::fmt;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
@@ -130,14 +129,28 @@ impl Tls {
 const RETIRED_KEYS: &[&str] = &["ssh_user"];
 
 /// Why the bootstrap settings could not be resolved.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ConfigError {
-    #[error("{}: {because}", path.display())]
-    Read { path: PathBuf, because: String },
+    #[error("cannot read {}", path.display())]
+    Read {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 
-    #[error("{}: {because}", path.display())]
-    Parse { path: PathBuf, because: String },
+    #[error("cannot parse {}", path.display())]
+    Parse {
+        path: PathBuf,
+        source: toml::de::Error,
+    },
+
+    /// An `[app]` table in the package's file, which only the configuration
+    /// file carries.
+    #[error(
+        "{}: `[app]` is not read from the package's file; it belongs in the configuration file",
+        path.display()
+    )]
+    AppInPackage { path: PathBuf },
 
     #[error("{}: unrecognised {}: {}", path.display(), if keys.len() == 1 { "setting" } else { "settings" }, keys.join(", "))]
     UnknownKeys { path: PathBuf, keys: Vec<String> },
@@ -152,9 +165,25 @@ pub enum ConfigError {
         because: String,
     },
 
+    /// An environment variable whose value did not parse, or named a file
+    /// that could not be read.
+    #[error("{var}={value:?} is not usable")]
+    EnvUnusable {
+        var: String,
+        value: String,
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
     /// A browser bundle that was named and cannot be served from.
     #[error("the browser bundle at {}: {because}", path.display())]
     Ui { path: PathBuf, because: String },
+
+    /// A browser bundle that was named and could not be read.
+    #[error("the browser bundle at {} cannot be read", path.display())]
+    UiUnreadable {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 }
 
 /// Where a packaged browser bundle lives, for the product called `name`; a
@@ -166,29 +195,36 @@ pub fn default_ui_dir(name: &str) -> PathBuf {
 /// The bundle directory, or `None` when there is no bundle to serve, by the rule
 /// on [`Bootstrap::ui`].
 fn bundle_at(path: PathBuf, named: bool) -> Result<Option<PathBuf>, ConfigError> {
-    // Not inside the `tracing` macros: their fields are evaluated only when a
-    // subscriber listens, so the tests would never run it.
-    let (missing, because) = match std::fs::metadata(&path) {
+    let unservable = match std::fs::metadata(&path) {
         Ok(meta) if meta.is_dir() => return Ok(Some(path)),
-        Ok(_) => (false, "this is not a directory".to_string()),
-        Err(e) => (e.kind() == std::io::ErrorKind::NotFound, e.to_string()),
+        Ok(_) => ConfigError::Ui {
+            path: path.clone(),
+            because: "this is not a directory".to_string(),
+        },
+        Err(source) => ConfigError::UiUnreadable {
+            path: path.clone(),
+            source,
+        },
     };
 
     if named {
-        return Err(ConfigError::Ui { path, because });
+        return Err(unservable);
     }
-    if missing {
-        tracing::info!(
+    match &unservable {
+        ConfigError::UiUnreadable { source, .. }
+            if source.kind() == std::io::ErrorKind::NotFound =>
+        {
+            tracing::info!(
+                ui = %path.display(),
+                "no browser bundle here, so this appliance serves its API and nothing else"
+            );
+        }
+        _ => tracing::warn!(
             ui = %path.display(),
-            "no browser bundle here, so this appliance serves its API and nothing else"
-        );
-    } else {
-        tracing::warn!(
-            ui = %path.display(),
-            because = %because,
+            error = &unservable as &dyn std::error::Error,
             "there is something at the default browser-bundle location that cannot be served \
              from, so this appliance is serving its API only"
-        );
+        ),
     }
     Ok(None)
 }
@@ -395,18 +431,13 @@ impl Resolver {
         };
         let path = self.absolute_path("PACKAGE_CONFIG", value)?;
         let file = match known_keys_from(&path, true) {
-            Err(ConfigError::Read { because, .. }) => {
-                return Err(self.refuse("PACKAGE_CONFIG", path.display().to_string(), because));
+            Err(ConfigError::Read { source, .. }) => {
+                return Err(self.unusable("PACKAGE_CONFIG", path.display().to_string(), source));
             }
             loaded => loaded?,
         };
         if !file.app.is_empty() {
-            return Err(ConfigError::Parse {
-                path,
-                because: "`[app]` is not read from the package's file; it belongs in the \
-                          configuration file"
-                    .into(),
-            });
+            return Err(ConfigError::AppInPackage { path });
         }
         Ok(file)
     }
@@ -427,7 +458,7 @@ impl Resolver {
                 let app_socket = self.absolute_path("APP_SOCKET", socket)?;
                 let console_uid = uid
                     .parse::<u32>()
-                    .map_err(|e| self.refuse("CONSOLE_UID", uid, e.to_string()))?;
+                    .map_err(|e| self.unusable("CONSOLE_UID", uid, e))?;
                 let hooks_socket = hooks
                     .map(|hooks| match self.absolute_path("HOOKS_SOCKET", hooks)? {
                         same if same == app_socket => Err(self.refuse(
@@ -478,6 +509,19 @@ impl Resolver {
         }
     }
 
+    fn unusable(
+        &self,
+        name: &str,
+        value: String,
+        source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+    ) -> ConfigError {
+        ConfigError::EnvUnusable {
+            var: format!("{}_{name}", self.env_prefix),
+            value,
+            source: source.into(),
+        }
+    }
+
     /// The value of `<PREFIX>_<name>`, trimmed, if it is not blank.
     fn env(&self, name: &str) -> Option<String> {
         std::env::var(format!("{}_{name}", self.env_prefix))
@@ -509,13 +553,13 @@ impl Resolver {
     ) -> Result<Option<T>, ConfigError>
     where
         T: FromStr,
-        T::Err: fmt::Display,
+        T::Err: Into<Box<dyn std::error::Error + Send + Sync>>,
     {
         let env = match self.env(key.env) {
-            Some(raw) => Some(raw.parse::<T>().map_err(|e| ConfigError::Env {
+            Some(raw) => Some(raw.parse::<T>().map_err(|e| ConfigError::EnvUnusable {
                 var: key.spell(Source::Env, &self.env_prefix),
                 value: raw.clone(),
-                because: e.to_string(),
+                source: e.into(),
             })?),
             None => None,
         };
@@ -918,7 +962,7 @@ mod tests {
         assert_eq!(base(&[], "", None).unwrap(), "/");
         assert!(matches!(
             base(&[("TESTAPP_BASE_PATH", "/../x")], "", None),
-            Err(ConfigError::Env { .. })
+            Err(ConfigError::EnvUnusable { .. })
         ));
         assert!(matches!(
             base(&[], "base_path = \"/a b/\"\n", None),
@@ -1023,10 +1067,10 @@ mod tests {
                 .resolve(&ApplianceArgs::default())
                 .map(|b| b.browser_onboarding)
         };
-        assert_eq!(resolved(&[]), Ok(false));
-        assert_eq!(resolved(&[(var, "")]), Ok(false));
-        assert_eq!(resolved(&[(var, "socket")]), Ok(false));
-        assert_eq!(resolved(&[(var, " browser ")]), Ok(true));
+        assert_eq!(resolved(&[]).ok(), Some(false));
+        assert_eq!(resolved(&[(var, "")]).ok(), Some(false));
+        assert_eq!(resolved(&[(var, "socket")]).ok(), Some(false));
+        assert_eq!(resolved(&[(var, " browser ")]).ok(), Some(true));
         for garbage in ["yes", "true", "BROWSER"] {
             let e = resolved(&[(var, garbage)]).expect_err("garbage must refuse");
             assert!(e.to_string().contains(&format!("{var}={garbage:?}")), "{e}");
@@ -1046,11 +1090,11 @@ mod tests {
         };
         let (path, uid) = ("TESTAPP_APP_SOCKET", "TESTAPP_CONSOLE_UID");
 
-        assert_eq!(resolved(&[]), Ok(None));
-        assert_eq!(resolved(&[(path, " "), (uid, "")]), Ok(None));
+        assert_eq!(resolved(&[]).ok(), Some(None));
+        assert_eq!(resolved(&[(path, " "), (uid, "")]).ok(), Some(None));
         assert_eq!(
-            resolved(&[(path, socket), (uid, "0")]),
-            Ok(Some(Proxied {
+            resolved(&[(path, socket), (uid, "0")]).ok(),
+            Some(Some(Proxied {
                 app_socket: PathBuf::from(socket),
                 console_uid: 0,
                 hooks_socket: None,
@@ -1061,14 +1105,24 @@ mod tests {
             (&[(uid, "0")][..], uid),
             (&[(path, "app.sock"), (uid, "0")][..], path),
             (&[(path, "/run/x/../app.sock"), (uid, "0")][..], path),
-            (&[(path, socket), (uid, "-1")][..], uid),
-            (&[(path, socket), (uid, "root")][..], uid),
-            (&[(path, socket), (uid, "4294967296")][..], uid),
         ] {
             let e = resolved(vars).expect_err("refused");
             assert!(
                 matches!(&e, ConfigError::Env { var, .. } if var == refused),
                 "{vars:?}: {e}"
+            );
+        }
+        for unparsed in ["-1", "root", "4294967296"] {
+            let e = resolved(&[(path, socket), (uid, unparsed)]).expect_err("refused");
+            assert!(
+                matches!(&e, ConfigError::EnvUnusable { var, value, .. } if var == uid && value == unparsed),
+                "{unparsed}: {e}"
+            );
+            assert!(
+                std::error::Error::source(&e)
+                    .and_then(|e| e.downcast_ref::<std::num::ParseIntError>())
+                    .is_some(),
+                "{e:?}"
             );
         }
 
@@ -1107,8 +1161,11 @@ mod tests {
         );
         let beside = |value| [(path, app), (uid, "0"), (var, value)];
 
-        assert_eq!(resolved(&[(path, app), (uid, "0")]), Ok(None));
-        assert_eq!(resolved(&beside(hooks)), Ok(Some(PathBuf::from(hooks))));
+        assert_eq!(resolved(&[(path, app), (uid, "0")]).ok(), Some(None));
+        assert_eq!(
+            resolved(&beside(hooks)).ok(),
+            Some(Some(PathBuf::from(hooks)))
+        );
         for vars in [
             &[(var, hooks)][..],
             &beside("hooks.sock"),
@@ -1166,18 +1223,77 @@ mod tests {
         let file = here.join("index.html");
         std::fs::write(&file, "<!doctype html>").expect("write");
 
-        assert_eq!(bundle_at(here.clone(), false), Ok(Some(here.clone())));
-        assert_eq!(bundle_at(here, true), Ok(Some(dir.path().to_path_buf())));
+        assert_eq!(
+            bundle_at(here.clone(), false).ok(),
+            Some(Some(here.clone()))
+        );
+        assert_eq!(
+            bundle_at(here, true).ok(),
+            Some(Some(dir.path().to_path_buf()))
+        );
 
-        assert_eq!(bundle_at(absent.clone(), false), Ok(None));
-        assert!(bundle_at(absent, true).is_err());
+        assert_eq!(bundle_at(absent.clone(), false).ok(), Some(None));
+        let unread = bundle_at(absent.clone(), true).expect_err("named and missing");
+        assert_eq!(
+            unread.to_string(),
+            format!("the browser bundle at {} cannot be read", absent.display())
+        );
+        let source = std::error::Error::source(&unread)
+            .and_then(|e| e.downcast_ref::<std::io::Error>())
+            .expect("the metadata's error");
+        assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
 
         // `ENOTDIR` rather than an unreadable directory, which root can read.
         let under_a_file = file.join("ui");
-        for hopeless in [file, under_a_file] {
-            assert_eq!(bundle_at(hopeless.clone(), false), Ok(None));
+        for hopeless in [file.clone(), under_a_file] {
+            assert_eq!(bundle_at(hopeless.clone(), false).ok(), Some(None));
             assert!(bundle_at(hopeless, true).is_err());
         }
+        assert!(matches!(
+            bundle_at(file, true),
+            Err(ConfigError::Ui { because, .. }) if because == "this is not a directory"
+        ));
+    }
+
+    #[test]
+    fn a_file_that_will_not_read_or_parse_keeps_its_error_as_the_source() {
+        let dir = TempDir::new().expect("temp dir");
+        let unparsable = dir.path().join("config.toml");
+        std::fs::write(&unparsable, "https_port = \"many\"\n").expect("write");
+        let e = FileConfig::load(&unparsable, true).expect_err("refused");
+        assert_eq!(
+            e.to_string(),
+            format!("cannot parse {}", unparsable.display())
+        );
+        assert!(
+            std::error::Error::source(&e)
+                .and_then(|e| e.downcast_ref::<toml::de::Error>())
+                .is_some(),
+            "{e:?}"
+        );
+
+        let absent = dir.path().join("absent.toml");
+        let e = FileConfig::load(&absent, true).expect_err("refused");
+        assert_eq!(e.to_string(), format!("cannot read {}", absent.display()));
+        let source = std::error::Error::source(&e)
+            .and_then(|e| e.downcast_ref::<std::io::Error>())
+            .expect("the read's error");
+        assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn an_environment_value_that_will_not_parse_keeps_the_parsers_error() {
+        let _env = Env::set(&[("TESTAPP_HTTPS_PORT", "many")]);
+        let e = resolver()
+            .resolve(&ApplianceArgs::default())
+            .expect_err("refused");
+        assert_eq!(e.to_string(), r#"TESTAPP_HTTPS_PORT="many" is not usable"#);
+        assert!(
+            std::error::Error::source(&e)
+                .and_then(|e| e.downcast_ref::<std::num::ParseIntError>())
+                .is_some(),
+            "{e:?}"
+        );
     }
 
     #[test]
@@ -1379,13 +1495,17 @@ mod tests {
             .resolve(&ApplianceArgs::default())
             .expect_err("refused");
         assert!(
-            matches!(&e, ConfigError::Env { var, .. } if var == "TESTAPP_PACKAGE_CONFIG"),
+            matches!(&e, ConfigError::EnvUnusable { var, .. } if var == "TESTAPP_PACKAGE_CONFIG"),
             "{e}"
         );
         assert!(
             e.to_string().contains("/nonexistent/testapp/config.toml"),
             "{e}"
         );
+        let source = std::error::Error::source(&e)
+            .and_then(|e| e.downcast_ref::<std::io::Error>())
+            .expect("the read's error");
+        assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
     }
 
     #[test]

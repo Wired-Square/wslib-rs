@@ -19,7 +19,7 @@ use crate::rtu::rtu_options_for;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CatalogueError {
-    #[error("catalogue is not valid TOML: {0}")]
+    #[error("catalogue is not valid TOML")]
     Toml(#[from] toml::de::Error),
 }
 
@@ -32,7 +32,7 @@ pub struct RtuRules {
 
 #[derive(Debug, thiserror::Error)]
 pub enum RtuRulesError {
-    #[error("catalogue is not valid TOML: {0}")]
+    #[error("catalogue is not valid TOML")]
     Toml(#[from] toml::de::Error),
     #[error("{}", .0.iter().map(|f| format!("{}: {}", f.field, f.message)).collect::<Vec<_>>().join("; "))]
     Rules(Vec<ValidationError>),

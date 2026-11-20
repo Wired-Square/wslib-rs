@@ -10,7 +10,8 @@ pub use logo::{LOGO_SIZE_GUIDANCE, LogoValidation, SvgRule, SvgViolation, valida
 #[cfg(feature = "render")]
 pub use render::{LogoGeometry, RenderFailure, RenderOptions, measure_logo};
 pub use vmc::{
-    MarkCertificateKind, VmcOptions, VmcProblem, VmcTrustAnchors, VmcVerification, verify_vmc,
+    ChainRefusal, MarkCertificateKind, TrustAnchorError, VmcOptions, VmcProblem, VmcTrustAnchors,
+    VmcVerification, verify_vmc,
 };
 
 use crate::text::{RawTag, check_version, first_of_each, starts_with_version, tag_list, unwrap};

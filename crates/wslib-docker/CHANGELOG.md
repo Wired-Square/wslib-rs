@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+- `DockerError::Unreachable`, `Http` and `Json` say only their own layer;
+  the `io::Error`, hyper's or serde_json's error is the `source()`.
+- On wslib-file-atomic 0.2.
+
 ## 0.1.2
 
 - `Docker::events`: the events from `since` to `until` that pass an

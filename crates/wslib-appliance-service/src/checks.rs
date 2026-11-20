@@ -16,6 +16,7 @@ pub(crate) enum Unfit {
     Refused(String),
     Unreadable(std::io::Error),
     NotLookedUp(std::io::Error),
+    LookupPanicked,
 }
 
 impl From<String> for Unfit {
@@ -74,7 +75,7 @@ pub(crate) async fn group_id(
         Ok(Ok(Ok(Some(gid)))) => Ok(gid),
         Ok(Ok(Ok(None))) => Err(format!("there is no group named {group}").into()),
         Ok(Ok(Err(errno))) => Err(Unfit::NotLookedUp(std::io::Error::from_raw_os_error(errno))),
-        Ok(Err(_)) => Err(format!("looking up the group {group} failed").into()),
+        Ok(Err(_)) => Err(Unfit::LookupPanicked),
         Err(_) => {
             Err(format!("looking up the group {group} did not answer within {deadline:?}").into())
         }

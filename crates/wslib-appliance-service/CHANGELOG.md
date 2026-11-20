@@ -11,6 +11,8 @@
   could not be read, and `LocalError::GroupLookup` an endpoint's group that
   could not be looked up, each with the `io::Error` as `source`; both were a
   `Refused` carrying that error's text.
+- `LocalError::GroupLookupPanicked`: the thread looking up an endpoint's
+  group panicked. It was a `Refused` saying the lookup failed.
 
 ## 0.1.6
 

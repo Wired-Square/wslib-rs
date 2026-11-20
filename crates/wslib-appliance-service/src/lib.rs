@@ -89,6 +89,10 @@ pub enum LocalError {
         source: std::io::Error,
     },
 
+    /// The thread looking up a control endpoint's group panicked.
+    #[error("looking up the group {group} panicked")]
+    GroupLookupPanicked { group: String },
+
     #[error("there is no control endpoint to serve")]
     NoEndpoints,
 

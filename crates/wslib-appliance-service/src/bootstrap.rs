@@ -202,6 +202,9 @@ impl LocalEndpoint {
                 group: self.group.clone(),
                 source,
             },
+            Unfit::LookupPanicked => LocalError::GroupLookupPanicked {
+                group: self.group.clone(),
+            },
         }
     }
 }
@@ -452,6 +455,36 @@ mod tests {
             matches!(&said, crate::checks::Unfit::Refused(said) if said.contains("did not answer within 20ms")),
             "{said:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_group_lookup_that_panicked_is_its_own_error() {
+        let panicked = crate::checks::group_id(
+            "appliance-admin",
+            Duration::from_secs(5),
+            |_| -> crate::checks::Lookup { panic!("the group lookup panicked") },
+        )
+        .await
+        .expect_err("refuses");
+        assert!(
+            matches!(panicked, crate::checks::Unfit::LookupPanicked),
+            "{panicked:?}"
+        );
+        let endpoint = LocalEndpoint {
+            path: "/run/appliance/admin.sock".into(),
+            ceiling: Role::Admin,
+            group: "appliance-admin".to_string(),
+        };
+        let said = endpoint.unfit(Path::new("/run/appliance"), panicked);
+        assert!(
+            matches!(&said, LocalError::GroupLookupPanicked { group } if group == "appliance-admin"),
+            "{said:?}"
+        );
+        assert_eq!(
+            said.to_string(),
+            "looking up the group appliance-admin panicked"
+        );
+        assert!(std::error::Error::source(&said).is_none());
     }
 
     #[tokio::test]

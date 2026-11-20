@@ -199,6 +199,7 @@ mod tests {
         replies: mpsc::UnboundedSender<Vec<u8>>,
         inbox: tokio::sync::Mutex<mpsc::UnboundedReceiver<Vec<u8>>>,
         answers_chunks: bool,
+        unreadable_params: bool,
         declared_len: Mutex<usize>,
         written: Mutex<Vec<u8>>,
         seen: Mutex<Vec<Seen>>,
@@ -206,11 +207,16 @@ mod tests {
 
     impl FakeDevice {
         fn new(answers_chunks: bool) -> Arc<Self> {
+            Self::answering(answers_chunks, false)
+        }
+
+        fn answering(answers_chunks: bool, unreadable_params: bool) -> Arc<Self> {
             let (replies, inbox) = mpsc::unbounded_channel();
             Arc::new(Self {
                 replies,
                 inbox: tokio::sync::Mutex::new(inbox),
                 answers_chunks,
+                unreadable_params,
                 declared_len: Mutex::new(0),
                 written: Mutex::new(Vec::new()),
                 seen: Mutex::new(Vec::new()),
@@ -267,7 +273,10 @@ mod tests {
                         buf_size: 128 + CHUNK,
                         buf_count: 4,
                     };
-                    self.reply(&header, &params);
+                    match self.unreadable_params {
+                        true => self.reply(&header, &"not the params"),
+                        false => self.reply(&header, &params),
+                    }
                 }
                 (Group::Image, CMD_UPLOAD) => {
                     self.seen().push(Seen::Chunk);
@@ -312,6 +321,7 @@ mod tests {
     }
 
     struct Sink {
+        lines: Vec<String>,
         stages: Vec<FlashStage>,
         bytes: Vec<u64>,
         cancel: Box<dyn Fn(&Sink) -> bool + Send>,
@@ -320,6 +330,7 @@ mod tests {
     impl Sink {
         fn new(cancel: impl Fn(&Sink) -> bool + Send + 'static) -> Self {
             Self {
+                lines: Vec::new(),
                 stages: Vec::new(),
                 bytes: Vec::new(),
                 cancel: Box::new(cancel),
@@ -328,7 +339,9 @@ mod tests {
     }
 
     impl FlashProgress for Sink {
-        fn on_progress(&mut self, _message: &str) {}
+        fn on_progress(&mut self, message: &str) {
+            self.lines.push(message.to_string());
+        }
 
         fn on_stage(&mut self, stage: FlashStage, _message: &str) {
             self.stages.push(stage);
@@ -412,6 +425,31 @@ mod tests {
         use FlashStage::*;
         assert_eq!(sink.stages, [Connecting, Erasing, Writing, Resetting]);
         assert_eq!(sink.bytes.last(), Some(&(image.len() as u64)));
+    }
+
+    #[tokio::test]
+    async fn unreadable_params_keep_the_default_chunk_size_saying_each_cause() {
+        let device = FakeDevice::answering(true, true);
+        let image = mcuboot_image(CHUNK);
+        let mut sink = Sink::new(never);
+
+        run(&device, &image, Activation::Test, &mut sink)
+            .await
+            .unwrap();
+
+        let kept = sink
+            .lines
+            .iter()
+            .find_map(|line| line.strip_prefix("Keeping the default chunk size: "))
+            .unwrap_or_else(|| panic!("no chunk-size line: {:?}", sink.lines));
+        let mut layers = kept.split(": ");
+        assert!(
+            layers
+                .next()
+                .is_some_and(|smp| smp.contains("mcumgr params")),
+            "{kept}"
+        );
+        assert!(layers.next().is_some(), "no cause: {kept}");
     }
 
     #[tokio::test]

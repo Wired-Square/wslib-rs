@@ -3067,3 +3067,17 @@ async fn a_join_that_panicked_or_was_cancelled_journals_which() {
         )
     );
 }
+
+#[tokio::test]
+async fn a_restore_that_panicked_journals_the_panic_not_tokios_text() {
+    crate::install_test_provider();
+    let app = Harness::builder().build().await;
+    async fn restore() -> Result<(), ApiError> {
+        panic!("the restore panicked")
+    }
+    let panicked = to_completion(app.state(), restore()).await.unwrap_err();
+    assert_eq!(
+        journalled(&panicked),
+        ("run the restore", "work on the backup panicked")
+    );
+}

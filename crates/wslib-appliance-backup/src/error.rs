@@ -4,8 +4,8 @@ use wslib_appliance_core::ApiError;
 use wslib_appliance_core::backend::chain;
 
 /// Why a bundle could not be written or opened. `Malformed` is a file somebody
-/// handed in; a fault on the write path is `Failed`, `Unwritten` or
-/// `Internal`.
+/// handed in; a fault on the write path is `Failed`, `Unwritten`, `Internal`,
+/// `Panicked` or `Cancelled`.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum BackupError {

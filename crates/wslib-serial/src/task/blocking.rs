@@ -14,7 +14,9 @@ const READ_TIMEOUT: Duration = Duration::from_millis(50);
 type Boxed = Box<dyn serialport::SerialPort>;
 
 /// A port opened read-write through serialport, for a protocol that drives the
-/// line itself rather than through a [`SerialTask`](super::SerialTask).
+/// line itself rather than through a [`SerialTask`](super::SerialTask). A
+/// write cancelled once started still runs, and its failure is the next call's
+/// answer.
 pub struct SerialPort {
     state: State,
     /// A read that finished while a write waited for the port.
@@ -134,7 +136,7 @@ impl SerialPort {
         if let State::Reading(_) = self.state {
             self.unread = Some(self.read_in_flight().await);
         }
-        let _ = self.written().await;
+        self.written().await?;
         match mem::replace(&mut self.state, State::Gone) {
             State::Idle(port) => Ok(port),
             _ => Err(SerialError::Write(io::ErrorKind::NotConnected.into())),
@@ -180,7 +182,7 @@ impl SerialPort {
     }
 
     async fn next_read(&mut self) -> Result<io::Result<Vec<u8>>, SerialError> {
-        let _ = self.written().await;
+        self.written().await?;
         self.state = match mem::replace(&mut self.state, State::Gone) {
             State::Idle(port) => {
                 let len = self.read_buffer;
@@ -417,6 +419,50 @@ pub(super) mod tests {
         );
         assert!(matches!(port.read().await, Err(SerialError::Panicked)));
         assert!(matches!(port.read().await, Err(SerialError::Closed)));
+    }
+
+    fn writing(write: impl FnOnce() -> (Boxed, io::Result<()>) + Send + 'static) -> SerialPort {
+        SerialPort {
+            state: State::Writing(spawn_blocking(write)),
+            unread: None,
+            read_buffer: 1,
+        }
+    }
+
+    fn broken_pipe() -> (Boxed, io::Result<()>) {
+        (Box::new(Panicking), Err(io::ErrorKind::BrokenPipe.into()))
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_write_that_failed_is_the_next_reads_answer() {
+        let mut port = writing(|| panic!("write panicked"));
+        assert!(matches!(port.read().await, Err(SerialError::Panicked)));
+        let read = writing(broken_pipe).read().await;
+        assert!(
+            matches!(&read, Err(SerialError::Write(e)) if e.kind() == io::ErrorKind::BrokenPipe),
+            "{read:?}"
+        );
+    }
+
+    #[cfg(feature = "write")]
+    #[tokio::test]
+    async fn a_cancelled_write_that_failed_is_the_next_writes_answer_and_leaves_its_bytes() {
+        let mut bytes = b"x".to_vec();
+        assert!(matches!(
+            writing(|| panic!("write panicked")).write(&mut bytes).await,
+            Err(SerialError::Panicked)
+        ));
+        let mut port = writing(broken_pipe);
+        let written = port.write(&mut bytes).await;
+        assert!(
+            matches!(&written, Err(SerialError::Write(e)) if e.kind() == io::ErrorKind::BrokenPipe),
+            "{written:?}"
+        );
+        assert_eq!(bytes, b"x");
+        assert!(matches!(
+            port.write(&mut bytes).await,
+            Err(SerialError::Panicked)
+        ));
     }
 
     #[cfg(feature = "write")]

@@ -17,6 +17,10 @@
   reporting the read's `Panicked`.
 - `SerialError::Cancelled`: the runtime cancelled a blocking call on the
   port before it ran.
+- `SerialPort`: a write cancelled once started, which still runs, answers
+  its failure from the next read, write or control change, where it was
+  dropped and a write that panicked left the next read saying `Closed`. A
+  write that answers so takes none of its bytes.
 
 ## 0.1.3
 

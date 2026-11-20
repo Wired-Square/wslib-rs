@@ -18,7 +18,7 @@ use tokio::{
 use support::within;
 use wslib_can::{
     CanError, CanEvent, CanFrame, CanOptions, CanRead, CanTask, DeviceInfo, SendRefused,
-    Unsupported,
+    Unsupported, WriteFailed,
 };
 use wslib_can_gvret::{
     self as gvret, ClientCommand, Decoder, GvretOptions, Link, REQ_DEV_INFO, REQ_NUM_BUSES, SYNC,
@@ -455,6 +455,28 @@ async fn a_read_error_during_the_probe_is_the_callers_error() {
 }
 
 #[tokio::test]
+async fn a_handshake_write_that_fails_is_a_write_error() {
+    within(async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let link = Link::Tcp {
+            endpoint: listener.local_addr().unwrap().to_string(),
+            connect_timeout: Duration::from_secs(1),
+        };
+        let resetting = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            stream.set_zero_linger().unwrap();
+        });
+        let error = open_err(link).await;
+        resetting.await.unwrap();
+        assert!(
+            matches!(&error, CanError::Write(WriteFailed::Io(_))),
+            "{error:?}"
+        );
+    })
+    .await
+}
+
+#[tokio::test]
 async fn a_refused_connect_is_a_connect_error() {
     within(async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -867,7 +889,7 @@ mod serial {
         /// serialport reads a pty's hang-up as `POLLHUP`, which it reports as
         /// `BrokenPipe` rather than zero bytes.
         #[tokio::test]
-        async fn a_hang_up_is_closed_or_a_read_error() {
+        async fn a_hang_up_is_closed_or_a_read_or_write_error() {
             within(async {
                 let device = FakeGvret::pty(Behaviour::default());
                 let mut task = open(&device, None).await;
@@ -876,6 +898,7 @@ mod serial {
                 match lost(&mut task).await {
                     CanError::Closed => {}
                     CanError::Read(e) => assert_eq!(e.kind(), io::ErrorKind::BrokenPipe, "{e}"),
+                    CanError::Write(WriteFailed::Io(_)) => {}
                     other => panic!("{other:?}"),
                 }
                 assert!(task.next_event().await.is_none());

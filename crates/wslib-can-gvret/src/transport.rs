@@ -287,7 +287,7 @@ impl Wire {
                     biased;
                     ready = stream.writable(), if !outbound.is_empty() => {
                         ready.map_err(CanError::Read)?;
-                        let _ = push(stream, outbound);
+                        push(stream, outbound).map_err(|e| CanError::Write(WriteFailed::Io(e)))?;
                     }
                     ready = stream.readable() => {
                         ready.map_err(CanError::Read)?;

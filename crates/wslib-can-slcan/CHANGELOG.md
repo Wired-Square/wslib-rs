@@ -16,8 +16,11 @@
 - A send answers with a `WriteFailed`: `Io` for the port's `io::Error`,
   `Panicked` for a write that panicked, and `Serial` for any other
   `SerialError`. A write the runtime cancels before it runs is
-  `WriteFailed::Cancelled`. A probe's write that fails is `CanError::Write`, in place
-  of `CanError::Read`.
+  `WriteFailed::Cancelled`. A probe's write that fails is
+  `CanError::Write`, in place of `CanError::Read`.
+- A write of pending output before a read that fails is that read's
+  `CanError::Write`. It was dropped, and one that panicked left the read
+  saying `Closed`.
 - The transport needs no wslib-serial on iOS, which it doesn't build for.
 
 ## 0.1.0

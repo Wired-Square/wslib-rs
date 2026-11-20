@@ -40,7 +40,9 @@ pub(crate) async fn read(
     outbound: &mut Vec<u8>,
 ) -> Result<Vec<u8>, CanError> {
     if !outbound.is_empty() {
-        let _ = port.write(outbound).await;
+        port.write(outbound)
+            .await
+            .map_err(|e| CanError::Write(unwritten(e)))?;
     }
     port.read().await.map_err(error)
 }

@@ -17,6 +17,9 @@
   `io::Error`, `Panicked` for a serial write that panicked, and `Serial`
   for any other `SerialError`. A handshake's write that fails is
   `CanError::Write`, in place of `CanError::Read`.
+- A write of pending output, such as a keepalive ask, before a read that
+  fails is that read's `CanError::Write`. It was dropped, and a serial one
+  that panicked left the read saying `Closed`.
 
 ## 0.1.1
 

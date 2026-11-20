@@ -159,7 +159,7 @@ async fn exchange(socket: &Path, request: &str) -> Result<Vec<u8>, Error> {
 
 #[cfg(not(unix))]
 async fn exchange(_: &Path, _: &str) -> Result<Vec<u8>, Error> {
-    Err(Error::Absent(io::ErrorKind::Unsupported.into()))
+    Err(Error::Unsupported)
 }
 
 fn answer(raw: &[u8]) -> Option<(u16, &[u8])> {
@@ -178,8 +178,10 @@ fn answer(raw: &[u8]) -> Option<(u16, &[u8])> {
 #[non_exhaustive]
 pub enum Error {
     /// Nothing listens on the socket: tailscaled isn't running. The connect's
-    /// error is the source; off Unix it is `Unsupported`.
+    /// error is the source.
     Absent(io::Error),
+    /// Off Unix, where this crate has no way to reach tailscaled.
+    Unsupported,
     /// tailscaled took longer than the timeout.
     Silent,
     /// tailscaled answered with a status outside 2xx; `said` is the first line of its body.
@@ -196,6 +198,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Absent(_) => f.write_str("tailscaled is not running"),
+            Self::Unsupported => f.write_str("tailscaled can be reached only on Unix"),
             Self::Silent => f.write_str("tailscaled did not answer in time"),
             Self::Refused { status, said } => write!(f, "tailscaled refused ({status}): {said}"),
             Self::Malformed(why) => write!(f, "tailscaled's answer could not be read: {why}"),
@@ -210,7 +213,7 @@ impl std::error::Error for Error {
         match self {
             Self::Absent(e) | Self::Io(e) => Some(e),
             Self::Json(e) => Some(e),
-            Self::Silent | Self::Refused { .. } | Self::Malformed(_) => None,
+            Self::Unsupported | Self::Silent | Self::Refused { .. } | Self::Malformed(_) => None,
         }
     }
 }
@@ -268,5 +271,23 @@ mod tests {
         );
         assert_eq!(answer(b"HTTP/1.0 200 OK\r\n"), None);
         assert_eq!(answer(b"garbage\r\n\r\n"), None);
+    }
+
+    #[test]
+    fn off_unix_is_unsupported_with_no_cause() {
+        assert_eq!(
+            Error::Unsupported.to_string(),
+            "tailscaled can be reached only on Unix"
+        );
+        assert!(std::error::Error::source(&Error::Unsupported).is_none());
+    }
+
+    #[cfg(not(unix))]
+    #[tokio::test]
+    async fn every_call_off_unix_is_unsupported() {
+        assert!(matches!(
+            LocalApi::default().status().await,
+            Err(Error::Unsupported)
+        ));
     }
 }

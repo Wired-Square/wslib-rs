@@ -25,8 +25,8 @@ fn running(node: FakeNode) -> (FakeTailscaled, LocalApi) {
     (fake, api)
 }
 
-/// Answers every connection with `raw` and closes.
 const READ_CHUNK: usize = 1024;
+const HEAD_END: &[u8] = b"\r\n\r\n";
 
 fn answering_raw(raw: Vec<u8>) -> LocalApi {
     let socket = socket();
@@ -35,7 +35,7 @@ fn answering_raw(raw: Vec<u8>) -> LocalApi {
         while let Ok((mut stream, _)) = listener.accept().await {
             let mut request = Vec::new();
             let mut chunk = [0; READ_CHUNK];
-            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+            while !request.windows(HEAD_END.len()).any(|w| w == HEAD_END) {
                 match stream.read(&mut chunk).await {
                     Ok(0) | Err(_) => break,
                     Ok(n) => request.extend_from_slice(&chunk[..n]),

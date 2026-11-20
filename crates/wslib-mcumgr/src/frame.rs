@@ -228,6 +228,29 @@ mod tests {
         );
     }
 
+    #[derive(Serialize)]
+    struct TextOff {
+        off: &'static str,
+    }
+
+    #[test]
+    fn a_reply_whose_body_does_not_fit_names_the_request() {
+        let mut wrong = Vec::new();
+        ciborium::into_writer(&TextOff { off: "x" }, &mut wrong).unwrap();
+
+        let refused = decode_reply::<Off>(&reply(Version::V1, &wrong), "upload").unwrap_err();
+
+        assert!(
+            matches!(&refused, Error::Undecodable { context: Some(c), .. } if c == "upload"),
+            "{refused:?}"
+        );
+        assert!(
+            std::error::Error::source(&refused)
+                .and_then(|s| s.downcast_ref::<ciborium::de::Error<std::io::Error>>())
+                .is_some()
+        );
+    }
+
     struct Refusing;
 
     impl Serialize for Refusing {

@@ -405,6 +405,17 @@ fn a_bus_that_fails_to_open_on_the_link_thread_fails_the_start_with_its_error() 
     );
 }
 
+#[test]
+fn an_opener_that_panics_on_the_link_thread_is_a_panicked_start() {
+    let opener: Opener = Box::new(|| panic!("the bus's open panicked"));
+
+    let error = WiredReflowProbe::start_with(opener, &can0(), None, WINDOW, FAST)
+        .err()
+        .unwrap();
+
+    assert!(matches!(error, StartError::Panicked), "{error:?}");
+}
+
 fn lost() -> Step {
     Err(BusError::Lost(closed()))
 }

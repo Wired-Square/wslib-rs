@@ -216,7 +216,7 @@ impl WiredReflowProbe {
             }
         })
         .map_err(StartError::Thread)?;
-        let device = outcome.recv().map_err(|_| StartError::Stopped)??;
+        let device = outcome.recv().map_err(|_| StartError::Panicked)??;
         Ok(Self {
             on,
             device,

@@ -78,6 +78,28 @@ where
 mod tests {
     use super::*;
 
+    struct Idle;
+
+    impl ServerHandler for Idle {}
+
+    #[tokio::test]
+    async fn a_peer_gone_before_initialise_keeps_rmcps_error() {
+        let (peer, ours) = tokio::io::duplex(64);
+        drop(peer);
+
+        let refused = serve_io(Idle, tokio::io::split(ours)).await.unwrap_err();
+
+        assert!(matches!(refused, StdioError::Initialize(_)), "{refused:?}");
+        assert_eq!(refused.to_string(), "MCP initialise failed");
+        assert!(
+            refused
+                .source()
+                .and_then(|s| s.downcast_ref::<ServerInitializeError>())
+                .is_some(),
+            "{refused:?}"
+        );
+    }
+
     #[tokio::test]
     async fn a_panicked_task_is_panicked_and_a_cancelled_one_cancelled() {
         let panicked = tokio::spawn(async { panic!("the service failed") })

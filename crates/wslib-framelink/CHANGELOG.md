@@ -7,9 +7,18 @@
   wslib-isotp 0.2 and wslib-file-atomic 0.2, and on wslib-mdns 0.2, whose
   `Error` is `Error::Mdns`'s.
 - On wslib-mcumgr 0.2, whose `Error` is `Error::Smp`'s.
-- `Error::UnlockFailed`: unlocking after a WRITE_LOCKED refusal failed,
-  with that failure, boxed, as its `source()`. It was `WriteLocked` with
-  the failure's text; `WriteLocked` keeps the crate's own sentences.
+- `Error::UnlockFailed(UnlockFailure)`: unlocking after a WRITE_LOCKED
+  refusal failed; `UnlockFailure::cause` and its `source()` are the
+  `Error` the unlock ended with. It was `WriteLocked` with the failure's
+  text; `WriteLocked` keeps the crate's own sentences.
+- `DiscoveryEvent::Error` gains `cause`, the error behind the event on the
+  live value (not serialised): a failed BLE or mDNS init attempt, a BLE
+  scan that could not start, and a BLE adapter given up on carry theirs in
+  place of its text in `message`. A BLE scanner that panics or is
+  cancelled is an event whose cause is `Error::Panicked` or
+  `Error::Cancelled`. A start's last failed init attempt is its returned
+  error, not an event too. `DiscoveryEvent` is no longer `PartialEq` or
+  `Eq`.
 - `Error::Challenge`: the device's WRITE_CHALLENGE reply doesn't parse,
   with wslib-framelink-protocol's error as its `source()`. It was
   `Protocol` with the error's text.

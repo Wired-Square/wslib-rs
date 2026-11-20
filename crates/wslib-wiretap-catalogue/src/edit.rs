@@ -302,8 +302,9 @@ fn insert_meta_version(text: &str, meta: &Table, to: u32) -> Result<VersionBump,
 }
 
 /// Apply one edit to the raw catalogue TOML, preserving comments and formatting.
-/// `Err` carries a UI-friendly message (invalid TOML, missing target, rename
-/// collision); the caller shows it and leaves the document untouched.
+/// `Err` is [`DocumentError::TomlDocument`] for invalid TOML, or
+/// [`DocumentError::Refused`] naming a missing target or rename collision;
+/// the document is left untouched.
 pub fn apply_edit(text: &str, op: EditOp) -> Result<String, DocumentError> {
     apply_edits(text, std::slice::from_ref(&op))
 }

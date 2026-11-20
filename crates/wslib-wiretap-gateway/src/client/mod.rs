@@ -24,6 +24,8 @@ pub use frames::{ArchiveFrame, FrameCursor};
 
 #[derive(Debug)]
 pub enum ClientError {
+    /// The HTTP client could not be built; the source is reqwest's error.
+    Build(reqwest::Error),
     /// The request never got an answer; the source is reqwest's error.
     Transport(reqwest::Error),
     /// A non-2xx answer, with the body's `error` when it had one.
@@ -35,13 +37,18 @@ pub enum ClientError {
     /// error.
     Decode(Box<dyn Error + Send + Sync>),
     Request(RequestError),
-    BadHex(String),
+    /// A frame's `data_hex` is not hex; the source is the parser's error.
+    BadHex {
+        data_hex: String,
+        source: wslib_bits::hex::HexError,
+    },
     BusIgnored(u8),
 }
 
 impl fmt::Display for ClientError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Build(_) => f.write_str("the HTTP client could not be built"),
             Self::Transport(_) => f.write_str("API request failed"),
             Self::Status {
                 error: Some(error), ..
@@ -52,7 +59,7 @@ impl fmt::Display for ClientError {
             },
             Self::Decode(_) => f.write_str("API response decode failed"),
             Self::Request(e) => e.fmt(f),
-            Self::BadHex(data_hex) => write!(f, "bad data_hex '{data_hex}'"),
+            Self::BadHex { data_hex, .. } => write!(f, "bad data_hex '{data_hex}'"),
             Self::BusIgnored(bus) => {
                 write!(f, "the gateway ignored bus {bus}: it predates bus filters")
             }
@@ -63,9 +70,10 @@ impl fmt::Display for ClientError {
 impl Error for ClientError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Transport(e) => Some(e),
+            Self::Build(e) | Self::Transport(e) => Some(e),
             Self::Decode(e) => Some(&**e),
-            Self::Status { .. } | Self::Request(_) | Self::BadHex(_) | Self::BusIgnored(_) => None,
+            Self::BadHex { source, .. } => Some(source),
+            Self::Status { .. } | Self::Request(_) | Self::BusIgnored(_) => None,
         }
     }
 }
@@ -140,7 +148,7 @@ impl GatewayClient {
             builder = builder.connect_timeout(timeout);
         }
         Ok(Self {
-            http: builder.build().map_err(ClientError::Transport)?,
+            http: builder.build().map_err(ClientError::Build)?,
             endpoint: Endpoint::new(base_url, api_key),
             label: String::new(),
             running: Registry::default(),

@@ -715,7 +715,13 @@ fn a_modbus_message_over_255_bytes_counts_every_byte() {
 fn a_row_that_is_not_hex_is_refused_by_its_text() {
     let err = frame(json!({ "data_hex": "zz" })).unwrap_err();
     assert!(
-        matches!(&err, ClientError::BadHex(text) if text == "zz"),
+        matches!(&err, ClientError::BadHex { data_hex, .. } if data_hex == "zz"),
+        "{err:?}"
+    );
+    assert!(
+        std::error::Error::source(&err)
+            .and_then(|s| s.downcast_ref::<wslib_bits::hex::HexError>())
+            .is_some(),
         "{err:?}"
     );
     assert_eq!(err.to_string(), "bad data_hex 'zz'");
@@ -904,6 +910,25 @@ async fn an_unassignment_of_nothing_on_an_older_gateway_is_done() {
         .unassign_catalogue(&unassign(None))
         .await;
     assert_eq!(outcome.unwrap(), AssignOutcome::Done { warnings: vec![] });
+}
+
+#[tokio::test]
+async fn an_assignment_answer_that_is_not_the_catalogue_is_a_decode_error() {
+    let (base_url, _) = gateway(|_| (200, "not json".into()));
+
+    let err = client(&base_url, "")
+        .assign_catalogue(&assign())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, ClientError::Decode(_)), "{err:?}");
+    assert_eq!(err.to_string(), "API response decode failed");
+    assert!(
+        std::error::Error::source(&err)
+            .and_then(|s| s.downcast_ref::<serde_json::Error>())
+            .is_some(),
+        "{err:?}"
+    );
 }
 
 #[tokio::test]

@@ -1,3 +1,4 @@
+use std::fmt;
 use std::time::Duration;
 
 #[derive(Debug, thiserror::Error)]
@@ -15,6 +16,14 @@ pub enum Error {
     #[error("connection closed")]
     ConnectionClosed,
 
+    /// A background task panicked.
+    #[error("a background task panicked")]
+    Panicked,
+
+    /// The runtime cancelled a background task before it finished.
+    #[error("a background task was cancelled")]
+    Cancelled,
+
     /// The peer answered on another FrameLink protocol version, so the
     /// request waiting for a reply failed at once.
     #[error("the peer speaks FrameLink protocol version {0}, not {PROTOCOL_VERSION}", PROTOCOL_VERSION = wslib_framelink_protocol::PROTOCOL_VERSION)]
@@ -29,10 +38,9 @@ pub enum Error {
     #[error("write locked: {0}")]
     WriteLocked(String),
 
-    /// Unlocking after a WRITE_LOCKED refusal failed; the source is the
-    /// failure, an [`Error`].
-    #[error("write locked: the unlock after WRITE_LOCKED failed")]
-    UnlockFailed(#[source] Box<dyn std::error::Error + Send + Sync>),
+    /// Unlocking after a WRITE_LOCKED refusal failed.
+    #[error(transparent)]
+    UnlockFailed(UnlockFailure),
 
     /// The device's WRITE_CHALLENGE reply doesn't parse; the source is the
     /// protocol's error.
@@ -153,6 +161,34 @@ pub enum Error {
     WifiProvFailed,
 }
 
+/// Why unlocking after a WRITE_LOCKED refusal failed: its `source()` is
+/// the [`Error`] the unlock ended with.
+#[derive(Debug)]
+pub struct UnlockFailure(Box<Error>);
+
+impl UnlockFailure {
+    pub(crate) fn new(cause: Error) -> Self {
+        Self(Box::new(cause))
+    }
+
+    /// The error the unlock ended with.
+    pub fn cause(&self) -> &Error {
+        &self.0
+    }
+}
+
+impl fmt::Display for UnlockFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("write locked: the unlock after WRITE_LOCKED failed")
+    }
+}
+
+impl std::error::Error for UnlockFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&*self.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::error::Error as _;
@@ -189,7 +225,8 @@ mod tests {
 
     #[test]
     fn a_failed_unlock_keeps_the_failure_typed() {
-        let failed = Error::UnlockFailed(Box::new(Error::Timeout(Duration::from_secs(1))));
+        let failed =
+            Error::UnlockFailed(UnlockFailure::new(Error::Timeout(Duration::from_secs(1))));
 
         assert_eq!(
             failed.to_string(),
@@ -199,6 +236,10 @@ mod tests {
             failed.source().and_then(|s| s.downcast_ref::<Error>()),
             Some(Error::Timeout(_))
         ));
+        let Error::UnlockFailed(unlock) = &failed else {
+            panic!("{failed:?}");
+        };
+        assert!(matches!(unlock.cause(), Error::Timeout(_)));
     }
 
     #[test]

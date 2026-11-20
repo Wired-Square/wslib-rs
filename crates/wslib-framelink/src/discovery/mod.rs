@@ -394,13 +394,14 @@ where
             Ok(v) => return Ok(v),
             Err(e) => {
                 tracing::warn!(attempt, error = %e, "{label} init failed");
-                let _ = event_tx.send(DiscoveryEvent::Error {
-                    source,
-                    message: format!("{label} init attempt {attempt} failed: {e}"),
-                });
                 if attempt == INIT_MAX_ATTEMPTS {
                     return Err(e);
                 }
+                let _ = event_tx.send(DiscoveryEvent::Error {
+                    source,
+                    message: format!("{label} init attempt {attempt} failed"),
+                    cause: Some(Arc::new(e)),
+                });
                 tokio::time::sleep(delay).await;
                 delay = (delay * 2).min(INIT_MAX_BACKOFF);
                 attempt += 1;
@@ -422,11 +423,7 @@ fn spawn_supervised_ble_scanner(
     crate::runtime::ble_runtime().spawn(async move {
         let mut current = first;
         loop {
-            let _ = current.await;
-            let _ = event_tx.send(DiscoveryEvent::Error {
-                source: ErrorSource::Ble,
-                message: "BLE scanner exited; respawning".to_owned(),
-            });
+            let _ = event_tx.send(scanner_ended(current.await));
             let adapter = match init_with_backoff(
                 "BLE adapter",
                 &event_tx,
@@ -439,7 +436,8 @@ fn spawn_supervised_ble_scanner(
                 Err(e) => {
                     let _ = event_tx.send(DiscoveryEvent::Error {
                         source: ErrorSource::Ble,
-                        message: format!("BLE adapter re-acquire gave up: {e}"),
+                        message: "BLE adapter re-acquire gave up".to_owned(),
+                        cause: Some(Arc::new(e)),
                     });
                     return;
                 }
@@ -447,6 +445,23 @@ fn spawn_supervised_ble_scanner(
             current = ble::spawn_scanner(adapter, Arc::clone(&tracker), Arc::clone(&store));
         }
     })
+}
+
+#[cfg(feature = "ble")]
+fn scanner_ended(joined: Result<(), tokio::task::JoinError>) -> DiscoveryEvent {
+    let (message, cause) = match joined {
+        Ok(()) => ("BLE scanner exited; respawning", None),
+        Err(e) if e.is_panic() => ("BLE scanner panicked; respawning", Some(Error::Panicked)),
+        Err(_) => (
+            "BLE scanner was cancelled; respawning",
+            Some(Error::Cancelled),
+        ),
+    };
+    DiscoveryEvent::Error {
+        source: ErrorSource::Ble,
+        message: message.to_owned(),
+        cause: cause.map(|e| Arc::new(e) as events::Cause),
+    }
 }
 
 impl Drop for DiscoveryInner {
@@ -498,6 +513,65 @@ mod tests {
             .await
             .expect("event delivered")
             .expect("stream open")
+    }
+
+    fn caused_by(event: &DiscoveryEvent) -> Option<&Error> {
+        let DiscoveryEvent::Error { cause, .. } = event else {
+            panic!("{event:?}");
+        };
+        cause.as_deref().and_then(|c| c.downcast_ref::<Error>())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_init_attempt_is_an_event_with_its_error_and_the_last_is_returned() {
+        let (event_tx, mut events) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+
+        let gave_up = init_with_backoff("mDNS responder", &event_tx, ErrorSource::Mdns, || async {
+            Err::<(), _>(Error::ConnectionClosed)
+        })
+        .await
+        .unwrap_err();
+
+        assert!(matches!(gave_up, Error::ConnectionClosed), "{gave_up:?}");
+        for attempt in 1..INIT_MAX_ATTEMPTS {
+            let event = events.try_recv().unwrap();
+            assert!(
+                matches!(&event, DiscoveryEvent::Error { message, .. }
+                    if *message == format!("mDNS responder init attempt {attempt} failed")),
+                "{event:?}"
+            );
+            assert!(
+                matches!(caused_by(&event), Some(Error::ConnectionClosed)),
+                "{event:?}"
+            );
+        }
+        assert!(
+            events.try_recv().is_err(),
+            "the last attempt is the caller's error"
+        );
+    }
+
+    #[cfg(feature = "ble")]
+    #[tokio::test]
+    async fn a_scanner_that_panics_or_is_cancelled_is_typed_in_its_event() {
+        let panicked = tokio::spawn(async { panic!("the scanner failed") }).await;
+        let cancelled = tokio::spawn(std::future::pending::<()>());
+        cancelled.abort();
+        let cancelled = cancelled.await;
+
+        let panicked = scanner_ended(panicked.map(drop));
+        let cancelled = scanner_ended(cancelled);
+        let exited = scanner_ended(Ok(()));
+
+        assert!(
+            matches!(caused_by(&panicked), Some(Error::Panicked)),
+            "{panicked:?}"
+        );
+        assert!(
+            matches!(caused_by(&cancelled), Some(Error::Cancelled)),
+            "{cancelled:?}"
+        );
+        assert!(caused_by(&exited).is_none(), "{exited:?}");
     }
 
     #[tokio::test]

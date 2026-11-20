@@ -1,6 +1,7 @@
 //! The devices currently seen, turning each observation into the event it
 //! amounts to. No I/O.
 
+use super::events::Cause;
 use super::{DiscoveryEvent, ErrorSource};
 use crate::{Device, DeviceId};
 use std::collections::HashMap;
@@ -117,10 +118,16 @@ impl PresenceTracker {
         }
     }
 
-    pub fn emit_error(&self, source: ErrorSource, message: impl Into<String>) {
+    pub fn emit_error(
+        &self,
+        source: ErrorSource,
+        message: impl Into<String>,
+        cause: Option<Cause>,
+    ) {
         let _ = self.event_tx.send(DiscoveryEvent::Error {
             source,
             message: message.into(),
+            cause,
         });
     }
 }
@@ -341,13 +348,13 @@ mod tests {
         tracker.observe(ble_dev("ble:abc", "WFL", -50, CapabilitySet::SMP));
         let _ = drain(&mut rx);
 
-        tracker.emit_error(ErrorSource::Ble, "transient adapter glitch");
+        tracker.emit_error(ErrorSource::Ble, "transient adapter glitch", None);
 
         let events = drain(&mut rx);
         assert_eq!(events.len(), 1);
         assert!(matches!(
             &events[0],
-            DiscoveryEvent::Error { source: ErrorSource::Ble, message } if message == "transient adapter glitch"
+            DiscoveryEvent::Error { source: ErrorSource::Ble, message, .. } if message == "transient adapter glitch"
         ));
         assert_eq!(tracker.snapshot().len(), 1, "state must survive errors");
     }

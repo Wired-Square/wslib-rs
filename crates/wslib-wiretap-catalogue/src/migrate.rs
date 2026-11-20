@@ -35,7 +35,8 @@ pub fn slave_node_name(addr: u8) -> String {
 }
 
 /// Run every migration step over `text`, returning the upgraded TOML plus a
-/// summary. `Err` carries a UI-friendly message when the input is not valid TOML.
+/// summary. `Err` is [`DocumentError::TomlDocument`] when the input is not
+/// valid TOML.
 pub fn migrate(text: &str) -> Result<Migration, DocumentError> {
     let mut doc = text.parse::<DocumentMut>()?;
     let mut summary = Vec::new();

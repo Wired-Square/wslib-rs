@@ -7,7 +7,7 @@
 - `uri::open`, `Gw121Probe::start` and `start_tapped`, and
   `WiredReflowProbe::start` fail with `probe::StartError`, in place of an
   `io::Error`: `FeatureDisabled`, `Unreachable`, `Bus` with wslib-can-bus'
-  `OpenError` as its `source()`, `Thread`, `Runtime`, `Stopped`,
+  `OpenError` as its `source()`, `Thread`, `Runtime`, `Panicked`,
   `NoWiredReflow`, `ManyWiredReflows` and `Ended`. `StartError::kind` is
   the `io::ErrorKind` the `io::Error` had. `ProbeError::FeatureDisabled` is
   gone.
@@ -16,9 +16,11 @@
   adapter's, or an `io::Error`) is the `source()`, held in an `Arc`, in
   place of one message holding both. `ProbeError` and `cluster::Latest` are
   no longer `PartialEq` or `Eq`.
-- `gw121::ble::scan` fails with `ScanError`: `Stopped`, or `Failed` with
-  btleplug's error as its `source()`, in place of an `io::Error`, which
-  was `Interrupted` for a stop.
+- `ProbeError::Panicked { unrestarted }`: the 121GW's link thread
+  panicked; `unrestarted`, the `source()`, is why it could not be started
+  again.
+- `gw121::ble::scan` fails with `ScanError`, a failed Bluetooth step with
+  btleplug's error as its `source()`, in place of an `io::Error`.
 - `ProbeUriError::Bus` holds a WiredReflow bus's `BusParseError`, and
   `ProbeUriError::UnknownSignal` a selector's signal-key parse error, each
   the `source()`, in place of their text in `Target` and `Signal`.

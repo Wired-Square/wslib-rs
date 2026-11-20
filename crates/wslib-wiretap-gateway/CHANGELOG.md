@@ -9,6 +9,10 @@
   boxed, and says "API response decode failed"; each is the `source()`, in
   place of the error and its causes joined as text. `ClientError` is no
   longer `Clone`, `PartialEq` or `Eq`.
+- `ClientError::Build`: the HTTP client could not be built, with reqwest's
+  error as its `source()`; it was `Transport`.
+- `ClientError::BadHex { data_hex, source }` keeps wslib-bits' `HexError`
+  as its `source()`.
 
 ## 0.2.3
 

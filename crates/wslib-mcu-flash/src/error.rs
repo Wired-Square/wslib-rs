@@ -14,13 +14,22 @@ pub enum FlashError {
         #[source]
         source: Box<dyn Error + Send + Sync>,
     },
+    /// The STM32 bootloader answered NACK.
+    #[error("Device returned NACK")]
+    Nack,
     #[error("USB device {0:?} not attached")]
     NotAttached(String),
     #[error(
         "connected chip reports MAC {}, expected {expected}; nothing was written",
         reported_mac(*.actual)
     )]
-    IdentityMismatch { expected: Mac, actual: Option<Mac> },
+    /// `unread`, the source, is why the chip's MAC could not be read.
+    IdentityMismatch {
+        expected: Mac,
+        actual: Option<Mac>,
+        #[source]
+        unread: Option<Box<dyn Error + Send + Sync>>,
+    },
     #[error("cancelled by user")]
     Cancelled,
 }

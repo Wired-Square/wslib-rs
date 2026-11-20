@@ -361,7 +361,7 @@ fn read_byte(p: &mut dyn SerialPort) -> Result<u8> {
 fn wait_ack(p: &mut dyn SerialPort) -> Result<()> {
     match read_byte(p)? {
         ACK => Ok(()),
-        NACK => Err("Device returned NACK".into()),
+        NACK => Err(FlashError::Nack),
         other => Err(FlashError::Message(format!(
             "Unexpected byte 0x{other:02X} (expected ACK/NACK)"
         ))),
@@ -452,10 +452,12 @@ fn cmd_read_memory(p: &mut dyn SerialPort, addr: u32, len: usize) -> Result<Vec<
 }
 
 fn rdp_hint_on_nack(err: FlashError) -> FlashError {
-    if err.to_string().contains("NACK") {
-        "Read protected (RDP Level 1) — disable readout protection to back up flash".into()
-    } else {
-        err
+    match err {
+        FlashError::Nack => failed(
+            "Read protected (RDP Level 1) — disable readout protection to back up flash",
+            err,
+        ),
+        other => other,
     }
 }
 
@@ -510,12 +512,49 @@ mod tests {
         assert_eq!(opts.baud, DEFAULT_BAUD);
     }
 
+    const UNEXPECTED: u8 = 0x42;
+
+    fn is_nack(error: &FlashError) -> bool {
+        std::error::Error::source(error)
+            .and_then(|s| s.downcast_ref::<FlashError>())
+            .is_some_and(|e| matches!(e, FlashError::Nack))
+    }
+
     #[test]
-    fn nack_on_read_becomes_an_rdp_hint() {
-        let hinted = rdp_hint_on_nack("Device returned NACK".into()).to_string();
-        assert!(hinted.contains("RDP"), "{hinted}");
-        let other = rdp_hint_on_nack("Serial read: timeout".into()).to_string();
-        assert_eq!(other, "Serial read: timeout");
+    fn a_nack_on_read_becomes_an_rdp_hint_keeping_the_nack() {
+        let mut port = FakePort::replying(&[NACK]);
+
+        let hinted = cmd_read_memory(&mut port, DEFAULT_FLASH_BASE, CHUNK).unwrap_err();
+
+        assert!(hinted.to_string().contains("RDP Level 1"), "{hinted}");
+        assert!(is_nack(&hinted), "{hinted:?}");
+    }
+
+    #[test]
+    fn an_unexpected_byte_on_read_is_not_an_rdp_hint() {
+        let mut port = FakePort::replying(&[UNEXPECTED]);
+
+        let refused = cmd_read_memory(&mut port, DEFAULT_FLASH_BASE, CHUNK).unwrap_err();
+
+        assert!(
+            matches!(&refused, FlashError::Message(why) if why.starts_with("Unexpected byte 0x42")),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
+    fn a_refused_handshake_names_the_wiring_and_keeps_the_nack() {
+        let mut port = FakePort::replying(&[NACK]);
+
+        let refused = autobaud(&mut port).unwrap_err();
+
+        assert!(
+            refused
+                .to_string()
+                .starts_with("Bootloader handshake failed."),
+            "{refused}"
+        );
+        assert!(is_nack(&refused), "{refused:?}");
     }
 
     struct FakePort {
@@ -524,6 +563,13 @@ mod tests {
     }
 
     impl FakePort {
+        fn replying(bytes: &[u8]) -> Self {
+            Self {
+                replies: bytes.iter().copied().collect(),
+                written: Vec::new(),
+            }
+        }
+
         fn acking_reads_then_nack(chunks: &[usize]) -> Self {
             let mut replies = std::collections::VecDeque::new();
             for &len in chunks {

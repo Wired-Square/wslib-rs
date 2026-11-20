@@ -188,7 +188,7 @@ fn observe(tracker: &Mutex<PresenceTracker>, spec: ServiceSpec, found: &Resolved
                 found.instance, spec.service_type
             );
             warn!("{msg}");
-            tracker.emit_error(ErrorSource::Mdns, msg);
+            tracker.emit_error(ErrorSource::Mdns, msg, None);
         }
     }
 }

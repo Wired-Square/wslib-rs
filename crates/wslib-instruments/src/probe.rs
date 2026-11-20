@@ -22,6 +22,11 @@ pub enum ProbeError {
         source: Option<Arc<dyn Error + Send + Sync>>,
     },
     NotAdvertising(String),
+    /// The thread that reads the instrument panicked; `unrestarted`, the
+    /// source, is why it could not be started again.
+    Panicked {
+        unrestarted: Option<Arc<dyn Error + Send + Sync>>,
+    },
 }
 
 impl ProbeError {
@@ -47,6 +52,12 @@ impl fmt::Display for ProbeError {
             ProbeError::Stale(age) => write!(f, "no reading for {:.1} s", age.as_secs_f64()),
             ProbeError::Disconnected { why, .. } => write!(f, "disconnected: {why}"),
             ProbeError::NotAdvertising(what_to_do) => write!(f, "not advertising: {what_to_do}"),
+            ProbeError::Panicked { unrestarted: None } => {
+                f.write_str("the probe's link thread panicked")
+            }
+            ProbeError::Panicked {
+                unrestarted: Some(_),
+            } => f.write_str("the probe's link thread panicked and could not restart"),
         }
     }
 }
@@ -57,6 +68,9 @@ impl Error for ProbeError {
             ProbeError::Disconnected {
                 source: Some(source),
                 ..
+            }
+            | ProbeError::Panicked {
+                unrestarted: Some(source),
             } => Some(&**source),
             _ => None,
         }
@@ -77,8 +91,8 @@ pub enum StartError {
     Thread(io::Error),
     /// The tokio runtime on the probe's thread did not start.
     Runtime(io::Error),
-    /// The probe's thread stopped before it opened its instrument.
-    Stopped,
+    /// The probe's thread panicked before it opened its instrument.
+    Panicked,
     /// No WiredReflow was heard on `on` within `window`; `lost`, the
     /// source, is why the adapter was lost while listening.
     NoWiredReflow {
@@ -107,7 +121,7 @@ impl StartError {
             StartError::Thread(e) | StartError::Runtime(e) => e.kind(),
             StartError::NoWiredReflow { .. } => io::ErrorKind::NotFound,
             StartError::ManyWiredReflows { .. } => io::ErrorKind::InvalidInput,
-            StartError::Stopped | StartError::Ended { .. } => io::ErrorKind::Other,
+            StartError::Panicked | StartError::Ended { .. } => io::ErrorKind::Other,
         }
     }
 }
@@ -125,8 +139,8 @@ impl fmt::Display for StartError {
             StartError::Bus(_) => f.write_str("the CAN bus did not open"),
             StartError::Thread(_) => f.write_str("the probe's thread did not start"),
             StartError::Runtime(_) => f.write_str("the probe's tokio runtime did not start"),
-            StartError::Stopped => {
-                f.write_str("the probe's thread stopped before it opened its instrument")
+            StartError::Panicked => {
+                f.write_str("the probe's thread panicked before it opened its instrument")
             }
             StartError::NoWiredReflow { on, window, lost } => {
                 write!(
@@ -168,7 +182,7 @@ impl Error for StartError {
             } => Some(&**source),
             StartError::FeatureDisabled(_)
             | StartError::Unreachable(_)
-            | StartError::Stopped
+            | StartError::Panicked
             | StartError::NoWiredReflow { lost: None, .. }
             | StartError::ManyWiredReflows { .. }
             | StartError::Ended { source: None, .. } => None,
@@ -195,5 +209,35 @@ pub trait Probe: Send + 'static {
     /// The longest dropping it waits for what it holds to be released.
     fn release_within(&self) -> Duration {
         worker::RELEASE_WITHIN
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_thread_or_runtime_that_did_not_start_keeps_the_io_error_and_its_kind() {
+        let refused = || io::Error::new(io::ErrorKind::OutOfMemory, "no room");
+        for (error, said) in [
+            (
+                StartError::Thread(refused()),
+                "the probe's thread did not start",
+            ),
+            (
+                StartError::Runtime(refused()),
+                "the probe's tokio runtime did not start",
+            ),
+        ] {
+            assert_eq!(error.to_string(), said);
+            assert_eq!(error.kind(), io::ErrorKind::OutOfMemory);
+            assert!(
+                error
+                    .source()
+                    .and_then(|s| s.downcast_ref::<io::Error>())
+                    .is_some_and(|e| e.kind() == io::ErrorKind::OutOfMemory),
+                "{error:?}"
+            );
+        }
     }
 }

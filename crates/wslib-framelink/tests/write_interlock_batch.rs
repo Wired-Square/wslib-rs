@@ -41,6 +41,7 @@ struct DeviceState {
 #[derive(Clone, Copy)]
 enum ChallengeReply {
     Dropped,
+    Truncated,
     After(Duration),
     HeldUntilNextFrame,
 }
@@ -149,6 +150,12 @@ fn handle(
             match state.challenge_replies.pop_front() {
                 None => Some(Reply::now(bytes)),
                 Some(ChallengeReply::Dropped) => None,
+                Some(ChallengeReply::Truncated) => Some(Reply::now(build_frame(
+                    MSG_WRITE_CHALLENGE_RESP,
+                    FLAG_RESPONSE,
+                    seq,
+                    &[0],
+                ))),
                 Some(ChallengeReply::After(delay)) => Some(Reply {
                     bytes,
                     delay: Some(delay),
@@ -416,6 +423,36 @@ async fn a_refused_unlock_is_reported_as_refused_even_after_a_silent_challenge()
         matches!(error, wslib_framelink::Error::WriteLocked(_)),
         "the last attempt was refused, so the error must not blame silence: {error}"
     );
+}
+
+#[tokio::test]
+async fn a_malformed_challenge_fails_the_unlock_with_the_protocols_error() {
+    let state = Arc::new(Mutex::new(DeviceState {
+        locked: true,
+        challenge_replies: VecDeque::from([ChallengeReply::Truncated]),
+        ..DeviceState::default()
+    }));
+    let addr = spawn_device(Arc::clone(&state)).await;
+    let session = session_for(addr).await;
+
+    let error = session.send_batch(&rule_batch()).await.unwrap_err();
+
+    let wslib_framelink::Error::UnlockFailed(unlock) = &error else {
+        panic!("{error:?}");
+    };
+    let wslib_framelink::Error::Challenge(refused) = unlock.cause() else {
+        panic!("{unlock:?}");
+    };
+    assert_eq!(
+        unlock.cause().to_string(),
+        "the write challenge does not parse"
+    );
+    assert!(
+        std::error::Error::source(unlock.cause())
+            .and_then(|s| s.downcast_ref::<wslib_framelink_protocol::Error>())
+            .is_some_and(|e| e == refused)
+    );
+    assert_eq!(state.lock().unwrap().unlocks, 0);
 }
 
 #[tokio::test]

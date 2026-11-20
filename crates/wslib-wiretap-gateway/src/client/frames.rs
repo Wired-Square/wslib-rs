@@ -25,8 +25,11 @@ impl TryFrom<FrameBatchRow> for ArchiveFrame {
     type Error = ClientError;
 
     fn try_from(row: FrameBatchRow) -> Result<Self, ClientError> {
-        let data = wslib_bits::hex::parse_bytes(&row.data_hex)
-            .map_err(|_| ClientError::BadHex(row.data_hex.clone()))?;
+        let data =
+            wslib_bits::hex::parse_bytes(&row.data_hex).map_err(|source| ClientError::BadHex {
+                data_hex: row.data_hex.clone(),
+                source,
+            })?;
         let len = if row.is_rtr {
             wslib_can::dlc_to_len(row.dlc as u8, false)
         } else {

@@ -115,10 +115,16 @@ async fn open_task(bus: &CanBus) -> Result<CanTask, StartError> {
 /// Opens the bus on a thread of its own running its own runtime, so a caller
 /// inside a tokio runtime never blocks on it; dropping the bus ends both.
 pub(crate) fn open_bus(bus: &CanBus) -> Result<Box<dyn Bus>, StartError> {
+    let on = bus.clone();
+    open_bus_with(async move || open_task(&on).await)
+}
+
+fn open_bus_with(
+    open: impl AsyncFnOnce() -> Result<CanTask, StartError> + Send + 'static,
+) -> Result<Box<dyn Bus>, StartError> {
     let (opened_tx, opened) = mpsc::sync_channel(1);
     let (reads_tx, reads) = mpsc::channel();
     let (stop, stopping) = oneshot::channel();
-    let on = bus.clone();
     let task = Worker::spawn("can", RELEASE_WITHIN, move || {
         let runtime = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -131,7 +137,7 @@ pub(crate) fn open_bus(bus: &CanBus) -> Result<Box<dyn Bus>, StartError> {
             }
         };
         runtime.block_on(async {
-            match open_task(&on).await {
+            match open().await {
                 Ok(task) => {
                     if opened_tx.send(Ok(())).is_ok() {
                         forward(task, reads_tx, stopping).await;
@@ -144,7 +150,7 @@ pub(crate) fn open_bus(bus: &CanBus) -> Result<Box<dyn Bus>, StartError> {
         });
     })
     .map_err(StartError::Thread)?;
-    opened.recv().map_err(|_| StartError::Stopped)??;
+    opened.recv().map_err(|_| StartError::Panicked)??;
     Ok(Box::new(TaskBus {
         reads,
         pending: VecDeque::new(),
@@ -185,6 +191,21 @@ mod tests {
             _task: task,
         });
         assert!(closed.load(Ordering::Relaxed));
+    }
+
+    fn panics() -> Result<CanTask, StartError> {
+        panic!("the adapter's open panicked")
+    }
+
+    #[test]
+    fn an_open_that_panics_on_the_can_thread_is_a_panicked_start() {
+        let refused = open_bus_with(async || panics()).err().unwrap();
+
+        assert!(matches!(refused, StartError::Panicked), "{refused:?}");
+        assert_eq!(
+            refused.to_string(),
+            "the probe's thread panicked before it opened its instrument"
+        );
     }
 
     fn read_failed() -> wslib_can::CanError {

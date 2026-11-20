@@ -22,7 +22,7 @@ use wslib_framelink_protocol::types::{
 use wslib_framelink_protocol::{bridge, capabilities, dsig, frame_def, generator, xform};
 
 use crate::client::{FrameLinkClient, FrameSender, FramingCounters, FramingStats, Received};
-use crate::{Error, Peer};
+use crate::{Error, Peer, UnlockFailure};
 #[cfg(feature = "can")]
 use {
     wslib_can_bus::CanBus,
@@ -999,7 +999,7 @@ async fn unlock_after_refusal(
         .await
         .map_err(|e| match e {
             Error::WriteLocked(_) | Error::PeerVersion(_) => e,
-            other => Error::UnlockFailed(Box::new(other)),
+            other => Error::UnlockFailed(UnlockFailure::new(other)),
         })
 }
 

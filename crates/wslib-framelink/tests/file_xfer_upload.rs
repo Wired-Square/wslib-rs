@@ -794,17 +794,14 @@ async fn a_commit_refused_as_locked_is_never_reported_as_unknown() {
         .await
         .expect("a bounded number of unlock attempts must end the upload");
 
-    let Err(wslib_framelink::Error::UnlockFailed(why)) = &result else {
+    let Err(wslib_framelink::Error::UnlockFailed(unlock)) = &result else {
         panic!(
             "the device refused the commit, so a dead unlock must not read as an unanswered commit: {result:?}"
         );
     };
     assert!(
-        matches!(
-            why.downcast_ref::<wslib_framelink::Error>(),
-            Some(wslib_framelink::Error::Timeout(_))
-        ),
-        "{why:?}"
+        matches!(unlock.cause(), wslib_framelink::Error::Timeout(_)),
+        "{unlock:?}"
     );
     assert_eq!(state.lock().unwrap().commits, 0);
 }

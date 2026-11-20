@@ -29,6 +29,8 @@ const READ_CHUNK_SIZE: u32 = 64 * 1024;
 const READ_BLOCK_SIZE: u32 = 1024;
 const READ_MAX_IN_FLIGHT: u32 = 64;
 const ESP_IMAGE_MAGIC: u8 = 0xE9;
+const UNDETECTED_SIZE: &str =
+    "Could not auto-detect flash size; specify size or pick one from the form";
 
 /// Flasher tuning; `None` leaves espflash's own default in place.
 #[derive(Debug, Clone, Default)]
@@ -137,7 +139,7 @@ fn connect_for_write(
     progress.on_stage(FlashStage::Connecting, &format!("Opening {port}"));
     let mut flasher = open_flasher(port, options)?;
 
-    let info = chip_info_from(&mut flasher).ok();
+    let info = check_expected_mac(options, chip_info_from(&mut flasher))?;
     if let Some(info) = &info {
         progress.on_progress(&format!(
             "Connected: {} · MAC {} · {}",
@@ -148,7 +150,6 @@ fn connect_for_write(
                 .unwrap_or_else(|| "flash size unknown".to_string()),
         ));
     }
-    check_expected_mac(options, info.as_ref())?;
 
     if let Some(size) = options.flash_size {
         flasher.set_flash_size(size);
@@ -226,15 +227,9 @@ pub fn read_flash(
         Some(s) => s,
         None => flasher
             .flash_detect()
-            .ok()
-            .flatten()
+            .map_err(|e| failed(UNDETECTED_SIZE, e))?
             .map(|detected| detected.size())
-            .ok_or_else(|| {
-                FlashError::Message(
-                    "Could not auto-detect flash size; specify size or pick one from the form"
-                        .to_string(),
-                )
-            })?,
+            .ok_or_else(|| FlashError::from(UNDETECTED_SIZE))?,
     };
 
     let total = resolved_size as u64;
@@ -286,7 +281,7 @@ pub fn erase(
     progress.on_stage(FlashStage::Connecting, &format!("Opening {port}"));
     let mut flasher = open_flasher(port, options)?;
     if options.expected_mac.is_some() {
-        check_expected_mac(options, chip_info_from(&mut flasher).ok().as_ref())?;
+        check_expected_mac(options, chip_info_from(&mut flasher))?;
     }
     progress.on_stage(
         FlashStage::Erasing,
@@ -356,15 +351,25 @@ fn chip_info_from(flasher: &mut Flasher) -> Result<EspChipInfo> {
     })
 }
 
-fn check_expected_mac(options: &EspFlashOptions, info: Option<&EspChipInfo>) -> Result<()> {
+fn check_expected_mac(
+    options: &EspFlashOptions,
+    read: Result<EspChipInfo>,
+) -> Result<Option<EspChipInfo>> {
     let Some(expected) = options.expected_mac else {
-        return Ok(());
+        return Ok(read.ok());
     };
-    let actual = info.and_then(|i| i.mac);
-    if actual == Some(expected) {
-        Ok(())
-    } else {
-        Err(FlashError::IdentityMismatch { expected, actual })
+    match read {
+        Ok(info) if info.mac == Some(expected) => Ok(Some(info)),
+        Ok(info) => Err(FlashError::IdentityMismatch {
+            expected,
+            actual: info.mac,
+            unread: None,
+        }),
+        Err(e) => Err(FlashError::IdentityMismatch {
+            expected,
+            actual: None,
+            unread: Some(Box::new(e)),
+        }),
     }
 }
 
@@ -624,13 +629,13 @@ mod tests {
     #[test]
     fn an_expected_mac_accepts_the_chip_that_reports_it() {
         let right = chip_with_mac(Some(mac("68:09:47:1D:2F:0C")));
-        check_expected_mac(&expecting(EXPECTED), Some(&right)).unwrap();
+        check_expected_mac(&expecting(EXPECTED), Ok(right)).unwrap();
     }
 
     #[test]
     fn an_expected_mac_refuses_any_other_chip() {
         let other = chip_with_mac(Some(mac("00:00:00:00:00:01")));
-        let err = check_expected_mac(&expecting(EXPECTED), Some(&other)).unwrap_err();
+        let err = check_expected_mac(&expecting(EXPECTED), Ok(other)).unwrap_err();
         let expected = "connected chip reports MAC 00:00:00:00:00:01, expected \
                         68:09:47:1d:2f:0c; nothing was written";
         assert_eq!(err.to_string(), expected);
@@ -639,29 +644,46 @@ mod tests {
     #[test]
     fn an_expected_mac_refuses_a_chip_whose_mac_is_unread() {
         let options = expecting(EXPECTED);
-        let silent = chip_with_mac(None);
-        for chip in [None, Some(&silent)] {
+        let unread = || {
+            failed(
+                "Failed to read chip info",
+                std::io::Error::other("no reply"),
+            )
+        };
+        for chip in [Err(unread()), Ok(chip_with_mac(None))] {
+            let was_read = chip.is_ok();
             let mismatch = check_expected_mac(&options, chip).unwrap_err();
             assert!(
                 matches!(
-                    mismatch,
-                    FlashError::IdentityMismatch { expected, actual: None } if expected == mac(EXPECTED)
+                    &mismatch,
+                    FlashError::IdentityMismatch { expected, actual: None, .. } if *expected == mac(EXPECTED)
                 ),
                 "{mismatch:?}"
             );
             let expected = "connected chip reports MAC (unknown), expected \
                             68:09:47:1d:2f:0c; nothing was written";
             assert_eq!(mismatch.to_string(), expected);
+            let cause =
+                std::error::Error::source(&mismatch).and_then(|s| s.downcast_ref::<FlashError>());
+            assert_eq!(
+                cause.is_some_and(|c| matches!(c, FlashError::Failed { .. })),
+                !was_read,
+                "{mismatch:?}"
+            );
         }
     }
 
     #[test]
     fn no_expected_mac_accepts_any_chip_or_none() {
         let options = EspFlashOptions::default();
-        check_expected_mac(&options, None).unwrap();
+        let unread = failed(
+            "Failed to read chip info",
+            std::io::Error::other("no reply"),
+        );
+        assert!(check_expected_mac(&options, Err(unread)).unwrap().is_none());
         let any = chip_with_mac(Some(mac("00:00:00:00:00:01")));
-        check_expected_mac(&options, Some(&any)).unwrap();
-        check_expected_mac(&options, Some(&chip_with_mac(None))).unwrap();
+        assert!(check_expected_mac(&options, Ok(any)).unwrap().is_some());
+        check_expected_mac(&options, Ok(chip_with_mac(None))).unwrap();
     }
 
     #[cfg(feature = "serde")]

@@ -188,19 +188,21 @@ pub(super) fn spawn_scanner(
             }
 
             if let Err(e) = adapter.start_scan(ScanFilter::default()).await {
-                tracker
-                    .lock()
-                    .expect("tracker lock")
-                    .emit_error(ErrorSource::Ble, format!("scan start: {e}"));
+                tracker.lock().expect("tracker lock").emit_error(
+                    ErrorSource::Ble,
+                    "starting the BLE scan failed",
+                    Some(Arc::new(e)),
+                );
                 return;
             }
             let mut events = match adapter.events().await {
                 Ok(s) => s,
                 Err(e) => {
-                    tracker
-                        .lock()
-                        .expect("tracker lock")
-                        .emit_error(ErrorSource::Ble, format!("events stream: {e}"));
+                    tracker.lock().expect("tracker lock").emit_error(
+                        ErrorSource::Ble,
+                        "opening the BLE adapter's events failed",
+                        Some(Arc::new(e)),
+                    );
                     return;
                 }
             };

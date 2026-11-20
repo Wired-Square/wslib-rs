@@ -10,6 +10,12 @@
   sentences.
 - `FlashError` is no longer `Clone`, `PartialEq` or `Eq`, and
   `From<String>` is gone.
+- `FlashError::Nack`: the STM32 bootloader answered NACK. A NACK on a
+  memory read is the RDP Level 1 hint with the `Nack` as its `source()`;
+  an unexpected byte is no longer taken for one.
+- `FlashError::IdentityMismatch` gains `unread`, its `source()`: why the
+  chip's MAC could not be read. ESP flash-size detection that fails is
+  `Failed` with espflash's error.
 
 ## 0.3.0
 

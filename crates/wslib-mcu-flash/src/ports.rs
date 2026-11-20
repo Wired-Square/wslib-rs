@@ -267,6 +267,22 @@ mod tests {
     use super::*;
 
     const ALIAS_V1: &str = "platform-x-usb-0:1.4:1.0-port0";
+
+    #[cfg(feature = "ports")]
+    #[test]
+    fn a_serialport_error_is_this_layers_sentence_over_serialports_error() {
+        let failed = FlashError::from(serialport::Error::new(
+            serialport::ErrorKind::NoDevice,
+            "the port went away",
+        ));
+
+        assert_eq!(failed.to_string(), "The serial port failed");
+        assert!(
+            std::error::Error::source(&failed)
+                .and_then(|s| s.downcast_ref::<serialport::Error>())
+                .is_some_and(|e| e.kind() == serialport::ErrorKind::NoDevice)
+        );
+    }
     const ALIAS_V2: &str = "platform-x-usbv2-0:1.4:1.0-port0";
     const SIBLING: &str = "platform-x-usb-0:1.4:1.2-port0";
     const ACM_PATH: &str = "platform-x-usb-0:2:1.0";

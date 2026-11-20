@@ -545,7 +545,8 @@ impl std::fmt::Display for ServingError {
             }
             Self::HalfPair { present, missing } => write!(
                 f,
-                "{} is there and {} is not",
+                "{} is there and {} is not; a half-supplied pair is not completed with a \
+                 generated file, because the two would not match",
                 present.display(),
                 missing.display()
             ),
@@ -1403,10 +1404,15 @@ mod tests {
 
         let (cert, key) = another_pair(provider);
         write(&dir.join("cert.pem"), &cert);
-        assert!(matches!(
-            dir.managed().read_pair(),
-            Err(ServingError::HalfPair { .. })
-        ));
+        let half = dir.managed().read_pair().expect_err("half a pair");
+        assert!(matches!(half, ServingError::HalfPair { .. }), "{half:?}");
+        assert!(
+            half.to_string().ends_with(
+                "is not; a half-supplied pair is not completed with a generated file, because \
+                 the two would not match"
+            ),
+            "{half}"
+        );
 
         write(&dir.join("cert.pem"), &format!("{key}{cert}"));
         write(&dir.join("key.pem"), &key);

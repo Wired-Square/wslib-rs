@@ -280,7 +280,7 @@ impl From<crate::tls::TlsError> for ApiError {
             // 503 rather than 403: nothing about the caller is wrong.
             Unsupported(_) | RecordRefused(_) => Self::Unsupported(redact::chain(&e)),
 
-            Unreachable(_) | Unreadable { .. } => Self::BadGateway(redact::chain(&e)),
+            Unreachable(_) | Unreadable { .. } => Self::BadGateway(redact::foreign(&e)),
 
             Unwritable { .. } => Self::internal("write the certificate", &e),
 
@@ -477,6 +477,53 @@ mod tests {
                     if because == "could not write /srv/tls/key.pem: the disk is full"
             ),
             "{unwritten:?}"
+        );
+    }
+
+    #[test]
+    fn a_refused_record_or_an_unreachable_hosts_body_keeps_its_cause() {
+        use crate::tls::TlsError;
+
+        let deep = || TlsError::Unwritable {
+            path: "/srv/tls/key.pem.txn".into(),
+            source: std::io::Error::other("planted"),
+        };
+        let refused = ApiError::from(TlsError::RecordRefused(Box::new(deep())));
+        assert!(
+            matches!(
+                &refused,
+                ApiError::Unsupported(body) if body == "this appliance will not act on the record \
+                    an interrupted write left: could not write /srv/tls/key.pem.txn: planted"
+            ),
+            "{refused:?}"
+        );
+
+        let unreachable = ApiError::from(TlsError::Unreachable(Box::new(std::io::Error::other(
+            "error sending request for url (https://hook:s3cr3t@example.invalid/x)",
+        ))));
+        assert!(
+            matches!(
+                &unreachable,
+                ApiError::BadGateway(body)
+                    if body.starts_with("the host could not be looked at: error sending request")
+                        && body.contains("example.invalid")
+                        && !body.contains("s3cr3t")
+            ),
+            "{unreachable:?}"
+        );
+
+        let unreadable = ApiError::from(TlsError::Unreadable {
+            host: "example.invalid".into(),
+            port: 443,
+            source: Box::new(deep()),
+        });
+        assert!(
+            matches!(
+                &unreadable,
+                ApiError::BadGateway(body) if body == "example.invalid:443 presented a certificate \
+                    this appliance cannot read: could not write /srv/tls/key.pem.txn: planted"
+            ),
+            "{unreadable:?}"
         );
     }
 

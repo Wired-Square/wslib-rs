@@ -16,9 +16,12 @@
   record this appliance will not act on, `Unreadable` a dialled host's
   certificate that cannot be read, `Corrupt` the certificate on disk that
   cannot be read, and `Failed` anything else reading or writing the pair.
-  A certificate refusal's response body writes the sentence and each cause.
+  A certificate refusal's response body writes the sentence and each cause,
+  a dialled host's redacted and bounded as the journal's are.
 - `ServeError::Tls`, `Trust` and `Serving` hold the error behind them as
   `source` in place of its text; `Bind` holds the `io::Error`.
+  `ServeError::Tls::named` is a pair named in the configuration, whose
+  sentence tells the operator to correct the files or unset the setting.
   `ServeError::SocketFailed` is a socket, its directory or its security that
   could not be made, with the error as `source`; `Socket` keeps this crate's
   own sentences. A start whose pair panicked or was cancelled on the

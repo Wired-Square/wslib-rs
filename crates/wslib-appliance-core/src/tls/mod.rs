@@ -155,17 +155,15 @@ impl Tls {
         let provider = provider()?;
         let started =
             tokio::task::spawn_blocking(move || start(provider, location, alias.as_deref())).await;
-        let serving = match started {
-            Ok(started) => started,
-            Err(e) if e.is_panic() => Err(ServingError::Panicked),
-            Err(_) => Err(ServingError::Cancelled),
-        }
-        .map_err(|source| ServeError::Tls {
-            cert: settings.cert.clone(),
-            key: settings.key.clone(),
-            source: Box::new(source),
-        })?
-        .with_alpn(vec![b"h2".to_vec(), b"http/1.1".to_vec()]);
+        let serving = started
+            .unwrap_or_else(|e| Err(unjoined(e)))
+            .map_err(|source| ServeError::Tls {
+                cert: settings.cert.clone(),
+                key: settings.key.clone(),
+                named: settings.named,
+                source: Box::new(source),
+            })?
+            .with_alpn(vec![b"h2".to_vec(), b"http/1.1".to_vec()]);
         let listener = RustlsConfig::from_config(serving.config());
         Ok(Self {
             served: Some(Served {
@@ -263,6 +261,13 @@ impl Tls {
         self.served
             .as_ref()
             .is_some_and(|served| served.serving.location().is_named())
+    }
+}
+
+fn unjoined(e: tokio::task::JoinError) -> ServingError {
+    match e.is_panic() {
+        true => ServingError::Panicked,
+        false => ServingError::Cancelled,
     }
 }
 
@@ -529,8 +534,17 @@ mod tests {
             let e = Tls::load_or_mint(&named, None)
                 .await
                 .expect_err("a named pair this cannot use is refused");
+            assert!(
+                e.to_string().ends_with(
+                    "correct them, or unset the setting to have the appliance manage its own pair"
+                ),
+                "{e}"
+            );
             let said = crate::redact::chain(&e);
             assert!(said.contains("were named"), "{said}");
+            if theirs.len() == 1 {
+                assert!(said.contains("because the two would not match"), "{said}");
+            }
             for file in theirs {
                 assert_eq!(
                     std::fs::read_to_string(dir.path().join(file)).unwrap(),
@@ -611,6 +625,61 @@ mod tests {
             ),
             "{half:?}"
         );
+        let said = crate::redact::chain(&half);
+        assert!(
+            said.ends_with(
+                "a half-supplied pair is not completed with a generated file, because the two \
+                 would not match"
+            ),
+            "{said}"
+        );
+    }
+
+    #[test]
+    fn a_named_pair_rustls_will_not_serve_says_so_and_what_to_do() {
+        let location = Location::named("/srv/tls/cert.pem", "/srv/tls/key.pem");
+        let refused = ServeError::Tls {
+            cert: location.cert().to_path_buf(),
+            key: location.key().to_path_buf(),
+            named: true,
+            source: Box::new(ServingError::Named {
+                cert: location.cert().to_path_buf(),
+                key: location.key().to_path_buf(),
+                source: Box::new(ServingError::Refused(rustls::Error::General(
+                    "rustls says no".into(),
+                ))),
+            }),
+        };
+        assert_eq!(
+            crate::redact::chain(&refused),
+            "the TLS certificate (/srv/tls/cert.pem) or key (/srv/tls/key.pem) could not be \
+             loaded; they were named in this appliance's configuration, so it will not move \
+             them aside and make its own: correct them, or unset the setting to have the \
+             appliance manage its own pair: /srv/tls/cert.pem and /srv/tls/key.pem were named, \
+             so they are not moved aside and replaced: rustls will not serve the pair: \
+             unexpected error: rustls says no"
+        );
+
+        let managed = ServeError::Tls {
+            cert: location.cert().to_path_buf(),
+            key: location.key().to_path_buf(),
+            named: false,
+            source: Box::new(ServingError::Mismatched),
+        };
+        assert_eq!(
+            managed.to_string(),
+            "the TLS certificate (/srv/tls/cert.pem) or key (/srv/tls/key.pem) could not be loaded"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_start_that_panicked_or_was_cancelled_on_the_blocking_pool_says_which() {
+        let panicked = tokio::spawn(async { panic!("boom") }).await.unwrap_err();
+        assert!(matches!(unjoined(panicked), ServingError::Panicked));
+        let pending = tokio::spawn(std::future::pending::<()>());
+        pending.abort();
+        let cancelled = pending.await.unwrap_err();
+        assert!(matches!(unjoined(cancelled), ServingError::Cancelled));
     }
 
     /// An orphaned key would make every later start refuse the half pair, and
@@ -1395,7 +1464,10 @@ mod tests {
         assert_eq!(
             e.to_string(),
             format!(
-                "the TLS certificate ({}) or key ({}) could not be loaded",
+                "the TLS certificate ({}) or key ({}) could not be loaded; they were named in \
+                 this appliance's configuration, so it will not move them aside and make its \
+                 own: correct them, or unset the setting to have the appliance manage its own \
+                 pair",
                 named.cert.display(),
                 named.key.display()
             )

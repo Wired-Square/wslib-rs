@@ -43,15 +43,27 @@ const CONNECTIONS: usize = 32;
 /// between requests.
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(5);
 
+const NAMED: &str = "; they were named in this appliance's configuration, so it will not move \
+                     them aside and make its own: correct them, or unset the setting to have the \
+                     appliance manage its own pair";
+
 /// Why the appliance could not start listening. A variant about a file or a
 /// listener names its path or address.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ServeError {
-    #[error("the TLS certificate ({}) or key ({}) could not be loaded", cert.display(), key.display())]
+    /// `named` is a pair named in the appliance's configuration, which it
+    /// never moves aside and replaces.
+    #[error(
+        "the TLS certificate ({}) or key ({}) could not be loaded{}",
+        cert.display(),
+        key.display(),
+        if *named { NAMED } else { "" }
+    )]
     Tls {
         cert: PathBuf,
         key: PathBuf,
+        named: bool,
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 
@@ -489,6 +501,14 @@ fn file_identity(path: &Path) -> Option<(u64, u64)> {
 /// anything else at the path is left alone.
 #[cfg(unix)]
 fn clear_stale_socket(path: &Path) -> Result<(), ServeError> {
+    clearing_stale_socket(path, |path| std::fs::remove_file(path))
+}
+
+#[cfg(unix)]
+fn clearing_stale_socket(
+    path: &Path,
+    remove: impl FnOnce(&Path) -> std::io::Result<()>,
+) -> Result<(), ServeError> {
     use std::io::ErrorKind::{ConnectionRefused, NotFound};
     use std::os::unix::fs::FileTypeExt;
 
@@ -511,7 +531,7 @@ fn clear_stale_socket(path: &Path) -> Result<(), ServeError> {
                 path = %path.display(),
                 "removing a socket left behind by an earlier run"
             );
-            std::fs::remove_file(path).map_err(|e| socket_error(path, e))
+            remove(path).map_err(|e| socket_error(path, e))
         }
         _ => Err(ServeError::SocketInUse {
             path: path.to_path_buf(),
@@ -522,6 +542,31 @@ fn clear_stale_socket(path: &Path) -> Result<(), ServeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_stale_socket_that_will_not_be_removed_keeps_the_io_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stale.sock");
+        drop(std::os::unix::net::UnixListener::bind(&path).expect("binds"));
+
+        let refused =
+            clearing_stale_socket(&path, |_| Err(std::io::ErrorKind::PermissionDenied.into()));
+        let Err(failed @ ServeError::SocketFailed { .. }) = refused else {
+            panic!("a socket that was not removed: {refused:?}");
+        };
+        assert_eq!(
+            failed.to_string(),
+            format!("the socket at {} could not be created", path.display())
+        );
+        assert_eq!(
+            std::error::Error::source(&failed)
+                .and_then(|e| e.downcast_ref::<std::io::Error>())
+                .map(std::io::Error::kind),
+            Some(std::io::ErrorKind::PermissionDenied)
+        );
+        assert!(path.exists());
+    }
 
     #[test]
     fn a_serve_error_says_its_own_layer_and_keeps_its_cause() {

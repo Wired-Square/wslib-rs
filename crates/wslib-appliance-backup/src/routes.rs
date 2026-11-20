@@ -765,7 +765,7 @@ fn pair_not_installed(e: &TlsError) -> String {
             "The serving certificate this backup carried was written but not finished \
              ({}); this box is still serving its own. Installing it again serves it at \
              once, and {next}.",
-            backend::chain(&**source)
+            backend::foreign(&**source)
         ),
         e => format!(
             "The serving certificate this backup carried was not installed — {}. This box \

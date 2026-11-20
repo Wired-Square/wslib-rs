@@ -1105,14 +1105,24 @@ mod tests {
             (&[(uid, "0")][..], uid),
             (&[(path, "app.sock"), (uid, "0")][..], path),
             (&[(path, "/run/x/../app.sock"), (uid, "0")][..], path),
-            (&[(path, socket), (uid, "-1")][..], uid),
-            (&[(path, socket), (uid, "root")][..], uid),
-            (&[(path, socket), (uid, "4294967296")][..], uid),
         ] {
             let e = resolved(vars).expect_err("refused");
             assert!(
-                matches!(&e, ConfigError::Env { var, .. } | ConfigError::EnvUnusable { var, .. } if var == refused),
+                matches!(&e, ConfigError::Env { var, .. } if var == refused),
                 "{vars:?}: {e}"
+            );
+        }
+        for unparsed in ["-1", "root", "4294967296"] {
+            let e = resolved(&[(path, socket), (uid, unparsed)]).expect_err("refused");
+            assert!(
+                matches!(&e, ConfigError::EnvUnusable { var, value, .. } if var == uid && value == unparsed),
+                "{unparsed}: {e}"
+            );
+            assert!(
+                std::error::Error::source(&e)
+                    .and_then(|e| e.downcast_ref::<std::num::ParseIntError>())
+                    .is_some(),
+                "{e:?}"
             );
         }
 

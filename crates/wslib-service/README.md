@@ -58,14 +58,14 @@ fn main() -> ExitCode {
   `run` until `main` returns, so it shows the runtime is alive, not that the
   service serves. `$NOTIFY_SOCKET` and `$WATCHDOG_USEC` are left set.
 - **An error, a panic, ending unasked or overrunning is logged** through
-  `tracing`, or to stderr before a subscriber is installed; an error with
-  each cause its `source()` gives. `main`'s error is anything that converts
-  into `Box<dyn Error + Send + Sync>`, kept typed as the source of
-  `Failure::Ended`. On Windows an error or a panic also
-  goes to the Application event log under the service's name, registered as
-  its event source on first start. While `main` runs the panic hook logs where
-  a panic happened; the previous hook is restored once it returns. It is
-  replaced, not chained, so install a hook of your own inside `main`.
+  `tracing`, or to stderr before a subscriber is installed; an error with each
+  cause its `source()` gives. `main`'s error is anything that converts into
+  `Box<dyn Error + Send + Sync>`, kept typed as the source of
+  `Failure::Ended`. On Windows an error or a panic also goes to the
+  Application event log under the service's name, registered as its event
+  source on first start. While `main` runs the panic hook logs where a panic
+  happened; the previous hook is restored once it returns. It is replaced, not
+  chained, so install a hook of your own inside `main`.
 - **Under the service control manager, a failure is a service-specific exit
   code of 1.** The installer sets what follows: `sc failure <name> reset=
   86400 actions= restart/5000` and `sc failureflag <name> 1`. A start that

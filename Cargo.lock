@@ -8133,7 +8133,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-appliance-client"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "thiserror 2.0.21",
  "tokio",

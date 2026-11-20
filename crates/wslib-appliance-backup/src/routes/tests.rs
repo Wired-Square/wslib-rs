@@ -2916,7 +2916,10 @@ fn a_pair_that_was_not_installed_says_which_pair_the_box_serves() {
         "{rolled_back}"
     );
     let committed = pair_not_installed(&TlsError::Unfinished {
-        source: Box::new(std::io::Error::other("renaming: in the way")),
+        source: Box::new(TlsError::Unwritable {
+            path: "/var/lib/key.pem".into(),
+            source: std::io::Error::other("in the way"),
+        }),
         next: "the next write, backup read or start finishes it from /var/lib/key.pem.txn, or a \
                start that cannot sets it aside and serves the pair on disk, making a fresh one \
                only if that will not load"
@@ -2924,11 +2927,100 @@ fn a_pair_that_was_not_installed_says_which_pair_the_box_serves() {
     });
     assert_eq!(
         committed,
-        "The serving certificate this backup carried was written but not finished (renaming: \
-         in the way); this box is still serving its own. Installing it again serves it at once, \
+        "The serving certificate this backup carried was written but not finished (could not \
+         write /var/lib/key.pem: in the way); this box is still serving its own. Installing it again serves it at once, \
          and the next write, backup read or start finishes it from /var/lib/key.pem.txn, or a \
          start that cannot sets it aside and serves the pair on disk, making a fresh one only if \
          that will not load."
     );
     assert_sentences([rolled_back.as_str(), committed.as_str()]);
+}
+
+#[test]
+fn a_pair_not_finished_keeps_its_cause_redacted_and_bounded() {
+    let said = pair_not_installed(&TlsError::Unfinished {
+        source: Box::new(TlsError::Unwritable {
+            path: "/var/lib/key.pem".into(),
+            source: std::io::Error::other(format!(
+                "https://hook:s3cr3t@example.invalid/{}",
+                "a".repeat(4096)
+            )),
+        }),
+        next: "start it again".into(),
+    });
+    assert!(
+        said.contains("(could not write /var/lib/key.pem: https://"),
+        "{said}"
+    );
+    assert!(!said.contains("s3cr3t"), "{said}");
+    assert!(said.len() < 4096, "{}", said.len());
+}
+
+#[tokio::test]
+async fn an_outbound_trust_that_did_not_reload_says_each_cause() {
+    let rig = mounted_on(over_accounts().await).await;
+    rig.app.store().close().await;
+    let said = reload_outbound_trust(rig.app.state(), "restored")
+        .await
+        .expect("a sentence for the report");
+    let pool = wslib_appliance_store::sqlx::Error::PoolClosed.to_string();
+    assert!(
+        said.contains(&format!("(the database query failed: {pool})")),
+        "{said}"
+    );
+}
+
+#[tokio::test]
+async fn an_offline_seal_that_cannot_be_written_names_the_path_and_keeps_the_io_error() {
+    let builder = over_accounts().await;
+    let backups = backups(&builder, ());
+    let app = builder.api(backups.routes(Router::new())).build().await;
+    let pair = app.state().tls.pair().await.unwrap();
+    let out = app.dir().join("missing").join("offline.json");
+    let offline = backups
+        .seal_offline(app.store(), pair, &Secret::new(PASSPHRASE), &out)
+        .await;
+    let Err(BackupError::Unwritten { path, source }) = offline else {
+        panic!("unwritten: {offline:?}");
+    };
+    assert_eq!(path, out);
+    assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+}
+
+#[tokio::test]
+async fn a_scheduled_backup_whose_passphrase_cannot_be_read_says_each_cause() {
+    let rig = mounted_on(over_accounts().await).await;
+    rig.app.store().close().await;
+    let why = rig
+        .backups
+        .take_scheduled(
+            rig.app.state(),
+            &BackupSchedule::default(),
+            chrono::Utc::now(),
+        )
+        .await
+        .expect_err("the store is closed");
+    let pool = wslib_appliance_store::sqlx::Error::PoolClosed.to_string();
+    assert_eq!(why, format!("the database query failed: {pool}"));
+}
+
+#[tokio::test]
+async fn a_scheduled_backup_that_will_not_seal_says_why() {
+    let builder = over_accounts().await;
+    let backups = backups(&builder, Padded(MAX_BUNDLE_LEN));
+    let app = builder.api(backups.routes(Router::new())).build().await;
+    app.store()
+        .set_secret(PASSPHRASE_SECRET, &Secret::new(PASSPHRASE))
+        .await
+        .unwrap();
+    let why = backups
+        .take_scheduled(app.state(), &BackupSchedule::default(), chrono::Utc::now())
+        .await
+        .expect_err("past the cap");
+    let refused = backups
+        .seal(app.state(), &Secret::new(PASSPHRASE), BTreeSet::new())
+        .await
+        .expect_err("past the cap");
+    assert_eq!(why, refused.to_string());
+    assert!(matches!(refused, ApiError::PayloadTooLarge(_)));
 }

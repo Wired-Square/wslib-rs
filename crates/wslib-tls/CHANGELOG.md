@@ -10,6 +10,8 @@
 - `ServingError`, `ProbeError::Failed` and `AnchorError` name only their own
   part; the cause comes only through `source()`. `ServingError::Named`'s
   source is the inner `ServingError`, not its box.
+- `ServingError::HalfPair` says why the half pair is not completed: a
+  generated half would not match the one that is there.
 - Work on the blocking pool that panics is `ServingError::Panicked`, and work
   the runtime drops before it runs `ServingError::Cancelled`, in place of a
   resumed panic. The record a failed commit left stays remembered through

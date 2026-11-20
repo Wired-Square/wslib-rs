@@ -135,3 +135,24 @@ impl From<BackupError> for ApiError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_blocking_write_that_panicked_or_was_cancelled_says_which() {
+        let panicked = tokio::spawn(async { panic!("boom") }).await.unwrap_err();
+        assert!(matches!(
+            BackupError::unjoined(panicked),
+            BackupError::Panicked
+        ));
+        let pending = tokio::spawn(std::future::pending::<()>());
+        pending.abort();
+        let cancelled = pending.await.unwrap_err();
+        assert!(matches!(
+            BackupError::unjoined(cancelled),
+            BackupError::Cancelled
+        ));
+    }
+}

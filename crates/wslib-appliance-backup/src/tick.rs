@@ -13,7 +13,7 @@ use wslib_appliance_core::{Actor, ApplianceState, CancellationToken, audit};
 use wslib_appliance_types::backup::{BackupSchedule, BackupState};
 
 use crate::routes::{Engine, HostHalf, PASSPHRASE_SECRET, SCHEDULE_SETTING, STATE_KEY};
-use crate::{Sections, schedule};
+use crate::{BackupError, Sections, schedule};
 
 struct Scheduler;
 
@@ -96,7 +96,7 @@ impl<S: Sections, H: HostHalf> Engine<S, H> {
     }
 
     /// The error is prose for the schedule's view.
-    async fn take_scheduled(
+    pub(crate) async fn take_scheduled(
         &self,
         app: &ApplianceState,
         wanted: &BackupSchedule,
@@ -137,7 +137,7 @@ impl<S: Sections, H: HostHalf> Engine<S, H> {
                 .map_err(|e| format!("{written}: {e}"))
         })
         .await
-        .map_err(|e| format!("writing the backup panicked: {e}"))??;
+        .map_err(|e| backend::chain(&BackupError::unjoined(e)))??;
         Ok(file)
     }
 }

@@ -374,6 +374,20 @@ mod tests {
         assert_eq!(source.raw_os_error(), Some(libc::EIO));
     }
 
+    #[tokio::test]
+    async fn an_endpoint_directory_under_a_file_cannot_be_read_rather_than_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("file");
+        std::fs::write(&file, "").unwrap();
+        let unfit = crate::checks::endpoint_directory(&file.join("run"), "admin")
+            .await
+            .expect_err("refuses");
+        assert!(
+            matches!(&unfit, crate::checks::Unfit::Unreadable(e) if e.raw_os_error() == Some(libc::ENOTDIR)),
+            "{unfit:?}"
+        );
+    }
+
     #[test]
     fn an_endpoint_directory_that_cannot_be_read_keeps_the_error() {
         let dir = tempfile::tempdir().unwrap();

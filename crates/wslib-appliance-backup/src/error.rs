@@ -4,7 +4,8 @@ use wslib_appliance_core::ApiError;
 use wslib_appliance_core::backend::chain;
 
 /// Why a bundle could not be written or opened. `Malformed` is a file somebody
-/// handed in; a fault on the write path is `Internal`.
+/// handed in; a fault on the write path is `Failed`, `Unwritten` or
+/// `Internal`.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum BackupError {
@@ -78,12 +79,13 @@ pub enum BackupError {
         source: std::io::Error,
     },
 
-    /// The blocking work panicked; the panic hook has reported it.
-    #[error("writing the backup panicked")]
+    /// Work on the backup, blocking or spawned, panicked; the panic hook has
+    /// reported it.
+    #[error("work on the backup panicked")]
     Panicked,
 
-    /// The runtime shut down before the blocking work ran.
-    #[error("the runtime shut down before the backup was written")]
+    /// The runtime shut down before work on the backup finished.
+    #[error("the runtime shut down before work on the backup finished")]
     Cancelled,
 }
 

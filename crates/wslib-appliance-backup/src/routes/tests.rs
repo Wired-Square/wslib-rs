@@ -3024,3 +3024,46 @@ async fn a_scheduled_backup_that_will_not_seal_says_why() {
     assert_eq!(why, refused.to_string());
     assert!(matches!(refused, ApiError::PayloadTooLarge(_)));
 }
+
+fn journalled(error: &ApiError) -> (&'static str, &str) {
+    match error {
+        ApiError::Internal {
+            context, because, ..
+        } => (context, because),
+        other => panic!("not internal: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_blocking_step_that_panicked_journals_the_panic_not_tokios_text() {
+    let engine = Engine::session(NAME, "0.1.0-test", std::path::Path::new("."), (), ());
+    let panicked = engine
+        .blocking("open the backup", true, || -> Result<(), BackupError> {
+            panic!("a blocking step panicked")
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(
+        journalled(&panicked),
+        ("open the backup", "work on the backup panicked")
+    );
+}
+
+#[tokio::test]
+async fn a_join_that_panicked_or_was_cancelled_journals_which() {
+    let panicked = tokio::spawn(async { panic!("boom") }).await.unwrap_err();
+    assert_eq!(
+        journalled(&unjoined("run the restore", panicked)),
+        ("run the restore", "work on the backup panicked")
+    );
+    let pending = tokio::spawn(std::future::pending::<()>());
+    pending.abort();
+    let cancelled = pending.await.unwrap_err();
+    assert_eq!(
+        journalled(&unjoined("run the backup deletion", cancelled)),
+        (
+            "run the backup deletion",
+            "the runtime shut down before work on the backup finished"
+        )
+    );
+}

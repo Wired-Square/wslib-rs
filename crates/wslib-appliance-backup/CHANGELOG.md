@@ -17,7 +17,8 @@
   the outbound trust, and a scheduled backup's failure write each cause of
   the error behind them; an unfinished pair's cause is redacted and bounded
   as the journal's is. A scheduled write that panicked or was cancelled says
-  which, without tokio's text.
+  which, without tokio's text, and so does the journal line of a deletion,
+  a restore, or a seal or open on the blocking pool that did.
 
 ## 0.2.4
 

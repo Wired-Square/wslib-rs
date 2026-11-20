@@ -321,8 +321,16 @@ async fn refuse_if_last_admin(
 pub(crate) async fn hash(password: Secret) -> Result<String, ApiError> {
     tokio::task::spawn_blocking(move || wslib_appliance_auth::hash_password(password.expose()))
         .await
-        .map_err(|e| ApiError::internal("hash the password", &e))?
+        .map_err(|e| unjoined("hash the password", e))?
         .map_err(ApiError::from)
+}
+
+fn unjoined(what: &'static str, e: tokio::task::JoinError) -> ApiError {
+    let why = match e.is_panic() {
+        true => wslib_appliance_auth::AuthError::Panicked,
+        false => wslib_appliance_auth::AuthError::Cancelled,
+    };
+    ApiError::internal(what, &why)
 }
 
 pub(crate) fn clean_username(raw: &str) -> Result<String, ApiError> {
@@ -1108,6 +1116,37 @@ mod tests {
                 .contains(&("role".to_string(), "operator".to_string())),
             "{:?}",
             latest.fields
+        );
+    }
+
+    fn journalled(error: &ApiError) -> (&'static str, &str) {
+        match error {
+            ApiError::Internal {
+                context, because, ..
+            } => (context, because),
+            other => panic!("not internal: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_hash_that_panicked_or_was_cancelled_journals_which() {
+        let panicked = tokio::spawn(async { panic!("boom") }).await.unwrap_err();
+        assert_eq!(
+            journalled(&unjoined("hash the password", panicked)),
+            (
+                "hash the password",
+                "hashing or checking the password panicked"
+            )
+        );
+        let pending = tokio::spawn(std::future::pending::<()>());
+        pending.abort();
+        let cancelled = pending.await.unwrap_err();
+        assert_eq!(
+            journalled(&unjoined("hash the password", cancelled)),
+            (
+                "hash the password",
+                "the runtime shut down before the password was hashed or checked"
+            )
         );
     }
 }

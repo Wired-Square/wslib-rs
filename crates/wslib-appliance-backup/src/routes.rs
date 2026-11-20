@@ -775,6 +775,10 @@ fn pair_not_installed(e: &TlsError) -> String {
     }
 }
 
+fn unjoined(what: &'static str, e: tokio::task::JoinError) -> ApiError {
+    ApiError::internal(what, &BackupError::unjoined(e))
+}
+
 fn none_ours<'a>(
     ours: &BTreeSet<String>,
     mut names: impl ExactSizeIterator<Item = &'a String>,
@@ -790,7 +794,7 @@ pub(crate) async fn to_completion<T: Send + 'static>(
 ) -> Result<T, ApiError> {
     backend::to_completion(app, apply)
         .await
-        .map_err(|e| ApiError::internal("run the restore", &e))?
+        .map_err(|e| unjoined("run the restore", e))?
 }
 
 /// A restored schedule the schedule route would refuse, such as one whose
@@ -1188,7 +1192,7 @@ async fn remove<S: Sections, H: HostHalf, R: Caller>(
     // Off the runtime: a scheduled write holds the lock across its fsyncs.
     let removed = tokio::task::spawn_blocking(move || this.remove(&doomed))
         .await
-        .map_err(|e| ApiError::internal("run the backup deletion", &e))?
+        .map_err(|e| unjoined("run the backup deletion", e))?
         .map_err(|e| ApiError::internal("delete the backup", &e))?;
     if !removed {
         return Err(ApiError::NotFound(format!("no such backup: {file}")));
@@ -1240,7 +1244,7 @@ impl<S, H> Engine<S, H> {
             step()
         })
         .await
-        .map_err(|e| ApiError::internal(what, &e))?
+        .map_err(|e| unjoined(what, e))?
         .map_err(ApiError::from)
     }
 }

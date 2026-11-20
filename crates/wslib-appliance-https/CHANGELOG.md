@@ -9,6 +9,9 @@
   `io::Error`. The control socket's directory that cannot be made is
   `ServeError::SocketFailed`.
 - On wslib-appliance-config 0.2 and wslib-service 0.2.
+- A password hash that panicked or was cancelled on the blocking pool
+  journals wslib-appliance-auth's `AuthError::Panicked` or `Cancelled`, not
+  tokio's text.
 
 ## 0.1.6
 

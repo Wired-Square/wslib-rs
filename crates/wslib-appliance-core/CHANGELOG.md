@@ -30,7 +30,9 @@
   `Cancelled` as `source`.
 - A failed store or sign-in call's journal line, and a failed health
   check's, writes each cause of the `StoreError` or `AuthError` behind it,
-  which keep them only through `source()`.
+  which keep them only through `source()`. A re-authentication's password
+  check that panicked or was cancelled journals `AuthError::Panicked` or
+  `Cancelled`, not tokio's text.
 - On wslib-appliance-store 0.2 and wslib-appliance-auth 0.2, whose
   `StoreError` and `AuthError` its `ApiError` converts from.
 - On wslib-tls 0.3, wslib-crypto 0.2, wslib-crypto-x509 0.2,

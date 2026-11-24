@@ -6,7 +6,8 @@
 //! `MSG_CONFIRM`, which is how the kernel marks the socket's own frames.
 
 use std::{
-    io, mem,
+    error::Error,
+    fmt, io, mem,
     os::fd::{AsRawFd, RawFd},
     ptr,
     sync::{Arc, Mutex},
@@ -19,7 +20,8 @@ use socketcan::{
 };
 use tokio::io::{Interest, unix::AsyncFd};
 use wslib_can::{
-    CanError, CanFrame, CanOptions, CanTask, Device, DeviceInfo, Direction, Limits, Received, Stamp,
+    CanError, CanFrame, CanOptions, CanTask, Device, DeviceInfo, Direction, Limits, Received,
+    Stamp, WriteFailed,
 };
 
 use crate::{FD_FRAME_BYTES, parse_frame};
@@ -51,11 +53,52 @@ pub async fn open(sc: SocketCanOptions, options: CanOptions) -> Result<CanTask, 
     wslib_can::open::<SocketCan>(config, options).await
 }
 
+/// Why [`bitrates`] read no rates.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum BitratesError {
+    /// No interface has the name.
+    Interface {
+        interface: String,
+        source: io::Error,
+    },
+    /// The netlink query failed; the source is socketcan's error.
+    Netlink {
+        interface: String,
+        source: Box<dyn Error + Send + Sync>,
+    },
+}
+
+impl fmt::Display for BitratesError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Interface { interface, .. } => write!(f, "cannot find {interface}"),
+            Self::Netlink { interface, .. } => write!(f, "cannot read {interface}'s rates"),
+        }
+    }
+}
+
+impl Error for BitratesError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Interface { source, .. } => Some(source),
+            Self::Netlink { source, .. } => Some(&**source),
+        }
+    }
+}
+
 /// One netlink round trip; a netlink failure is `Err`, not `None`.
-pub fn bitrates(interface: &str) -> io::Result<Bitrates> {
-    let details = CanInterface::open(interface)?
+pub fn bitrates(interface: &str) -> Result<Bitrates, BitratesError> {
+    let details = CanInterface::open(interface)
+        .map_err(|e| BitratesError::Interface {
+            interface: interface.to_owned(),
+            source: e.into(),
+        })?
         .details()
-        .map_err(|e| io::Error::other(e.to_string()))?;
+        .map_err(|e| BitratesError::Netlink {
+            interface: interface.to_owned(),
+            source: Box::new(e),
+        })?;
     Ok(Bitrates {
         nominal: details.can.bit_timing.map(|t| t.bitrate),
         data: details.can.data_bit_timing.map(|t| t.bitrate),
@@ -154,11 +197,12 @@ impl Device for SocketCan {
         Ok(received)
     }
 
-    async fn write(&mut self, frame: &CanFrame) -> io::Result<()> {
-        let frame = outgoing(frame).ok_or(io::ErrorKind::InvalidInput)?;
+    async fn write(&mut self, frame: &CanFrame) -> Result<(), WriteFailed> {
+        let frame = outgoing(frame).ok_or(WriteFailed::Io(io::ErrorKind::InvalidInput.into()))?;
         self.socket
             .async_io(Interest::WRITABLE, |socket| socket.write_frame(&frame))
             .await
+            .map_err(WriteFailed::Io)
     }
 
     async fn close(self) {
@@ -376,5 +420,20 @@ mod tests {
         let remote = outgoing(&CanFrame::remote(0, 0x10, false, 5)).unwrap();
         assert!(matches!(remote, CanAnyFrame::Remote(r) if r.dlc() == 5));
         assert!(outgoing(&CanFrame::remote(0, 0x10, false, 9)).is_none());
+    }
+
+    #[test]
+    fn a_netlink_failure_names_the_interface_and_keeps_socketcans_error() {
+        let failed = BitratesError::Netlink {
+            interface: "can0".into(),
+            source: Box::new(io::Error::from(io::ErrorKind::PermissionDenied)),
+        };
+        assert_eq!(failed.to_string(), "cannot read can0's rates");
+        let cause = failed
+            .source()
+            .unwrap()
+            .downcast_ref::<io::Error>()
+            .unwrap();
+        assert_eq!(cause.kind(), io::ErrorKind::PermissionDenied);
     }
 }

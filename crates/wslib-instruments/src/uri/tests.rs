@@ -404,11 +404,20 @@ fn an_slcan_port_named_by_id_opens_under_dev_serial_by_id_and_round_trips() {
 }
 
 #[test]
+fn a_bus_whose_port_does_not_parse_is_refused_with_the_ports_reason() {
+    let why = refusal("wiredreflow:slcan=");
+    assert!(
+        why.starts_with("slcan= names no serial port: name the serial port as "),
+        "{why}"
+    );
+}
+
+#[test]
 fn a_port_name_containing_an_at_sign_is_refused_because_at_starts_the_device_id() {
-    let why = "slcan=by-id:usb-Foo@Bar_X-if00"
+    let refused = "slcan=by-id:usb-Foo@Bar_X-if00"
         .parse::<CanBus>()
-        .unwrap_err()
-        .to_string();
+        .unwrap_err();
+    let why = std::error::Error::source(&refused).unwrap().to_string();
     assert!(why.contains("can't contain '@'"), "{why}");
     let why = refusal("wiredreflow:slcan=by-id:usb-Foo@Bar_X-if00@028F08");
     assert!(

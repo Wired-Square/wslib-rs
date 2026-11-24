@@ -8427,17 +8427,18 @@ version = "0.1.0"
 
 [[package]]
 name = "wslib-can"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "wslib-backoff",
+ "wslib-serial",
  "wslib-tcp",
 ]
 
 [[package]]
 name = "wslib-can-bus"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "tokio",
  "wslib-can",
@@ -8451,7 +8452,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-can-gsusb"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "nusb 0.2.7",
  "tokio",
@@ -8460,7 +8461,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-can-gvret"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "libc",
  "tokio",
@@ -8471,7 +8472,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-can-pcan"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libloading",
  "nusb 0.2.7",
@@ -8481,7 +8482,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-can-slcan"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "tokio",
@@ -8491,7 +8492,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-can-socketcan"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "libc",
  "socketcan",
@@ -8653,7 +8654,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-framelink"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "btleplug",
  "futures-util",
@@ -8788,7 +8789,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-instruments"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "btleplug",
  "futures-util",
@@ -8804,7 +8805,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-isotp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "thiserror 2.0.21",
  "tokio",
@@ -8880,7 +8881,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-modbus"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "rust_decimal",
  "rust_decimal_macros",
@@ -8944,7 +8945,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-serial"
-version = "0.1.3"
+version = "0.2.0"
 dependencies = [
  "libc",
  "serialport",
@@ -8955,7 +8956,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-serial-console"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "axum",
  "futures-util",
@@ -9052,7 +9053,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-tcp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "thiserror 2.0.21",
  "tokio",
@@ -9096,7 +9097,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-wiretap-catalogue"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "can-dbc",
  "rust_decimal",
@@ -9118,7 +9119,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-wiretap-gateway"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "reqwest 0.12.28",
  "serde",
@@ -9132,7 +9133,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-wiretap-protocol"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",

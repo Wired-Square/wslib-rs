@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0
+
+- A tokio-modbus protocol error is wslib-tcp's `TransportError::Violation`,
+  with tokio-modbus's `ProtocolError` as its source, in place of `Protocol`
+  and a sentence. wslib-tcp's floor is 0.1.2.
+- `WriteOutcome::Failed` carries a `WriteFailure`, and `Unconfirmed` the
+  `VerifyProblem`s, in place of text. Each names its `WriteTarget`, and the
+  `TransportError` or `RequestError` that failed is its `source()`, held in
+  an `Arc`. `WriteReport` and
+  `WriteOutcome` are no longer `PartialEq` or `Eq`.
+
 ## 0.2.2
 
 - serde's floor is 1.0.228.

@@ -18,7 +18,7 @@ pub use frame::{CanFlags, CanFrame, Direction, ErrorFrame, ErrorState};
 #[cfg(feature = "task")]
 pub use task::{
     BusState, CanError, CanEvent, CanOptions, CanRead, CanTask, CanWriter, Device, DeviceInfo,
-    Limits, Received, SendRefused, Stamp, TimeMapping, Unsupported, open,
+    Limits, Received, SendRefused, Stamp, TimeMapping, Unsupported, WriteFailed, open,
 };
 
 /// Arbitration id masks, one per id width: every CAN protocol masks the same 29

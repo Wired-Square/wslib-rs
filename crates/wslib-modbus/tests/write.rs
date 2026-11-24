@@ -1,10 +1,14 @@
 mod support;
 
-use std::time::{Duration, Instant};
+use std::{
+    error::Error,
+    time::{Duration, Instant},
+};
 
 use support::{Action, FakeServer, refusable, within};
 use wslib_modbus::{
-    ExceptionCode, ModbusTcp, ReadbackKind, RequestError, TcpOptions, WriteOutcome, WriteReport,
+    ExceptionCode, ModbusTcp, ReadbackKind, RequestError, TcpOptions, TransportError,
+    VerifyProblem, WriteFailure, WriteOutcome, WriteReport, WriteTarget,
 };
 use wslib_modbus::{ModbusWrite, WriteBank};
 
@@ -39,6 +43,83 @@ fn requests(server: &FakeServer) -> Vec<(u8, u16)> {
         .iter()
         .map(|s| (s.function, s.address))
         .collect()
+}
+
+fn register(address: u16) -> WriteTarget {
+    WriteTarget {
+        bank: WriteBank::Holding,
+        address,
+    }
+}
+
+fn coil(address: u16) -> WriteTarget {
+    WriteTarget {
+        bank: WriteBank::Coil,
+        address,
+    }
+}
+
+fn failure(report: &WriteReport) -> &WriteFailure {
+    match &report.outcome {
+        WriteOutcome::Failed(failure) => failure,
+        other => panic!("expected a failure, got {other:?}"),
+    }
+}
+
+fn problems(report: &WriteReport) -> &[VerifyProblem] {
+    match &report.outcome {
+        WriteOutcome::Unconfirmed(problems) => problems,
+        other => panic!("expected problems, got {other:?}"),
+    }
+}
+
+fn mismatches(report: &WriteReport) -> Vec<(WriteTarget, u16, u16)> {
+    problems(report)
+        .iter()
+        .map(|problem| match problem {
+            VerifyProblem::Mismatch {
+                target,
+                wrote,
+                read,
+            } => (*target, *wrote, *read),
+            other => panic!("expected a mismatch, got {other:?}"),
+        })
+        .collect()
+}
+
+fn request_error<'a>(error: &'a (dyn Error + 'static)) -> &'a RequestError {
+    error
+        .source()
+        .and_then(|cause| cause.downcast_ref::<RequestError>())
+        .unwrap_or_else(|| panic!("no request error under {error:?}"))
+}
+
+fn exception(error: &(dyn Error + 'static)) -> ExceptionCode {
+    match request_error(error) {
+        RequestError::Exception { code, .. } => *code,
+        other => panic!("expected an exception, got {other:?}"),
+    }
+}
+
+fn written_at(failure: &WriteFailure) -> WriteTarget {
+    match failure {
+        WriteFailure::Write { target, .. } => *target,
+        other => panic!("expected a write failure, got {other:?}"),
+    }
+}
+
+fn read_modify_written_at(failure: &WriteFailure) -> WriteTarget {
+    match failure {
+        WriteFailure::ReadModifyWrite { target, .. } => *target,
+        other => panic!("expected a read-modify-write failure, got {other:?}"),
+    }
+}
+
+fn unread_at(problem: &VerifyProblem) -> WriteTarget {
+    match problem {
+        VerifyProblem::Unread { target, .. } => *target,
+        other => panic!("expected an unread run, got {other:?}"),
+    }
 }
 
 fn readback(report: &WriteReport) -> Vec<(ReadbackKind, u16, Vec<u16>)> {
@@ -128,7 +209,11 @@ async fn contiguous_writes_go_out_as_runs_then_every_run_is_verified() {
             .write_verified(None, &[full(10, 1), full(11, 2), full(20, 3)])
             .await;
 
-        assert_eq!(report.outcome, WriteOutcome::Confirmed);
+        assert!(
+            matches!(report.outcome, WriteOutcome::Confirmed),
+            "{:?}",
+            report.outcome
+        );
         assert_eq!(
             requests(&server),
             [(0x10, 10), (0x06, 20), (0x03, 10), (0x03, 20)]
@@ -162,7 +247,11 @@ async fn a_mixed_batch_writes_each_bank_with_its_own_codes_then_verifies_it() {
 
         let report = tcp.write_verified(None, &writes).await;
 
-        assert_eq!(report.outcome, WriteOutcome::Confirmed);
+        assert!(
+            matches!(report.outcome, WriteOutcome::Confirmed),
+            "{:?}",
+            report.outcome
+        );
         // A coil run owns its coils, so there is no read before it.
         assert_eq!(
             requests(&server),
@@ -207,10 +296,8 @@ async fn a_coil_that_did_not_change_is_unconfirmed_and_named_as_a_coil() {
             .write_verified(None, &[full(5, 7), ModbusWrite::coil(5, true)])
             .await;
 
-        assert_eq!(
-            report.outcome,
-            WriteOutcome::Unconfirmed("coil 5: wrote 1, read 0".into())
-        );
+        assert_eq!(mismatches(&report), [(coil(5), 1, 0)]);
+        assert_eq!(problems(&report)[0].to_string(), "coil 5: wrote 1, read 0");
         assert!(!report.transport_lost);
     })
     .await
@@ -227,10 +314,10 @@ async fn a_rejected_coil_write_fails_naming_the_coil() {
             .write_verified(None, &[ModbusWrite::coil(8, true)])
             .await;
 
-        assert_eq!(
-            report.outcome,
-            WriteOutcome::Failed("coil 8: Illegal Data Address".into())
-        );
+        let failure = failure(&report);
+        assert_eq!(written_at(failure), coil(8));
+        assert_eq!(failure.to_string(), "coil 8: write failed");
+        assert_eq!(exception(failure), ExceptionCode::IllegalDataAddress);
         assert!(report.written.is_empty());
     })
     .await
@@ -247,7 +334,11 @@ async fn a_masked_run_is_read_first_and_only_its_owned_bits_change() {
             .write_verified(None, &[masked(30, 0x0012, 0x00FF), full(31, 5)])
             .await;
 
-        assert_eq!(report.outcome, WriteOutcome::Confirmed);
+        assert!(
+            matches!(report.outcome, WriteOutcome::Confirmed),
+            "{:?}",
+            report.outcome
+        );
         assert_eq!([server.holding(30), server.holding(31)], [0xAB12, 5]);
         assert_eq!(requests(&server), [(0x03, 30), (0x10, 30), (0x03, 30)]);
         assert_eq!(
@@ -272,10 +363,10 @@ async fn an_exception_on_the_read_modify_write_read_fails_the_batch() {
             .write_verified(None, &[masked(30, 1, 0x000F), full(40, 1)])
             .await;
 
-        assert_eq!(
-            report.outcome,
-            WriteOutcome::Failed("register 30: read-modify-write: Illegal Data Address".into())
-        );
+        let failure = failure(&report);
+        assert_eq!(read_modify_written_at(failure), register(30));
+        assert_eq!(failure.to_string(), "register 30: read-modify-write failed");
+        assert_eq!(exception(failure), ExceptionCode::IllegalDataAddress);
         assert_eq!(requests(&server), [(0x03, 30)]);
         assert!(report.written.is_empty() && report.readback.is_empty());
         assert!(!report.transport_lost);
@@ -293,9 +384,14 @@ async fn a_transport_error_on_the_read_modify_write_read_fails_the_batch() {
 
         let report = tcp.write_verified(None, &[masked(30, 1, 0x000F)]).await;
 
-        assert_eq!(
-            report.outcome,
-            WriteOutcome::Failed("register 30: read-modify-write: timed out after 200ms".into())
+        let failure = failure(&report);
+        assert_eq!(read_modify_written_at(failure), register(30));
+        assert!(
+            matches!(
+                request_error(failure),
+                RequestError::Transport(TransportError::Timeout { after }) if *after == quick().op_timeout
+            ),
+            "{failure:?}"
         );
         assert!(report.transport_lost);
         assert!(!tcp.is_connected());
@@ -315,10 +411,9 @@ async fn the_first_failing_run_stops_the_batch() {
             .write_verified(None, &[full(10, 1), full(20, 2), full(30, 3)])
             .await;
 
-        assert_eq!(
-            report.outcome,
-            WriteOutcome::Failed("register 20: Server Device Failure".into())
-        );
+        let failure = failure(&report);
+        assert_eq!(written_at(failure), register(20));
+        assert_eq!(exception(failure), ExceptionCode::ServerDeviceFailure);
         assert_eq!(requests(&server), [(0x06, 10), (0x06, 20)]);
         assert_eq!(report.written, registers([10]));
         assert!(report.readback.is_empty());
@@ -338,16 +433,18 @@ async fn a_lost_socket_on_a_write_ends_the_batch_without_reconnecting() {
             .write_verified(None, &[full(10, 1), full(20, 2), full(30, 3)])
             .await;
 
-        assert!(
-            matches!(&report.outcome, WriteOutcome::Failed(d) if d.starts_with("register 20: "))
-        );
+        assert_eq!(written_at(failure(&report)), register(20));
         assert!(report.transport_lost);
         assert_eq!(report.written, registers([10]));
         assert_eq!(server.connections(), 1);
         assert!(!tcp.is_connected());
 
         let report = tcp.write_verified(None, &[full(30, 3)]).await;
-        assert_eq!(report.outcome, WriteOutcome::Confirmed);
+        assert!(
+            matches!(report.outcome, WriteOutcome::Confirmed),
+            "{:?}",
+            report.outcome
+        );
         assert_eq!(server.connections(), 2);
     })
     .await
@@ -367,10 +464,12 @@ async fn verify_carries_on_past_an_exception() {
 
         let report = tcp.write_verified(None, &[full(10, 1), full(20, 2)]).await;
 
-        assert_eq!(
-            report.outcome,
-            WriteOutcome::Unconfirmed("register 10: verify read: Illegal Data Address".into())
-        );
+        let [problem] = problems(&report) else {
+            panic!("one problem: {:?}", report.outcome);
+        };
+        assert_eq!(unread_at(problem), register(10));
+        assert_eq!(problem.to_string(), "register 10: verify read failed");
+        assert_eq!(exception(problem), ExceptionCode::IllegalDataAddress);
         assert_eq!(requests(&server).len(), 4);
         assert_eq!(readback(&report), [(ReadbackKind::Verify, 20, vec![2])]);
         assert_eq!(report.written, registers([10, 20]));
@@ -388,10 +487,10 @@ async fn a_lost_socket_stops_verify_without_reconnecting() {
 
         let report = tcp.write_verified(None, &[full(10, 1), full(20, 2)]).await;
 
-        assert!(matches!(
-            &report.outcome,
-            WriteOutcome::Unconfirmed(d) if d.starts_with("register 10: verify read: ")
-        ));
+        let [problem] = problems(&report) else {
+            panic!("one problem: {:?}", report.outcome);
+        };
+        assert_eq!(unread_at(problem), register(10));
         assert_eq!(requests(&server).len(), 3);
         assert!(report.transport_lost);
         assert_eq!(report.written, registers([10, 20]));
@@ -414,10 +513,7 @@ async fn a_mismatch_compares_only_the_owned_bits() {
             .write_verified(None, &[masked(40, 0x0001, 0x000F)])
             .await;
 
-        assert_eq!(
-            report.outcome,
-            WriteOutcome::Unconfirmed("register 40: wrote 1, read 0".into())
-        );
+        assert_eq!(mismatches(&report), [(register(40), 1, 0)]);
         assert!(!report.transport_lost);
     })
     .await
@@ -436,7 +532,11 @@ async fn a_short_read_modify_write_read_is_zero_filled() {
             .write_verified(None, &[masked(50, 1, 0x000F), masked(51, 2, 0x000F)])
             .await;
 
-        assert_eq!(report.outcome, WriteOutcome::Confirmed);
+        assert!(
+            matches!(report.outcome, WriteOutcome::Confirmed),
+            "{:?}",
+            report.outcome
+        );
         assert_eq!([server.holding(50), server.holding(51)], [0xFFF1, 0x0002]);
         assert_eq!(report.readback[0].words, [0xFFFF]);
     })
@@ -452,10 +552,7 @@ async fn a_short_verify_read_is_zero_filled_and_unconfirmed() {
 
         let report = tcp.write_verified(None, &[full(60, 0), full(61, 7)]).await;
 
-        assert_eq!(
-            report.outcome,
-            WriteOutcome::Unconfirmed("register 61: wrote 7, read 0".into())
-        );
+        assert_eq!(mismatches(&report), [(register(61), 7, 0)]);
         assert_eq!(readback(&report), [(ReadbackKind::Verify, 60, vec![0])]);
         assert!(!report.transport_lost);
         assert!(tcp.is_connected());
@@ -480,7 +577,11 @@ async fn a_batch_connects_and_settles_first_and_uses_its_unit() {
             .write_verified(Some(9), &[full(10, 1), full(20, 2)])
             .await;
 
-        assert_eq!(report.outcome, WriteOutcome::Confirmed);
+        assert!(
+            matches!(report.outcome, WriteOutcome::Confirmed),
+            "{:?}",
+            report.outcome
+        );
         assert!(started.elapsed() >= settle);
         assert!(
             server
@@ -504,12 +605,72 @@ async fn a_batch_that_cannot_connect_fails_as_lost() {
 
         let report = tcp.write_verified(None, &[full(10, 1)]).await;
 
-        let connect_failed = format!("connect to {refused} failed: ");
+        let failure = failure(&report);
+        assert!(matches!(failure, WriteFailure::Connect(_)), "{failure:?}");
+        let connect = failure
+            .source()
+            .and_then(|cause| cause.downcast_ref::<TransportError>())
+            .unwrap();
         assert!(
-            matches!(&report.outcome, WriteOutcome::Failed(d) if d.starts_with(&connect_failed))
+            matches!(connect, TransportError::Connect { addr, .. } if *addr == refused),
+            "{connect:?}"
         );
+        let cause = connect
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap();
+        assert_eq!(cause.kind(), std::io::ErrorKind::ConnectionRefused);
         assert!(report.transport_lost);
         assert!(report.written.is_empty() && report.readback.is_empty());
+    })
+    .await
+}
+
+fn violated_under(error: &(dyn Error + 'static)) -> bool {
+    std::iter::successors(Some(error), |&e| e.source())
+        .any(|e| e.downcast_ref::<tokio_modbus::ProtocolError>().is_some())
+}
+
+#[tokio::test]
+async fn a_write_answered_by_another_unit_fails_carrying_tokio_modbus_error() {
+    within(async {
+        let server = FakeServer::start().await;
+        server.script([Action::OtherUnit]);
+        let mut tcp = client(&server);
+
+        let report = tcp.write_verified(None, &[full(10, 1)]).await;
+
+        let failure = failure(&report);
+        assert_eq!(written_at(failure), register(10));
+        assert!(
+            matches!(
+                request_error(failure),
+                RequestError::Transport(TransportError::Violation(_))
+            ),
+            "{failure:?}"
+        );
+        assert!(violated_under(failure), "{failure:?}");
+        assert!(report.transport_lost);
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_verify_read_answered_by_another_unit_is_a_problem_carrying_tokio_modbus_error() {
+    within(async {
+        let server = FakeServer::start().await;
+        server.script([Action::Reply, Action::OtherUnit]);
+        let mut tcp = client(&server);
+
+        let report = tcp.write_verified(None, &[full(10, 1)]).await;
+
+        let [problem] = problems(&report) else {
+            panic!("one problem: {:?}", report.outcome);
+        };
+        assert_eq!(unread_at(problem), register(10));
+        assert!(violated_under(problem), "{problem:?}");
+        assert!(report.transport_lost);
     })
     .await
 }

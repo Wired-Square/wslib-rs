@@ -1,4 +1,4 @@
-use std::{io, time::Duration};
+use std::{error::Error, fmt, io, iter, time::Duration};
 
 #[cfg(test)]
 pub(crate) use wslib_can_bus::PortDirectory;
@@ -35,7 +35,31 @@ pub(crate) fn refused(bus: &CanBus) -> io::Error {
 }
 
 pub(crate) fn failed(error: OpenError) -> io::Error {
-    io::Error::new(error.kind(), error.explain(BUS_FORMS))
+    io::Error::new(error.kind(), Unopened(error))
+}
+
+#[derive(Debug)]
+struct Unopened(OpenError);
+
+impl fmt::Display for Unopened {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0.explain(BUS_FORMS))
+    }
+}
+
+impl Error for Unopened {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.0.source()
+    }
+}
+
+const CAUSE_SEPARATOR: &str = ": ";
+
+pub(crate) fn chain(error: &(dyn Error + 'static)) -> String {
+    iter::successors(Some(error), |&e| e.source())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(CAUSE_SEPARATOR)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

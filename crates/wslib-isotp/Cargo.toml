@@ -1,6 +1,6 @@
 [package]
 name = "wslib-isotp"
-version = "0.1.0"
+version = "0.2.0"
 description = "ISO-TP (ISO 15765-2) over classic CAN: a sans-IO codec for segmenting, reassembly and flow control, and an async link over a wslib-can adapter."
 readme = "README.md"
 edition.workspace = true
@@ -16,14 +16,14 @@ link = ["dep:tokio", "dep:wslib-can", "wslib-can/task", "dep:windows-sys"]
 [dependencies]
 thiserror = "2.0.20"
 tokio = { version = "1.53.3", default-features = false, features = ["macros", "rt", "sync", "time"], optional = true }
-wslib-can = { path = "../wslib-can", version = "0.1.2", registry = "wired-square", optional = true }
+wslib-can = { path = "../wslib-can", version = "0.2", registry = "wired-square", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Media"], optional = true }
 
 [dev-dependencies]
 tokio = { version = "1.53.3", features = ["macros", "rt", "sync", "test-util", "time"] }
-wslib-can = { path = "../wslib-can", version = "0.1.3", registry = "wired-square", features = ["testing"] }
+wslib-can = { path = "../wslib-can", version = "0.2", registry = "wired-square", features = ["testing"] }
 
 [[test]]
 name = "link"

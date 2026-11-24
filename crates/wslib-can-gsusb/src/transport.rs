@@ -559,7 +559,7 @@ mod tests {
     };
 
     use tokio::sync::mpsc;
-    use wslib_can::{CanEvent, CanOptions, CanTask, Device, Limits, SendRefused};
+    use wslib_can::{CanEvent, CanOptions, CanTask, Device, Limits, SendRefused, WriteFailed};
 
     use super::*;
     use crate::{ECHO_ID_RX, HEADER_BYTES};
@@ -860,7 +860,10 @@ mod tests {
         assert!(matches!(error, CanError::Closed));
         usb.broken = Some((Breq::BtConst, io::ErrorKind::ConnectionReset));
         let error = start(&usb, &options(500_000), false).await.err().unwrap();
-        assert!(matches!(&error, CanError::Read(e) if e.to_string().starts_with("BT_CONST")));
+        assert!(
+            matches!(&error, CanError::Request { request: "BT_CONST", source } if source.kind() == io::ErrorKind::ConnectionReset),
+            "{error:?}"
+        );
     }
 
     fn host(echo_id: u32, arb_id: u32, fd: bool, len: usize) -> HostFrame {
@@ -1091,8 +1094,8 @@ mod tests {
             self.0.read().await
         }
 
-        async fn write(&mut self, frame: &CanFrame) -> io::Result<()> {
-            let written = self.0.write(frame).await;
+        async fn write(&mut self, frame: &CanFrame) -> Result<(), WriteFailed> {
+            let written = self.0.write(frame).await.map_err(WriteFailed::Io);
             let held = self.0.held.len();
             self.0
                 .transfers
@@ -1231,7 +1234,10 @@ mod tests {
         );
 
         let timed_out = soon(waiting).await.unwrap().unwrap().unwrap_err();
-        assert_eq!(timed_out.kind(), io::ErrorKind::TimedOut);
+        assert!(
+            matches!(&timed_out, WriteFailed::Io(e) if e.kind() == io::ErrorKind::TimedOut),
+            "{timed_out:?}"
+        );
         soon(queued).await.unwrap().unwrap().unwrap();
         assert_eq!(bench.sent().last(), Some(&(11, 0)));
         task.stop().await;

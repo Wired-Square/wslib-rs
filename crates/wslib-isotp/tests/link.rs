@@ -7,6 +7,7 @@ use std::{
 use tokio::time::{Instant, sleep, timeout};
 use wslib_can::{
     CanEvent, CanFrame, CanOptions, CanRead, CanTask, CanWriter, Direction, SendRefused,
+    WriteFailed,
     loopback::{LoopbackBus, LoopbackPort},
 };
 use wslib_isotp::{
@@ -897,6 +898,28 @@ async fn a_write_stalled_past_n_as_fails_the_send() {
     assert_eq!(at - asked, N_AS + MARGIN);
     let failures = host.stats().send_failures;
     assert_eq!((failures.unconfirmed, failures.adapter_timeout), (1, 0));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_write_that_failed_or_panicked_fails_the_send_with_its_typed_cause() {
+    let rig = Rig::default();
+    let (host, _, port) = rig.host().await;
+    port.fail_next_write(WriteFailed::Io(std::io::ErrorKind::BrokenPipe.into()));
+    let failed = host.send(&PAYLOAD).await;
+    assert!(
+        matches!(&failed, Err(SendFailed::Write(WriteFailed::Io(e))) if e.kind() == std::io::ErrorKind::BrokenPipe),
+        "{failed:?}"
+    );
+    port.fail_next_write(WriteFailed::Panicked);
+    let panicked = host.send(&PAYLOAD).await.unwrap_err();
+    assert!(
+        matches!(
+            std::error::Error::source(&panicked).and_then(|e| e.downcast_ref::<WriteFailed>()),
+            Some(WriteFailed::Panicked)
+        ),
+        "{panicked:?}"
+    );
+    assert_eq!(host.stats().send_failures.write, 2);
 }
 
 fn single_frame() -> Vec<u8> {

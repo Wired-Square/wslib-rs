@@ -18,7 +18,7 @@ use tokio::{
 use support::within;
 use wslib_can::{
     CanError, CanEvent, CanFrame, CanOptions, CanRead, CanTask, DeviceInfo, SendRefused,
-    Unsupported,
+    Unsupported, WriteFailed,
 };
 use wslib_can_gvret::{
     self as gvret, ClientCommand, Decoder, GvretOptions, Link, REQ_DEV_INFO, REQ_NUM_BUSES, SYNC,
@@ -455,6 +455,28 @@ async fn a_read_error_during_the_probe_is_the_callers_error() {
 }
 
 #[tokio::test]
+async fn a_handshake_write_that_fails_is_a_write_error() {
+    within(async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let link = Link::Tcp {
+            endpoint: listener.local_addr().unwrap().to_string(),
+            connect_timeout: Duration::from_secs(1),
+        };
+        let resetting = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            stream.set_zero_linger().unwrap();
+        });
+        let error = open_err(link).await;
+        resetting.await.unwrap();
+        assert!(
+            matches!(&error, CanError::Write(WriteFailed::Io(_))),
+            "{error:?}"
+        );
+    })
+    .await
+}
+
+#[tokio::test]
 async fn a_refused_connect_is_a_connect_error() {
     within(async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -743,9 +765,9 @@ async fn a_probe_connect_gets_no_longer_than_the_probe() {
     .await
 }
 
-#[cfg(feature = "serial")]
+#[cfg(all(feature = "serial", not(target_os = "ios")))]
 mod serial {
-    use wslib_serial::{LineSettings, Parity};
+    use wslib_serial::{LineSettings, Parity, SerialError};
 
     use super::*;
 
@@ -780,13 +802,16 @@ mod serial {
     }
 
     #[tokio::test]
-    async fn invalid_line_settings_are_a_config_error() {
+    async fn invalid_line_settings_are_the_serial_ports_refusal() {
         let bad = LineSettings {
             data_bits: 9,
             ..LINE
         };
         let error = within(open_err(link("/nonexistent/gvret", bad))).await;
-        assert!(matches!(error, CanError::Config(_)), "{error:?}");
+        assert!(
+            matches!(&error, CanError::Serial(SerialError::InvalidSettings(line)) if *line == bad),
+            "{error:?}"
+        );
     }
 
     /// serialport can't open a macOS pty: it sets the rate with `IOSSIOSPEED`,

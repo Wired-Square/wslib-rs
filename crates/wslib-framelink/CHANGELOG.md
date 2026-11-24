@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0
+
+- On wslib-can-bus 0.3, whose `OpenError` is `Error::CanOpen`'s and whose
+  `BusConfig`, `CanMode` and `CanBus` it re-exports, and on wslib-can 0.2
+  and wslib-isotp 0.2.
+
 ## 0.5.0
 
 - `SessionConfig::can_bus: BusConfig` replaces `can_bitrate`.

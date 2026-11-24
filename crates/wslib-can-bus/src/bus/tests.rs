@@ -1,6 +1,8 @@
+use std::error::Error;
+
 use super::{
-    BUILT, BUS_FORMS, BusKind, BusParseError, CanBus, PortDirectory, SerialPort, form_count,
-    forms_of, name_the_bus,
+    BUILT, BUS_FORMS, BusKind, BusParseError, CanBus, PortDirectory, PortParseError, SerialPort,
+    form_count, forms_of, name_the_bus,
 };
 
 const CANABLE2_BY_ID: &str =
@@ -30,13 +32,27 @@ fn a_bus_is_a_socketcan_interface_or_an_slcan_port_and_round_trips() {
     );
     assert_eq!(slcan.to_string(), "slcan=cu.usbmodem2101");
     assert!("slcan=".parse::<CanBus>().is_err());
-    let path = "slcan=/dev/cu.usbmodem2101"
-        .parse::<CanBus>()
-        .unwrap_err()
-        .to_string();
+    let path = "slcan=/dev/cu.usbmodem2101".parse::<CanBus>().unwrap_err();
+    assert_eq!(
+        path.to_string(),
+        "slcan=/dev/cu.usbmodem2101 names no serial port"
+    );
+    let why = path
+        .source()
+        .unwrap()
+        .downcast_ref::<PortParseError>()
+        .unwrap();
+    assert_eq!(
+        why,
+        &PortParseError::Path(Some(SerialPort {
+            directory: PortDirectory::Devices,
+            name: "cu.usbmodem2101".into()
+        }))
+    );
+    let why = why.to_string();
     assert!(
-        path.contains("write slcan=cu.usbmodem2101") && path.contains("under /dev/"),
-        "{path}"
+        why.contains("write slcan=cu.usbmodem2101") && why.contains("under /dev/"),
+        "{why}"
     );
     assert!("".parse::<CanBus>().is_err());
 }
@@ -165,10 +181,17 @@ fn a_gvret_bus_without_a_usable_endpoint_is_refused_naming_its_form() {
 
 #[test]
 fn a_port_name_containing_an_at_sign_is_refused_because_at_starts_the_device_id() {
-    let why = "slcan=by-id:usb-Foo@Bar_X-if00"
+    let refused = "slcan=by-id:usb-Foo@Bar_X-if00"
         .parse::<CanBus>()
-        .unwrap_err()
-        .to_string();
+        .unwrap_err();
+    assert_eq!(
+        refused,
+        BusParseError::Port {
+            bus: "slcan=by-id:usb-Foo@Bar_X-if00".into(),
+            source: PortParseError::DeviceSeparator("usb-Foo@Bar_X-if00".into()),
+        }
+    );
+    let why = refused.source().unwrap().to_string();
     assert!(why.contains("can't contain '@'"), "{why}");
 }
 

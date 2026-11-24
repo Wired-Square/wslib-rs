@@ -1,11 +1,16 @@
-use std::time::{Duration, SystemTime};
+use std::{
+    error::Error,
+    fmt,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use crate::{ModbusWrite, WriteBank, group_contiguous};
 use tokio_modbus::prelude::{Request, Response};
 
 use super::{ModbusTcp, RequestError, TransportError, tcp::Link};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct WriteReport {
     pub outcome: WriteOutcome,
     /// Every read-modify-write and verify read, in the order they ran.
@@ -16,12 +21,112 @@ pub struct WriteReport {
     pub transport_lost: bool,
 }
 
-/// The detail names the registers involved.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum WriteOutcome {
     Confirmed,
-    Unconfirmed(String),
-    Failed(String),
+    /// Every run went out, and these didn't read back as written.
+    Unconfirmed(Vec<VerifyProblem>),
+    Failed(WriteFailure),
+}
+
+/// The first address of a run, or the address a problem is at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WriteTarget {
+    pub bank: WriteBank,
+    pub address: u16,
+}
+
+impl WriteTarget {
+    fn of(write: &ModbusWrite) -> Self {
+        Self {
+            bank: write.bank,
+            address: write.address,
+        }
+    }
+}
+
+impl fmt::Display for WriteTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {}", self.bank.noun(), self.address)
+    }
+}
+
+/// Why a batch stopped; the source is the request's or connection's error.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum WriteFailure {
+    /// No connection to write on.
+    Connect(Arc<TransportError>),
+    /// The read before a read-modify-write of the run at `target` failed.
+    ReadModifyWrite {
+        target: WriteTarget,
+        error: Arc<RequestError>,
+    },
+    /// The write of the run at `target` failed.
+    Write {
+        target: WriteTarget,
+        error: Arc<RequestError>,
+    },
+}
+
+impl fmt::Display for WriteFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Connect(_) => f.write_str("no connection to write on"),
+            Self::ReadModifyWrite { target, .. } => {
+                write!(f, "{target}: read-modify-write failed")
+            }
+            Self::Write { target, .. } => write!(f, "{target}: write failed"),
+        }
+    }
+}
+
+impl Error for WriteFailure {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Connect(error) => Some(&**error),
+            Self::ReadModifyWrite { error, .. } | Self::Write { error, .. } => Some(&**error),
+        }
+    }
+}
+
+/// A target that didn't read back as written.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum VerifyProblem {
+    /// The owned bits read back otherwise.
+    Mismatch {
+        target: WriteTarget,
+        wrote: u16,
+        read: u16,
+    },
+    /// The verify read of the run at `target` failed.
+    Unread {
+        target: WriteTarget,
+        error: Arc<RequestError>,
+    },
+}
+
+impl fmt::Display for VerifyProblem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Mismatch {
+                target,
+                wrote,
+                read,
+            } => write!(f, "{target}: wrote {wrote}, read {read}"),
+            Self::Unread { target, .. } => write!(f, "{target}: verify read failed"),
+        }
+    }
+}
+
+impl Error for VerifyProblem {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Mismatch { .. } => None,
+            Self::Unread { error, .. } => Some(&**error),
+        }
+    }
 }
 
 /// The words as received: a short reply stays short, and a coil reads as 0 or 1.
@@ -93,9 +198,10 @@ impl ModbusTcp {
         let mut link = match self.acquire().await {
             Ok(link) => link,
             Err(e) => {
-                report.outcome = WriteOutcome::Failed(e.to_string());
+                let kept = e.duplicate();
+                report.outcome = WriteOutcome::Failed(WriteFailure::Connect(Arc::new(e)));
                 report.transport_lost = true;
-                return (report, Some(e));
+                return (report, Some(kept));
             }
         };
         let mut batch = Batch {
@@ -161,10 +267,6 @@ fn words(response: Response, count: u16) -> Option<Vec<u16>> {
     }
 }
 
-fn describe(w: &ModbusWrite) -> String {
-    format!("{} {}", w.bank.noun(), w.address)
-}
-
 /// Missing words read as 0, as a short block decodes.
 fn word_at(words: &[u16], index: usize) -> u16 {
     words.get(index).copied().unwrap_or(0)
@@ -209,12 +311,21 @@ impl Batch<'_> {
         Ok(words)
     }
 
-    fn fail(&mut self, first: &ModbusWrite, step: &str, e: RequestError) -> bool {
-        self.report.outcome = WriteOutcome::Failed(format!("{}: {step}{e}", describe(first)));
-        if let RequestError::Transport(error) = e {
-            self.lost = Some(error);
-        }
+    fn fail(
+        &mut self,
+        failed: fn(WriteTarget, Arc<RequestError>) -> WriteFailure,
+        first: &ModbusWrite,
+        e: RequestError,
+    ) -> bool {
+        self.keep_loss(&e);
+        self.report.outcome = WriteOutcome::Failed(failed(WriteTarget::of(first), Arc::new(e)));
         false
+    }
+
+    fn keep_loss(&mut self, e: &RequestError) {
+        if let RequestError::Transport(error) = e {
+            self.lost = Some(error.duplicate());
+        }
     }
 
     async fn register_values(&mut self, run: &[ModbusWrite]) -> Result<Vec<u16>, RequestError> {
@@ -242,7 +353,13 @@ impl Batch<'_> {
                 ),
                 WriteBank::Holding => match self.register_values(run).await {
                     Ok(values) => register_write(first.address, values),
-                    Err(e) => return self.fail(first, "read-modify-write: ", e),
+                    Err(e) => {
+                        return self.fail(
+                            |target, error| WriteFailure::ReadModifyWrite { target, error },
+                            first,
+                            e,
+                        );
+                    }
                 },
             };
             if let Err(e) = self
@@ -250,7 +367,11 @@ impl Batch<'_> {
                 .exchange(self.unit, request, self.op_timeout, acknowledged)
                 .await
             {
-                return self.fail(first, "", e);
+                return self.fail(
+                    |target, error| WriteFailure::Write { target, error },
+                    first,
+                    e,
+                );
             }
             self.report
                 .written
@@ -268,21 +389,29 @@ impl Batch<'_> {
                     for (i, w) in run.iter().enumerate() {
                         let (wrote, read) = (w.value & w.mask, word_at(&words, i) & w.mask);
                         if wrote != read {
-                            problems.push(format!("{}: wrote {wrote}, read {read}", describe(w)));
+                            problems.push(VerifyProblem::Mismatch {
+                                target: WriteTarget::of(w),
+                                wrote,
+                                read,
+                            });
                         }
                     }
                 }
                 Err(e) => {
-                    problems.push(format!("{}: verify read: {e}", describe(&run[0])));
-                    if let RequestError::Transport(error) = e {
-                        self.lost = Some(error);
+                    self.keep_loss(&e);
+                    let lost = matches!(e, RequestError::Transport(_));
+                    problems.push(VerifyProblem::Unread {
+                        target: WriteTarget::of(&run[0]),
+                        error: Arc::new(e),
+                    });
+                    if lost {
                         break;
                     }
                 }
             }
         }
         if !problems.is_empty() {
-            self.report.outcome = WriteOutcome::Unconfirmed(problems.join("; "));
+            self.report.outcome = WriteOutcome::Unconfirmed(problems);
         }
     }
 }

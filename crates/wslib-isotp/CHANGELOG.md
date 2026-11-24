@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0
+
+- On wslib-can 0.2, whose `SendRefused` and `WriteFailed` `SendFailed`
+  carries.
+- `SendFailed::Io` is `SendFailed::Write`, carrying the adapter's
+  `WriteFailed` in place of an `io::Error`, and `SendFailures::io` is
+  `write`.
+- `SendFailed::Refused` and `Write` name only their own layer, and return the
+  `SendRefused` or `WriteFailed` from `source()`.
+
 ## 0.1.0
 
 - A sans-IO ISO-TP (ISO 15765-2) codec for normal addressing on classic

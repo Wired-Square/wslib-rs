@@ -10,6 +10,7 @@ use nusb::{
 use tokio::time::{Instant, timeout, timeout_at};
 use wslib_can::{
     BusState, CanError, CanFrame, CanOptions, CanTask, Device, DeviceInfo, Limits, Received,
+    WriteFailed,
 };
 
 use super::{Control, Frames, GsUsbDevice, GsUsbOptions, OnBus, Transfers, identify, start};
@@ -117,8 +118,8 @@ impl Device for GsUsb {
         self.frames.read().await
     }
 
-    async fn write(&mut self, frame: &CanFrame) -> io::Result<()> {
-        self.frames.write(frame).await
+    async fn write(&mut self, frame: &CanFrame) -> Result<(), WriteFailed> {
+        self.frames.write(frame).await.map_err(WriteFailed::Io)
     }
 
     fn bus_reports(&mut self) -> Vec<BusState> {

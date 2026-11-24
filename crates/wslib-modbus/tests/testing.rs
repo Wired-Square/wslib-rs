@@ -194,7 +194,11 @@ async fn a_verified_write_the_device_acks_but_does_not_apply_is_unconfirmed() {
 
         banks.apply_writes(true);
         let applied = tcp.write_verified(None, &write).await;
-        assert_eq!(applied.outcome, WriteOutcome::Confirmed);
+        assert!(
+            matches!(applied.outcome, WriteOutcome::Confirmed),
+            "{:?}",
+            applied.outcome
+        );
         assert_eq!(banks.get(RegisterType::Holding, 30, 1), [500]);
     })
     .await

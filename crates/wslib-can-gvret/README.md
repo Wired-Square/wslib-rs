@@ -26,4 +26,4 @@ None is on by default.
 - `transport`: `open` and `probe`, a wslib-can task on a GVRET device over
   TCP, with a keepalive that drops a device once it stops answering.
 - `serial`: `Link::Serial`, the same device on a serial port, opened
-  read-write and exclusive through wslib-serial.
+  read-write and exclusive through wslib-serial; not on iOS.

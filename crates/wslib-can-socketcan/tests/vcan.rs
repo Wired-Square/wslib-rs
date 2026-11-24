@@ -15,6 +15,7 @@
 #![cfg(target_os = "linux")]
 
 use std::{
+    error::Error,
     io,
     process::Command,
     time::{Duration, SystemTime},
@@ -27,7 +28,7 @@ use ::socketcan::{
 use wslib_can::{
     CanError, CanEvent, CanFrame, CanOptions, CanRead, CanTask, Direction, SendRefused, Unsupported,
 };
-use wslib_can_socketcan::{self as socketcan, Bitrates, SocketCanOptions};
+use wslib_can_socketcan::{self as socketcan, Bitrates, BitratesError, SocketCanOptions};
 
 const PATIENCE: Duration = Duration::from_secs(10);
 
@@ -157,7 +158,19 @@ async fn a_missing_interface_is_the_callers_open_error() {
 
 #[test]
 fn a_missing_interface_has_no_bitrates_and_one_that_isnt_can_reports_none() {
-    assert!(socketcan::bitrates("wslib-none").is_err());
+    let missing = socketcan::bitrates("wslib-none").unwrap_err();
+    assert_eq!(missing.to_string(), "cannot find wslib-none");
+    assert!(
+        matches!(&missing, BitratesError::Interface { interface, .. } if interface == "wslib-none"),
+        "{missing:?}"
+    );
+    assert!(
+        missing
+            .source()
+            .unwrap()
+            .downcast_ref::<io::Error>()
+            .is_some()
+    );
     let none = Bitrates {
         nominal: None,
         data: None,

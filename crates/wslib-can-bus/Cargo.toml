@@ -1,6 +1,6 @@
 [package]
 name = "wslib-can-bus"
-version = "0.2.0"
+version = "0.3.0"
 description = "A CAN adapter's address, as SocketCAN, SLCAN, gs_usb, PEAK or GVRET, and a wslib-can task opened on it."
 readme = "README.md"
 edition.workspace = true
@@ -19,13 +19,13 @@ pcan = ["task", "dep:wslib-can-pcan", "wslib-can-pcan/transport"]
 gvret = ["task", "dep:wslib-can-gvret", "wslib-can-gvret/transport"]
 
 [dependencies]
-wslib-can = { path = "../wslib-can", version = "0.1.2", registry = "wired-square", features = ["task"], optional = true }
-wslib-can-gsusb = { path = "../wslib-can-gsusb", version = "0.1", registry = "wired-square", optional = true }
-wslib-can-gvret = { path = "../wslib-can-gvret", version = "0.1", registry = "wired-square", optional = true }
-wslib-can-pcan = { path = "../wslib-can-pcan", version = "0.1", registry = "wired-square", optional = true }
-wslib-can-slcan = { path = "../wslib-can-slcan", version = "0.1", registry = "wired-square", optional = true }
-wslib-can-socketcan = { path = "../wslib-can-socketcan", version = "0.1", registry = "wired-square", optional = true }
-wslib-serial = { path = "../wslib-serial", version = "0.1.1", registry = "wired-square", optional = true }
+wslib-can = { path = "../wslib-can", version = "0.2", registry = "wired-square", features = ["task"], optional = true }
+wslib-can-gsusb = { path = "../wslib-can-gsusb", version = "0.2", registry = "wired-square", optional = true }
+wslib-can-gvret = { path = "../wslib-can-gvret", version = "0.2", registry = "wired-square", optional = true }
+wslib-can-pcan = { path = "../wslib-can-pcan", version = "0.2", registry = "wired-square", optional = true }
+wslib-can-slcan = { path = "../wslib-can-slcan", version = "0.2", registry = "wired-square", optional = true }
+wslib-can-socketcan = { path = "../wslib-can-socketcan", version = "0.2", registry = "wired-square", optional = true }
+wslib-serial = { path = "../wslib-serial", version = "0.2", registry = "wired-square", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1.53.3", default-features = false, features = ["rt"] }

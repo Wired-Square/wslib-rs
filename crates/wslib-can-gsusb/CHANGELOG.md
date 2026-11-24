@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0
+
+- On wslib-can 0.2.
+- `transport`: a request the device refuses is wslib-can's
+  `CanError::Request`, naming the request, with nusb's `io::Error` as its
+  source, in place of `Read` with the request's name in the text.
+- An adapter bound to a driver other than WinUSB keeps nusb's `io::Error`
+  as the source of the open's `io::Error`, which names the driver and the
+  remedy.
+- A send the device doesn't take answers with `WriteFailed::Io` and nusb's
+  `io::Error`.
+
 ## 0.1.0
 
 - The gs_usb codec: the host frame both ways, the vendor requests and their

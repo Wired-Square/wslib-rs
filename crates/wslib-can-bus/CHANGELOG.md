@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.0
+
+- `OpenError::Open`'s source is an `OpenCause`: `Io` for finding the
+  adapter, or `Adapter` with the adapter's wslib-can `CanError`, in place of
+  an `io::Error` wrapping either. `source()` returns the `io::Error` or the
+  `CanError` itself.
+- `OpenError::Open` names only the bus that did not open; the cause comes
+  only through `source()`. `kind()` is the cause's `io::Error` kind, a
+  failed write's and a GVRET connect's included, so a missing adapter or
+  port is `NotFound`, and a USB listing that fails keeps its own.
+- `SerialPort`'s parse fails with `PortParseError`, not a `String`.
+  `BusParseError::Port` carries it as its source for an SLCAN bus whose port
+  doesn't parse.
+- On wslib-can 0.2, whose `CanError` is `OpenCause::Adapter`'s, and on
+  wslib-serial 0.2, wslib-can-slcan 0.2, wslib-can-gvret 0.2,
+  wslib-can-gsusb 0.2, wslib-can-pcan 0.2 and wslib-can-socketcan 0.2.
+
 ## 0.2.0
 
 - `open` takes a `BusConfig` in place of `bitrate: Option<u32>`.

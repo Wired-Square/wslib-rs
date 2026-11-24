@@ -1,10 +1,10 @@
-use std::{io, time::Duration};
+use std::time::Duration;
 
 use tokio::{
     sync::oneshot,
     time::{Instant, sleep, timeout_at},
 };
-use wslib_can::SendRefused;
+use wslib_can::{SendRefused, WriteFailed};
 
 use super::{
     period::Period,
@@ -29,10 +29,10 @@ pub enum SendFailed {
     TooManyWaits,
     #[error("flow control with reserved status {0:#x}")]
     ReservedStatus(u8),
-    #[error("send refused: {0}")]
-    Refused(SendRefused),
-    #[error("send failed: {0}")]
-    Io(io::Error),
+    #[error("send refused")]
+    Refused(#[source] SendRefused),
+    #[error("send failed")]
+    Write(#[source] WriteFailed),
     /// The adapter's queue had no room within N_As. The frame was not sent.
     #[error("the adapter's queue had no room within N_As")]
     AdapterTimeout,
@@ -152,5 +152,28 @@ impl Shared {
             return Ok(());
         }
         self.unless_interrupted(generation, sleep(gap)).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error;
+
+    use super::*;
+
+    #[test]
+    fn a_refused_or_failed_send_names_only_its_own_layer_and_keeps_its_cause() {
+        let refused = SendFailed::Refused(SendRefused::QueueFull);
+        assert_eq!(refused.to_string(), "send refused");
+        assert_eq!(
+            refused.source().unwrap().downcast_ref::<SendRefused>(),
+            Some(&SendRefused::QueueFull)
+        );
+        let failed = SendFailed::Write(WriteFailed::Panicked);
+        assert_eq!(failed.to_string(), "send failed");
+        assert!(matches!(
+            failed.source().unwrap().downcast_ref::<WriteFailed>(),
+            Some(WriteFailed::Panicked)
+        ));
     }
 }

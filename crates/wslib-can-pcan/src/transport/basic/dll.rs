@@ -1,4 +1,4 @@
-use std::{ffi::c_void, io, ptr, sync::Arc, time::Duration};
+use std::{error::Error, ffi::c_void, fmt, io, ptr, sync::Arc, time::Duration};
 
 use libloading::Library;
 
@@ -74,12 +74,7 @@ struct Dll {
 
 impl Dll {
     fn load() -> io::Result<Self> {
-        let missing = |e: libloading::Error| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("{e}: install PEAK-Drivers (PCAN-Basic)"),
-            )
-        };
+        let missing = |e| io::Error::new(io::ErrorKind::NotFound, Missing(e));
         // SAFETY: PCANBasic.dll runs no initialiser with preconditions, each
         // type is the symbol's in PCANBasic.h, and the pointers are kept only
         // beside the library they came from.
@@ -97,6 +92,21 @@ impl Dll {
                 _library: library,
             })
         }
+    }
+}
+
+#[derive(Debug)]
+struct Missing(libloading::Error);
+
+impl fmt::Display for Missing {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("PCANBasic.dll didn't load: install PEAK-Drivers (PCAN-Basic)")
+    }
+}
+
+impl Error for Missing {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.0)
     }
 }
 
@@ -152,5 +162,28 @@ impl Api for Dll {
         let millis = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX);
         // SAFETY: the event lives as long as `self`.
         unsafe { WaitForSingleObject(self.event.0, millis) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_library_that_did_not_load_says_what_to_install_and_keeps_why() {
+        let Err(why) = (unsafe { Library::new("wslib-absent.dll") }) else {
+            panic!("an absent library loaded");
+        };
+        let error = io::Error::new(io::ErrorKind::NotFound, Missing(why));
+        assert_eq!(
+            error.to_string(),
+            "PCANBasic.dll didn't load: install PEAK-Drivers (PCAN-Basic)"
+        );
+        assert!(
+            error
+                .source()
+                .and_then(|cause| cause.downcast_ref::<libloading::Error>())
+                .is_some()
+        );
     }
 }

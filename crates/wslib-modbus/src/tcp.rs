@@ -1,11 +1,12 @@
 use std::{
     io,
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 
 use tokio::time::{Instant, sleep, timeout};
 use tokio_modbus::{
-    ProtocolError, Slave,
+    Slave,
     client::{Context, tcp::attach_slave},
     prelude::{Client, ReadCode, Request, Response, SlaveContext},
 };
@@ -225,12 +226,7 @@ impl Link {
                 TransportError::Closed
             }
             Ok(Err(tokio_modbus::Error::Transport(e))) => TransportError::Io(e),
-            Ok(Err(tokio_modbus::Error::Protocol(e))) => TransportError::Protocol(match e {
-                ProtocolError::HeaderMismatch { message, .. } => message,
-                ProtocolError::FunctionCodeMismatch { request, .. } => {
-                    format!("reply does not match function {request}")
-                }
-            }),
+            Ok(Err(tokio_modbus::Error::Protocol(e))) => TransportError::Violation(Arc::new(e)),
             Err(_) => TransportError::Timeout { after: op_timeout },
         };
         Err(transport.into())

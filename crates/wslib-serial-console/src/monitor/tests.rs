@@ -3,7 +3,7 @@ use std::future::Future;
 use tokio::time::{Duration, timeout};
 
 use super::*;
-use crate::test_support::{FakeDevice, FakePorts, StopReaders, Wired};
+use crate::test_support::{FakeDevice, FakePorts, StopReaders, WRITES_REFUSED, Wired};
 
 const PATH: &str = "/dev/ttyACM0";
 const WAIT: Duration = Duration::from_secs(5);
@@ -127,6 +127,46 @@ fn a_port_key_reads_back_from_its_display() {
     }
     assert_eq!("usb:0042".parse(), Ok(PortKey::UsbSerial("0042".into())));
     assert_eq!("usb-path:X".parse(), Ok(PortKey::UsbPath("X".into())));
+}
+
+#[tokio::test]
+async fn a_port_that_does_not_open_is_backed_off_from_with_each_cause() {
+    let bench = Bench::new();
+    let mut console = bench.monitors.subscribe(path(), None, Bounds::default());
+    let wanted = format!(
+        "open {PATH}: cannot open {PATH}: {}",
+        std::io::Error::from(std::io::ErrorKind::NotFound)
+    );
+    until(&mut console, |u| {
+        matches!(
+            u,
+            Update::State {
+                state: MonitorState::Backoff,
+                message: Some(message),
+            } if *message == wanted
+        )
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_read_that_failed_is_backed_off_from_with_each_cause() {
+    let bench = Bench::new();
+    let device = bench.plug();
+    let mut console = bench.console("alex").await;
+    let cause = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "the cable came out");
+    device.lose(wslib_serial::SerialError::Read(cause));
+    let wanted = format!("read {PATH}: read failed: the cable came out");
+    until(&mut console, |u| {
+        matches!(
+            u,
+            Update::State {
+                state: MonitorState::Backoff,
+                message: Some(message),
+            } if *message == wanted
+        )
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -537,12 +577,13 @@ async fn a_failed_write_or_reset_drops_the_line_and_it_is_reopened() {
     let bench = Bench::new();
     let mut device = bench.plug();
     let mut console = bench.console("alex").await;
-    let lost = |why: &'static str| {
+    let lost = |what: &'static str| {
+        let wanted = format!("{what} {PATH}: write failed: {WRITES_REFUSED}");
         move |u: &Update| match u {
             Update::State {
                 state: MonitorState::Backoff,
                 message: Some(message),
-            } => message.starts_with(why),
+            } => *message == wanted,
             _ => false,
         }
     };
@@ -550,13 +591,13 @@ async fn a_failed_write_or_reset_drops_the_line_and_it_is_reopened() {
     device.fail_writes();
     let mut again = bench.plug();
     bench.monitors.write(&path(), b"x".to_vec(), None).unwrap();
-    until(&mut console, lost("write ")).await;
+    until(&mut console, lost("write")).await;
     reaches(&mut console, MonitorState::Reading).await;
 
     again.fail_writes();
     let _third = bench.plug();
     bench.monitors.reset(&path()).unwrap();
-    until(&mut console, lost("reset ")).await;
+    until(&mut console, lost("reset")).await;
     reaches(&mut console, MonitorState::Reading).await;
 }
 

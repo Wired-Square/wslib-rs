@@ -17,8 +17,8 @@ use crate::{
     wiredreflow::{
         self,
         bus::{
-            CanBus, DEVICE_SEPARATOR, PATH_SEPARATOR, SLCAN_PREFIX, SerialPort, name_the_bus,
-            port_forms,
+            CanBus, DEVICE_SEPARATOR, PATH_SEPARATOR, SLCAN_PREFIX, SerialPort, chain,
+            name_the_bus, port_forms,
         },
         link::WiredReflowProbe,
     },
@@ -279,7 +279,7 @@ impl FromStr for ProbeUri {
             };
             let bus: CanBus = bus_text.parse().map_err(|why| match why {
                 BusParseError::Empty => ProbeUriError::Target(name_the_bus("the CAN bus")),
-                why => ProbeUriError::Target(why.to_string()),
+                why => ProbeUriError::Target(chain(&why)),
             })?;
             let probe = format!("{WIREDREFLOW}{SCHEME_SEPARATOR}{target}");
             return Ok(ProbeUri::WiredReflow {

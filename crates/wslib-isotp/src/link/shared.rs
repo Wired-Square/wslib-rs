@@ -120,12 +120,13 @@ impl Shared {
 
     pub(super) async fn out(&self, generation: u64, data: Vec<u8>) -> Result<(), SendFailed> {
         let config = &self.config;
+        let fd = config.framing.is_fd();
         let frame = CanFrame::data(
             config.bus,
             config.tx_id,
             config.extended,
-            false,
-            false,
+            fd,
+            fd && config.brs,
             data,
         );
         let deadline = Instant::now() + config.n_as;
@@ -163,7 +164,7 @@ impl Shared {
     }
 
     pub(super) fn route(&self, frame: &[u8]) {
-        let flow = match FlowControl::parse(frame) {
+        let flow = match self.config.framing.parse_flow_control(frame) {
             Ok(flow) => Ok(flow),
             Err(FlowControlError::ReservedStatus(status)) => Err(status),
             Err(FlowControlError::NotFlowControl) => return,

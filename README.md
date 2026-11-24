@@ -53,7 +53,7 @@ appliance chassis and every app beside it.
 | `wslib-http-scaffold`    | SPA fallback, health and version routes, standard layers      |
 | `wslib-http-server`      | HTTP, TLS and a redirect listener, bounded and drained        |
 | `wslib-instruments`      | Blocking bench-instrument probes: a 121GW, a WiredReflow      |
-| `wslib-isotp`            | ISO-TP on classic CAN: segmenting, reassembly, flow control   |
+| `wslib-isotp`            | ISO-TP on CAN and CAN FD: codec, link, tap, detection, a peer |
 | `wslib-mcp`              | Hosting layer for tools-only MCP servers over rmcp            |
 | `wslib-mcu-flash`        | ESP32 and STM32 flashing: tty lookup, images, six backends    |
 | `wslib-mcumgr`           | SMP (mcumgr): image upload, test and confirm, files, UDP, BLE |

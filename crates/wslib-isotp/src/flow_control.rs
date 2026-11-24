@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::pci::{LOW_NIBBLE, PciKind};
+use crate::pci::{CLASSIC_LEN, LOW_NIBBLE, PciKind};
 
 pub(crate) const UNLIMITED_BLOCK: u8 = 0;
 
@@ -14,6 +14,8 @@ const RESERVED: Duration = Duration::from_millis(MAX_MILLIS as u64);
 
 /// A flow control's minimum gap between consecutive frames, as its raw byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpStMin"))]
 pub struct StMin(pub u8);
 
 impl StMin {
@@ -45,6 +47,8 @@ impl StMin {
 
 /// A flow control's status nibble.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpFlowStatus"))]
 #[repr(u8)]
 pub enum FlowStatus {
     ContinueToSend = 0x0,
@@ -74,6 +78,8 @@ pub enum FlowControlError {
 /// A flow control frame. A block size of 0 asks for every consecutive frame
 /// in one block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpFlowControl"))]
 pub struct FlowControl {
     pub status: FlowStatus,
     pub block_size: u8,
@@ -92,10 +98,17 @@ impl FlowControl {
 
     /// Parses a flow control, padded or not.
     pub fn parse(frame: &[u8]) -> Result<Self, FlowControlError> {
-        let [pci, block_size, st_min, ..] = *frame else {
+        if frame.len() > CLASSIC_LEN {
+            return Err(FlowControlError::NotFlowControl);
+        }
+        Self::parse_payload(frame)
+    }
+
+    pub(crate) fn parse_payload(payload: &[u8]) -> Result<Self, FlowControlError> {
+        let [pci, block_size, st_min, ..] = *payload else {
             return Err(FlowControlError::NotFlowControl);
         };
-        if PciKind::classify(frame) != Some(PciKind::FlowControl) {
+        if PciKind::of(pci) != Some(PciKind::FlowControl) {
             return Err(FlowControlError::NotFlowControl);
         }
         let nibble = pci & LOW_NIBBLE;

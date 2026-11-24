@@ -1,8 +1,6 @@
 use crate::flow_control::{FlowControl, FlowStatus, StMin, UNLIMITED_BLOCK};
-use crate::pci::{
-    CF_MAX_DATA, CF_PCI_LEN, CLASSIC_LEN, FF_DL_MIN, FF_PCI_LEN, LOW_NIBBLE, PciKind, SF_PCI_LEN,
-    SN_FIRST,
-};
+use crate::framing::{FirstFrame, Framing, Pdu};
+use crate::pci::{LOW_NIBBLE, SN_FIRST};
 
 /// Why a message in progress was dropped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -11,8 +9,8 @@ pub enum Abort {
         expected: u8,
         received: u8,
     },
-    /// A consecutive frame carried fewer bytes than the lesser of 7 and what
-    /// the message still needs.
+    /// A consecutive frame carried fewer bytes than the lesser of what its
+    /// first frame's length allows and what the message still needs.
     Truncated {
         needed: usize,
         carried: usize,
@@ -58,6 +56,7 @@ struct Receiving {
     len: usize,
     next_sn: u8,
     in_block: u8,
+    cf_capacity: usize,
 }
 
 /// The receive side: frames in, whole messages and flow controls out.
@@ -65,16 +64,25 @@ struct Receiving {
 pub struct Reassembler {
     block_size: u8,
     st_min: StMin,
+    framing: Framing,
     receiving: Option<Receiving>,
 }
 
 impl Reassembler {
     /// A receiver asking for `block_size` consecutive frames per flow control,
-    /// 0 for all, at least `st_min` apart.
+    /// 0 for all, at least `st_min` apart, with the default [`Framing`].
     pub fn new(block_size: u8, st_min: StMin) -> Self {
+        Self::with_framing(block_size, st_min, Framing::default())
+    }
+
+    /// As [`new`](Self::new), reading frames as `framing` lays them out. A
+    /// first frame announcing more than its `max_message` is answered with
+    /// an overflow.
+    pub fn with_framing(block_size: u8, st_min: StMin, framing: Framing) -> Self {
         Self {
             block_size,
             st_min,
+            framing,
             receiving: None,
         }
     }
@@ -89,61 +97,45 @@ impl Reassembler {
     }
 
     /// Takes one received frame, padded or not. It ignores flow control and
-    /// any frame [`PciKind::classify`] refuses.
+    /// any frame its framing's [`classify`](Framing::classify) refuses.
     #[must_use = "a frame can complete a message or need a flow control sent"]
     pub fn on_frame(&mut self, frame: &[u8]) -> Outcome {
-        match PciKind::classify(frame) {
-            Some(PciKind::Single) => {
-                let aborted = self.supersede();
-                Outcome {
-                    aborted,
-                    step: Self::on_single(frame),
-                }
-            }
-            Some(PciKind::First) => {
-                let aborted = self.supersede();
-                Outcome {
-                    aborted,
-                    step: self.on_first(frame),
-                }
-            }
-            Some(PciKind::Consecutive) => self.on_consecutive(frame),
-            Some(PciKind::FlowControl) | None => Outcome::NOTHING,
+        match self.framing.decode(frame) {
+            Some(Pdu::Single(data)) => Outcome {
+                aborted: self.supersede(),
+                step: data.map_or(Step::Nothing, |data| Step::Message(data.to_vec())),
+            },
+            Some(Pdu::First(first)) => Outcome {
+                aborted: self.supersede(),
+                step: first.map_or(Step::Nothing, |first| self.on_first(first)),
+            },
+            Some(Pdu::Consecutive { sn, data }) => self.on_consecutive(sn, data),
+            Some(Pdu::FlowControl(_)) | None => Outcome::NOTHING,
         }
     }
 
-    fn on_single(frame: &[u8]) -> Step {
-        let len = usize::from(frame[0] & LOW_NIBBLE);
-        match frame.get(SF_PCI_LEN..SF_PCI_LEN + len) {
-            Some(data) if !data.is_empty() => Step::Message(data.to_vec()),
-            _ => Step::Nothing,
+    fn on_first(&mut self, first: FirstFrame<'_>) -> Step {
+        if first.len > self.framing.max_len() {
+            return Step::SendFlowControl(self.flow(FlowStatus::Overflow));
         }
-    }
-
-    fn on_first(&mut self, frame: &[u8]) -> Step {
-        if frame.len() < CLASSIC_LEN {
-            return Step::Nothing;
-        }
-        let len = usize::from(u16::from_be_bytes([frame[0] & LOW_NIBBLE, frame[1]]));
-        if len < FF_DL_MIN {
-            return Step::Nothing;
-        }
-        let mut message = Vec::with_capacity(len);
-        message.extend_from_slice(&frame[FF_PCI_LEN..CLASSIC_LEN]);
         self.receiving = Some(Receiving {
-            message,
-            len,
+            message: first.buffer(),
+            len: first.len,
             next_sn: SN_FIRST,
             in_block: 0,
+            cf_capacity: first.cf_capacity,
         });
         Step::SendFlowControl(self.continue_to_send())
     }
 
-    fn on_consecutive(&mut self, frame: &[u8]) -> Outcome {
-        let Some(receiving) = self.receiving.as_mut() else {
+    fn on_consecutive(&mut self, sn: u8, data: &[u8]) -> Outcome {
+        let Some(receiving) = self
+            .receiving
+            .as_mut()
+            .filter(|receiving| data.len() <= receiving.cf_capacity)
+        else {
             return Outcome::NOTHING;
         };
-        let sn = frame[0] & LOW_NIBBLE;
         if sn != receiving.next_sn {
             let expected = receiving.next_sn;
             return self.abort(Abort::OutOfSequence {
@@ -151,11 +143,11 @@ impl Reassembler {
                 received: sn,
             });
         }
-        let wanted = (receiving.len - receiving.message.len()).min(CF_MAX_DATA);
-        let Some(data) = frame.get(CF_PCI_LEN..CF_PCI_LEN + wanted) else {
+        let wanted = (receiving.len - receiving.message.len()).min(receiving.cf_capacity);
+        let Some(data) = data.get(..wanted) else {
             return self.abort(Abort::Truncated {
                 needed: wanted,
-                carried: frame.len() - CF_PCI_LEN,
+                carried: data.len(),
             });
         };
         receiving.message.extend_from_slice(data);
@@ -189,8 +181,12 @@ impl Reassembler {
     }
 
     fn continue_to_send(&self) -> FlowControl {
+        self.flow(FlowStatus::ContinueToSend)
+    }
+
+    fn flow(&self, status: FlowStatus) -> FlowControl {
         FlowControl {
-            status: FlowStatus::ContinueToSend,
+            status,
             block_size: self.block_size,
             st_min: self.st_min,
         }
@@ -200,8 +196,183 @@ impl Reassembler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pci::{FF_DATA, MAX_MESSAGE};
+    use crate::framing::{Addressing, FdLength, FrameFormat};
+    use crate::pci::{CF_MAX_DATA, CF_PCI_LEN, CLASSIC_LEN, FF_DATA, FF_DL_MIN, MAX_MESSAGE};
     use crate::segment::Segmenter;
+
+    fn framings() -> Vec<Framing> {
+        let addressings = [
+            Addressing::Normal,
+            Addressing::Extended { tx: 0x10, rx: 0xF1 },
+            Addressing::Mixed { tx: 0x55, rx: 0x55 },
+        ];
+        let formats = [
+            FrameFormat::Classic,
+            FrameFormat::Fd(FdLength::new(8).unwrap()),
+            FrameFormat::Fd(FdLength::new(20).unwrap()),
+            FrameFormat::Fd(FdLength::MAX),
+        ];
+        let mut framings = Vec::new();
+        for addressing in addressings {
+            for format in formats {
+                for padding in [None, Some(0xAA)] {
+                    let mut framing = Framing::new(addressing, format);
+                    framing.padding = padding;
+                    framing.max_message = 70_000;
+                    framings.push(framing);
+                }
+            }
+        }
+        framings
+    }
+
+    fn framed_round_trip(sender: &Framing, len: usize) {
+        let data = message(len);
+        let mut segmenter = Segmenter::with_framing(&data, sender).unwrap();
+        let mut reassembler = Reassembler::with_framing(0, ST_MIN, sender.peer());
+        let first = reassembler.on_frame(&segmenter.first());
+        if segmenter.is_single() {
+            assert_eq!(first, Outcome::of(Step::Message(data)), "{sender:?} {len}");
+            return;
+        }
+        assert_eq!(first, Outcome::of(cts(0)), "{sender:?} {len}");
+        let mut last = None;
+        for frame in segmenter.by_ref() {
+            match reassembler.on_frame(&frame) {
+                Outcome {
+                    aborted: None,
+                    step: Step::Accepted,
+                } => {}
+                Outcome {
+                    aborted: None,
+                    step: Step::Message(message),
+                } => last = Some(message),
+                other => panic!("{sender:?} {len}: {other:?}"),
+            }
+        }
+        assert_eq!(last, Some(data), "{sender:?} {len}");
+    }
+
+    #[test]
+    fn every_addressing_format_and_padding_round_trips() {
+        for framing in framings() {
+            for len in [
+                1,
+                6,
+                7,
+                8,
+                18,
+                61,
+                62,
+                63,
+                64,
+                200,
+                MAX_MESSAGE,
+                MAX_MESSAGE + 1,
+                70_000,
+            ] {
+                framed_round_trip(&framing, len);
+            }
+        }
+    }
+
+    #[test]
+    fn a_frame_carrying_another_address_byte_is_ignored() {
+        let sender = Framing::new(
+            Addressing::Extended { tx: 0x10, rx: 0xF1 },
+            FrameFormat::Classic,
+        );
+        let mut reassembler = Reassembler::with_framing(0, ST_MIN, sender);
+        let ours = sender.peer().frame(&[0x01, 0x3E]);
+        assert_eq!(
+            reassembler.on_frame(&sender.frame(&[0x01, 0x3E])),
+            Outcome::NOTHING
+        );
+        assert_eq!(
+            reassembler.on_frame(&ours),
+            Outcome::of(Step::Message(vec![0x3E]))
+        );
+    }
+
+    #[test]
+    fn a_first_frame_over_the_message_cap_is_answered_with_overflow() {
+        let mut framing = Framing {
+            max_message: 100,
+            ..Framing::default()
+        };
+        let mut reassembler = Reassembler::with_framing(0, ST_MIN, framing);
+        assert_eq!(
+            reassembler.on_frame(&[0x10, 101, 0, 0, 0, 0, 0, 0]),
+            Outcome::of(Step::SendFlowControl(FlowControl {
+                status: FlowStatus::Overflow,
+                block_size: 0,
+                st_min: ST_MIN,
+            }))
+        );
+        assert!(!reassembler.is_receiving());
+        framing.max_message = 70_000;
+        let mut reassembler = Reassembler::with_framing(0, ST_MIN, framing);
+        let hostile = [0x10, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0, 0];
+        assert!(matches!(
+            reassembler.on_frame(&hostile).step,
+            Step::SendFlowControl(FlowControl {
+                status: FlowStatus::Overflow,
+                ..
+            })
+        ));
+        assert!(!reassembler.is_receiving());
+    }
+
+    #[test]
+    fn a_consecutive_frame_longer_than_the_first_frame_is_ignored() {
+        let fd = Framing::new(Addressing::Normal, FrameFormat::Fd(FdLength::MAX));
+        let mut reassembler = Reassembler::with_framing(0, ST_MIN, fd);
+        let first = [0x10, 30, 0, 1, 2, 3, 4, 5];
+        assert_eq!(reassembler.on_frame(&first), Outcome::of(cts(0)));
+        let mut long = vec![0x21];
+        long.extend(6..17);
+        assert_eq!(reassembler.on_frame(&long), Outcome::NOTHING);
+        assert!(reassembler.is_receiving());
+        assert_eq!(
+            reassembler.on_frame(&[0x21, 6, 7, 8, 9, 10, 11, 12]),
+            ACCEPTED
+        );
+    }
+
+    #[test]
+    fn an_announced_length_reserves_at_most_4095_bytes() {
+        let framing = Framing {
+            max_message: u32::MAX,
+            ..Framing::default()
+        };
+        let mut reassembler = Reassembler::with_framing(0, ST_MIN, framing);
+        let hostile = [0x10, 0x00, 0xFF, 0xFF, 0xFF, 0xF0, 0xAA, 0xBB];
+        assert_eq!(reassembler.on_frame(&hostile), Outcome::of(cts(0)));
+        let receiving = reassembler.receiving.as_ref().unwrap();
+        assert_eq!(receiving.len, 0xFFFF_FFF0);
+        assert!(receiving.message.capacity() <= MAX_MESSAGE);
+    }
+
+    #[test]
+    fn a_can_fd_receiver_reads_consecutive_frames_as_long_as_the_first() {
+        let fd = Framing::new(Addressing::Normal, FrameFormat::Fd(FdLength::MAX));
+        let mut reassembler = Reassembler::with_framing(0, ST_MIN, fd);
+        let mut first = vec![0x10, 30];
+        first.extend(0..10);
+        first.resize(12, 0);
+        let Step::SendFlowControl(_) = reassembler.on_frame(&first).step else {
+            panic!("a 12-byte first frame starts a message");
+        };
+        let mut cf = vec![0x21];
+        cf.extend(10..20);
+        assert_eq!(
+            reassembler.on_frame(&cf).aborted,
+            Some(Abort::Truncated {
+                needed: 11,
+                carried: 10
+            })
+        );
+    }
 
     const PADDING: u8 = 0xCC;
     const ACCEPTED: Outcome = Outcome::of(Step::Accepted);

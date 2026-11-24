@@ -76,7 +76,8 @@ impl IsoTpLink {
     }
 
     /// Queues a read for the receive task without waiting. It keeps only
-    /// received classic data frames on the link's bus, rx id and id width.
+    /// received data frames on the link's bus, rx id and id width, and CAN FD
+    /// ones only on a CAN FD link.
     pub fn feed(&self, read: &CanRead) {
         let shared = &self.inner.shared;
         let config = &shared.config;
@@ -85,7 +86,7 @@ impl IsoTpLink {
             && frame.bus == config.bus
             && frame.arb_id == config.rx_id
             && frame.extended == config.extended
-            && !frame.fd
+            && (!frame.fd || config.framing.is_fd())
             && !frame.rtr;
         if !ours {
             return;
@@ -100,7 +101,8 @@ impl IsoTpLink {
         }
     }
 
-    /// Sends one message of 1 to 4095 bytes after any send under way, and
+    /// Sends one message of 1 byte to the framing's `max_message` after any
+    /// send under way, and
     /// returns once the adapter has taken its last frame. If the send is
     /// dropped part-way, a frame the adapter has may still reach the bus.
     pub async fn send(&self, message: &[u8]) -> Result<(), SendFailed> {

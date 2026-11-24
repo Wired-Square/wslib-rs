@@ -27,7 +27,11 @@ pub(super) async fn run(
     _done: oneshot::Sender<()>,
 ) {
     let config = &shared.config;
-    let mut reassembler = Reassembler::new(config.block_size, StMin::from_duration(config.st_min));
+    let mut reassembler = Reassembler::with_framing(
+        config.block_size,
+        StMin::from_duration(config.st_min),
+        config.framing,
+    );
     let mut generation = shared.generation();
     let mut n_cr: Option<Instant> = None;
     loop {
@@ -56,7 +60,7 @@ pub(super) async fn run(
             Turn::Reset | Turn::Expired => {}
             Turn::Frame(queued) if queued.generation != generation => {}
             Turn::Frame(Queued { data, .. })
-                if PciKind::classify(&data) == Some(PciKind::FlowControl) =>
+                if config.framing.classify(&data) == Some(PciKind::FlowControl) =>
             {
                 shared.route(&data);
             }
@@ -69,7 +73,8 @@ pub(super) async fn run(
                     Step::Nothing => {}
                     Step::Accepted => n_cr = Some(Instant::now() + config.n_cr),
                     Step::SendFlowControl(flow) => {
-                        if shared.out(generation, flow.encode()).await.is_err() {
+                        let frame = config.framing.encode_flow_control(&flow);
+                        if shared.out(generation, frame).await.is_err() {
                             shared.stats.flow_controls_failed.add();
                         }
                         n_cr = Some(Instant::now() + config.n_cr);

@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use crate::Framing;
+
 /// One link's ids and timing. [`new`](Self::new) sets every other field to
 /// its default.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +29,11 @@ pub struct LinkConfig {
     pub wait_limit: u32,
     /// Received frames the receive task's queue holds.
     pub rx_queue: usize,
+    /// The addressing, frame format, padding and longest message. A CAN FD
+    /// link sends CAN FD frames and reads classic and CAN FD ones.
+    pub framing: Framing,
+    /// CAN FD frames are sent with bit rate switching.
+    pub brs: bool,
 }
 
 impl LinkConfig {
@@ -54,6 +61,8 @@ impl LinkConfig {
             st_min: Self::DEFAULT_ST_MIN,
             wait_limit: Self::DEFAULT_WAIT_LIMIT,
             rx_queue: Self::DEFAULT_RX_QUEUE,
+            framing: Framing::default(),
+            brs: false,
         }
     }
 }

@@ -21,6 +21,7 @@ pub enum Sender {
 #[serde(rename_all = "camelCase")]
 pub struct Transaction {
     pub request: Vec<u8>,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub requested_at_us: u64,
     /// responsePending answers before the end.
     pub pending_responses: u32,
@@ -35,11 +36,13 @@ pub enum Outcome {
     /// The final response, positive or negative.
     Answered {
         response: Vec<u8>,
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
         latency_us: u64,
     },
     /// A positive answer that fails strict decoding.
     Malformed {
         response: Vec<u8>,
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
         latency_us: u64,
     },
     /// The request asked for no positive response, and no negative one came.
@@ -60,6 +63,7 @@ pub enum Observed {
     /// An ECU message that answers no open request.
     Unsolicited {
         response: Vec<u8>,
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
         at_us: u64,
     },
 }
@@ -70,7 +74,8 @@ pub const DEFAULT_TIMEOUT_US: u64 = 5_000_000;
 #[derive(Debug, Clone)]
 pub struct Tracker {
     timeout_us: u64,
-    open: Option<Open>,
+    /// Oldest first.
+    open: Vec<Open>,
 }
 
 #[derive(Debug, Clone)]
@@ -126,7 +131,7 @@ impl Tracker {
     pub fn new() -> Self {
         Self {
             timeout_us: DEFAULT_TIMEOUT_US,
-            open: None,
+            open: Vec::new(),
         }
     }
 
@@ -135,73 +140,94 @@ impl Tracker {
         self
     }
 
-    /// Feeds one message, first ending an open request that `at_us` shows
-    /// has timed out; an empty message is ignored. A suppressed tester
-    /// present while a request is owed a response is a keep-alive: it is
-    /// reported at once as suppressed and leaves the open request alone.
+    /// Feeds one message, first ending the open requests that `at_us` shows
+    /// have timed out; an empty message is ignored. A new request supersedes
+    /// any request owed a response; one that suppressed its positive response
+    /// stays open to its timeout, so a late refusal still pairs with it. A
+    /// suppressed tester present while a request is owed a response is a
+    /// keep-alive: it is reported at once as suppressed and leaves the open
+    /// requests alone.
     pub fn observe(&mut self, sender: Sender, message: &[u8], at_us: u64) -> Vec<Observed> {
         if message.is_empty() {
             return Vec::new();
         }
-        let mut seen: Vec<Observed> = self.expire(at_us).into_iter().collect();
+        let mut seen = self.expire(at_us);
         let keep_alive = Open::new(message, at_us);
-        seen.extend(match sender {
+        match sender {
             Sender::Tester
                 if message == [sid::TESTER_PRESENT, 0x80]
-                    && self.open.as_ref().is_some_and(Open::owed_a_response) =>
+                    && self.open.iter().any(Open::owed_a_response) =>
             {
-                Some(keep_alive.close(Outcome::Suppressed))
+                seen.push(keep_alive.close(Outcome::Suppressed))
             }
-            Sender::Tester => self.request(keep_alive),
-            Sender::Ecu => self.response(message, at_us),
-        });
+            Sender::Tester => seen.extend(self.request(keep_alive)),
+            Sender::Ecu => seen.extend(self.response(message, at_us)),
+        }
         seen
     }
 
-    /// Ends the open request if it has been quiet for the timeout, for a
-    /// caller with no further traffic to observe.
-    pub fn expire(&mut self, now_us: u64) -> Option<Observed> {
+    /// Ends the open requests quiet for the timeout, for a caller with no
+    /// further traffic to observe.
+    pub fn expire(&mut self, now_us: u64) -> Vec<Observed> {
         let timeout_us = self.timeout_us;
-        let open = self
+        self.open
+            .extract_if(.., |o| now_us.saturating_sub(o.last_us) >= timeout_us)
+            .map(|o| o.close_unanswered(Outcome::TimedOut))
+            .collect()
+    }
+
+    /// Ends the open requests at the end of the capture.
+    pub fn finish(&mut self) -> Vec<Observed> {
+        self.open
+            .drain(..)
+            .map(|o| o.close_unanswered(Outcome::Unfinished))
+            .collect()
+    }
+
+    fn request(&mut self, open: Open) -> Vec<Observed> {
+        let superseded = self
             .open
-            .take_if(|o| now_us.saturating_sub(o.last_us) >= timeout_us)?;
-        Some(open.close_unanswered(Outcome::TimedOut))
+            .extract_if(.., |o| o.owed_a_response())
+            .map(|o| o.close(Outcome::Superseded))
+            .collect();
+        self.open.push(open);
+        superseded
     }
 
-    /// Ends the open request at the end of the capture.
-    pub fn finish(&mut self) -> Option<Observed> {
-        Some(self.open.take()?.close_unanswered(Outcome::Unfinished))
-    }
-
-    fn request(&mut self, open: Open) -> Option<Observed> {
-        Some(
+    /// The oldest open request this answers, preferring one that may draw
+    /// it: a suppressed request draws a positive answer only after a
+    /// responsePending.
+    fn answered(&self, message: &[u8]) -> Option<(usize, Answer)> {
+        let answering = || {
             self.open
-                .replace(open)?
-                .close_unanswered(Outcome::Superseded),
-        )
+                .iter()
+                .enumerate()
+                .filter_map(|(i, o)| Some((i, answers(&o.request, message)?, o)))
+        };
+        answering()
+            .find(|(_, a, o)| matches!(a, Answer::Negative { .. }) || o.owed_a_response())
+            .or_else(|| answering().next())
+            .map(|(i, a, _)| (i, a))
     }
 
     fn response(&mut self, message: &[u8], at_us: u64) -> Option<Observed> {
-        let unsolicited = || Observed::Unsolicited {
-            response: message.to_vec(),
-            at_us,
-        };
-        let Some(open) = self.open.as_mut() else {
-            return Some(unsolicited());
-        };
-        let Some(answer) = answers(&open.request, message) else {
-            return Some(unsolicited());
+        let Some((i, answer)) = self.answered(message) else {
+            return Some(Observed::Unsolicited {
+                response: message.to_vec(),
+                at_us,
+            });
         };
         if answer
             == (Answer::Negative {
                 code: Nrc::RESPONSE_PENDING,
             })
         {
-            open.pending += 1;
+            let open = &mut self.open[i];
+            open.pending = open.pending.saturating_add(1);
             open.last_us = at_us;
             return None;
         }
-        let open = self.open.take()?;
+        let open = self.open.remove(i);
         let response = message.to_vec();
         let latency_us = at_us.saturating_sub(open.at_us);
         Some(open.close(match (answer, Response::decode(message)) {

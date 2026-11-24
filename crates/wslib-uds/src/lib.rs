@@ -4,8 +4,9 @@
 //! Every service decodes and encodes with no feature: the ones this crate
 //! models typed, any other as its service id and bytes. [`Safety::of`] classes
 //! a request, and a [`Client`] built without `write` sends only
-//! [`Safety::ReadOnly`] ones. A bare service id has its service's class with
-//! the sub-function unknown.
+//! [`Safety::ReadOnly`] ones; with it, only those up to the ceiling it was
+//! built with. A bare service id has its service's class with the
+//! sub-function unknown.
 //!
 //! | Request | Safety |
 //! | --- | --- |
@@ -31,11 +32,13 @@ pub mod sid;
 pub mod testing;
 
 pub use answer::{Answer, answers};
+#[cfg(feature = "write")]
+pub use client::SendError;
 pub use client::{Busy, Client, Event, Timing};
 pub use codec::{
-    BlockLength, DEFAULT_SESSION, DecodeError, DtcRequest, DtcResponse, DtcStatus,
-    EXTENDED_SESSION, InvalidWidth, MemoryRange, PROGRAMMING_SESSION, Request, Response,
-    SessionTiming, SubFunction,
+    BlockLength, DEFAULT_SESSION, DecodeError, Dtc, DtcRequest, DtcResponse, DtcStatus,
+    EXTENDED_SESSION, InvalidReportType, InvalidWidth, MemoryRange, OtherReportType,
+    PROGRAMMING_SESSION, Request, Response, SessionTiming, SubFunction,
 };
 pub use identify::{Detail, Identity, identify};
 pub use nrc::Nrc;

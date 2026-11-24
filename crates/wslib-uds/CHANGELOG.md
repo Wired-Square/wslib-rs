@@ -11,6 +11,11 @@
   encode; several DIDs in one read; and ReadDTCInformation's report types
   0x01, 0x02, 0x04, 0x06 and 0x0A typed. Decoding never panics, and every
   message it accepts re-encodes byte for byte.
+- `Dtc`, a DTC or group of DTCs that cannot be built, or deserialised, over
+  24 bits.
+- `OtherReportType`, the report type of `DtcRequest::Other`, refuses one over
+  0x7F and one with its own variant, so that request always decodes back to
+  itself.
 - `sid` names every ISO 14229-1 service id and says which carry a
   sub-function, `Nrc` names every negative response code, and `identify`
   names a request from its leading bytes: its DID, routine, session or memory
@@ -26,6 +31,9 @@
   timed-out, malformed and unsolicited messages are reported as such, a
   timeout is judged by each message's own time, and a keep-alive tester
   present does not disturb a request still owed a response.
+- A request that suppressed its positive response stays open to the timeout
+  however many requests follow, so a late refusal pairs with it; `expire` and
+  `finish` return every request they end.
 - `Client`, sans-IO: the session, the security level unlocked, P2 and P2*
   from the session-control response and back to the defaults on any other
   session change, a tester present to hold a non-default session with its
@@ -33,6 +41,17 @@
   resolved. A reply that does not answer the outstanding request changes
   nothing; `abandon` gives up on it. Without `write` it sends only `ReadOnly`
   requests; `write` adds `Client::send`.
+- `Client::up_to(timing, ceiling)` with `write`: `send` refuses any request
+  above the ceiling with `SendError::AboveCeiling` and sends nothing.
+  `Client::new`'s ceiling is read-only.
+- A session change or ECU reset that times out or is abandoned locks security
+  and leaves `session()` `None` until a session-control or reset answer, or
+  S3; no keep-alive goes while it is unknown. An unanswered SecurityAccess
+  locks security.
+- responsePending to the keep-alive is `Event::KeepAlivePending`, not a
+  refusal, and a refusal may follow it up to P2* later.
+- No timing value panics: a wait too long for an `Instant` to hold never
+  ends, and `Event::Pending`'s deadline is then `None`.
 - Scan plans: `AddressScan`; `ServiceScan`, over the read-only bare ids, or
   with `write` `ServiceScan::up_to` a class, stopping if a bare id above
   read-only is acted on; `DidScan`; and with `write` `SessionScan`, which
@@ -41,4 +60,5 @@
 - `testing`: `testing::Ecu`, a simulated ECU that refuses in the standard's
   order.
 - `ts`: TypeScript declarations for the data types.
+- `ts`: 64-bit fields are declared `number`, as serde_json writes them.
 - Serialised fields and variant values are camelCase.

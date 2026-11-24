@@ -1,7 +1,12 @@
 use wslib_uds::{
-    BlockLength, DecodeError, DtcRequest, DtcResponse, DtcStatus, InvalidWidth, MemoryRange, Nrc,
-    Request, Response, SessionTiming, SubFunction, sid,
+    BlockLength, DecodeError, Dtc, DtcRequest, DtcResponse, DtcStatus, InvalidReportType,
+    InvalidWidth, MemoryRange, Nrc, OtherReportType, Request, Response, SessionTiming, SubFunction,
+    sid,
 };
+
+fn dtc(value: u32) -> Dtc {
+    Dtc::new(value).unwrap()
+}
 
 fn request_round_trips(bytes: &[u8], expected: Request) {
     let decoded = Request::decode(bytes).unwrap();
@@ -74,14 +79,14 @@ fn clear_diagnostic_information_takes_a_24_bit_group_and_an_optional_memory_sele
     request_round_trips(
         &[0x14, 0xFF, 0xFF, 0xFF],
         Request::ClearDiagnosticInformation {
-            group: 0xFF_FFFF,
+            group: Dtc::ALL,
             memory_selection: None,
         },
     );
     request_round_trips(
         &[0x14, 0x12, 0x34, 0x56, 0x01],
         Request::ClearDiagnosticInformation {
-            group: 0x12_3456,
+            group: dtc(0x12_3456),
             memory_selection: Some(0x01),
         },
     );
@@ -108,7 +113,7 @@ fn read_dtc_information_types_the_common_report_types() {
         &[0x19, 0x04, 0x12, 0x34, 0x56, 0xFF],
         Request::ReadDtcInformation {
             report: DtcRequest::SnapshotRecordByDtc {
-                dtc: 0x12_3456,
+                dtc: dtc(0x12_3456),
                 record: 0xFF,
             },
             suppress_positive_response: false,
@@ -118,7 +123,7 @@ fn read_dtc_information_types_the_common_report_types() {
         &[0x19, 0x06, 0x12, 0x34, 0x56, 0x01],
         Request::ReadDtcInformation {
             report: DtcRequest::ExtendedDataRecordByDtc {
-                dtc: 0x12_3456,
+                dtc: dtc(0x12_3456),
                 record: 0x01,
             },
             suppress_positive_response: false,
@@ -135,7 +140,7 @@ fn read_dtc_information_types_the_common_report_types() {
         &[0x19, 0x42, 0x33, 0x01],
         Request::ReadDtcInformation {
             report: DtcRequest::Other {
-                report_type: 0x42,
+                report_type: OtherReportType::new(0x42).unwrap(),
                 data: vec![0x33, 0x01],
             },
             suppress_positive_response: false,
@@ -160,11 +165,11 @@ fn read_dtc_information_types_the_common_report_types() {
                 availability_mask: 0xFF,
                 dtcs: vec![
                     DtcStatus {
-                        dtc: 0x12_3456,
+                        dtc: dtc(0x12_3456),
                         status: 0x09,
                     },
                     DtcStatus {
-                        dtc: 0xAB_CDEF,
+                        dtc: dtc(0xAB_CDEF),
                         status: 0x08,
                     },
                 ],
@@ -417,6 +422,34 @@ fn a_sub_function_cannot_hold_a_value_over_0x7f() {
     let parsed: SubFunction =
         serde_json::from_str(r#"{"value":3,"suppressPositiveResponse":true}"#).unwrap();
     assert_eq!(parsed.byte(), 0x83);
+}
+
+#[test]
+fn a_dtc_cannot_hold_more_than_24_bits() {
+    assert_eq!(Dtc::new(0x0100_0000), Err(InvalidWidth));
+    assert_eq!(Dtc::new(0xFF_FFFF), Ok(Dtc::ALL));
+    let clear = |group: u32| {
+        serde_json::from_value::<Request>(serde_json::json!({
+            "kind": "clearDiagnosticInformation",
+            "group": group,
+            "memorySelection": null,
+        }))
+    };
+    assert!(clear(0x01FF_FFFF).is_err());
+    assert!(clear(0xFF_FFFF).is_ok());
+    let status = serde_json::from_str::<DtcStatus>(r#"{"dtc":16777216,"status":0}"#);
+    assert!(status.is_err());
+}
+
+#[test]
+fn an_untyped_report_type_cannot_carry_the_suppress_bit_or_a_typed_report_type() {
+    for typed in [0x01, 0x02, 0x04, 0x06, 0x0A, 0x80, 0x81, 0xFF] {
+        assert_eq!(OtherReportType::new(typed), Err(InvalidReportType));
+        let other = serde_json::json!({ "kind": "other", "reportType": typed, "data": [] });
+        assert!(serde_json::from_value::<DtcRequest>(other).is_err());
+    }
+    let other = serde_json::json!({ "kind": "other", "reportType": 0x42, "data": [] });
+    assert!(serde_json::from_value::<DtcRequest>(other).is_ok());
 }
 
 #[test]

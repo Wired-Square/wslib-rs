@@ -67,16 +67,34 @@ the tracker and the scan verdicts all use it (`tests/answer.rs`):
   `a_key_answer_that_does_not_echo_the_key_sub_function_does_not_unlock`).
   Anything else answers nothing and changes no state
   (`a_reply_that_does_not_echo_the_requested_did_or_routine_is_unexpected_and_changes_nothing`).
+  A request that goes unanswered, by timeout or abandonment, may still have
+  been acted on, so the client moves the same way: after 0x10 or 0x11 it
+  locks security and no longer knows the session, and after 0x27 it locks
+  security. While the session is unknown it sends no keep-alive, since one
+  could hold a session the ECU was never meant to stay in; after S3 without a
+  request the ECU is in the default session again, and so is the client
+  (`a_session_change_or_reset_that_goes_unanswered_locks_security_and_leaves_the_session_unknown`,
+  `a_security_access_that_goes_unanswered_locks_security_and_keeps_the_session`,
+  `an_unknown_session_gets_no_keep_alive_and_becomes_the_default_at_s3`).
 - A refusal of a tester present (0x7F 0x3E) within P2 of the client's
   keep-alive belongs to the keep-alive, which was always sent before any
   caller request still open: it is reported as a refused keep-alive and never
   closes the caller's request
   (`a_refusal_of_the_keep_alive_is_its_own_event_and_never_closes_the_callers_request`).
+  responsePending (0x78) to the keep-alive is no refusal: it moves the
+  keep-alive's window to P2* from then
+  (`response_pending_to_the_keep_alive_is_no_refusal_and_holds_its_window_open_to_p2_star`).
 - In a capture, a suppressed tester present (0x3E 0x80) while a request is
   still owed a response is a keep-alive: it is reported at once as its own
   suppressed transaction and leaves the open request alone
   (`tests/pairing.rs`:
   `a_keep_alive_tester_present_does_not_supersede_a_request_owed_a_response`).
+  A request that suppressed its positive response, and drew no
+  responsePending, is owed nothing but may still be refused: it stays open to
+  the timeout whatever follows it, and ends suppressed if no refusal comes. A
+  response goes to the oldest open request it answers that could draw it
+  (`a_suppressed_request_stays_open_to_its_timeout_so_a_late_refusal_still_pairs_with_it`,
+  `a_suppressed_request_ends_suppressed_at_its_timeout_not_when_the_next_request_comes`).
   The tracker ends an open request that has timed out before it reads the
   next message, by that message's time
   (`a_reply_after_the_timeout_ends_the_request_timed_out_and_is_itself_unsolicited`,
@@ -110,13 +128,20 @@ others (`the_address_and_length_format_identifier_sets_each_fields_width`,
 `a_zero_or_over_eight_byte_width_is_refused`). A memory range or block length
 cannot be built with a width outside that or a value too wide for its width
 (`a_memory_range_or_block_length_cannot_hold_a_width_or_value_it_cannot_encode`).
+A DTC or group of DTCs is three bytes and cannot be built over 24 bits
+(`a_dtc_cannot_hold_more_than_24_bits`). A 0x19 report type with no variant of
+its own cannot be over 0x7F, where it would set the suppress bit, or one of
+the typed ones
+(`an_untyped_report_type_cannot_carry_the_suppress_bit_or_a_typed_report_type`).
 Several DIDs' data cannot be split without each DID's length, so a 0x62
 response keeps everything after the first DID together
 (`read_data_by_identifier_takes_several_dids_in_one_request`). Any other
 service is kept as its id and bytes (`any_other_service_is_kept_byte_for_byte`),
 and every message the decoder accepts re-encodes byte for byte
 (`every_two_byte_message_decodes_without_panic_and_re_encodes_exactly`,
-`arbitrary_messages_decode_without_panic_and_re_encode_exactly`).
+`arbitrary_messages_decode_without_panic_and_re_encode_exactly`); every typed
+request and response decodes back from its encoding (`tests/round_trip.rs`:
+`every_typed_request_and_response_decodes_back_from_its_encoding`).
 
 ## Response pending and timing
 
@@ -129,9 +154,11 @@ than one may come before the final response
 Nothing caps how many may come; the client's caller gives up with `abandon`
 (`abandoning_the_outstanding_request_frees_the_client_however_long_pending_runs`).
 After a 0x78 the server owes a final response, so silence after one is a
-timeout, never a suppressed success, and changes no state
+timeout, never a suppressed success; it is unanswered, as above
 (`silence_after_response_pending_is_a_timeout_even_when_the_positive_response_was_suppressed`,
-`a_suppressed_session_change_that_drew_response_pending_and_then_silence_times_out_unapplied`).
+`a_suppressed_session_change_that_drew_response_pending_and_then_silence_times_out_unknown`).
+No timing value panics: a wait too long for an `Instant` to hold never ends
+(`no_timing_however_long_panics_and_a_wait_too_long_to_represent_never_ends`).
 
 P2 is how long the server may take to start its response (default 50 ms),
 P2* how long after a responsePending (default 5000 ms). A positive
@@ -172,6 +199,14 @@ gates no sub-function by session, so it never sends 0x7E
 
 A bare service id has the class its service has with the sub-function unknown:
 a non-conforming server can act on one.
+
+A client sends nothing above its ceiling: read-only unless it was built with
+`write` and a higher one. A scan run through a client is bounded by the lower
+of the scan's class and the client's ceiling (`tests/client_write.rs`:
+`by_default_a_client_refuses_a_state_changing_request_and_sends_nothing`,
+`a_state_changing_ceiling_refuses_destructive_and_vendor_requests_and_keeps_the_session_alive`;
+`tests/service_scan_write.rs`:
+`a_scan_through_a_client_sends_only_up_to_the_lower_of_the_two_ceilings`).
 
 | Request | Safety | Test (`tests/safety.rs`) |
 | --- | --- | --- |

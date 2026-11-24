@@ -84,7 +84,9 @@ fn response_pending_moves_the_deadline_to_p2_star() {
     let deadline = t0 + ms(10) + timing.p2_star + timing.margin;
     assert_eq!(
         client.receive(&answers[0], t0 + ms(10)),
-        Event::Pending { deadline }
+        Event::Pending {
+            deadline: Some(deadline)
+        }
     );
     assert_eq!(client.next_deadline(), Some(deadline));
     assert_eq!(client.poll(t0 + ms(1000)), None);
@@ -190,7 +192,10 @@ fn silence_after_response_pending_is_a_timeout_even_when_the_positive_response_w
     })
     .unwrap();
     client.send_read_only(request, t0).unwrap();
-    let Event::Pending { deadline } = client.receive(&[0x7F, 0x3E, 0x78], t0) else {
+    let Event::Pending {
+        deadline: Some(deadline),
+    } = client.receive(&[0x7F, 0x3E, 0x78], t0)
+    else {
         panic!("no pending");
     };
     assert_eq!(
@@ -203,7 +208,7 @@ fn silence_after_response_pending_is_a_timeout_even_when_the_positive_response_w
 fn in_the_default_session_nothing_is_due_with_nothing_outstanding() {
     let mut client = Client::new(Timing::default());
     let t0 = Instant::now();
-    assert_eq!(client.session(), DEFAULT_SESSION);
+    assert_eq!(client.session(), Some(DEFAULT_SESSION));
     assert_eq!(client.next_deadline(), None);
     assert_eq!(client.poll(t0 + ms(60_000)), None);
 }

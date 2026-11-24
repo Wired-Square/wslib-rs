@@ -97,14 +97,52 @@ fn fits(value: u64, width: u8) -> bool {
     (1..=8).contains(&width) && (width == 8 || value >> (8 * u32::from(width)) == 0)
 }
 
+/// A DTC, or a group of DTCs: three bytes on the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsDtc"))]
+#[serde(try_from = "u32", into = "u32")]
+pub struct Dtc(u32);
+
+impl Dtc {
+    /// The group of every DTC, as ClearDiagnosticInformation takes it.
+    pub const ALL: Dtc = Dtc(0xFF_FFFF);
+
+    pub const fn new(value: u32) -> Result<Self, InvalidWidth> {
+        if value > 0xFF_FFFF {
+            return Err(InvalidWidth);
+        }
+        Ok(Self(value))
+    }
+
+    pub const fn value(self) -> u32 {
+        self.0
+    }
+}
+
+impl TryFrom<u32> for Dtc {
+    type Error = InvalidWidth;
+
+    fn try_from(value: u32) -> Result<Self, InvalidWidth> {
+        Self::new(value)
+    }
+}
+
+impl From<Dtc> for u32 {
+    fn from(dtc: Dtc) -> u32 {
+        dtc.0
+    }
+}
+
 /// An address and a size, each big-endian over 1 to 8 bytes, as an
 /// addressAndLengthFormatIdentifier lays them out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsMemoryRange"))]
 #[serde(try_from = "MemoryRangeFields", rename_all = "camelCase")]
 pub struct MemoryRange {
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     address: u64,
     address_width: u8,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     size: u64,
     size_width: u8,
 }
@@ -187,6 +225,7 @@ impl MemoryRange {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsBlockLength"))]
 #[serde(try_from = "BlockLengthFields", rename_all = "camelCase")]
 pub struct BlockLength {
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     value: u64,
     width: u8,
 }
@@ -242,13 +281,50 @@ impl SessionTiming {
     }
 }
 
-/// A DTC and its status byte; the DTC is the low 24 bits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsDtcStatus"))]
 #[serde(rename_all = "camelCase")]
 pub struct DtcStatus {
-    pub dtc: u32,
+    pub dtc: Dtc,
     pub status: u8,
+}
+
+/// A report type over 0x7F, or one with its own [`DtcRequest`] variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("a report type over 0x7F, or one with its own variant")]
+pub struct InvalidReportType;
+
+/// A ReadDTCInformation report type with no variant of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsOtherReportType"))]
+#[serde(try_from = "u8", into = "u8")]
+pub struct OtherReportType(u8);
+
+impl OtherReportType {
+    pub const fn new(value: u8) -> Result<Self, InvalidReportType> {
+        match value {
+            0x01 | 0x02 | 0x04 | 0x06 | 0x0A | 0x80.. => Err(InvalidReportType),
+            _ => Ok(Self(value)),
+        }
+    }
+
+    pub const fn value(self) -> u8 {
+        self.0
+    }
+}
+
+impl TryFrom<u8> for OtherReportType {
+    type Error = InvalidReportType;
+
+    fn try_from(value: u8) -> Result<Self, InvalidReportType> {
+        Self::new(value)
+    }
+}
+
+impl From<OtherReportType> for u8 {
+    fn from(report_type: OtherReportType) -> u8 {
+        report_type.0
+    }
 }
 
 /// A ReadDTCInformation request by its report type; the common ones typed.
@@ -257,12 +333,25 @@ pub struct DtcStatus {
 #[serde(tag = "kind", rename_all = "camelCase")]
 #[serde(rename_all_fields = "camelCase")]
 pub enum DtcRequest {
-    NumberByStatusMask { status_mask: u8 },
-    ByStatusMask { status_mask: u8 },
-    SnapshotRecordByDtc { dtc: u32, record: u8 },
-    ExtendedDataRecordByDtc { dtc: u32, record: u8 },
+    NumberByStatusMask {
+        status_mask: u8,
+    },
+    ByStatusMask {
+        status_mask: u8,
+    },
+    SnapshotRecordByDtc {
+        dtc: Dtc,
+        record: u8,
+    },
+    ExtendedDataRecordByDtc {
+        dtc: Dtc,
+        record: u8,
+    },
     SupportedDtcs,
-    Other { report_type: u8, data: Vec<u8> },
+    Other {
+        report_type: OtherReportType,
+        data: Vec<u8>,
+    },
 }
 
 impl DtcRequest {
@@ -273,10 +362,11 @@ impl DtcRequest {
             Self::SnapshotRecordByDtc { .. } => 0x04,
             Self::ExtendedDataRecordByDtc { .. } => 0x06,
             Self::SupportedDtcs => 0x0A,
-            Self::Other { report_type, .. } => *report_type,
+            Self::Other { report_type, .. } => report_type.0,
         }
     }
 
+    /// `report_type` is a sub-function value, so at most 0x7F.
     fn read(report_type: u8, r: &mut Reader<'_>) -> Result<Self, DecodeError> {
         Ok(match report_type {
             0x01 => Self::NumberByStatusMask {
@@ -286,16 +376,16 @@ impl DtcRequest {
                 status_mask: r.u8()?,
             },
             0x04 => Self::SnapshotRecordByDtc {
-                dtc: r.u24()?,
+                dtc: r.dtc()?,
                 record: r.u8()?,
             },
             0x06 => Self::ExtendedDataRecordByDtc {
-                dtc: r.u24()?,
+                dtc: r.dtc()?,
                 record: r.u8()?,
             },
             0x0A => Self::SupportedDtcs,
             _ => Self::Other {
-                report_type,
+                report_type: OtherReportType(report_type),
                 data: r.rest(),
             },
         })
@@ -308,7 +398,7 @@ impl DtcRequest {
             }
             Self::SnapshotRecordByDtc { dtc, record }
             | Self::ExtendedDataRecordByDtc { dtc, record } => {
-                put_uint(out, (*dtc).into(), 3);
+                put_dtc(out, *dtc);
                 out.push(*record);
             }
             Self::SupportedDtcs => {}
@@ -396,7 +486,7 @@ impl DtcResponse {
             } => {
                 out.push(*availability_mask);
                 for d in dtcs {
-                    put_uint(out, d.dtc.into(), 3);
+                    put_dtc(out, d.dtc);
                     out.push(d.status);
                 }
             }
@@ -418,7 +508,7 @@ pub enum Request {
         sub_function: SubFunction,
     },
     ClearDiagnosticInformation {
-        group: u32,
+        group: Dtc,
         memory_selection: Option<u8>,
     },
     ReadDtcInformation {
@@ -493,7 +583,7 @@ impl Request {
                 sub_function: r.sub_function()?,
             },
             sid::CLEAR_DIAGNOSTIC_INFORMATION => Self::ClearDiagnosticInformation {
-                group: r.u24()?,
+                group: r.dtc()?,
                 memory_selection: r.optional(1)?.map(|b| b[0]),
             },
             sid::READ_DTC_INFORMATION => {
@@ -578,7 +668,7 @@ impl Request {
                 group,
                 memory_selection,
             } => {
-                put_uint(&mut out, (*group).into(), 3);
+                put_dtc(&mut out, *group);
                 out.extend(memory_selection);
             }
             Self::ReadDtcInformation {
@@ -939,9 +1029,9 @@ impl<'a> Reader<'a> {
         Ok(u16::from_be_bytes([b[0], b[1]]))
     }
 
-    fn u24(&mut self) -> Result<u32, DecodeError> {
+    fn dtc(&mut self) -> Result<Dtc, DecodeError> {
         let b = self.take(3)?;
-        Ok(u32::from_be_bytes([0, b[0], b[1], b[2]]))
+        Ok(Dtc(u32::from_be_bytes([0, b[0], b[1], b[2]])))
     }
 
     fn uint(&mut self, width: u8) -> Result<u64, DecodeError> {
@@ -979,7 +1069,7 @@ impl<'a> Reader<'a> {
         Ok(records
             .iter()
             .map(|d| DtcStatus {
-                dtc: u32::from_be_bytes([0, d[0], d[1], d[2]]),
+                dtc: Dtc(u32::from_be_bytes([0, d[0], d[1], d[2]])),
                 status: d[3],
             })
             .collect())
@@ -1007,4 +1097,8 @@ impl<'a> Reader<'a> {
 
 fn put_uint(out: &mut Vec<u8>, value: u64, width: u8) {
     out.extend_from_slice(&value.to_be_bytes()[8 - usize::from(width)..]);
+}
+
+fn put_dtc(out: &mut Vec<u8>, dtc: Dtc) {
+    put_uint(out, dtc.0.into(), 3);
 }

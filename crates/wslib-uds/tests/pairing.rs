@@ -1,5 +1,5 @@
 use wslib_uds::testing::{Did, Ecu};
-use wslib_uds::{Observed, Outcome, Sender, Tracker, Transaction};
+use wslib_uds::{DEFAULT_TIMEOUT_US, Observed, Outcome, Sender, Tracker, Transaction};
 
 fn transaction(observed: impl IntoIterator<Item = Observed>) -> Transaction {
     let observed: Vec<Observed> = observed.into_iter().collect();
@@ -72,12 +72,16 @@ fn a_negative_response_ends_the_transaction() {
 }
 
 #[test]
-fn a_suppressed_request_ends_suppressed_when_the_next_request_comes() {
+fn a_suppressed_request_ends_suppressed_at_its_timeout_not_when_the_next_request_comes() {
     let mut ecu = Ecu::new();
     let mut tracker = Tracker::new();
     assert!(replay(&mut ecu, &mut tracker, &[0x3E, 0x80], 0).is_empty());
-    let seen = tracker.observe(Sender::Tester, &[0x3E, 0x80], 2_000_000);
-    let t = transaction(seen);
+    assert!(
+        tracker
+            .observe(Sender::Tester, &[0x22, 0xF1, 0x90], 2_000_000)
+            .is_empty()
+    );
+    let t = transaction(tracker.expire(DEFAULT_TIMEOUT_US));
     assert_eq!(t.request, [0x3E, 0x80]);
     assert_eq!(t.outcome, Outcome::Suppressed);
 }
@@ -94,6 +98,34 @@ fn a_suppressed_request_still_pairs_with_a_negative_response() {
             ..
         }
     ));
+}
+
+#[test]
+fn a_suppressed_request_stays_open_to_its_timeout_so_a_late_refusal_still_pairs_with_it() {
+    let mut tracker = Tracker::new();
+    let mut seen = tracker.observe(Sender::Tester, &[0x10, 0x83], 0);
+    seen.extend(tracker.observe(Sender::Tester, &[0x3E, 0x80], 10));
+    seen.extend(tracker.observe(Sender::Ecu, &[0x7F, 0x10, 0x22], 20));
+    seen.extend(tracker.finish());
+    let session = seen
+        .iter()
+        .find_map(|o| match o {
+            Observed::Transaction(t) if t.request == [0x10, 0x83] => Some(t),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        session.outcome,
+        Outcome::Answered {
+            response: vec![0x7F, 0x10, 0x22],
+            latency_us: 20
+        }
+    );
+    assert!(
+        !seen
+            .iter()
+            .any(|o| matches!(o, Observed::Unsolicited { .. }))
+    );
 }
 
 #[test]
@@ -138,7 +170,7 @@ fn a_request_quiet_past_the_timeout_since_its_last_pending_answer_times_out() {
     let mut tracker = Tracker::new().with_timeout_us(1_000);
     tracker.observe(Sender::Tester, &[0x31, 0x01, 0x02, 0x03], 0);
     tracker.observe(Sender::Ecu, &[0x7F, 0x31, 0x78], 900);
-    assert_eq!(tracker.expire(1_500), None);
+    assert!(tracker.expire(1_500).is_empty());
     let t = transaction(tracker.expire(1_900));
     assert_eq!(t.pending_responses, 1);
     assert_eq!(t.outcome, Outcome::TimedOut);
@@ -149,7 +181,7 @@ fn the_end_of_a_capture_leaves_the_open_request_unfinished() {
     let mut tracker = Tracker::new();
     tracker.observe(Sender::Tester, &[0x22, 0xF1, 0x90], 0);
     assert_eq!(transaction(tracker.finish()).outcome, Outcome::Unfinished);
-    assert_eq!(tracker.finish(), None);
+    assert!(tracker.finish().is_empty());
 }
 
 #[test]
@@ -185,7 +217,7 @@ fn a_positive_answer_that_fails_strict_decoding_ends_the_transaction_malformed()
 fn a_suppressed_request_to_an_unmodelled_sub_function_service_ends_suppressed() {
     let mut tracker = Tracker::new();
     tracker.observe(Sender::Tester, &[0x29, 0x80], 0);
-    let t = transaction(tracker.observe(Sender::Tester, &[0x3E, 0x80], 100));
+    let t = transaction(tracker.expire(DEFAULT_TIMEOUT_US));
     assert_eq!(t.outcome, Outcome::Suppressed);
 }
 
@@ -205,7 +237,7 @@ fn an_empty_message_is_ignored() {
     let mut tracker = Tracker::new();
     assert!(tracker.observe(Sender::Tester, &[], 0).is_empty());
     assert!(tracker.observe(Sender::Ecu, &[], 0).is_empty());
-    assert_eq!(tracker.finish(), None);
+    assert!(tracker.finish().is_empty());
 }
 
 #[test]

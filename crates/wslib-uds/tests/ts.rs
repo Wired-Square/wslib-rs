@@ -4,9 +4,9 @@
 use ts_rs::{Config, TS};
 
 use wslib_uds::{
-    Answer, BlockLength, Detail, DidFinding, DidVerdict, DtcRequest, DtcResponse, DtcStatus,
-    Identity, MemoryRange, Nrc, Observed, Outcome, Request, Response, Safety, ScanProgress, Sender,
-    ServiceFinding, ServiceVerdict, SessionTiming, SubFunction, Transaction,
+    Answer, BlockLength, Detail, DidFinding, DidVerdict, Dtc, DtcRequest, DtcResponse, DtcStatus,
+    Identity, MemoryRange, Nrc, Observed, OtherReportType, Outcome, Request, Response, Safety,
+    ScanProgress, Sender, ServiceFinding, ServiceVerdict, SessionTiming, SubFunction, Transaction,
 };
 
 #[test]
@@ -26,7 +26,7 @@ fn block_length() {
 }
 
 fn exported<T: TS + 'static>() -> String {
-    let ts = T::export_to_string(&Config::new().with_large_int("number")).unwrap();
+    let ts = T::export_to_string(&Config::new()).unwrap();
     let mut out = String::new();
     let mut rest = ts.as_str();
     while let Some(start) = rest.find("/**") {
@@ -47,7 +47,7 @@ fn exported<T: TS + 'static>() -> String {
 fn request() {
     assert_eq!(
         exported::<Request>(),
-        r#"import type { UdsDtcRequest } from "./UdsDtcRequest"; import type { UdsMemoryRange } from "./UdsMemoryRange"; import type { UdsSubFunction } from "./UdsSubFunction"; export type UdsRequest = { "kind": "diagnosticSessionControl", subFunction: UdsSubFunction, } | { "kind": "ecuReset", subFunction: UdsSubFunction, } | { "kind": "clearDiagnosticInformation", group: number, memorySelection: number | null, } | { "kind": "readDtcInformation", report: UdsDtcRequest, suppressPositiveResponse: boolean, } | { "kind": "readDataByIdentifier", dids: Array<number>, } | { "kind": "readMemoryByAddress", range: UdsMemoryRange, } | { "kind": "securityAccess", subFunction: UdsSubFunction, data: Array<number>, } | { "kind": "communicationControl", subFunction: UdsSubFunction, communicationType: number, node: number | null, } | { "kind": "writeDataByIdentifier", did: number, data: Array<number>, } | { "kind": "inputOutputControlByIdentifier", did: number, data: Array<number>, } | { "kind": "routineControl", subFunction: UdsSubFunction, routine: number, data: Array<number>, } | { "kind": "requestDownload", dataFormat: number, range: UdsMemoryRange, } | { "kind": "requestUpload", dataFormat: number, range: UdsMemoryRange, } | { "kind": "transferData", sequence: number, data: Array<number>, } | { "kind": "requestTransferExit", data: Array<number>, } | { "kind": "testerPresent", subFunction: UdsSubFunction, } | { "kind": "controlDtcSetting", subFunction: UdsSubFunction, data: Array<number>, } | { "kind": "other", service: number, data: Array<number>, };"#
+        r#"import type { UdsDtc } from "./UdsDtc"; import type { UdsDtcRequest } from "./UdsDtcRequest"; import type { UdsMemoryRange } from "./UdsMemoryRange"; import type { UdsSubFunction } from "./UdsSubFunction"; export type UdsRequest = { "kind": "diagnosticSessionControl", subFunction: UdsSubFunction, } | { "kind": "ecuReset", subFunction: UdsSubFunction, } | { "kind": "clearDiagnosticInformation", group: UdsDtc, memorySelection: number | null, } | { "kind": "readDtcInformation", report: UdsDtcRequest, suppressPositiveResponse: boolean, } | { "kind": "readDataByIdentifier", dids: Array<number>, } | { "kind": "readMemoryByAddress", range: UdsMemoryRange, } | { "kind": "securityAccess", subFunction: UdsSubFunction, data: Array<number>, } | { "kind": "communicationControl", subFunction: UdsSubFunction, communicationType: number, node: number | null, } | { "kind": "writeDataByIdentifier", did: number, data: Array<number>, } | { "kind": "inputOutputControlByIdentifier", did: number, data: Array<number>, } | { "kind": "routineControl", subFunction: UdsSubFunction, routine: number, data: Array<number>, } | { "kind": "requestDownload", dataFormat: number, range: UdsMemoryRange, } | { "kind": "requestUpload", dataFormat: number, range: UdsMemoryRange, } | { "kind": "transferData", sequence: number, data: Array<number>, } | { "kind": "requestTransferExit", data: Array<number>, } | { "kind": "testerPresent", subFunction: UdsSubFunction, } | { "kind": "controlDtcSetting", subFunction: UdsSubFunction, data: Array<number>, } | { "kind": "other", service: number, data: Array<number>, };"#
     );
 }
 
@@ -84,10 +84,23 @@ fn session_timing() {
 }
 
 #[test]
+fn dtc() {
+    assert_eq!(exported::<Dtc>(), "export type UdsDtc = number;");
+}
+
+#[test]
+fn other_report_type() {
+    assert_eq!(
+        exported::<OtherReportType>(),
+        "export type UdsOtherReportType = number;"
+    );
+}
+
+#[test]
 fn dtc_status() {
     assert_eq!(
         exported::<DtcStatus>(),
-        "export type UdsDtcStatus = { dtc: number, status: number, };"
+        r#"import type { UdsDtc } from "./UdsDtc"; export type UdsDtcStatus = { dtc: UdsDtc, status: number, };"#
     );
 }
 
@@ -95,7 +108,7 @@ fn dtc_status() {
 fn dtc_request() {
     assert_eq!(
         exported::<DtcRequest>(),
-        r#"export type UdsDtcRequest = { "kind": "numberByStatusMask", statusMask: number, } | { "kind": "byStatusMask", statusMask: number, } | { "kind": "snapshotRecordByDtc", dtc: number, record: number, } | { "kind": "extendedDataRecordByDtc", dtc: number, record: number, } | { "kind": "supportedDtcs" } | { "kind": "other", reportType: number, data: Array<number>, };"#
+        r#"import type { UdsDtc } from "./UdsDtc"; import type { UdsOtherReportType } from "./UdsOtherReportType"; export type UdsDtcRequest = { "kind": "numberByStatusMask", statusMask: number, } | { "kind": "byStatusMask", statusMask: number, } | { "kind": "snapshotRecordByDtc", dtc: UdsDtc, record: number, } | { "kind": "extendedDataRecordByDtc", dtc: UdsDtc, record: number, } | { "kind": "supportedDtcs" } | { "kind": "other", reportType: UdsOtherReportType, data: Array<number>, };"#
     );
 }
 

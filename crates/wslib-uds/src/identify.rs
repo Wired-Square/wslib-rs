@@ -20,17 +20,43 @@ pub struct Identity {
 #[serde(tag = "kind", rename_all = "camelCase")]
 #[serde(rename_all_fields = "camelCase")]
 pub enum Detail {
-    Session { session: u8 },
-    Reset { reset_type: u8 },
-    DtcGroup { group: u32 },
-    DtcReport { report_type: u8 },
-    Dids { dids: Vec<u16> },
-    Memory { address: u64, size: u64 },
-    SecurityAccess { sub_function: u8 },
-    Communication { control_type: u8 },
-    Routine { routine: u16, sub_function: u8 },
-    Block { sequence: u8 },
-    DtcSetting { setting: u8 },
+    Session {
+        session: u8,
+    },
+    Reset {
+        reset_type: u8,
+    },
+    DtcGroup {
+        group: u32,
+    },
+    DtcReport {
+        report_type: u8,
+    },
+    Dids {
+        dids: Vec<u16>,
+    },
+    Memory {
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
+        address: u64,
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
+        size: u64,
+    },
+    SecurityAccess {
+        sub_function: u8,
+    },
+    Communication {
+        control_type: u8,
+    },
+    Routine {
+        routine: u16,
+        sub_function: u8,
+    },
+    Block {
+        sequence: u8,
+    },
+    DtcSetting {
+        setting: u8,
+    },
 }
 
 /// Names a request from as many of its bytes as are at hand; `None` when empty.

@@ -3,6 +3,8 @@
 
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "write")]
+use crate::Safety;
 use crate::answer::suppresses_positive_response;
 use crate::codec::DEFAULT_SESSION;
 use crate::{Answer, Nrc, ReadOnly, Request, Response, SessionTiming, answers, sid};
@@ -33,6 +35,15 @@ impl Default for Timing {
     }
 }
 
+impl Timing {
+    fn answer_within(&self, limit: Duration, since: Instant) -> Wait {
+        Wait {
+            since,
+            length: limit.saturating_add(self.margin),
+        }
+    }
+}
+
 /// What a received message or the passing of time meant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
@@ -41,10 +52,11 @@ pub enum Event {
         service: u8,
         code: Nrc,
     },
-    /// responsePending: the deadline has moved to P2*. There is no cap on how
-    /// many may come; [`Client::abandon`] gives up.
+    /// responsePending: the deadline has moved to P2*, or is `None` when P2*
+    /// is too long for an `Instant` to hold. There is no cap on how many may
+    /// come; [`Client::abandon`] gives up.
     Pending {
-        deadline: Instant,
+        deadline: Option<Instant>,
     },
     /// A request that suppressed its positive response drew no negative one by P2.
     Suppressed {
@@ -63,6 +75,9 @@ pub enum Event {
     KeepAliveRefused {
         code: Nrc,
     },
+    /// responsePending to the keep-alive: a refusal of it may still come up to
+    /// P2* from now.
+    KeepAlivePending,
     /// S3 ran out, so the server has returned to the default session.
     SessionExpired,
 }
@@ -71,41 +86,89 @@ pub enum Event {
 #[error("a request is still outstanding")]
 pub struct Busy;
 
+/// Why [`Client::send`] sent nothing.
+#[cfg(feature = "write")]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SendError {
+    #[error("a request is still outstanding")]
+    Busy,
+    #[error("a {safety:?} request is above the client's ceiling of {ceiling:?}")]
+    AboveCeiling {
+        request: Request,
+        safety: Safety,
+        ceiling: Safety,
+    },
+}
+
 const TESTER_PRESENT_SUPPRESSED: [u8; 2] = [sid::TESTER_PRESENT, 0x80];
 
 #[derive(Debug, Clone)]
 pub struct Client {
     defaults: Timing,
     timing: Timing,
-    session: u8,
+    #[cfg(feature = "write")]
+    ceiling: Safety,
+    session: Option<u8>,
     security_level: Option<u8>,
     outstanding: Option<Outstanding>,
-    keep_alive_sent: Option<Instant>,
+    keep_alive: Option<Wait>,
     last_activity: Option<Instant>,
 }
 
 #[derive(Debug, Clone)]
 struct Outstanding {
     request: Vec<u8>,
-    deadline: Instant,
+    wait: Wait,
     pending: bool,
 }
 
+/// A wait too long for an `Instant` to hold never ends.
+#[derive(Debug, Clone, Copy)]
+struct Wait {
+    since: Instant,
+    length: Duration,
+}
+
+impl Wait {
+    fn is_over(self, now: Instant) -> bool {
+        now.saturating_duration_since(self.since) >= self.length
+    }
+
+    fn deadline(self) -> Option<Instant> {
+        self.since.checked_add(self.length)
+    }
+}
+
 impl Client {
-    /// `timing`'s P2 and P2* are also the defaults the client returns to.
+    /// A client that sends only read-only requests; `timing`'s P2 and P2* are
+    /// also the defaults it returns to.
     pub fn new(timing: Timing) -> Self {
         Self {
             defaults: timing,
             timing,
-            session: DEFAULT_SESSION,
+            #[cfg(feature = "write")]
+            ceiling: Safety::ReadOnly,
+            session: Some(DEFAULT_SESSION),
             security_level: None,
             outstanding: None,
-            keep_alive_sent: None,
+            keep_alive: None,
             last_activity: None,
         }
     }
 
-    pub fn session(&self) -> u8 {
+    /// A client whose [`Client::send`] refuses any request above `ceiling`.
+    #[cfg(feature = "write")]
+    pub fn up_to(timing: Timing, ceiling: Safety) -> Self {
+        Self {
+            ceiling,
+            ..Self::new(timing)
+        }
+    }
+
+    /// `None` after a session change or reset went unanswered: the server may
+    /// have acted on it. It is known again from the next session-control or
+    /// reset answer, or at S3, when any non-default session has lapsed.
+    pub fn session(&self) -> Option<u8> {
         self.session
     }
 
@@ -127,10 +190,18 @@ impl Client {
         self.start(request.into_request(), now)
     }
 
-    /// The bytes to send for any request.
+    /// The bytes to send for a request no higher than the client's ceiling.
     #[cfg(feature = "write")]
-    pub fn send(&mut self, request: Request, now: Instant) -> Result<Vec<u8>, Busy> {
-        self.start(request, now)
+    pub fn send(&mut self, request: Request, now: Instant) -> Result<Vec<u8>, SendError> {
+        let safety = request.safety();
+        if safety > self.ceiling {
+            return Err(SendError::AboveCeiling {
+                request,
+                safety,
+                ceiling: self.ceiling,
+            });
+        }
+        self.start(request, now).map_err(|Busy| SendError::Busy)
     }
 
     fn start(&mut self, request: Request, now: Instant) -> Result<Vec<u8>, Busy> {
@@ -141,7 +212,7 @@ impl Client {
         self.last_activity = Some(now);
         self.outstanding = Some(Outstanding {
             request: bytes.clone(),
-            deadline: now + self.timing.p2 + self.timing.margin,
+            wait: self.timing.answer_within(self.timing.p2, now),
             pending: false,
         });
         Ok(bytes)
@@ -151,20 +222,22 @@ impl Client {
     pub fn abandon(&mut self, now: Instant) -> Option<Vec<u8>> {
         let abandoned = self.outstanding.take()?;
         self.last_activity = Some(now);
+        self.unanswered(&abandoned.request);
         Some(abandoned.request)
     }
 
     /// A refusal of a tester present goes to the keep-alive while one is
-    /// within P2 of being sent: it always went before any caller request.
+    /// within P2 of being sent, or of its responsePending: it always went
+    /// before any caller request.
     pub fn receive(&mut self, message: &[u8], now: Instant) -> Event {
         let unexpected = || Event::Unexpected(message.to_vec());
-        let keep_alive_deadline = self.timing.p2 + self.timing.margin;
         if let Some(Answer::Negative { code }) = answers(&TESTER_PRESENT_SUPPRESSED, message)
-            && self
-                .keep_alive_sent
-                .take_if(|sent| now < *sent + keep_alive_deadline)
-                .is_some()
+            && self.keep_alive.take_if(|w| !w.is_over(now)).is_some()
         {
+            if code == Nrc::RESPONSE_PENDING {
+                self.keep_alive = Some(self.timing.answer_within(self.timing.p2_star, now));
+                return Event::KeepAlivePending;
+            }
             return Event::KeepAliveRefused { code };
         }
         let Some(outstanding) = self.outstanding.as_mut() else {
@@ -179,10 +252,11 @@ impl Client {
             Answer::Negative {
                 code: Nrc::RESPONSE_PENDING,
             } => {
-                let deadline = now + self.timing.p2_star + self.timing.margin;
-                outstanding.deadline = deadline;
+                outstanding.wait = self.timing.answer_within(self.timing.p2_star, now);
                 outstanding.pending = true;
-                Event::Pending { deadline }
+                Event::Pending {
+                    deadline: outstanding.wait.deadline(),
+                }
             }
             Answer::Negative { code } => {
                 self.outstanding = None;
@@ -198,9 +272,9 @@ impl Client {
                     Err(_) => {
                         match (service, message.get(1)) {
                             (sid::DIAGNOSTIC_SESSION_CONTROL, Some(session)) => {
-                                self.enter_session(*session, None)
+                                self.enter_session(Some(*session), None)
                             }
-                            (sid::ECU_RESET, _) => self.enter_session(DEFAULT_SESSION, None),
+                            (sid::ECU_RESET, _) => self.enter_session(Some(DEFAULT_SESSION), None),
                             _ => {}
                         }
                         Event::Malformed(message.to_vec())
@@ -212,54 +286,70 @@ impl Client {
 
     /// A timeout, a suppressed request's end, S3's expiry or a due tester present.
     pub fn poll(&mut self, now: Instant) -> Option<Event> {
-        if let Some(done) = self.outstanding.take_if(|o| now >= o.deadline) {
+        if let Some(done) = self.outstanding.take_if(|o| o.wait.is_over(now)) {
             self.last_activity = Some(now);
             let service = done.request[0];
             if done.pending || !suppresses_positive_response(&done.request) {
+                self.unanswered(&done.request);
                 return Some(Event::Timeout { service });
             }
             match done.request[..] {
-                [sid::DIAGNOSTIC_SESSION_CONTROL, sub, ..] => self.enter_session(sub & 0x7F, None),
-                [sid::ECU_RESET, ..] => self.enter_session(DEFAULT_SESSION, None),
+                [sid::DIAGNOSTIC_SESSION_CONTROL, sub, ..] => {
+                    self.enter_session(Some(sub & 0x7F), None)
+                }
+                [sid::ECU_RESET, ..] => self.enter_session(Some(DEFAULT_SESSION), None),
                 _ => {}
             }
             return Some(Event::Suppressed { service });
         }
-        if self.outstanding.is_some() || self.session == DEFAULT_SESSION {
+        if self.outstanding.is_some() || self.session == Some(DEFAULT_SESSION) {
             return None;
         }
-        let last = self.last_activity?;
-        if now >= last + self.timing.s3 {
-            self.enter_session(DEFAULT_SESSION, None);
+        if self.s3()?.is_over(now) {
+            self.enter_session(Some(DEFAULT_SESSION), None);
             return Some(Event::SessionExpired);
         }
-        if now >= last + self.timing.keep_alive? {
+        if self.keep_alive_after()?.is_over(now) {
             self.last_activity = Some(now);
-            self.keep_alive_sent = Some(now);
+            self.keep_alive = Some(self.timing.answer_within(self.timing.p2, now));
             return Some(Event::TesterPresent(TESTER_PRESENT_SUPPRESSED.to_vec()));
         }
         None
     }
 
-    /// When [`Client::poll`] next has something to say.
+    /// When [`Client::poll`] next has something to say; `None` also when the
+    /// only wait left is too long for an `Instant` to hold.
     pub fn next_deadline(&self) -> Option<Instant> {
         if let Some(o) = &self.outstanding {
-            return Some(o.deadline);
+            return o.wait.deadline();
         }
-        if self.session == DEFAULT_SESSION {
+        if self.session == Some(DEFAULT_SESSION) {
             return None;
         }
-        let last = self.last_activity?;
-        let expiry = last + self.timing.s3;
-        Some(
-            self.timing
-                .keep_alive
-                .map_or(expiry, |k| expiry.min(last + k)),
-        )
+        [self.s3(), self.keep_alive_after()]
+            .into_iter()
+            .flatten()
+            .filter_map(Wait::deadline)
+            .min()
+    }
+
+    fn s3(&self) -> Option<Wait> {
+        Some(Wait {
+            since: self.last_activity?,
+            length: self.timing.s3,
+        })
+    }
+
+    /// No keep-alive holds a session the client does not know it is in.
+    fn keep_alive_after(&self) -> Option<Wait> {
+        Some(Wait {
+            since: self.last_activity?,
+            length: self.timing.keep_alive.filter(|_| self.session.is_some())?,
+        })
     }
 
     /// Locks security; P2 and P2* become the reported ones, or the defaults.
-    fn enter_session(&mut self, session: u8, reported: Option<SessionTiming>) {
+    fn enter_session(&mut self, session: Option<u8>, reported: Option<SessionTiming>) {
         self.session = session;
         self.security_level = None;
         (self.timing.p2, self.timing.p2_star) = match reported {
@@ -268,12 +358,23 @@ impl Client {
         };
     }
 
+    /// The server may have acted on a request it never answered.
+    fn unanswered(&mut self, request: &[u8]) {
+        match request.first() {
+            Some(&(sid::DIAGNOSTIC_SESSION_CONTROL | sid::ECU_RESET)) => {
+                self.enter_session(None, None)
+            }
+            Some(&sid::SECURITY_ACCESS) => self.security_level = None,
+            _ => {}
+        }
+    }
+
     fn apply(&mut self, response: &Response) {
         match response {
             Response::DiagnosticSessionControl { session, timing } => {
-                self.enter_session(*session, *timing)
+                self.enter_session(Some(*session), *timing)
             }
-            Response::EcuReset { .. } => self.enter_session(DEFAULT_SESSION, None),
+            Response::EcuReset { .. } => self.enter_session(Some(DEFAULT_SESSION), None),
             Response::SecurityAccess { sub_function, .. } if sub_function % 2 == 0 => {
                 self.security_level = sub_function.checked_sub(1);
             }

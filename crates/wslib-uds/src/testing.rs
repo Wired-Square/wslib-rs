@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::codec::{DEFAULT_SESSION, DtcRequest, DtcResponse, DtcStatus, SessionTiming};
+use crate::codec::{DEFAULT_SESSION, Dtc, DtcRequest, DtcResponse, DtcStatus, SessionTiming};
 use crate::{Nrc, Request, Response, sid};
 
 /// The timing every session-control answer reports: P2 50 ms, P2* 5 s.
@@ -151,7 +151,7 @@ impl Ecu {
         self
     }
 
-    pub fn with_dtc(mut self, dtc: u32, status: u8) -> Self {
+    pub fn with_dtc(mut self, dtc: Dtc, status: u8) -> Self {
         self.dtcs.push(DtcStatus { dtc, status });
         self
     }
@@ -240,8 +240,8 @@ impl Ecu {
             }
             Request::ClearDiagnosticInformation { group, .. } => {
                 let before = self.dtcs.len();
-                self.dtcs.retain(|d| group != 0xFF_FFFF && d.dtc != group);
-                if group != 0xFF_FFFF && self.dtcs.len() == before {
+                self.dtcs.retain(|d| group != Dtc::ALL && d.dtc != group);
+                if group != Dtc::ALL && self.dtcs.len() == before {
                     return Err(Nrc::REQUEST_OUT_OF_RANGE);
                 }
                 Response::ClearDiagnosticInformation

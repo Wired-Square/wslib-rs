@@ -19,7 +19,11 @@ A client holds the session, the unlocked security level and the P2, P2* and
 S3 timers. It hands back bytes to send and turns received bytes into events;
 `poll` reports a timeout, S3's expiry or a due tester present, and
 `next_deadline` says when to poll next. Nothing caps a server's
-responsePending answers; `abandon` gives up on the outstanding request.
+responsePending answers; `abandon` gives up on the outstanding request. A
+session change or ECU reset that goes unanswered locks security and leaves
+`session()` `None`, with no keep-alive, until an answer says which session it
+is or S3 returns the server to the default one. No timing panics: a wait too
+long for an `Instant` to hold never ends.
 
 ```rust
 use std::time::Instant;
@@ -30,14 +34,16 @@ let read = ReadOnly::new(Request::ReadDataByIdentifier { dids: vec![0xF190] })?;
 link.send(&client.send_read_only(read, Instant::now())?)?;
 match client.receive(&link.recv()?, Instant::now()) {
     Event::Positive(response) => println!("{response:?}"),
-    Event::Pending { deadline } => { /* wait until the deadline */ }
+    Event::Pending { .. } => { /* poll at client.next_deadline() */ }
     other => println!("{other:?}"),
 }
 ```
 
 Without `write`, `send_read_only` is the only way to send, and `ReadOnly::new`
-refuses any request that is not `Safety::ReadOnly`. The crate docs carry the
-safety table.
+refuses any request that is not `Safety::ReadOnly`. With `write`, a client
+built by `Client::up_to(timing, Safety::StateChanging)` sends up to that class
+and refuses anything above it; `Client::new` still sends only read-only
+requests. The crate docs carry the safety table.
 
 Scans are plans the caller drives: take the next probe, send it, report the
 final reply, or `None` for silence.
@@ -67,7 +73,8 @@ for finding in scan.findings() {
   has its service's class.
 - `Tracker` pairs a capture's requests and responses, counting
   responsePending answers and timing each; a keep-alive tester present does
-  not disturb a request still owed a response.
+  not disturb a request still owed a response, and a request that suppressed
+  its positive response stays open to the timeout for a late refusal.
 - Scans: `AddressScan` (tester present per candidate id), `ServiceScan` (bare
   service ids: the read-only ones, or with `write` up to a class the caller
   names; it stops if a bare id above read-only is acted on), `DidScan`, and
@@ -79,6 +86,8 @@ for finding in scan.findings() {
   security level, DTCs, a routine and responsePending answers, whose
   `answer(&[u8]) -> Vec<Vec<u8>>` drives a transport's responder.
 - `ts`: TypeScript declarations for the data types, every name prefixed `Uds`.
+  64-bit fields are declared `number`, so an address, size or block length
+  above 2^53 loses precision in JavaScript.
 
 `docs/uds.md` is the wire as this crate reads it, written from knowledge of
 ISO 14229-1:2020 and not checked against the standard's text.

@@ -439,7 +439,7 @@ fn checked(runner: &impl Runner, call: Call, secrets: &[&str]) -> Result<Output,
     let out = runner.run(&call);
     let elapsed = start.elapsed();
     let mut out = out.inspect_err(|e| {
-        tracing::warn!(command = %call, error = %e, ?elapsed, "op did not run");
+        tracing::warn!(command = %call, error = e as &dyn std::error::Error, ?elapsed, "op did not run");
     })?;
     if out.success() {
         tracing::debug!(command = %call, ?elapsed, "op");

@@ -52,12 +52,12 @@ const MAX_LIFETIME: Duration = Duration::from_secs(60 * 60);
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
-    #[error("database: {0}")]
+    #[error("database query failed")]
     Db(#[from] sqlx::Error),
 
     /// A migration of `chain` failed, an applied one was modified
     /// (`VersionMismatch`), or one applied is not in the chain (`VersionMissing`).
-    #[error("migration chain {chain}: {source}")]
+    #[error("migration chain {chain} failed")]
     Migrate {
         chain: String,
         #[source]
@@ -73,11 +73,12 @@ pub enum Error {
     SchemaBehind { chain: String, version: i64 },
 
     /// A stored value this build cannot read.
-    #[error("unreadable {what} in {table}: {because}")]
+    #[error("unreadable {what} in {table}")]
     Unreadable {
         table: &'static str,
         what: &'static str,
-        because: String,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
     },
 
     /// A chain or table name that is not `[a-z][a-z0-9_]*`.
@@ -145,7 +146,7 @@ pub enum Error {
     #[error("{0:?} cannot be the local prefix: it ends in '.' and does not overlap \"secret.\"")]
     LocalPrefix(String),
 
-    #[error("the document for {key} will not serialise: {source}")]
+    #[error("the document for {key} will not serialise")]
     Serialise {
         key: String,
         #[source]
@@ -155,11 +156,15 @@ pub enum Error {
 
 impl Error {
     /// [`Error::Unreadable`], for a wrapper reading its own rows.
-    pub fn unreadable(table: &'static str, what: &'static str, because: impl ToString) -> Self {
+    pub fn unreadable(
+        table: &'static str,
+        what: &'static str,
+        because: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
         Self::Unreadable {
             table,
             what,
-            because: because.to_string(),
+            source: Box::new(because),
         }
     }
 }
@@ -507,7 +512,7 @@ fn restrict_to_owner(path: &Path) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => tracing::warn!(
-                error = %e, path = %file.display(),
+                error = &e as &dyn std::error::Error, path = %file.display(),
                 "could not restrict the database to its owner"
             ),
         }
@@ -526,5 +531,24 @@ async fn wait_for_removal(db: &Path) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
     while (wal.exists() || shm.exists()) && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_query_says_only_that_and_keeps_sqlxs_error() {
+        let e = Error::from(sqlx::Error::RowNotFound);
+        assert_eq!(e.to_string(), "database query failed");
+        let source = std::error::Error::source(&e).expect("sqlx's error");
+        assert!(
+            matches!(
+                source.downcast_ref::<sqlx::Error>(),
+                Some(sqlx::Error::RowNotFound)
+            ),
+            "{source:?}"
+        );
     }
 }

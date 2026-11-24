@@ -136,11 +136,12 @@ pub enum StoreError {
     PasskeyTaken,
 
     /// A stored row this build cannot read.
-    #[error("unreadable {what} in {table}: {because}")]
+    #[error("unreadable {what} in {table}")]
     Unreadable {
         table: &'static str,
         what: &'static str,
-        because: String,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
     },
 
     /// A paging cursor that did not come from this store: the caller's
@@ -149,8 +150,8 @@ pub enum StoreError {
     BadCursor(String),
 
     /// What the migration chains refuse beyond the variants above.
-    #[error(transparent)]
-    Database(wslib_db_sqlite::Error),
+    #[error("the migration chains were refused")]
+    Database(#[source] wslib_db_sqlite::Error),
 }
 
 impl From<wslib_db_sqlite::Error> for StoreError {
@@ -166,22 +167,28 @@ impl From<wslib_db_sqlite::Error> for StoreError {
             E::Unreadable {
                 table,
                 what,
-                because,
-            } => Self::unreadable(table, what, because),
-            E::Serialise { key, source } => {
-                Self::unreadable("settings", "document", format!("{key}: {source}"))
-            }
+                source,
+            } => Self::Unreadable {
+                table,
+                what,
+                source,
+            },
+            serialise @ E::Serialise { .. } => Self::unreadable("settings", "document", serialise),
             other => Self::Database(other),
         }
     }
 }
 
 impl StoreError {
-    fn unreadable(table: &'static str, what: &'static str, because: impl ToString) -> Self {
+    fn unreadable(
+        table: &'static str,
+        what: &'static str,
+        because: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
         Self::Unreadable {
             table,
             what,
-            because: because.to_string(),
+            source: Box::new(because),
         }
     }
 }
@@ -557,5 +564,46 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn a_chain_refusal_is_its_own_layer_over_the_databases_error() {
+        let e = StoreError::from(wslib_db_sqlite::Error::InvalidName("Bad".into()));
+        assert_eq!(e.to_string(), "the migration chains were refused");
+        let source = std::error::Error::source(&e).expect("the database's refusal");
+        assert!(
+            matches!(
+                source.downcast_ref::<wslib_db_sqlite::Error>(),
+                Some(wslib_db_sqlite::Error::InvalidName(name)) if name == "Bad"
+            ),
+            "{source:?}"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_value_says_where_and_keeps_its_cause_as_the_source() {
+        let mine = parse_stamp("t", "at", "yesterday").expect_err("not a stamp");
+        let chrono_error = || DateTime::parse_from_rfc3339("yesterday").expect_err("not a stamp");
+        let the_databases = StoreError::from(wslib_db_sqlite::Error::unreadable(
+            "t",
+            "at",
+            chrono_error(),
+        ));
+        for e in [mine, the_databases] {
+            assert!(
+                matches!(
+                    e,
+                    StoreError::Unreadable {
+                        table: "t",
+                        what: "at",
+                        ..
+                    }
+                ),
+                "{e:?}"
+            );
+            assert_eq!(e.to_string(), "unreadable at in t");
+            let source = std::error::Error::source(&e).expect("chrono's error");
+            assert!(source.is::<chrono::ParseError>(), "{source:?}");
+        }
     }
 }

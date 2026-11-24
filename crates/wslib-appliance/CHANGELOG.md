@@ -1,9 +1,9 @@
 # Changelog
 
-## 0.1.17
+## 0.2.0
 
-- Pins `wslib-appliance-core`, `-https`, `-server` and `-service` at 0.1.7,
-  and `-backup` at 0.2.5.
+- Pins `wslib-appliance-core`, `-https`, `-server`, `-service`, `-store` and
+  `-auth` at 0.2.0, and `-backup` at 0.3.0.
 
 ## 0.1.16
 

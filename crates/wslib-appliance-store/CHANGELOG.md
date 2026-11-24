@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0
+
+- `StoreError::Unreadable` holds the error that made the row unreadable as
+  `source`, in place of its text in `because`, and says only which value of
+  which table it could not read. A document that will not serialise is
+  `Unreadable` with wslib-db-sqlite's `Error::Serialise`, which names the
+  key, as its source.
+- `StoreError::Database` says the migration chains were refused, and gives
+  wslib-db-sqlite's error through `source()`, rather than being that error.
+- On wslib-db-sqlite 0.3.
+
 ## 0.1.3
 
 - Migration 0008 adds `platform_session_secrets`, `wslib-auth`'s table of

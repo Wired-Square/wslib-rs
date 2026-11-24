@@ -302,7 +302,11 @@ impl Settings {
             return Ok(T::default());
         };
         Ok(serde_json::from_str(&raw).unwrap_or_else(|e| {
-            tracing::warn!(key, error = %e, "a stored document will not parse; using its default");
+            tracing::warn!(
+                key,
+                error = &e as &dyn std::error::Error,
+                "a stored document will not parse; using its default"
+            );
             T::default()
         }))
     }
@@ -380,6 +384,22 @@ mod tests {
         let logged = for_the_log(&crafted);
         assert_eq!(logged.chars().count(), 64);
         assert!(crafted.starts_with(&logged));
+    }
+
+    #[tokio::test]
+    async fn a_document_that_will_not_serialise_names_its_key_and_keeps_serdes_error() {
+        let db = Database::open_in_memory(&[]).await.unwrap();
+        let not_a_map = BTreeMap::from([((1, 2), 3)]);
+        let e = Settings::new(&db)
+            .set_setting_doc("backup.schedule", &not_a_map)
+            .await
+            .expect_err("a map keyed by tuples is not JSON");
+        assert_eq!(
+            e.to_string(),
+            "the document for backup.schedule will not serialise"
+        );
+        let source = std::error::Error::source(&e).expect("serde's error");
+        assert!(source.is::<serde_json::Error>(), "{source:?}");
     }
 
     #[tokio::test]

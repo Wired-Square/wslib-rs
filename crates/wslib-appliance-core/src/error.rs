@@ -248,7 +248,7 @@ impl From<StoreError> for ApiError {
             StoreError::BadCursor(_) => {
                 Self::BadRequest("that cursor did not come from this appliance".to_string())
             }
-            other => Self::internal("reach the database", &other),
+            other => Self::internal("reach the database", &crate::tls::chain(&other)),
         }
     }
 }
@@ -309,7 +309,7 @@ impl From<AuthError> for ApiError {
                 Self::BadRequest(e.to_string())
             }
             AuthError::Store(e) => e.into(),
-            other => Self::internal("complete the sign-in", &other),
+            other => Self::internal("complete the sign-in", &crate::tls::chain(&other)),
         }
     }
 }
@@ -404,14 +404,34 @@ mod tests {
             ApiError::from(StoreError::UsernameTaken("admin".into())),
             ApiError::Conflict(_)
         ));
-        assert!(matches!(
-            ApiError::from(StoreError::Unreadable {
-                table: "users",
-                what: "role",
-                because: "superuser".into(),
-            }),
-            ApiError::Internal { .. }
-        ));
+        let unreadable = ApiError::from(StoreError::Unreadable {
+            table: "users",
+            what: "role",
+            source: Box::new(wslib_appliance_types::UnknownRole("superuser".into())),
+        });
+        assert!(
+            matches!(
+                &unreadable,
+                ApiError::Internal { because, .. }
+                    if because == r#"unreadable role in users: unknown role: "superuser""#
+            ),
+            "{unreadable:?}"
+        );
+    }
+
+    #[test]
+    fn a_failed_sign_in_journals_each_cause_of_its_auth_error() {
+        let failed = ApiError::from(AuthError::Hash(Box::new(std::io::Error::other(
+            "out of memory",
+        ))));
+        assert!(
+            matches!(
+                &failed,
+                ApiError::Internal { context: "complete the sign-in", because }
+                    if because == "the password could not be hashed: out of memory"
+            ),
+            "{failed:?}"
+        );
     }
 
     #[test]

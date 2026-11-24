@@ -5,6 +5,8 @@ use std::process::{Child, Command, Stdio};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use crate::Error;
+
 /// One `op` invocation, as a [`Runner`] receives it.
 #[derive(Clone)]
 pub struct Call {
@@ -107,13 +109,14 @@ impl Output {
 
 /// How `op` is run: [`ShellRunner`], or a fake in tests.
 pub trait Runner {
-    /// Runs `op` with `call`; an `io::ErrorKind::NotFound` means there is no `op`,
-    /// and `TimedOut` that it did not answer in time.
-    fn run(&self, call: &Call) -> io::Result<Output>;
+    /// Runs `op` with `call`: [`Error::CliNotFound`] when there is no `op`,
+    /// [`Error::TimedOut`] when it did not answer in time, and [`Error::Io`]
+    /// when it could not be run otherwise.
+    fn run(&self, call: &Call) -> Result<Output, Error>;
 }
 
 impl<R: Runner + ?Sized> Runner for &R {
-    fn run(&self, call: &Call) -> io::Result<Output> {
+    fn run(&self, call: &Call) -> Result<Output, Error> {
         (**self).run(call)
     }
 }
@@ -163,7 +166,7 @@ impl ShellRunner {
 }
 
 impl Runner for ShellRunner {
-    fn run(&self, call: &Call) -> io::Result<Output> {
+    fn run(&self, call: &Call) -> Result<Output, Error> {
         let stdin = match (call.stdin.is_some(), self.interactive) {
             (true, _) => Stdio::piped(),
             (false, true) => Stdio::inherit(),
@@ -278,16 +281,14 @@ mod tests {
         let runner = shell().with_timeout(Duration::from_millis(100));
         let start = Instant::now();
         let error = runner.run(&sh("sleep 5")).unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(matches!(error, Error::TimedOut), "{error:?}");
         assert!(start.elapsed() < Duration::from_secs(3));
     }
 
     #[test]
     fn a_missing_program_is_not_found() {
         let runner = ShellRunner::new().with_program("wslib-1password-no-such-op");
-        assert_eq!(
-            runner.run(&Call::new()).unwrap_err().kind(),
-            io::ErrorKind::NotFound
-        );
+        let error = runner.run(&Call::new()).unwrap_err();
+        assert!(matches!(error, Error::CliNotFound), "{error:?}");
     }
 }

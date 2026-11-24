@@ -22,6 +22,8 @@ impl From<PasswordError> for AuthError {
             PasswordError::TooShort { min_chars } => Self::PasswordTooShort(min_chars),
             PasswordError::TooLong { max_bytes } => Self::PasswordTooLong(max_bytes),
             PasswordError::Hash(e) => Self::Hash(e),
+            PasswordError::Cancelled => Self::Cancelled,
+            PasswordError::Panicked => Self::Panicked,
         }
     }
 }
@@ -45,7 +47,11 @@ pub fn verify_password(account: &Account, password: &str) -> bool {
     }
     let user_id = &account.user.id;
     if let Some(error) = wslib_auth_password::why_unreadable(stored) {
-        tracing::error!(%user_id, %error, "a stored password hash is unreadable");
+        tracing::error!(
+            %user_id,
+            error = &error as &dyn std::error::Error,
+            "a stored password hash is unreadable"
+        );
     }
     if password.len() > MAX_PASSWORD_BYTES {
         tracing::warn!(%user_id, "a password tried is over the maximum, so it cannot verify");
@@ -148,7 +154,7 @@ async fn rehashed(store: &Store, account: Account, password: &str) -> Account {
         ),
         Err(e) => tracing::warn!(
             user_id = %account.user.id,
-            error = %e,
+            error = &e as &dyn std::error::Error,
             "a password hash at old parameters was not re-hashed"
         ),
     }

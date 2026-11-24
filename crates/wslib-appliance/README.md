@@ -34,7 +34,7 @@ The appliance family in one dependency:
 
 ```toml
 [dependencies]
-wslib-appliance = { version = "0.1", registry = "wired-square" }
+wslib-appliance = { version = "0.2", registry = "wired-square" }
 ```
 
 Each `wslib-appliance-*` crate keeps its own version, and this crate pins

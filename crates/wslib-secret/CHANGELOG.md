@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.7
+
+- `LoadError::Read` says which file it cannot read, and `StoreError::Backend`
+  that the store failed; neither repeats its cause, which comes through
+  `source()` only.
+
 ## 0.1.6
 
 - `Encoding::Hex`: lower-case RFC 4648 base16, so `Secret::random::<24>(Encoding::Hex)`

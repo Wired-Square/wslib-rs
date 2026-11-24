@@ -2,6 +2,9 @@
 
 ## 0.1.1
 
+- `CodeError::Random` and `CodeError::Io` no longer repeat their cause, which
+  comes through `source()` only; `Io` says the state at its path could not be
+  read or written.
 - On wslib-file-atomic 0.2.
 
 ## 0.1.0

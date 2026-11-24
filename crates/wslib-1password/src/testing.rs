@@ -15,7 +15,7 @@ pub struct FakeRunner {
 
 #[derive(Default)]
 struct State {
-    script: VecDeque<io::Result<Output>>,
+    script: VecDeque<Result<Output, Error>>,
     calls: Vec<Call>,
     files: Vec<Vec<u8>>,
 }
@@ -35,7 +35,9 @@ impl FakeRunner {
     /// Fails the next unanswered call to run at all: `TimedOut` for a timeout,
     /// `NotFound` for no `op`.
     pub fn fail_to_run(&self, kind: io::ErrorKind) -> &Self {
-        self.state().script.push_back(Err(kind.into()));
+        self.state()
+            .script
+            .push_back(Err(io::Error::from(kind).into()));
         self
     }
 
@@ -72,7 +74,7 @@ impl fmt::Debug for FakeRunner {
 }
 
 impl Runner for FakeRunner {
-    fn run(&self, call: &Call) -> io::Result<Output> {
+    fn run(&self, call: &Call) -> Result<Output, Error> {
         let mut state = self.state();
         state.calls.push(call.clone());
         let files = call
@@ -84,6 +86,20 @@ impl Runner for FakeRunner {
         state
             .script
             .pop_front()
-            .unwrap_or_else(|| Err(io::Error::other(Error::Unscripted(call.to_string()))))
+            .unwrap_or_else(|| Err(Error::Unscripted(call.to_string())))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_fake_answers_an_unscripted_call_with_the_crates_own_error() {
+        let refused = FakeRunner::new().run(&Call::of(["vault", "list"]));
+        assert!(
+            matches!(&refused, Err(Error::Unscripted(call)) if call == "op vault list"),
+            "{refused:?}"
+        );
     }
 }

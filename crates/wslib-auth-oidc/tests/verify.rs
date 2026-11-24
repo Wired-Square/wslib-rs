@@ -1,3 +1,4 @@
+use std::error::Error as _;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -87,6 +88,10 @@ impl Issuer {
         self.state.lock().unwrap().body = jwks_of(jwks);
     }
 
+    fn answer(&self, body: &str) {
+        self.state.lock().unwrap().body = body.into();
+    }
+
     fn fail(&self, status: u16) {
         self.state.lock().unwrap().status = status;
     }
@@ -145,7 +150,7 @@ fn with(changes: Value) -> Value {
 }
 
 fn is_rejected<T: std::fmt::Debug>(result: Result<T, Error>) -> bool {
-    matches!(result, Err(Error::Rejected(_)))
+    matches!(result, Err(Error::Rejected { .. }))
 }
 
 #[tokio::test]
@@ -298,7 +303,7 @@ async fn a_failing_issuer_is_unavailable_and_not_hammered() {
         let token = signed("a", KEY_A, &claims());
         assert!(matches!(
             verifier.verify::<Claims>(&token).await,
-            Err(Error::Unavailable(_))
+            Err(Error::Unavailable { .. })
         ));
     }
     assert_eq!(issuer.hits(), 1);
@@ -370,7 +375,10 @@ async fn keys_of_other_types_and_uses_are_skipped() {
 async fn a_jwks_without_a_usable_key_is_unavailable() {
     let issuer = Issuer::serving(&[]).await;
     let result = issuer.verifier().refresh().await;
-    assert!(matches!(result, Err(Error::Unavailable(_))), "{result:?}");
+    assert!(
+        matches!(result, Err(Error::Unavailable { .. })),
+        "{result:?}"
+    );
 }
 
 #[tokio::test]
@@ -392,4 +400,115 @@ async fn the_cognito_issuer_and_token_use() {
     );
     verifier.verify::<Claims>(&id).await.unwrap();
     assert!(is_rejected(verifier.verify::<Claims>(&access).await));
+}
+
+#[tokio::test]
+async fn a_token_jsonwebtoken_refuses_says_so_and_keeps_its_error() {
+    let issuer = Issuer::serving(&[JWK_A]).await;
+    let token = signed("a", KEY_A, &with(json!({"exp": now() - 3600})));
+    let refused = issuer
+        .verifier()
+        .verify::<Claims>(&token)
+        .await
+        .expect_err("expired");
+    assert_eq!(refused.to_string(), "token rejected: it does not verify");
+    let source = refused.source().expect("jsonwebtoken's error");
+    let refusal = source
+        .downcast_ref::<jsonwebtoken::errors::Error>()
+        .expect("typed");
+    assert_eq!(
+        refusal.kind(),
+        &jsonwebtoken::errors::ErrorKind::ExpiredSignature
+    );
+}
+
+#[tokio::test]
+async fn claims_that_dont_fit_keep_serdes_error() {
+    #[derive(Debug, serde::Deserialize)]
+    #[allow(dead_code)]
+    struct NeedsTenant {
+        tenant: String,
+    }
+    let issuer = Issuer::serving(&[JWK_A]).await;
+    let refused = issuer
+        .verifier()
+        .verify::<NeedsTenant>(&signed("a", KEY_A, &claims()))
+        .await
+        .expect_err("no tenant");
+    assert_eq!(refused.to_string(), "token rejected: the claims don't fit");
+    let source = refused.source().expect("serde's error");
+    assert!(source.is::<serde_json::Error>(), "{source:?}");
+}
+
+#[tokio::test]
+async fn a_refusal_in_the_crates_own_words_has_no_source() {
+    let issuer = Issuer::serving(&[JWK_A]).await;
+    let refused = issuer
+        .verifier()
+        .verify::<Claims>(&signed("b", KEY_B, &claims()))
+        .await
+        .expect_err("no key b");
+    assert_eq!(
+        refused.to_string(),
+        r#"token rejected: the issuer's JWKS has no key "b""#
+    );
+    assert!(refused.source().is_none());
+}
+
+#[tokio::test]
+async fn an_issuer_answering_an_error_status_is_named_with_it() {
+    let issuer = Issuer::serving(&[JWK_A]).await;
+    issuer.fail(500);
+    let failed = issuer.verifier().refresh().await.expect_err("a 500");
+    assert_eq!(
+        failed.to_string(),
+        format!(
+            "the issuer's keys at {} are unavailable: HTTP 500 Internal Server Error",
+            issuer.url
+        )
+    );
+    assert!(failed.source().is_none());
+}
+
+#[tokio::test]
+async fn a_jwks_that_is_not_json_keeps_serdes_error_while_it_is_cached() {
+    let issuer = Issuer::serving(&[JWK_A]).await;
+    issuer.answer("not json");
+    let verifier = issuer.verifier();
+    let token = signed("a", KEY_A, &claims());
+    for _ in 0..2 {
+        let failed = verifier
+            .verify::<Claims>(&token)
+            .await
+            .expect_err("no keys");
+        assert_eq!(
+            failed.to_string(),
+            format!(
+                "the issuer's keys at {} are unavailable: it is not JSON",
+                issuer.url
+            )
+        );
+        let source = failed.source().expect("serde's error");
+        assert!(source.is::<serde_json::Error>(), "{source:?}");
+    }
+    assert_eq!(issuer.hits(), 1, "the second answer is the cached failure");
+}
+
+#[tokio::test]
+async fn an_issuer_that_cannot_be_reached_keeps_reqwests_error() {
+    install_providers();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/jwks.json", listener.local_addr().unwrap());
+    drop(listener);
+    let failed = Verifier::new(reqwest::Client::new(), ISSUER, AUDIENCE)
+        .with_jwks_url(&url)
+        .refresh()
+        .await
+        .expect_err("nothing listens");
+    assert_eq!(
+        failed.to_string(),
+        format!("the issuer's keys at {url} are unavailable: the request failed")
+    );
+    let source = failed.source().expect("reqwest's error");
+    assert!(source.is::<reqwest::Error>(), "{source:?}");
 }

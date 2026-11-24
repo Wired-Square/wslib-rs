@@ -32,7 +32,7 @@ async fn serving(
 ) -> (
     SocketAddr,
     CancellationToken,
-    tokio::task::JoinHandle<std::io::Result<()>>,
+    tokio::task::JoinHandle<Result<(), wslib_http_server::ServeError>>,
 ) {
     let listener = listener(bounds).await;
     let address = listener.local_addr();

@@ -203,7 +203,7 @@ impl CnameChain {
 }
 
 /// Why [`Resolver::cname_chain`] stopped short; each carries the names reached.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case", tag = "code"))]
 #[non_exhaustive]
@@ -226,10 +226,10 @@ impl std::fmt::Display for CnameChainError {
         match self {
             Self::Loop { names } => write!(f, "CNAME loop: {}", names.join(" -> ")),
             Self::TooLong { names } => write!(f, "CNAME chain too long: {}", names.join(" -> ")),
-            Self::Lookup { names, error } => {
+            Self::Lookup { names, .. } => {
                 write!(
                     f,
-                    "CNAME lookup of {} failed: {error}",
+                    "CNAME lookup of {} failed",
                     names.last().map_or("", String::as_str)
                 )
             }
@@ -237,7 +237,14 @@ impl std::fmt::Display for CnameChainError {
     }
 }
 
-impl std::error::Error for CnameChainError {}
+impl std::error::Error for CnameChainError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Lookup { error, .. } => Some(error),
+            Self::Loop { .. } | Self::TooLong { .. } => None,
+        }
+    }
+}
 
 fn merge_addresses(v4: Lookup<Ipv4Addr>, v6: Lookup<Ipv6Addr>) -> Lookup<IpAddr> {
     let v4 = v4.map(|answer| answer.map(IpAddr::V4));

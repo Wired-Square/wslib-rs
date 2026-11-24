@@ -28,7 +28,7 @@ wslib-appliance-core = { path = "../wslib-appliance-core", version = "=0.2.0", r
 wslib-appliance-store = { path = "../wslib-appliance-store", version = "0.2", registry = "wired-square" }
 wslib-appliance-types = { path = "../wslib-appliance-types", version = "0.1.3", registry = "wired-square" }
 wslib-auth = { path = "../wslib-auth", version = "0.1.1", registry = "wired-square", default-features = false }
-wslib-http-server = { path = "../wslib-http-server", version = "0.1.7", registry = "wired-square" }
+wslib-http-server = { path = "../wslib-http-server", version = "0.2", registry = "wired-square" }
 wslib-secret = { path = "../wslib-secret", version = "0.1.1", registry = "wired-square" }
 
 [dev-dependencies]

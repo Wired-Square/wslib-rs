@@ -1,4 +1,3 @@
-use std::io;
 use std::sync::Arc;
 
 use axum::Router;
@@ -10,7 +9,7 @@ use axum_server::{Handle, Server};
 use tokio::sync::watch;
 
 use crate::bounded::Peer;
-use crate::{Listener, head_within, until_stopped};
+use crate::{Listener, ServeError, head_within, until_stopped};
 
 /// Answer every request on `listener` with a 307 to the same host, path and
 /// query on the TLS port `https_port` holds at the time, until `stop` completes
@@ -19,7 +18,7 @@ pub async fn serve_redirect(
     listener: Listener,
     https_port: watch::Receiver<u16>,
     stop: impl Future<Output = ()>,
-) -> io::Result<()> {
+) -> Result<(), ServeError> {
     let bounds = listener.bounds;
     tracing::info!(address = %listener.local_addr(), "redirecting to https");
     let handle = Handle::<Peer>::new();

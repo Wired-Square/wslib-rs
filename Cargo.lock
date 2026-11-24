@@ -8599,7 +8599,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-dns"
-version = "0.2.5"
+version = "0.3.0"
 dependencies = [
  "hickory-resolver",
  "idna",
@@ -8723,7 +8723,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-host"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "hmac 0.12.1",
  "libc",
@@ -8769,7 +8769,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-http-server"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "axum",
  "axum-server",
@@ -8871,7 +8871,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-mdns"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "futures-util",
  "libc",
@@ -9012,7 +9012,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-systemd-journal"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -9028,7 +9028,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-tailscale"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",

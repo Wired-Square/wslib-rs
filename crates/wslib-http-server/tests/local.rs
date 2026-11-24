@@ -68,7 +68,7 @@ fn socket_in() -> (TempDir, PathBuf) {
 
 struct Serving {
     stop: CancellationToken,
-    served: JoinHandle<std::io::Result<()>>,
+    served: JoinHandle<Result<(), wslib_http_server::ServeError>>,
 }
 
 impl Serving {

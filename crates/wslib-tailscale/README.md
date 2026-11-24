@@ -9,7 +9,7 @@ tailscaled for tests comes with the `testing` feature.
 let api = wslib_tailscale::LocalApi::default();
 match api.status().await {
     Ok(status) => println!("{:?}", status.enrolled()),
-    Err(wslib_tailscale::Error::Absent) => println!("tailscaled is not running"),
+    Err(wslib_tailscale::Error::Absent(_)) => println!("tailscaled is not running"),
     Err(e) => return Err(e.into()),
 }
 ```
@@ -29,11 +29,13 @@ match api.status().await {
   name unless it is in `NoState` or `NeedsLogin`: only the control server
   names a node, and a logged-out one keeps the name it had.
 - **`Prefs`**: the control URL, `None` when tailscaled has none.
-- **`Error`**: `Absent` (no socket, or a stale one that refuses), `Silent`
+- **`Error`**: `Absent` (no socket, or a stale one that refuses, with the
+  connect's `io::Error` as its source), `Unsupported` (off Unix), `Silent`
   (the timeout passed), `Refused` (a status outside 2xx, with the first line
-  of the body, up to 200 characters), `Malformed`, and `Io`. Nothing is
-  logged; the caller logs with its own context. `Refused` and `Malformed`
-  display tailscaled's own text: log it, and show users a fixed message.
+  of the body, up to 200 characters), `Malformed`, `Json` (with serde_json's
+  error as its source) and `Io`. Nothing is logged; the caller logs with its
+  own context. `Refused` displays tailscaled's own text: log it, and show
+  users a fixed message.
 - **`is_tailnet_address`**: `100.64.0.0/10` or `fd7a:115c:a1e0::/48`, taking an
   IPv4-mapped address as its IPv4 one, as a dual-stack listener reports it.
 - **`testing::FakeTailscaled`** (feature `testing`, on Unix): answers
@@ -45,5 +47,5 @@ match api.status().await {
 ## What isn't
 
 tailscaled on macOS and Windows, which listen on TCP with a token; off Unix
-every call is `Absent`. Peers, login, `up` and prefs changes. Any policy over
-when to enrol or log out, which stays with the app.
+every call is `Unsupported`. Peers, login, `up` and prefs changes. Any
+policy over when to enrol or log out, which stays with the app.

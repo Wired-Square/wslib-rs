@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixListener;
 use wslib_tailscale::testing::{self, Answering, FakeNode, FakeTailscaled};
 use wslib_tailscale::{BackendState, Error, LocalApi};
@@ -25,12 +25,22 @@ fn running(node: FakeNode) -> (FakeTailscaled, LocalApi) {
     (fake, api)
 }
 
-/// Answers every connection with `raw` and closes.
+const READ_CHUNK: usize = 1024;
+const HEAD_END: &[u8] = b"\r\n\r\n";
+
 fn answering_raw(raw: Vec<u8>) -> LocalApi {
     let socket = socket();
     let listener = UnixListener::bind(&socket).unwrap();
     tokio::spawn(async move {
         while let Ok((mut stream, _)) = listener.accept().await {
+            let mut request = Vec::new();
+            let mut chunk = [0; READ_CHUNK];
+            while !request.windows(HEAD_END.len()).any(|w| w == HEAD_END) {
+                match stream.read(&mut chunk).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => request.extend_from_slice(&chunk[..n]),
+                }
+            }
             drop(stream.write_all(&raw).await);
         }
     });
@@ -69,14 +79,27 @@ async fn a_logout_leaves_the_node_needing_a_login_and_every_request_is_heard() {
 }
 
 #[tokio::test]
-async fn no_socket_or_one_left_behind_is_absent() {
+async fn no_socket_or_one_left_behind_is_absent_with_the_connects_error() {
     let api = LocalApi::default().with_socket(socket());
-    assert!(matches!(api.status().await, Err(Error::Absent)));
+    let missing = api.status().await.unwrap_err();
+    assert!(
+        matches!(&missing, Error::Absent(e) if e.kind() == std::io::ErrorKind::NotFound),
+        "{missing:?}"
+    );
+    assert_eq!(missing.to_string(), "tailscaled is not running");
+    let source = std::error::Error::source(&missing).unwrap();
+    assert_eq!(
+        source.downcast_ref::<std::io::Error>().unwrap().kind(),
+        std::io::ErrorKind::NotFound
+    );
 
     let stale = socket();
     drop(std::os::unix::net::UnixListener::bind(&stale).unwrap());
     let api = LocalApi::default().with_socket(stale);
-    assert!(matches!(api.status().await, Err(Error::Absent)));
+    assert!(matches!(
+        api.status().await,
+        Err(Error::Absent(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused
+    ));
 }
 
 #[tokio::test]
@@ -84,7 +107,7 @@ async fn a_stopped_fake_is_absent_until_it_starts_again_with_its_node_kept() {
     let (fake, api) = running(FakeNode::Enrolled);
     fake.set_node(FakeNode::LoggedOut);
     fake.stop();
-    assert!(matches!(api.status().await, Err(Error::Absent)));
+    assert!(matches!(api.status().await, Err(Error::Absent(_))));
     fake.start().unwrap();
     assert_eq!(api.status().await.unwrap().enrolled(), None);
 }
@@ -123,7 +146,7 @@ async fn an_unknown_path_is_refused_as_not_found() {
 }
 
 #[tokio::test]
-async fn an_answer_that_is_not_http_or_not_the_json_expected_or_over_1_mib_is_malformed() {
+async fn an_answer_that_is_not_http_or_over_1_mib_is_malformed() {
     let header = b"HTTP/1.0 200 OK\r\n\r\n".to_vec();
     let fine = br#"{"BackendState": "Running"}"#.to_vec();
     assert!(
@@ -133,12 +156,21 @@ async fn an_answer_that_is_not_http_or_not_the_json_expected_or_over_1_mib_is_ma
             .is_ok()
     );
     let oversized = [&header[..], &fine, &vec![b' '; 1 << 20]].concat();
-    for raw in [
-        b"nonsense".to_vec(),
-        [header, b"{".to_vec()].concat(),
-        oversized,
-    ] {
+    for raw in [b"nonsense".to_vec(), oversized] {
         let api = answering_raw(raw);
         assert!(matches!(api.status().await, Err(Error::Malformed(_))));
     }
+}
+
+#[tokio::test]
+async fn an_answer_that_is_not_the_json_expected_keeps_the_decoders_error() {
+    let api = answering_raw(b"HTTP/1.0 200 OK\r\n\r\n{".to_vec());
+    let error = api.status().await.unwrap_err();
+    assert!(matches!(error, Error::Json(_)));
+    assert_eq!(
+        error.to_string(),
+        "tailscaled's answer is not the JSON expected"
+    );
+    let source = std::error::Error::source(&error).unwrap();
+    assert!(source.is::<serde_json::Error>());
 }

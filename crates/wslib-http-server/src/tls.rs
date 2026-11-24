@@ -1,7 +1,7 @@
-use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
+use std::{fmt, io};
 
 use axum::Extension;
 use axum::middleware::AddExtension;
@@ -9,7 +9,7 @@ use axum_server::accept::Accept;
 use axum_server::tls_rustls::RustlsConfig;
 use rustls::ServerConfig;
 use rustls::crypto::CryptoProvider;
-use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::pem::{self, PemObject};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::sync::watch;
 use tokio_rustls::server::TlsStream;
@@ -118,19 +118,18 @@ pub fn server_config_from_pem(
     provider: Arc<CryptoProvider>,
     cert_chain: &[u8],
     key: &[u8],
-) -> io::Result<Arc<ServerConfig>> {
+) -> Result<Arc<ServerConfig>, ServerConfigError> {
     let chain = CertificateDer::pem_slice_iter(cert_chain)
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| invalid(format!("reading the certificate chain: {e}")))?;
+        .map_err(ServerConfigError::Chain)?;
     if chain.is_empty() {
-        return Err(invalid("the certificate chain holds no certificate".into()));
+        return Err(ServerConfigError::NoCertificate);
     }
-    let key = PrivateKeyDer::from_pem_slice(key)
-        .map_err(|e| invalid(format!("reading the private key: {e}")))?;
+    let key = PrivateKeyDer::from_pem_slice(key).map_err(ServerConfigError::Key)?;
     let config = ServerConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .and_then(|builder| builder.with_no_client_auth().with_single_cert(chain, key))
-        .map_err(|e| invalid(e.to_string()))?;
+        .map_err(ServerConfigError::Refused)?;
     Ok(Arc::new(config))
 }
 
@@ -139,14 +138,53 @@ pub fn server_config_from_pem_files(
     provider: Arc<CryptoProvider>,
     cert_chain: &Path,
     key: &Path,
-) -> io::Result<Arc<ServerConfig>> {
+) -> Result<Arc<ServerConfig>, ServerConfigError> {
     let read = |path: &Path| {
-        std::fs::read(path)
-            .map_err(|e| io::Error::new(e.kind(), format!("reading {}: {e}", path.display())))
+        std::fs::read(path).map_err(|source| ServerConfigError::Read {
+            path: path.to_owned(),
+            source,
+        })
     };
     server_config_from_pem(provider, &read(cert_chain)?, &read(key)?)
 }
 
-fn invalid(message: String) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, message)
+/// Why [`server_config_from_pem`] or [`server_config_from_pem_files`] made
+/// no configuration.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum ServerConfigError {
+    Read {
+        path: PathBuf,
+        source: io::Error,
+    },
+    Chain(pem::Error),
+    NoCertificate,
+    Key(pem::Error),
+    /// rustls refused the chain and key, or the provider's protocol versions.
+    Refused(rustls::Error),
+}
+
+impl fmt::Display for ServerConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Read { path, .. } => write!(f, "could not read {}", path.display()),
+            Self::Chain(_) => f.write_str("the certificate chain is not valid PEM"),
+            Self::NoCertificate => f.write_str("the certificate chain holds no certificate"),
+            Self::Key(_) => f.write_str("the private key is not valid PEM"),
+            Self::Refused(_) => f.write_str(
+                "rustls refused the certificate chain and key, or the provider's protocol versions",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ServerConfigError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Read { source, .. } => Some(source),
+            Self::Chain(e) | Self::Key(e) => Some(e),
+            Self::Refused(e) => Some(e),
+            Self::NoCertificate => None,
+        }
+    }
 }

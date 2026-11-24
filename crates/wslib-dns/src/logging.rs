@@ -13,7 +13,7 @@ pub struct LoggingResolver<R> {
 }
 
 /// One query and its outcome.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct QueryRecord {
     pub name: String,
@@ -203,8 +203,8 @@ mod tests {
         let log = dns.into_log();
         assert_eq!(log.len(), 2);
         assert_eq!(log[0].record_type, RecordType::Mx);
-        assert_eq!(log[0].outcome, Ok(vec!["10 mail.example.com".to_owned()]));
+        assert_eq!(log[0].outcome.as_deref().unwrap(), ["10 mail.example.com"]);
         assert_eq!(log[1].name, "_dmarc.example.com");
-        assert_eq!(log[1].outcome, Err(LookupError::Timeout));
+        assert!(matches!(log[1].outcome, Err(LookupError::Timeout)));
     }
 }

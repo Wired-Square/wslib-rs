@@ -35,7 +35,7 @@ pub const COMMON_SELECTORS: &[&str] = &[
 
 /// The key records at one selector, and the aliases the name passed through
 /// to reach them.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DkimDiscovery {
     pub selector: String,

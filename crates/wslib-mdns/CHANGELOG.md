@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0
+
+- `Error::Daemon` holds the in-process responder's error, boxed, as its
+  `source()`, in place of its text, and says "the mDNS responder refused".
+- `Error::Thread`: the thread that follows the in-process responder's
+  events could not start, with the `io::Error` as its `source()`. It was
+  `Daemon` with the error's text.
+- `Error::Invalid` says "a name is not valid for DNS-SD" and `Error::Bus`
+  "avahi failed"; the `Invalid` and the `zbus::Error` are the `source()`.
+
 ## 0.1.1
 
 - tokio's floor is 1.53.3, futures-util's 0.3.34.

@@ -15,7 +15,7 @@ pub const LOGO_INFLATE_LIMIT: usize = 256 * 1024;
 const LOGO_ACCEPT: &str = "image/svg+xml, */*;q=0.1";
 
 /// The outcome of fetching a BIMI logo.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case", tag = "kind"))]
 #[non_exhaustive]
@@ -108,7 +108,7 @@ const CERTIFICATE_ACCEPT: &str =
     "application/pem-certificate-chain, application/x-pem-file, */*;q=0.1";
 
 /// The outcome of fetching a BIMI record's `a=` mark certificate chain.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case", tag = "kind"))]
 #[non_exhaustive]

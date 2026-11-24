@@ -216,6 +216,30 @@ async fn an_absent_engine_is_unreachable() {
 }
 
 #[tokio::test]
+async fn an_answer_that_is_not_http_keeps_hypers_error_as_the_source() {
+    use std::io::{Read, Write};
+
+    let path = socket();
+    let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+    let answering = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0; 1024];
+        let _ = stream.read(&mut request);
+        stream.write_all(b"nonsense\r\n\r\n").unwrap();
+    });
+    let error = Docker::default()
+        .with_socket(path)
+        .ping()
+        .await
+        .unwrap_err();
+    answering.join().unwrap();
+    assert!(matches!(error, DockerError::Http(_)), "{error:?}");
+    assert_eq!(error.to_string(), "docker's HTTP failed");
+    let source = std::error::Error::source(&error).unwrap();
+    assert!(source.is::<hyper::Error>());
+}
+
+#[tokio::test]
 async fn a_held_request_is_answered_once_released_and_a_slow_one_times_out() {
     let engine = FakeEngine::holding(socket(), |_, _| (200, "OK".to_string()), "/v1.44/_ping");
     let impatient = engine.docker().with_call_timeout(Duration::from_millis(50));

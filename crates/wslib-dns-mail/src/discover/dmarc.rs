@@ -19,7 +19,7 @@ pub enum DmarcDiscoveryMode {
 
 /// The policy record that governs a domain, and which of its policies
 /// applies.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DmarcDiscovery {
     pub records: Inherited<DmarcRecord>,
@@ -144,7 +144,7 @@ fn tree_walk(domain: &str) -> Vec<String> {
 
 /// Whether a report destination will take reports for a policy domain
 /// (RFC 7489 §7.1).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case", tag = "kind"))]
 pub enum ReportAuthorisation {

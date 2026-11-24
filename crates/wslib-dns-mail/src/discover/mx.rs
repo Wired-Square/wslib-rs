@@ -6,7 +6,7 @@ use super::{ascii, join_all};
 use crate::dane::{DaneRecord, parse_tlsa};
 
 /// A domain's MX records, each inspected.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct MxDiscovery {
@@ -33,7 +33,7 @@ impl MxDiscovery {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct MxHost {
@@ -52,7 +52,7 @@ pub struct MxHost {
 }
 
 /// The TLSA records for an MX host's SMTP port.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct TlsaSet {
@@ -76,7 +76,7 @@ impl MxHost {
 }
 
 /// An address's PTR names and whether any of them resolves back to it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ReverseDns {
     pub address: IpAddr,

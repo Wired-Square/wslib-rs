@@ -34,7 +34,7 @@ pub(crate) async fn dnssec_findings(
     let status = match probe {
         Ok(answer) if answer.dnssec == Some(DnssecStatus::Secure) => {
             let bogus = findings.iter().any(|finding| {
-                finding.code == FindingCode::DnssecBogus && failed_in(finding, domain, None)
+                finding.code == FindingCode::DnssecBogus && failed_in(finding, domain, |_| true)
             });
             Some(if bogus {
                 DnssecStatus::Bogus
@@ -69,9 +69,11 @@ pub(crate) async fn dnssec_findings(
         ));
     }
     if let Some(zone) = wslib_dns::registrable_domain(domain)
-        && findings
-            .iter()
-            .any(|finding| failed_in(finding, &zone, Some(&LookupError::ServFail)))
+        && findings.iter().any(|finding| {
+            failed_in(finding, &zone, |error| {
+                matches!(error, LookupError::ServFail)
+            })
+        })
         && let Ok(answer) = resolver.ds(&zone).await
     {
         out.push(Finding::new(
@@ -86,12 +88,11 @@ pub(crate) async fn dnssec_findings(
     (status, out)
 }
 
-/// A failed lookup at or under `zone`, with `error` if given.
-fn failed_in(finding: &Finding, zone: &str, error: Option<&LookupError>) -> bool {
+fn failed_in(finding: &Finding, zone: &str, wanted: impl Fn(&LookupError) -> bool) -> bool {
     matches!(
         &finding.detail,
-        Detail::Lookup { name, error: failed }
-            if error.is_none_or(|error| error == failed)
+        Detail::Lookup { name, error }
+            if wanted(error)
                 && (name == zone || name.strip_suffix(zone).is_some_and(|rest| rest.ends_with('.')))
     )
 }

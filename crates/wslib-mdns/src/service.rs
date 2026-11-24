@@ -120,24 +120,31 @@ pub enum Error {
     NotRunning(zbus::Error),
     #[cfg(feature = "avahi")]
     Bus(zbus::Error),
-    /// The in-process responder refused, in its own words.
+    /// The in-process responder refused, with its error as the
+    /// [`source`](std::error::Error::source).
     #[cfg(feature = "in-process")]
-    Daemon(String),
+    Daemon(Box<dyn std::error::Error + Send + Sync>),
+    /// The thread that follows the in-process responder's events could not
+    /// start.
+    #[cfg(feature = "in-process")]
+    Thread(std::io::Error),
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Unsupported(what) => write!(f, "unsupported: {what}"),
-            Self::Invalid(e) => e.fmt(f),
+            Self::Invalid(_) => f.write_str("a name is not valid for DNS-SD"),
             #[cfg(feature = "avahi")]
             Self::Collision(_) => f.write_str("another client of avahi already holds the name"),
             #[cfg(feature = "avahi")]
             Self::NotRunning(_) => f.write_str("avahi is not running"),
             #[cfg(feature = "avahi")]
-            Self::Bus(e) => write!(f, "avahi: {e}"),
+            Self::Bus(_) => f.write_str("avahi failed"),
             #[cfg(feature = "in-process")]
-            Self::Daemon(e) => write!(f, "mDNS: {e}"),
+            Self::Daemon(_) => f.write_str("the mDNS responder refused"),
+            #[cfg(feature = "in-process")]
+            Self::Thread(_) => f.write_str("the mDNS responder's event thread could not start"),
         }
     }
 }
@@ -148,7 +155,11 @@ impl std::error::Error for Error {
             #[cfg(feature = "avahi")]
             Self::Bus(e) | Self::Collision(e) | Self::NotRunning(e) => Some(e),
             Self::Invalid(e) => Some(e),
-            _ => None,
+            #[cfg(feature = "in-process")]
+            Self::Daemon(e) => Some(&**e),
+            #[cfg(feature = "in-process")]
+            Self::Thread(e) => Some(e),
+            Self::Unsupported(_) => None,
         }
     }
 }
@@ -156,5 +167,48 @@ impl std::error::Error for Error {
 impl From<Invalid> for Error {
     fn from(e: Invalid) -> Self {
         Self::Invalid(e)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_invalid_name_is_the_source_not_the_message() {
+        let error = Error::from(Invalid::Subtype);
+        assert_eq!(error.to_string(), "a name is not valid for DNS-SD");
+        let source = std::error::Error::source(&error).unwrap();
+        assert!(matches!(
+            source.downcast_ref::<Invalid>(),
+            Some(Invalid::Subtype)
+        ));
+    }
+
+    #[cfg(feature = "in-process")]
+    #[test]
+    fn a_thread_that_could_not_start_keeps_the_io_error_as_the_source() {
+        let error = Error::Thread(std::io::Error::from(std::io::ErrorKind::OutOfMemory));
+        assert_eq!(
+            error.to_string(),
+            "the mDNS responder's event thread could not start"
+        );
+        let source = std::error::Error::source(&error).unwrap();
+        assert_eq!(
+            source.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::OutOfMemory
+        );
+    }
+
+    #[cfg(feature = "avahi")]
+    #[test]
+    fn a_bus_failure_is_the_source_not_the_message() {
+        let error = Error::Bus(zbus::Error::Failure("refused".into()));
+        assert_eq!(error.to_string(), "avahi failed");
+        let source = std::error::Error::source(&error).unwrap();
+        assert!(matches!(
+            source.downcast_ref::<zbus::Error>(),
+            Some(zbus::Error::Failure(why)) if why == "refused"
+        ));
     }
 }

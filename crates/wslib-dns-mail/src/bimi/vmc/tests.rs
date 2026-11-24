@@ -386,7 +386,12 @@ fn an_untrusted_root_fails_the_chain() {
         .problems
         .iter()
         .find(|p| matches!(p, VmcProblem::Chain { .. }));
-    let Some(VmcProblem::Chain { refusal, cause }) = chain else {
+    let Some(VmcProblem::Chain {
+        refusal,
+        cause,
+        causes,
+    }) = chain
+    else {
         panic!("{:?}", verification.problems);
     };
     assert_eq!(*refusal, ChainRefusal::Untrusted);
@@ -396,34 +401,40 @@ fn an_untrusted_root_fails_the_chain() {
     );
     let error = cause.as_deref().expect("the verifier's refusal");
     assert!(matches!(error, ChainError::Untrusted(_)), "{error:?}");
-    assert!(
-        std::error::Error::source(error).is_some(),
-        "the verifier's own error: {error:?}"
-    );
+    let verifier = std::error::Error::source(error).expect("the verifier's own error");
+    assert_eq!(causes[..2], [error.to_string(), verifier.to_string()]);
 }
 
 #[cfg(feature = "serde")]
 #[test]
-fn a_chain_problem_serialises_its_refusal_and_not_its_cause() {
+fn a_chain_problem_serialises_its_refusal_and_what_its_causes_say_but_no_cause() {
     let error = ChainError::Untrusted(Box::new(std::io::Error::other("unknown issuer")));
-    let problem = VmcProblem::Chain {
-        refusal: ChainRefusal::from(&error),
-        cause: Some(Arc::new(error)),
-    };
-    let json = serde_json::to_value(&problem).unwrap();
+    let said = error.to_string();
+    let json = serde_json::to_value(VmcProblem::refused(error)).unwrap();
     assert_eq!(
         json,
-        serde_json::json!({ "kind": "chain", "refusal": "untrusted" })
+        serde_json::json!({
+            "kind": "chain",
+            "refusal": "untrusted",
+            "causes": [said, "unknown issuer"],
+        })
     );
     let read: VmcProblem = serde_json::from_value(json).unwrap();
     assert!(
         matches!(
-            read,
+            &read,
             VmcProblem::Chain {
                 refusal: ChainRefusal::Untrusted,
-                cause: None
-            }
+                cause: None,
+                causes,
+            } if causes.len() == 2
         ),
+        "{read:?}"
+    );
+    let stored = serde_json::json!({ "kind": "chain", "refusal": "invalid" });
+    let read: VmcProblem = serde_json::from_value(stored).unwrap();
+    assert!(
+        matches!(&read, VmcProblem::Chain { causes, .. } if causes.is_empty()),
         "{read:?}"
     );
 }
@@ -434,6 +445,7 @@ fn a_problem_is_reported_once() {
     let untrusted = || VmcProblem::Chain {
         refusal: ChainRefusal::Untrusted,
         cause: None,
+        causes: Vec::new(),
     };
     for problem in [
         VmcProblem::Expired,
@@ -443,6 +455,7 @@ fn a_problem_is_reported_once() {
         VmcProblem::Chain {
             refusal: ChainRefusal::Invalid,
             cause: None,
+            causes: Vec::new(),
         },
         VmcProblem::UnknownMarkType { value: None },
         VmcProblem::UnknownMarkType {
@@ -507,7 +520,7 @@ fn a_chain_the_verifier_cannot_read_is_invalid() {
         .problems
         .iter()
         .find(|p| matches!(p, VmcProblem::Chain { .. }));
-    let Some(problem @ VmcProblem::Chain { refusal, cause }) = chain else {
+    let Some(problem @ VmcProblem::Chain { refusal, cause, .. }) = chain else {
         panic!("{:?}", verification.problems);
     };
     assert_eq!(*refusal, ChainRefusal::Invalid);
@@ -537,18 +550,29 @@ fn garbage_is_a_parse_problem() {
         "{:?}",
         verification.problems
     );
-    assert!(VmcTrustAnchors::from_pem(b"").is_err());
+    assert!(matches!(
+        VmcTrustAnchors::from_pem(b""),
+        Err(TrustAnchorError::Empty)
+    ));
 }
 
 #[test]
-fn an_anchor_the_verifier_refuses_says_why_in_its_words() {
+fn an_anchor_the_verifier_refuses_keeps_its_error_as_the_source() {
     let pem = b"-----BEGIN CERTIFICATE-----\nMAA=\n-----END CERTIFICATE-----\n";
     let refused = VmcTrustAnchors::from_pem(pem).unwrap_err();
-    let der = rustls_pki_types::CertificateDer::from(vec![0x30, 0x00]);
-    let verifier = chain::trust_anchor(&der).unwrap_err();
-    let verifier = std::error::Error::source(&verifier).expect("the verifier's error");
-    assert!(
-        refused.ends_with(&format!(": {verifier}")),
-        "the verifier's detail is kept: {refused}"
+    assert_eq!(
+        refused.to_string(),
+        "a certificate in the bundle can't be a trust anchor"
     );
+    let source = std::error::Error::source(&refused).unwrap();
+    assert!(source.downcast_ref::<ChainError>().is_some());
+}
+
+#[test]
+fn a_bundle_that_is_not_pem_keeps_the_decoders_error_as_the_source() {
+    let pem = b"-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----\n";
+    let refused = VmcTrustAnchors::from_pem(pem).unwrap_err();
+    assert_eq!(refused.to_string(), "the bundle is not valid PEM");
+    let source = std::error::Error::source(&refused).unwrap();
+    assert!(source.is::<rustls_pki_types::pem::Error>());
 }

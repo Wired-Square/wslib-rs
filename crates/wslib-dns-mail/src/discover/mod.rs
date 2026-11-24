@@ -51,7 +51,7 @@ pub struct Published<T> {
 }
 
 /// The records of one kind at one name.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct RecordSet<T> {
@@ -192,7 +192,7 @@ pub async fn bimi(resolver: &impl Resolver, domain: &str, selector: &str) -> Inh
 
 /// A record looked for at a domain and then at its ancestors, as DMARC and
 /// BIMI do.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Inherited<T> {
     pub domain: String,
@@ -201,7 +201,7 @@ pub struct Inherited<T> {
     pub outcome: Outcome,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Attempt<T> {
     pub domain: String,

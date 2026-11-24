@@ -145,8 +145,14 @@ mod tests {
         );
         block_on(async {
             assert!(dns.txt("example.com").await.is_ok());
-            assert_eq!(dns.a("example.com").await, Err(LookupError::NoData));
-            assert_eq!(dns.txt("example.com").await, Err(LookupError::NotSent));
+            assert!(matches!(
+                dns.a("example.com").await,
+                Err(LookupError::NoData)
+            ));
+            assert!(matches!(
+                dns.txt("example.com").await,
+                Err(LookupError::NotSent)
+            ));
         });
         assert_eq!((dns.queries_sent(), dns.queries_refused()), (2, 1));
         assert_eq!(dns.into_inner().total_queries(), 2);
@@ -156,7 +162,10 @@ mod tests {
     fn a_passed_deadline_sends_nothing() {
         let past = Instant::now() - Duration::from_secs(1);
         let dns = BudgetResolver::new(FakeResolver::new(), Some(past), None);
-        assert_eq!(block_on(dns.mx("example.com")), Err(LookupError::NotSent));
+        assert!(matches!(
+            block_on(dns.mx("example.com")),
+            Err(LookupError::NotSent)
+        ));
         assert_eq!(dns.queries_sent(), 0);
     }
 

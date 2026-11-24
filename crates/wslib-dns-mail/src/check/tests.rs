@@ -518,7 +518,7 @@ fn dane_findings_per_mx_host() {
 fn a_non_validating_resolver_skips_tlsa() {
     let dns = good_mx().with_tlsa(TLSA_NAME, tlsa(3, vec![0xab; 32]));
     let check = block_on(check_mx(&dns, "example.com", &[]));
-    assert_eq!(check.mx.hosts[0].tlsa, None);
+    assert!(check.mx.hosts[0].tlsa.is_none());
     assert_eq!(dns.queries(TLSA_NAME, RecordType::Tlsa), 0);
 }
 
@@ -791,13 +791,19 @@ fn a_servfail_in_a_zone_with_ds_records_is_a_suspected_bogus() {
     assert!(
         matches!(
             &suspected[0].detail,
-            Detail::SuspectedBogus { zone, ds: found } if zone == "example.com" && *found == [ds]
+            Detail::SuspectedBogus { zone, ds: found } if zone == "example.com" && *found == [ds.clone()]
         ),
         "{:?}",
         suspected[0].detail
     );
     assert!(
         !codes(&dnssec_report(&failing()).findings).contains(&FindingCode::DnssecSuspectedBogus)
+    );
+    let timing_out = signed_domain()
+        .with_error("_dmarc.example.com", RecordType::Txt, LookupError::Timeout)
+        .with_ds("example.com", ds);
+    assert!(
+        !codes(&dnssec_report(&timing_out).findings).contains(&FindingCode::DnssecSuspectedBogus)
     );
 }
 

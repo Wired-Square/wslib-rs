@@ -11,8 +11,8 @@
   wslib-crypto or wslib-crypto-x509 error behind it, so a Settings screen,
   an API body and the journal keep the detail those errors carry only
   through `source()`.
-- On wslib-tls 0.3, wslib-crypto 0.2, wslib-crypto-x509 0.2 and
-  wslib-file-atomic 0.2.
+- On wslib-tls 0.3, wslib-crypto 0.2, wslib-crypto-x509 0.2,
+  wslib-file-atomic 0.2 and wslib-http-server 0.2.
 
 ## 0.1.6
 

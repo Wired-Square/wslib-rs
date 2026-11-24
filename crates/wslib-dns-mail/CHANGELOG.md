@@ -11,10 +11,19 @@
   the chain" for `Invalid`.
 - `VmcProblem`, `VmcVerification`, `Finding`, `Detail`, `DomainReport`,
   `DkimCheck`, `DmarcCheck`, `MxCheck` and `SpfCheck` no longer derive
-  `PartialEq` and `Eq`.
-- `VmcTrustAnchors::from_pem`'s refusal of an anchor writes the verifier's
-  error and each of its causes.
-- On wslib-crypto-x509 0.2.
+  `PartialEq` and `Eq`, nor do the types that hold a `LookupError` or a
+  `CnameChainError`: `RecordSet`, `Attempt`, `Inherited`, `DkimDiscovery`,
+  `DmarcDiscovery`, `ReportAuthorisation`, `DnsblResult`, `DnsblStatus`,
+  `FetchFailure`, `LogoFetch`, `CertificateFetch`, `PolicyFetch`,
+  `MxDiscovery`, `MxHost`, `TlsaSet`, `ReverseDns`, `CheckHost`, `Reason`,
+  `SpfTree`, `SpfNode`, `TermLookup`, `TermOutcome` and `Exchange`.
+- `VmcTrustAnchors::from_pem` returns `TrustAnchorError`: `Pem`, with the
+  PEM decoder's error as its `source()`, `Refused`, with the verifier's
+  `ChainError`, or `Empty`.
+- On wslib-crypto-x509 0.2 and wslib-dns 0.3.
+- `VmcProblem::Chain` gains `causes`, what `cause` and each error under it
+  say, outermost first; it is serialised, and left out when empty, so a stored
+  problem keeps the verifier's reason.
 
 ## 0.5.4
 

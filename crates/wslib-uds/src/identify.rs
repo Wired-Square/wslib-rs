@@ -8,6 +8,7 @@ use crate::sid;
 /// A request named from its leading bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsIdentity"))]
+#[serde(rename_all = "camelCase")]
 pub struct Identity {
     pub service: u8,
     pub detail: Option<Detail>,
@@ -17,6 +18,7 @@ pub struct Identity {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsDetail"))]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(rename_all_fields = "camelCase")]
 pub enum Detail {
     Session { session: u8 },
     Reset { reset_type: u8 },

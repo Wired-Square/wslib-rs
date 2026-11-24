@@ -400,7 +400,7 @@ fn a_memory_range_or_block_length_cannot_hold_a_width_or_value_it_cannot_encode(
     assert_eq!(BlockLength::new(0x100, 1), Err(InvalidWidth));
     assert_eq!(BlockLength::new(1, 0), Err(InvalidWidth));
     let range: Result<MemoryRange, _> =
-        serde_json::from_str(r#"{"address":65536,"address_width":2,"size":16,"size_width":1}"#);
+        serde_json::from_str(r#"{"address":65536,"addressWidth":2,"size":16,"sizeWidth":1}"#);
     assert!(range.is_err());
     let length: Result<BlockLength, _> = serde_json::from_str(r#"{"value":256,"width":1}"#);
     assert!(length.is_err());
@@ -412,11 +412,38 @@ fn a_sub_function_cannot_hold_a_value_over_0x7f() {
     assert!(!SubFunction::new(0x83).suppress_positive_response());
     assert_eq!(SubFunction::suppressed(0x83).byte(), 0x83);
     let parsed: Result<SubFunction, _> =
-        serde_json::from_str(r#"{"value":131,"suppress_positive_response":false}"#);
+        serde_json::from_str(r#"{"value":131,"suppressPositiveResponse":false}"#);
     assert!(parsed.is_err());
     let parsed: SubFunction =
-        serde_json::from_str(r#"{"value":3,"suppress_positive_response":true}"#).unwrap();
+        serde_json::from_str(r#"{"value":3,"suppressPositiveResponse":true}"#).unwrap();
     assert_eq!(parsed.byte(), 0x83);
+}
+
+#[test]
+fn fields_serialise_camel_case_and_variants_snake_case() {
+    let request = Request::RoutineControl {
+        sub_function: SubFunction::suppressed(0x01),
+        routine: 0xFF00,
+        data: vec![],
+    };
+    let json = serde_json::json!({
+        "kind": "routine_control",
+        "subFunction": { "value": 1, "suppressPositiveResponse": true },
+        "routine": 0xFF00,
+        "data": [],
+    });
+    assert_eq!(serde_json::to_value(&request).unwrap(), json);
+    assert_eq!(serde_json::from_value::<Request>(json).unwrap(), request);
+
+    let response = Response::RequestDownload {
+        max_block_length: BlockLength::new(0x0FFF, 2).unwrap(),
+    };
+    let json = serde_json::json!({
+        "kind": "request_download",
+        "maxBlockLength": { "value": 0x0FFF, "width": 2 },
+    });
+    assert_eq!(serde_json::to_value(&response).unwrap(), json);
+    assert_eq!(serde_json::from_value::<Response>(json).unwrap(), response);
 }
 
 #[test]

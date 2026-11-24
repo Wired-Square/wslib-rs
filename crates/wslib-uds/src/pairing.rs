@@ -18,6 +18,7 @@ pub enum Sender {
 /// A request and how it ended. Times are the capture's, in microseconds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsTransaction"))]
+#[serde(rename_all = "camelCase")]
 pub struct Transaction {
     pub request: Vec<u8>,
     pub requested_at_us: u64,
@@ -29,6 +30,7 @@ pub struct Transaction {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsOutcome"))]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(rename_all_fields = "camelCase")]
 pub enum Outcome {
     /// The final response, positive or negative.
     Answered {
@@ -52,6 +54,7 @@ pub enum Outcome {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsObserved"))]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(rename_all_fields = "camelCase")]
 pub enum Observed {
     Transaction(Transaction),
     /// An ECU message that answers no open request.

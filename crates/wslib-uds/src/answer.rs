@@ -6,6 +6,7 @@ use crate::{Nrc, sid};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsAnswer"))]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(rename_all_fields = "camelCase")]
 pub enum Answer {
     Positive,
     Negative { code: Nrc },

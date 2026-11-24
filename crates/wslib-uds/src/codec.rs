@@ -26,13 +26,14 @@ pub enum DecodeError {
 /// suppress-positive-response bit apart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsSubFunction"))]
-#[serde(try_from = "SubFunctionFields")]
+#[serde(try_from = "SubFunctionFields", rename_all = "camelCase")]
 pub struct SubFunction {
     value: u8,
     suppress_positive_response: bool,
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SubFunctionFields {
     value: u8,
     suppress_positive_response: bool,
@@ -100,7 +101,7 @@ fn fits(value: u64, width: u8) -> bool {
 /// addressAndLengthFormatIdentifier lays them out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsMemoryRange"))]
-#[serde(try_from = "MemoryRangeFields")]
+#[serde(try_from = "MemoryRangeFields", rename_all = "camelCase")]
 pub struct MemoryRange {
     address: u64,
     address_width: u8,
@@ -109,6 +110,7 @@ pub struct MemoryRange {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct MemoryRangeFields {
     address: u64,
     address_width: u8,
@@ -183,13 +185,14 @@ impl MemoryRange {
 /// its width of 1 to 8 bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsBlockLength"))]
-#[serde(try_from = "BlockLengthFields")]
+#[serde(try_from = "BlockLengthFields", rename_all = "camelCase")]
 pub struct BlockLength {
     value: u64,
     width: u8,
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct BlockLengthFields {
     value: u64,
     width: u8,
@@ -223,6 +226,7 @@ impl BlockLength {
 /// The P2 and P2* a server reports in its positive session-control response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsSessionTiming"))]
+#[serde(rename_all = "camelCase")]
 pub struct SessionTiming {
     pub p2_server_max_ms: u16,
     pub p2_star_server_max_10ms: u16,
@@ -241,6 +245,7 @@ impl SessionTiming {
 /// A DTC and its status byte; the DTC is the low 24 bits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsDtcStatus"))]
+#[serde(rename_all = "camelCase")]
 pub struct DtcStatus {
     pub dtc: u32,
     pub status: u8,
@@ -250,6 +255,7 @@ pub struct DtcStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsDtcRequest"))]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(rename_all_fields = "camelCase")]
 pub enum DtcRequest {
     NumberByStatusMask { status_mask: u8 },
     ByStatusMask { status_mask: u8 },
@@ -315,6 +321,7 @@ impl DtcRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsDtcResponse"))]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(rename_all_fields = "camelCase")]
 pub enum DtcResponse {
     NumberByStatusMask {
         availability_mask: u8,
@@ -402,6 +409,7 @@ impl DtcResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsRequest"))]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(rename_all_fields = "camelCase")]
 pub enum Request {
     DiagnosticSessionControl {
         sub_function: SubFunction,
@@ -669,6 +677,7 @@ impl Request {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsResponse"))]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(rename_all_fields = "camelCase")]
 pub enum Response {
     Negative {
         service: u8,

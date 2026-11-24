@@ -14,6 +14,7 @@ pub const DEFAULT_BUSY_RETRIES: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsScanProgress"))]
+#[serde(rename_all = "camelCase")]
 pub struct ScanProgress {
     pub done: u32,
     pub total: u32,
@@ -153,6 +154,7 @@ impl AddressScan {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsServiceVerdict"))]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(rename_all_fields = "camelCase")]
 pub enum ServiceVerdict {
     /// `code` is the refusal that proved it.
     Present {
@@ -169,6 +171,7 @@ pub enum ServiceVerdict {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsServiceFinding"))]
+#[serde(rename_all = "camelCase")]
 pub struct ServiceFinding {
     pub service: u8,
     pub verdict: ServiceVerdict,
@@ -282,6 +285,7 @@ impl ServiceScan {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsDidVerdict"))]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(rename_all_fields = "camelCase")]
 pub enum DidVerdict {
     Present {
         length: u32,
@@ -301,6 +305,7 @@ pub enum DidVerdict {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsDidFinding"))]
+#[serde(rename_all = "camelCase")]
 pub struct DidFinding {
     pub did: u16,
     pub verdict: DidVerdict,
@@ -402,6 +407,7 @@ mod session {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
     #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsSessionVerdict"))]
     #[serde(tag = "kind", rename_all = "snake_case")]
+    #[serde(rename_all_fields = "camelCase")]
     pub enum SessionVerdict {
         /// `timing` is `None` when the answer did not report one or failed strict decoding.
         Supported {
@@ -427,6 +433,7 @@ mod session {
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
     #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsSessionFinding"))]
+    #[serde(rename_all = "camelCase")]
     pub struct SessionFinding {
         pub session: u8,
         pub verdict: SessionVerdict,

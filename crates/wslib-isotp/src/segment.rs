@@ -1,55 +1,85 @@
 use std::iter::FusedIterator;
 
-use crate::pci::{CF_MAX_DATA, FF_DATA, LOW_NIBBLE, MAX_MESSAGE, PciKind, SF_MAX_DATA, SN_FIRST};
+use crate::framing::Framing;
+use crate::pci::{CLASSIC_LEN, LOW_NIBBLE, MAX_MESSAGE, PciKind, SN_FIRST};
 
 /// A message ISO-TP cannot carry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum LengthError {
     #[error("an ISO-TP message needs at least one byte")]
     Empty,
-    #[error("{len} bytes is over ISO-TP's {MAX_MESSAGE}-byte limit")]
+    #[error("{len} bytes is over the framing's message limit")]
     TooLong { len: usize },
 }
 
-/// One message cut into unpadded frames. [`first`](Self::first) is the single
-/// or first frame, and iterating gives the consecutive frames.
+/// One message cut into frames. [`first`](Self::first) is the single or first
+/// frame, and iterating gives the consecutive frames.
 #[derive(Debug, Clone)]
 pub struct Segmenter<'a> {
     message: &'a [u8],
+    framing: Framing,
     sent: usize,
     sn: u8,
 }
 
 impl<'a> Segmenter<'a> {
+    /// Cuts `message` with the default [`Framing`], into unpadded classic
+    /// frames of at most 4095 bytes a message.
     pub fn new(message: &'a [u8]) -> Result<Self, LengthError> {
-        match message.len() {
-            0 => Err(LengthError::Empty),
-            len if len > MAX_MESSAGE => Err(LengthError::TooLong { len }),
-            len => Ok(Self {
-                message,
-                sent: if len <= SF_MAX_DATA { len } else { FF_DATA },
-                sn: SN_FIRST,
-            }),
+        Self::with_framing(message, &Framing::default())
+    }
+
+    pub fn with_framing(message: &'a [u8], framing: &Framing) -> Result<Self, LengthError> {
+        let len = message.len();
+        if len == 0 {
+            return Err(LengthError::Empty);
         }
+        if len > framing.max_len() {
+            return Err(LengthError::TooLong { len });
+        }
+        let mut segmenter = Self {
+            message,
+            framing: *framing,
+            sent: 0,
+            sn: SN_FIRST,
+        };
+        let room = framing.tx_dl() - framing.address_len() - segmenter.first_pci().len();
+        segmenter.sent = len.min(room);
+        Ok(segmenter)
     }
 
     /// True if the message fits a single frame, which needs no flow control.
     pub fn is_single(&self) -> bool {
-        self.message.len() <= SF_MAX_DATA
+        self.message.len() <= self.framing.single_capacity(self.framing.tx_dl())
     }
 
-    /// The single frame, `1 + len` bytes, or the first frame, always 8.
+    /// The single or first frame. Unpadded on classic frames with normal
+    /// addressing, a single frame is `1 + len` bytes and a first frame 8.
     pub fn first(&self) -> Vec<u8> {
+        let mut pdu = self.first_pci();
+        pdu.extend_from_slice(&self.message[..self.sent]);
+        self.framing.frame(&pdu)
+    }
+
+    fn first_pci(&self) -> Vec<u8> {
         let len = self.message.len();
         if self.is_single() {
-            let mut frame = vec![PciKind::Single.pci_byte(len as u8)];
-            frame.extend_from_slice(self.message);
-            return frame;
+            if len <= self.framing.single_capacity(CLASSIC_LEN) {
+                return vec![PciKind::Single.pci_byte(len as u8)];
+            }
+            return vec![PciKind::Single.pci_byte(0), len as u8];
         }
-        let [high, low] = (len as u16).to_be_bytes();
-        let mut frame = vec![PciKind::First.pci_byte(high), low];
-        frame.extend_from_slice(&self.message[..FF_DATA]);
-        frame
+        if len <= MAX_MESSAGE {
+            let [high, low] = (len as u16).to_be_bytes();
+            return vec![PciKind::First.pci_byte(high), low];
+        }
+        let mut pci = vec![PciKind::First.pci_byte(0), 0];
+        pci.extend((len as u32).to_be_bytes());
+        pci
+    }
+
+    fn cf_capacity(&self) -> usize {
+        self.framing.cf_capacity(self.framing.tx_dl())
     }
 }
 
@@ -61,16 +91,16 @@ impl Iterator for Segmenter<'_> {
             .message
             .get(self.sent..)
             .filter(|rest| !rest.is_empty())?;
-        let data = &rest[..rest.len().min(CF_MAX_DATA)];
-        let mut frame = vec![PciKind::Consecutive.pci_byte(self.sn)];
-        frame.extend_from_slice(data);
+        let data = &rest[..rest.len().min(self.cf_capacity())];
+        let mut pdu = vec![PciKind::Consecutive.pci_byte(self.sn)];
+        pdu.extend_from_slice(data);
         self.sent += data.len();
         self.sn = (self.sn + 1) & LOW_NIBBLE;
-        Some(frame)
+        Some(self.framing.frame(&pdu))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let frames = (self.message.len() - self.sent).div_ceil(CF_MAX_DATA);
+        let frames = (self.message.len() - self.sent).div_ceil(self.cf_capacity());
         (frames, Some(frames))
     }
 }
@@ -82,10 +112,119 @@ impl FusedIterator for Segmenter<'_> {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pci::CLASSIC_LEN;
+    use crate::framing::{Addressing, FdLength, FrameFormat};
+    use crate::pci::{CF_MAX_DATA, FF_DATA, SF_MAX_DATA};
 
     fn message(len: usize) -> Vec<u8> {
         (0..len).map(|i| i as u8).collect()
+    }
+
+    fn fd(len: u8) -> Framing {
+        Framing::new(
+            Addressing::Normal,
+            FrameFormat::Fd(FdLength::new(len).unwrap()),
+        )
+    }
+
+    fn extended() -> Framing {
+        Framing::new(
+            Addressing::Extended { tx: 0x10, rx: 0xF1 },
+            FrameFormat::Classic,
+        )
+    }
+
+    #[test]
+    fn extended_addressing_leaves_6_bytes_in_a_classic_single_frame() {
+        let framing = extended();
+        let data = message(6);
+        let segmenter = Segmenter::with_framing(&data, &framing).unwrap();
+        assert!(segmenter.is_single());
+        assert_eq!(segmenter.first(), [0x10, 0x06, 0, 1, 2, 3, 4, 5]);
+        let data = message(7);
+        let segmenter = Segmenter::with_framing(&data, &framing).unwrap();
+        assert!(!segmenter.is_single());
+        assert_eq!(segmenter.first(), [0x10, 0x10, 0x07, 0, 1, 2, 3, 4]);
+        assert_eq!(segmenter.collect::<Vec<_>>(), [vec![0x10, 0x21, 5, 6]]);
+    }
+
+    #[test]
+    fn a_can_fd_single_frame_over_7_bytes_escapes_its_length() {
+        let framing = fd(64);
+        let data = message(7);
+        assert_eq!(
+            Segmenter::with_framing(&data, &framing).unwrap().first(),
+            [0x07, 0, 1, 2, 3, 4, 5, 6]
+        );
+        let data = message(8);
+        let first = Segmenter::with_framing(&data, &framing).unwrap().first();
+        assert_eq!(first[..2], [0x00, 0x08]);
+        assert_eq!(first.len(), 12);
+        let data = message(62);
+        let segmenter = Segmenter::with_framing(&data, &framing).unwrap();
+        assert!(segmenter.is_single());
+        assert_eq!(segmenter.first().len(), 64);
+        let data = message(63);
+        assert!(
+            !Segmenter::with_framing(&data, &framing)
+                .unwrap()
+                .is_single()
+        );
+    }
+
+    #[test]
+    fn can_fd_first_and_consecutive_frames_fill_the_tx_data_length() {
+        let framing = fd(16);
+        let data = message(41);
+        let segmenter = Segmenter::with_framing(&data, &framing).unwrap();
+        let first = segmenter.first();
+        assert_eq!(first.len(), 16);
+        assert_eq!(first[..2], [0x10, 41]);
+        let last = segmenter.last().unwrap();
+        assert_eq!(
+            last[..13],
+            [0x22, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40]
+        );
+        assert_eq!(last[13..], [Framing::FD_FILL; 3]);
+    }
+
+    #[test]
+    fn a_message_over_4095_bytes_takes_an_escaped_first_frame() {
+        let framing = Framing {
+            max_message: 70_000,
+            ..Framing::default()
+        };
+        let data = message(70_000);
+        let segmenter = Segmenter::with_framing(&data, &framing).unwrap();
+        assert_eq!(
+            segmenter.first(),
+            [0x10, 0x00, 0x00, 0x01, 0x11, 0x70, 0, 1]
+        );
+        assert_eq!(segmenter.len(), (70_000 - 2usize).div_ceil(CF_MAX_DATA));
+        let data = message(MAX_MESSAGE);
+        assert_eq!(
+            Segmenter::with_framing(&data, &framing).unwrap().first()[..2],
+            [0x1F, 0xFF]
+        );
+        let data = message(70_001);
+        assert_eq!(
+            Segmenter::with_framing(&data, &framing).unwrap_err(),
+            LengthError::TooLong { len: 70_001 }
+        );
+    }
+
+    #[test]
+    fn padding_fills_every_classic_frame() {
+        let framing = Framing {
+            padding: Some(0xAA),
+            ..Framing::default()
+        };
+        let data = message(9);
+        let segmenter = Segmenter::with_framing(&data, &framing).unwrap();
+        assert_eq!(segmenter.first().len(), CLASSIC_LEN);
+        assert_eq!(
+            segmenter.collect::<Vec<_>>(),
+            [vec![0x21, 6, 7, 8, 0xAA, 0xAA, 0xAA, 0xAA]]
+        );
     }
 
     #[test]

@@ -83,7 +83,7 @@ impl Shared {
     }
 
     async fn transmit(&self, message: &[u8]) -> Result<(), SendFailed> {
-        let mut frames = Segmenter::new(message)?;
+        let mut frames = Segmenter::with_framing(message, &self.config.framing)?;
         let _turn = self.turn.lock().await;
         let generation = self.generation();
         if frames.is_single() {

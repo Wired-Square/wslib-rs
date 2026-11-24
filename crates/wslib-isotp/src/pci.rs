@@ -9,10 +9,16 @@ pub(crate) const SF_PCI_LEN: usize = 1;
 pub(crate) const FF_PCI_LEN: usize = 2;
 pub(crate) const CF_PCI_LEN: usize = 1;
 
-pub(crate) const SF_MAX_DATA: usize = CLASSIC_LEN - SF_PCI_LEN;
-pub(crate) const FF_DATA: usize = CLASSIC_LEN - FF_PCI_LEN;
-pub(crate) const CF_MAX_DATA: usize = CLASSIC_LEN - CF_PCI_LEN;
+pub(crate) const SF_ESCAPE_PCI_LEN: usize = 2;
+pub(crate) const FF_ESCAPE_PCI_LEN: usize = 6;
 
+#[cfg(test)]
+pub(crate) const SF_MAX_DATA: usize = CLASSIC_LEN - SF_PCI_LEN;
+#[cfg(test)]
+pub(crate) const FF_DATA: usize = CLASSIC_LEN - FF_PCI_LEN;
+#[cfg(test)]
+pub(crate) const CF_MAX_DATA: usize = CLASSIC_LEN - CF_PCI_LEN;
+#[cfg(test)]
 pub(crate) const FF_DL_MIN: usize = SF_MAX_DATA + 1;
 
 /// A frame's protocol control information type, its first byte's high nibble.
@@ -39,7 +45,11 @@ impl PciKind {
         if frame.len() > CLASSIC_LEN {
             return None;
         }
-        let nibble = frame.first()? >> TYPE_SHIFT;
+        Self::of(*frame.first()?)
+    }
+
+    pub(crate) fn of(pci: u8) -> Option<Self> {
+        let nibble = pci >> TYPE_SHIFT;
         Self::ALL.into_iter().find(|kind| *kind as u8 == nibble)
     }
 

@@ -175,9 +175,16 @@ of several, it says so here.
   `tap::a_wait_chain_longer_than_n_cr_keeps_the_message_while_each_wait_is_due`,
   `tap::a_continue_to_send_when_none_is_due_restarts_nothing`,
   `tap::a_flow_control_at_the_end_of_a_block_restarts_the_timer`
+- A sender ignores a flow control that is not due, so the tap does too: an
+  overflow, a reserved status or a wait arriving when none is due drops
+  nothing and counts no wait. One with a valid status is still recorded and
+  counted with the message.
+  `tap::a_flow_control_that_is_not_due_drops_nothing_and_counts_no_wait`
 - Frame times are whole microseconds from any fixed origin. A frame stamped
-  before the timer started is no gap at all.
-  `tap::a_frame_stamped_before_the_timer_started_times_nothing_out`
+  before the timer started is no gap at all, and neither the timer nor a
+  message's last frame time ever moves back.
+  `tap::a_frame_stamped_before_the_timer_started_times_nothing_out`,
+  `tap::a_senders_frame_stamped_earlier_never_moves_the_timer_or_last_time_back`
 - One wait more than the tap's wait limit (10 by default, as the link's)
   drops the message; a continue-to-send restarts the count. A message keeps
   its first 64 flow controls and counts them all.
@@ -194,27 +201,38 @@ of several, it says so here.
 ### Detection
 
 - A first frame is open to answers for the window from its own time. A wait
-  from an id already a candidate, and the first continue-to-send, extend it
-  from their own time; nothing else does. An open first frame closes when
-  the window passes before its first consecutive frame, when its own id
-  sends a frame that cannot continue it, or when it completes. It keeps at
-  most 4 candidate ids.
+  from any candidate, including one it makes a candidate, and the first
+  continue-to-send, extend it from their own time; nothing else does. An
+  open first frame closes when the window passes before its first
+  consecutive frame, when it completes, or when its own id sends a single
+  frame, another first frame, a consecutive frame that cannot continue it,
+  or a frame no ISO-TP frame could be. A valid flow control from its own id
+  leaves it open, as a full-duplex sender may answer the other way. It keeps
+  at most 4 candidate ids.
   `detect::the_window_runs_from_the_first_frame_and_flow_controls_do_not_hold_it_open`,
   `detect::waits_from_a_candidate_extend_the_window`,
   `detect::a_flow_control_outside_the_window_answers_nothing`
 - A flow control within the window of several open first frames is a
   candidate answer to each. A sender's answering id is settled across all
   its completed messages: an id with frames no ISO-TP frame could be loses
-  to one without; then the id that is a candidate for the most of them wins
-  if it is a candidate for all of them or no rival is a candidate more than
-  once, and no rival ties it. A message whose candidates do not include the
-  winner, or a sender with no winner, counts as ambiguous. Two ECUs
-  answered by two testers at once, each once, report neither pair. A flow
-  control that ends up answering no completed message is a sequence break.
+  to one without. Each remaining id scores the messages it is a candidate
+  for, then, to break a tie, the messages it answered first with a flow
+  control that was the first answer to no other open first frame. The top
+  score wins if no rival equals it, and the winner is a candidate for more
+  than half of the messages or no rival is a candidate for more than one. A
+  message whose candidates do not include the winner, or a sender with no
+  winner, counts as ambiguous. Two ECUs answered by two testers at once,
+  each once, report neither pair. Each flow control frame answers at most
+  once however many messages it settles; one that answers no completed
+  message is a sequence break.
   `detect::two_first_frames_answered_from_two_ids_at_once_pair_neither`,
   `detect::a_first_frame_look_alike_between_a_first_frame_and_its_flow_control_takes_nothing`,
   `detect::a_stray_flow_control_once_loses_to_the_id_answering_every_message`,
-  `detect::a_stray_from_an_id_carrying_non_iso_tp_frames_loses_even_once`
+  `detect::a_stray_from_an_id_carrying_non_iso_tp_frames_loses_even_once`,
+  `detect::a_flow_control_look_alike_after_the_answer_every_time_loses_to_the_answer`,
+  `detect::the_first_to_answer_beats_a_look_alike_that_cleared_during_its_waits`,
+  `detect::a_stray_twice_does_not_hide_the_id_answering_all_but_one_message`,
+  `detect::one_flow_control_answering_two_senders_at_once_is_credited_once`
 - Each id is read twice: with normal addressing, and, if its frames lead
   with at most 8 distinct bytes, with that byte as an address, one entry per
   byte. It keeps the reading under which more of its exchanges complete,

@@ -66,7 +66,9 @@ resynchronisation after frames it could not place.
 
 - A message times out after N_Cr with no sender frame and no flow control it
   was waiting for (after its first frame or at the end of a block). A flow
-  control arriving when none is due restarts nothing.
+  control arriving when none is due restarts nothing and drops nothing, as a
+  sender ignores it. A frame stamped earlier never moves a message's timer or
+  last frame time back.
 - One wait past `TapConfig::wait_limit` (10 by default) drops the message.
 - A frame on the conversation's id with another address byte is ignored as
   a frame on another id is. One id both ways works when the address bytes
@@ -81,13 +83,15 @@ and finished by consecutive frames. An id carrying only single frames never
 is: its first byte cannot be told from a signal's.
 
 - A first frame is open to answers for the window from its own time; only a
-  wait from a candidate, or its first continue-to-send, extends it. While
-  several first frames are open, a flow control is a candidate answer to
-  each, at most 4 ids a first frame.
+  wait from a candidate, new or not, or its first continue-to-send, extends
+  it. While several first frames are open, a flow control is a candidate
+  answer to each, at most 4 ids a first frame.
 - A sender's answering id is settled across all its completed messages: an
-  id with non-ISO-TP frames loses, and a rival that appears only once loses
-  to the id answering every message. Where nothing separates two pairings,
-  neither is reported and the messages count as `ambiguous`.
+  id with non-ISO-TP frames loses, then the id answering the most of them
+  wins, provided it answers more than half or no rival answers more than
+  one. A tie goes to the id that answered first more often, so a look-alike
+  arriving after the real answer loses. Where nothing separates two
+  pairings, neither is reported and the messages count as `ambiguous`.
 - Each id is read with normal addressing and, if its frames lead with at
   most `MAX_ADDRESS_BYTES` (8) distinct bytes, with that byte as an address,
   one entry per byte; it keeps the reading under which more exchanges

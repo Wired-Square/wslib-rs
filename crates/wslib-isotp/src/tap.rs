@@ -15,6 +15,7 @@ pub struct TimedFrame {
     /// A 29-bit id, or 11-bit.
     pub extended: bool,
     pub data: Vec<u8>,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub at_us: u64,
 }
 
@@ -102,7 +103,9 @@ pub struct TapMessage {
     pub data: Vec<u8>,
     /// Its single frame, or its first and consecutive frames.
     pub frames: u32,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub first_at_us: u64,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub last_at_us: u64,
     /// The first [`MAX_FLOW_CONTROLS`](Self::MAX_FLOW_CONTROLS) flow controls
     /// the other side sent for it, waits included, in order.
@@ -125,6 +128,7 @@ pub struct TapNotice {
     /// The side sending the message it concerns.
     pub side: Side,
     /// The time of the frame that showed it.
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub at_us: u64,
     pub kind: NoticeKind,
 }
@@ -144,7 +148,10 @@ pub enum NoticeKind {
     /// A single or first frame, valid or not, dropped the message.
     Superseded,
     /// The message's frames stopped for N_Cr or more, and it was dropped.
-    TimedOut { gap_us: u64 },
+    TimedOut {
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
+        gap_us: u64,
+    },
     /// The receiver refused the message with an overflow.
     Overflow,
     /// The receiver asked the sender to wait.
@@ -188,6 +195,10 @@ struct Receiving {
 }
 
 impl Receiving {
+    fn restart_timer(&mut self, at_us: u64) {
+        self.timed_from_us = self.timed_from_us.max(at_us);
+    }
+
     fn into_message(self, from: Side) -> TapMessage {
         TapMessage {
             from,
@@ -415,8 +426,8 @@ impl IsoTpTap {
         receiving.message.extend_from_slice(data);
         receiving.next_sn = (sn + 1) & LOW_NIBBLE;
         receiving.frames += 1;
-        receiving.last_at_us = at;
-        receiving.timed_from_us = at;
+        receiving.last_at_us = receiving.last_at_us.max(at);
+        receiving.restart_timer(at);
         receiving.awaiting_flow = receiving.block_left.as_mut().is_some_and(|left| {
             *left = left.saturating_sub(1);
             *left == 0
@@ -439,35 +450,35 @@ impl IsoTpTap {
         let Some(receiving) = self.sides[sender.index()].receiving.as_mut() else {
             return;
         };
+        let due = receiving.awaiting_flow;
         let flow = match flow {
             Ok(flow) => flow,
-            Err(FlowControlError::ReservedStatus(status)) => {
+            Err(FlowControlError::ReservedStatus(status)) if due => {
                 let kind = NoticeKind::ReservedFlowStatus { status };
                 return self.drop_message(sender, at, kind, events);
             }
-            Err(FlowControlError::NotFlowControl) => return,
+            Err(_) => return,
         };
         receiving.flow_control_count = receiving.flow_control_count.saturating_add(1);
         if receiving.flow_controls.len() < TapMessage::MAX_FLOW_CONTROLS {
             receiving.flow_controls.push(flow);
         }
+        if !due {
+            return;
+        }
         match flow.status {
             FlowStatus::ContinueToSend => {
                 receiving.waits = 0;
-                if receiving.awaiting_flow {
-                    receiving.awaiting_flow = false;
-                    receiving.timed_from_us = at;
-                    receiving.block_left = (flow.block_size != 0).then_some(flow.block_size);
-                }
+                receiving.awaiting_flow = false;
+                receiving.restart_timer(at);
+                receiving.block_left = (flow.block_size != 0).then_some(flow.block_size);
             }
             FlowStatus::Wait => {
                 receiving.waits += 1;
                 if receiving.waits > self.config.wait_limit {
                     self.drop_message(sender, at, NoticeKind::TooManyWaits, events);
                 } else {
-                    if receiving.awaiting_flow {
-                        receiving.timed_from_us = at;
-                    }
+                    receiving.restart_timer(at);
                     notice(events, sender, at, NoticeKind::Wait);
                 }
             }
@@ -505,11 +516,15 @@ mod tests {
     }
 
     fn frame(id: u32, data: &[u8], millis: u64) -> TimedFrame {
+        stamped(id, data, ms(millis))
+    }
+
+    fn stamped(id: u32, data: &[u8], at_us: u64) -> TimedFrame {
         TimedFrame {
             id,
             extended: false,
             data: data.to_vec(),
-            at_us: ms(millis),
+            at_us,
         }
     }
 
@@ -780,6 +795,49 @@ mod tests {
         tap.push(&frame(TESTER, &[0x10, 0x14, 0, 1, 2, 3, 4, 5], 5_000));
         assert_eq!(tap.push(&frame(OTHER, &[0xFF], 0)), []);
         assert!(tap.is_receiving(Side::A));
+    }
+
+    #[test]
+    fn a_senders_frame_stamped_earlier_never_moves_the_timer_or_last_time_back() {
+        let events = feed(
+            &mut tap(),
+            &[
+                stamped(TESTER, &[0x10, 0x14, 0, 1, 2, 3, 4, 5], 5_000_000),
+                stamped(ECU, &cts(0, 0).encode(), 5_000_100),
+                stamped(TESTER, &[0x21, 6, 7, 8, 9, 10, 11, 12], 0),
+                stamped(TESTER, &[0x22, 13, 14, 15, 16, 17, 18, 19], 5_000_200),
+            ],
+        );
+        assert_eq!(notices(&events), []);
+        let message = &messages(events)[0];
+        assert_eq!(
+            (message.first_at_us, message.last_at_us),
+            (5_000_000, 5_000_200)
+        );
+    }
+
+    #[test]
+    fn a_flow_control_that_is_not_due_drops_nothing_and_counts_no_wait() {
+        let waits = TapConfig::DEFAULT_WAIT_LIMIT + 1;
+        let undue = [
+            (vec![vec![0x32, 0, 0]], 2),
+            (vec![vec![0x35, 0, 0]], 1),
+            (vec![wait().encode(); waits as usize], 1 + waits),
+        ];
+        for (flow_controls, counted) in undue {
+            let mut frames = vec![
+                stamped(TESTER, &[0x10, 0x14, 0, 1, 2, 3, 4, 5], 0),
+                stamped(ECU, &cts(0, 0).encode(), 100),
+                stamped(TESTER, &[0x21, 6, 7, 8, 9, 10, 11, 12], 200),
+            ];
+            frames.extend(flow_controls.iter().map(|fc| stamped(ECU, fc, 300)));
+            frames.push(stamped(TESTER, &[0x22, 13, 14, 15, 16, 17, 18, 19], 400));
+            let events = feed(&mut tap(), &frames);
+            assert_eq!(notices(&events), [], "{flow_controls:02x?}");
+            let message = &messages(events)[0];
+            assert_eq!(message.data, (0..20).collect::<Vec<u8>>());
+            assert_eq!(message.flow_control_count, counted, "{flow_controls:02x?}");
+        }
     }
 
     #[test]

@@ -9,7 +9,7 @@ use wslib_isotp::{
 };
 
 fn exported<T: TS + 'static>() -> String {
-    let ts = T::export_to_string(&Config::new().with_large_int("number")).unwrap();
+    let ts = T::export_to_string(&Config::default()).unwrap();
     let mut out = String::new();
     let mut rest = ts.as_str();
     while let Some(start) = rest.find("/**") {

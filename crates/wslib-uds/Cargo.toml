@@ -1,0 +1,56 @@
+[package]
+name = "wslib-uds"
+version = "0.1.0"
+description = "UDS (ISO 14229-1), sans-IO: every service decoded and encoded, a request's safety class, request-response pairing for a capture, a client on the caller's clock with writes behind a feature, scan plans, and a simulated ECU."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[features]
+write = []
+testing = []
+ts = ["dep:ts-rs"]
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "2.0.20"
+ts-rs = { version = "12", features = ["no-serde-warnings"], optional = true }
+
+[dev-dependencies]
+serde_json = "1.0.85"
+
+[[test]]
+name = "client"
+required-features = ["testing"]
+
+[[test]]
+name = "client_write"
+required-features = ["testing", "write"]
+
+[[test]]
+name = "ecu"
+required-features = ["testing"]
+
+[[test]]
+name = "pairing"
+required-features = ["testing"]
+
+[[test]]
+name = "scan"
+required-features = ["testing"]
+
+[[test]]
+name = "service_scan_write"
+required-features = ["testing", "write"]
+
+[[test]]
+name = "session_scan"
+required-features = ["testing", "write"]
+
+[[test]]
+name = "ts"
+required-features = ["ts"]

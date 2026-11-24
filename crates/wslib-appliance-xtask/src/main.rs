@@ -20,6 +20,8 @@ mod packaging;
 mod render;
 mod unit;
 
+use std::error::Error;
+use std::iter;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -88,6 +90,8 @@ enum Packaging {
     Diff,
 }
 
+const CAUSE_SEPARATOR: &str = ": ";
+
 const CONFIG: &str = "appliance.toml";
 const SCAFFOLD: &str = "scaffold";
 const RENDER_AGAIN: &str =
@@ -98,10 +102,17 @@ fn main() -> ExitCode {
     match run() {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("error: {e}");
+            eprintln!("error: {}", chain(&*e));
             ExitCode::from(COULD_NOT_RUN)
         }
     }
+}
+
+fn chain(error: &(dyn Error + 'static)) -> String {
+    iter::successors(Some(error), |&e| e.source())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(CAUSE_SEPARATOR)
 }
 
 /// Every file the chassis owns: only these are ever reported as drift, and a
@@ -303,6 +314,32 @@ fn drifted(scaffold: &Path, artefacts: &[Artefact]) -> Vec<String> {
 mod tests {
     use super::*;
     use model::{EXAMPLE, checked, docker_only, with_docker, with_every_package_knob};
+
+    #[derive(Debug)]
+    struct Layer(&'static str, Option<Box<Layer>>);
+
+    impl std::fmt::Display for Layer {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.0)
+        }
+    }
+
+    impl Error for Layer {
+        fn source(&self) -> Option<&(dyn Error + 'static)> {
+            self.1
+                .as_deref()
+                .map(|cause| cause as &(dyn Error + 'static))
+        }
+    }
+
+    #[test]
+    fn an_error_is_written_with_each_of_its_causes() {
+        let error = Layer(
+            "signing failed",
+            Some(Box::new(Layer("the disk is on fire", None))),
+        );
+        assert_eq!(chain(&error), "signing failed: the disk is on fire");
+    }
 
     /// Every artefact of every shape: the example, everything on, and an image
     /// with no package.

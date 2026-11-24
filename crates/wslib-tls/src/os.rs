@@ -91,7 +91,10 @@ impl OsRoots {
 fn read_roots(read: &ReadOs) -> (RootCertStore, bool) {
     let native = read();
     for e in &native.errors {
-        tracing::warn!(error = %e, "reading the OS trust store");
+        tracing::warn!(
+            error = e as &dyn std::error::Error,
+            "reading the OS trust store"
+        );
     }
     let mut roots = RootCertStore::empty();
     let (added, skipped) = roots.add_parsable_certificates(native.certs);

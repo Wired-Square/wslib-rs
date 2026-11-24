@@ -3,6 +3,7 @@
 //! (draft-fetch-validation-vmc-wchuang; the BIMI Group's Mark Certificate
 //! Requirements).
 
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use rustls_pki_types::pem::PemObject;
@@ -21,6 +22,8 @@ const BIMI_EKU_ID: &str = "1.3.6.1.5.5.7.3.31";
 const MARK_TYPE: &str = "1.3.6.1.4.1.53087.1.13";
 const LOGOTYPE: &str = "1.3.6.1.5.5.7.1.12";
 
+const CAUSE_SEPARATOR: &str = ": ";
+
 /// A compressed embedded logo is refused once it inflates past this.
 const LOGOTYPE_INFLATE_LIMIT: usize = 256 * 1024;
 
@@ -35,7 +38,7 @@ impl VmcTrustAnchors {
         let mut anchors = Vec::new();
         for der in CertificateDer::pem_slice_iter(pem) {
             let der = der.map_err(|error| error.to_string())?;
-            anchors.push(chain::trust_anchor(&der).map_err(|error| error.to_string())?);
+            anchors.push(chain::trust_anchor(&der).map_err(|error| chain_of(&error))?);
         }
         if anchors.is_empty() {
             return Err("no certificates in the bundle".into());
@@ -80,7 +83,7 @@ pub enum MarkCertificateKind {
 }
 
 /// What a mark certificate says and everything wrong with it.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct VmcVerification {
@@ -109,7 +112,7 @@ impl VmcVerification {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case", tag = "kind"))]
 #[non_exhaustive]
@@ -118,9 +121,14 @@ pub enum VmcProblem {
     Parse {
         message: String,
     },
-    /// The chain doesn't lead to a trusted root, in the verifier's words.
+    /// The verifier refused the chain: it doesn't lead to a trusted root, or
+    /// is otherwise invalid, as `refusal` says. `cause` is the verifier's
+    /// refusal, on the live value only: a serialised problem reads back
+    /// without it.
     Chain {
-        message: String,
+        refusal: ChainRefusal,
+        #[cfg_attr(feature = "serde", serde(skip))]
+        cause: Option<Arc<ChainError>>,
     },
     Expired,
     NotYetValid,
@@ -142,14 +150,38 @@ pub enum VmcProblem {
     MissingSct,
 }
 
+/// Why the verifier refused a chain, past its dates and its purpose.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[non_exhaustive]
+pub enum ChainRefusal {
+    /// Not issued under the trust anchors: no known issuer, or a signature
+    /// that does not verify.
+    Untrusted,
+    /// Anything else the verifier refused.
+    Invalid,
+}
+
+impl From<&ChainError> for ChainRefusal {
+    fn from(error: &ChainError) -> Self {
+        match error {
+            ChainError::Untrusted(_) => Self::Untrusted,
+            _ => Self::Invalid,
+        }
+    }
+}
+
 /// Neutral wording; consumers may write their own.
 impl std::fmt::Display for VmcProblem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Parse { message } => write!(f, "not a PEM certificate chain: {message}"),
-            Self::Chain { message } => {
-                write!(f, "the chain doesn't lead to a trusted root: {message}")
-            }
+            Self::Chain {
+                refusal: ChainRefusal::Untrusted,
+                ..
+            } => f.write_str("the chain doesn't lead to a trusted root"),
+            Self::Chain { .. } => f.write_str("the verifier refuses the chain"),
             Self::Expired => f.write_str("the certificate has expired"),
             Self::NotYetValid => f.write_str("the certificate is not yet valid"),
             Self::WrongEku => f.write_str("the extended key usage must be BIMI's alone"),
@@ -277,7 +309,8 @@ pub fn verify_vmc(
             ChainError::NotYetValid => VmcProblem::NotYetValid,
             ChainError::WrongPurpose => VmcProblem::WrongEku,
             error => VmcProblem::Chain {
-                message: error.to_string(),
+                refusal: ChainRefusal::from(&error),
+                cause: Some(Arc::new(error)),
             },
         });
     }
@@ -286,10 +319,38 @@ pub fn verify_vmc(
 
 impl VmcVerification {
     fn problem(&mut self, problem: VmcProblem) {
-        if !self.problems.contains(&problem) {
+        if !self.problems.iter().any(|p| same_problem(p, &problem)) {
             self.problems.push(problem);
         }
     }
+}
+
+fn same_problem(a: &VmcProblem, b: &VmcProblem) -> bool {
+    use VmcProblem::*;
+    match a {
+        Parse { message } => matches!(b, Parse { message: other } if other == message),
+        Chain { refusal, .. } => matches!(b, Chain { refusal: other, .. } if other == refusal),
+        Expired => matches!(b, Expired),
+        NotYetValid => matches!(b, NotYetValid),
+        WrongEku => matches!(b, WrongEku),
+        SanMismatch => matches!(b, SanMismatch),
+        UnknownMarkType { value } => {
+            matches!(b, UnknownMarkType { value: other } if other == value)
+        }
+        NoLogotype => matches!(b, NoLogotype),
+        LogotypeNotCompressed => matches!(b, LogotypeNotCompressed),
+        LogotypeInvalid { message } => {
+            matches!(b, LogotypeInvalid { message: other } if other == message)
+        }
+        MissingSct => matches!(b, MissingSct),
+    }
+}
+
+fn chain_of(error: &(dyn std::error::Error + 'static)) -> String {
+    std::iter::successors(Some(error), |&e| e.source())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(CAUSE_SEPARATOR)
 }
 
 fn failed(problem: VmcProblem) -> VmcVerification {

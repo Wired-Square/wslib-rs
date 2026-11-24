@@ -59,7 +59,7 @@ hidden.discard_staged(path)?;
   `PromoteError` says which half failed: `Unmoved` hands the `Staged` back
   for a retry or discard, and `Unsynced` means the file is in place but its
   directory wasn't synced. Neither message names a path, so a caller adds
-  it. It converts to an `io::Error` of the same kind for `?`.
+  it, and the `io::Error` is its `source()`.
 - **`promote_unsynced`** renames without the directory sync, and
   **`sync_dir`** syncs once after the last of several renames. That narrows
   the window in which a power cut leaves a key and its certificate
@@ -100,24 +100,26 @@ tls.commit()?;
   pending transaction back (`Recovered::RolledBack`: its staged files are
   deleted) and a committed one forward (`Recovered::RolledForward`). It only
   ever renames or deletes a target's `<file>.<name>.txn`. A record it can't
-  read, or one naming a relative path, is `InvalidData`, and nothing is touched:
+  read, or one naming a relative path, is `RecoverError::Io` of kind
+  `InvalidData`, and nothing is touched:
   an operator moves `<name>.txn` (`Transaction::record`) aside after checking
   it. Never delete it automatically.
 - **A record is trusted only if this process could have written it**: a
   regular file, opened without following a link, owned by the effective user
   and writable by no one else (on Windows, owned by the process token's user
-  or default owner). Anything else is `PermissionDenied` naming the record,
-  and nothing is touched. A staged file a committed record would rename over
-  its target is checked the same way first, and refused naming it. A
-  refusal's source is a `Refused`, with the `path()` refused. `recover_expecting(dir, name, targets)` also
-  refuses a record naming a file outside `targets`.
+  or default owner). Anything else is `RecoverError::Refused` naming the
+  record, and nothing is touched; any other failure is `RecoverError::Io`. A
+  staged file a committed record would rename over its target is checked the
+  same way first, and refused naming it. The `Refused` holds the `path()`
+  refused. `recover_expecting(dir, name, targets)` also refuses a record
+  naming a file outside `targets`.
 - **`begin` refuses while a record is there** (`AlreadyExists`): recover first.
 - **A failure before the commit point rolls back**, a failed `stage`
   included, and so does `abort` or dropping the transaction uncommitted.
   `commit` says which side it failed on: `CommitError::RolledBack` left every
   target as it was; `CommitError::Committed` left the record, and `recover`
-  rolls it forward, so the new files will be served. It converts to an
-  `io::Error` of the same kind. `commit_identified` also hands back the
+  rolls it forward, so the new files will be served, its `RecoverError`
+  saying why rolling forward failed. `commit_identified` also hands back the
   left record's `RecordIdentity`, and `recover_identified` finishes that
   record without the owner and mode checks while it is still that file,
   passing over (`None`) one that is not.

@@ -26,12 +26,10 @@ pub fn mint(signer: &Signer, names: &[SubjectAltName]) -> Result<CertificateDer<
     params.is_ca = IsCa::ExplicitNoCa;
     params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
-    let serial = random_serial(signer.provider()).map_err(|e| Error::Mint(e.to_string()))?;
+    let serial = random_serial(signer.provider()).map_err(Error::mint)?;
     params.serial_number = Some(SerialNumber::from_slice(&serial));
     params.key_identifier_method = KeyIdMethod::PreSpecified(signer.key_identifier().to_vec());
-    let certificate = params
-        .self_signed(signer)
-        .map_err(|e| Error::Mint(e.to_string()))?;
+    let certificate = params.self_signed(signer).map_err(Error::mint)?;
     Ok(certificate.der().clone())
 }
 
@@ -110,10 +108,22 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_mint_says_so_and_carries_its_cause() {
+        let failed = Error::mint(rcgen::Error::RemoteKeyError);
+        assert_eq!(failed.to_string(), "making the certificate failed");
+        let source =
+            std::error::Error::source(&failed).and_then(|e| e.downcast_ref::<rcgen::Error>());
+        assert!(
+            matches!(source, Some(rcgen::Error::RemoteKeyError)),
+            "{failed:?}"
+        );
+    }
+
+    #[test]
     fn a_certificate_without_names_is_refused() {
-        assert_eq!(
+        assert!(matches!(
             mint(&signer(KeyAlgorithm::EcP256), &[]),
             Err(Error::NoNames)
-        );
+        ));
     }
 }

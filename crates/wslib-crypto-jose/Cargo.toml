@@ -20,4 +20,4 @@ thiserror = "2.0.20"
 
 [dev-dependencies]
 rustls = { version = "0.23.27", default-features = false, features = ["aws_lc_rs", "ring", "std"] }
-wslib-crypto = { version = "0.1", path = "../wslib-crypto", registry = "wired-square" }
+wslib-crypto = { version = "0.2", path = "../wslib-crypto", registry = "wired-square" }

@@ -31,7 +31,7 @@ impl KeyIdentifierMethod {
         match self {
             Self::Sha1 => {
                 let (_, info) = SubjectPublicKeyInfo::from_der(spki)
-                    .map_err(|e| Error::Malformed(e.to_string()))?;
+                    .map_err(der::decode("SubjectPublicKeyInfo"))?;
                 Ok(Sha1::digest(&info.subject_public_key.data).into())
             }
             Self::Sha256 => Ok(wslib_crypto::key_identifier(spki)),
@@ -185,7 +185,7 @@ impl Authority {
         method: KeyIdentifierMethod,
     ) -> Result<Self, Error> {
         let (subject, key_identifier, serial, self_signed) = {
-            let parsed = der::whole(X509Certificate::from_der(&certificate))?;
+            let parsed = der::whole(X509Certificate::from_der(&certificate), "certificate")?;
             if !parsed.is_ca() {
                 return Err(Error::NotAnAuthority);
             }

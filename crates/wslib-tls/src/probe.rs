@@ -38,7 +38,7 @@ pub enum ProbeError {
     NotAServerName { host: String },
     #[error("{host}:{port} presented no certificate: nothing answered within {} seconds", PROBE_TIMEOUT.as_secs())]
     TimedOut { host: String, port: u16 },
-    #[error("{host}:{port} presented no certificate: {source}")]
+    #[error("{host}:{port} presented no certificate")]
     Failed {
         host: String,
         port: u16,
@@ -128,6 +128,23 @@ fn parse_target(target: &str) -> Result<(String, u16), ProbeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_probe_says_only_where_and_carries_the_io_error() {
+        let failed = ProbeError::Failed {
+            host: "widget.local".into(),
+            port: 8443,
+            source: std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused"),
+        };
+        assert_eq!(
+            failed.to_string(),
+            "widget.local:8443 presented no certificate"
+        );
+        let source = std::error::Error::source(&failed)
+            .and_then(|e| e.downcast_ref::<std::io::Error>())
+            .map(std::io::Error::kind);
+        assert_eq!(source, Some(std::io::ErrorKind::ConnectionRefused));
+    }
 
     #[test]
     fn a_target_is_a_url_or_a_host_with_or_without_a_port() {

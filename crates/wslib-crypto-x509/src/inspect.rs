@@ -222,7 +222,7 @@ fn whole<'a, T: FromDer<'a, X509Error>>(der: &'a [u8], what: &str) -> Result<T, 
     match T::from_der(der) {
         Ok(([], parsed)) => Ok(parsed),
         Ok(_) => Err(Error::Malformed(format!("trailing bytes after the {what}"))),
-        Err(e) => Err(Error::Malformed(e.to_string())),
+        Err(e) => Err(Error::decode(e)),
     }
 }
 
@@ -430,7 +430,7 @@ mod tests {
     fn an_indented_certificate_reads_rather_than_panicking() {
         let pem = certificate(|_| {});
         let indented: String = pem.lines().map(|line| format!("    {line}\n")).collect();
-        assert_eq!(inspect_pem(&indented), inspect_pem(&pem));
+        assert_eq!(inspect_pem(&indented).unwrap(), inspect_pem(&pem).unwrap());
     }
 
     #[test]
@@ -716,5 +716,15 @@ mod tests {
         let mut trailing = der.to_vec();
         trailing.push(0);
         assert!(matches!(inspect(&trailing), Err(Error::Malformed(_))));
+    }
+
+    #[test]
+    fn der_the_parser_refuses_says_so_and_carries_the_parsers_error() {
+        let refused = inspect(&[0x30, 0x00]).unwrap_err();
+        assert!(matches!(refused, Error::Decode(_)), "{refused:?}");
+        assert_eq!(refused.to_string(), "does not decode");
+        let source = std::error::Error::source(&refused)
+            .and_then(|e| e.downcast_ref::<x509_parser::nom::Err<x509_parser::error::X509Error>>());
+        assert!(source.is_some(), "{refused:?}");
     }
 }

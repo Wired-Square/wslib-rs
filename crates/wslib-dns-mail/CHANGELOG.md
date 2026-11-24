@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.0
+
+- `VmcProblem::Chain` is `{ refusal, cause }`: `refusal` a `ChainRefusal`
+  (`Untrusted` or `Invalid`) in place of the verifier's text in `message`,
+  and `cause` the verifier's `ChainError`, typed, on the live value only. A
+  serialised problem carries the refusal and reads back with no cause.
+  Its `Display` is "the chain doesn't lead to a trusted root" for
+  `Untrusted`, with no verifier's text after it, and "the verifier refuses
+  the chain" for `Invalid`.
+- `VmcProblem`, `VmcVerification`, `Finding`, `Detail`, `DomainReport`,
+  `DkimCheck`, `DmarcCheck`, `MxCheck` and `SpfCheck` no longer derive
+  `PartialEq` and `Eq`.
+- `VmcTrustAnchors::from_pem`'s refusal of an anchor writes the verifier's
+  error and each of its causes.
+- On wslib-crypto-x509 0.2.
+
 ## 0.5.4
 
 - `DkimDiscovery::aliased_to`: whether the selector's CNAME chain reaches

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- On wslib-file-atomic 0.2.
+
 ## 0.1.2
 
 - `Docker::events`: the events from `since` to `until` that pass an

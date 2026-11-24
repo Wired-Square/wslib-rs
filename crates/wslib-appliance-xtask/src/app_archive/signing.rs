@@ -84,7 +84,8 @@ impl Root {
             ),
             Self::Pem(pem) => (pem.clone(), format!("the root in {WIRED_SQUARE_ROOT}")),
         };
-        let mut certificates = pem::certificates(&pem).map_err(|e| format!("{named}: {e}"))?;
+        let mut certificates =
+            pem::certificates(&pem).map_err(|e| format!("{named}: {}", crate::chain(&e)))?;
         Ok((certificates.swap_remove(0), named))
     }
 }
@@ -99,7 +100,7 @@ impl Chain {
     pub(super) fn read(path: &Path) -> Result<Self, String> {
         fs::read_to_string(path)
             .map_err(|e| e.to_string())
-            .and_then(|pem| pem::certificates(&pem).map_err(|e| e.to_string()))
+            .and_then(|pem| pem::certificates(&pem).map_err(|e| crate::chain(&e)))
             .map(|certificates| Self {
                 path: path.to_path_buf(),
                 certificates,
@@ -110,7 +111,8 @@ impl Chain {
     /// Why its leaf is not a code-signing leaf of `root` now, if it is not.
     pub(super) fn refusal(&self, root: &Root) -> Result<Option<String>, String> {
         let (root, named) = root.certificate()?;
-        let anchor = chain::trust_anchor(&root).map_err(|e| format!("{named}: {e}"))?;
+        let anchor =
+            chain::trust_anchor(&root).map_err(|e| format!("{named}: {}", crate::chain(&e)))?;
         let [leaf, intermediates @ ..] = self.certificates.as_slice() else {
             unreachable!("pem::certificates gives at least one");
         };
@@ -125,8 +127,9 @@ impl Chain {
         .err()
         .map(|e| {
             format!(
-                "{} is not a code-signing leaf of {named}: {e}",
-                self.path.display()
+                "{} is not a code-signing leaf of {named}: {}",
+                self.path.display(),
+                crate::chain(&e)
             )
         }))
     }
@@ -224,8 +227,8 @@ impl Key {
             false => fs::File::open(path).and_then(|mut file| file.read_to_string(&mut text)),
         }
         .map_err(|e| e.to_string())
-        .and_then(|_| pem::private_key(&text).map_err(|e| e.to_string()))
-        .and_then(|key| to_pkcs8(&key).map_err(|e| e.to_string()))
+        .and_then(|_| pem::private_key(&text).map_err(|e| crate::chain(&e)))
+        .and_then(|key| to_pkcs8(&key).map_err(|e| crate::chain(&e)))
         .and_then(|key| Self::from_pkcs8(key.secret_pkcs8_der()))
         .map_err(|e| format!("{}: {e}", path.display()))
     }
@@ -362,4 +365,75 @@ pub(super) fn keys(dir: &Path) -> Result<(), Failed> {
         leaf_path.display()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const UNDECODABLE: &str = "-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----\n";
+
+    #[test]
+    fn a_chain_that_does_not_read_says_what_the_decoder_said() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("chain.pem");
+        fs::write(&path, UNDECODABLE).unwrap();
+        let decoder = pem::certificates(UNDECODABLE).unwrap_err();
+        let decoder = std::error::Error::source(&decoder).expect("the decoder's error");
+        let refused = Chain::read(&path).err().expect("refused");
+        assert!(refused.ends_with(&format!(": {decoder}")), "{refused}");
+    }
+
+    #[test]
+    fn a_key_that_does_not_convert_says_what_the_decoder_said() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("key.pem");
+        fs::write(
+            &path,
+            "-----BEGIN EC PRIVATE KEY-----\nMAA=\n-----END EC PRIVATE KEY-----\n",
+        )
+        .unwrap();
+        let refused = Key::read(&path).err().expect("refused");
+        assert!(
+            refused.contains("the private key is malformed: "),
+            "{refused}"
+        );
+    }
+
+    #[test]
+    fn a_root_the_verifier_refuses_says_what_it_said() {
+        const ECDSA_SHA256: [u8; 10] = [0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02];
+        const SHA384: u8 = 0x03;
+        let dir = tempfile::tempdir().unwrap();
+        keys(dir.path()).unwrap();
+        let root = fs::read_to_string(dir.path().join("root.pem")).unwrap();
+        let mut der = pem::certificates(&root).unwrap().remove(0).to_vec();
+        let outer = der
+            .windows(ECDSA_SHA256.len())
+            .rposition(|window| window == ECDSA_SHA256)
+            .expect("the outer signature algorithm");
+        der[outer + ECDSA_SHA256.len() - 1] = SHA384;
+        let mismatched = dir.path().join("mismatched.pem");
+        fs::write(&mismatched, pem::encode(pem::CERTIFICATE, &der)).unwrap();
+        let chain = Chain::read(&dir.path().join("leaf.pem")).unwrap();
+        let refused = chain.refusal(&Root::File(mismatched)).unwrap_err();
+        assert!(
+            refused.contains(": the certificate does not verify: "),
+            "{refused}"
+        );
+    }
+
+    #[test]
+    fn a_leaf_of_another_root_says_what_the_verifier_said() {
+        let (ours, theirs) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        keys(ours.path()).unwrap();
+        keys(theirs.path()).unwrap();
+        let chain = Chain::read(&ours.path().join("leaf.pem")).unwrap();
+        let root = Root::File(theirs.path().join("root.pem"));
+        let refused = chain.refusal(&root).unwrap().expect("not their leaf");
+        assert!(
+            refused.contains("the certificate is not issued under a trusted anchor: "),
+            "{refused}"
+        );
+    }
 }

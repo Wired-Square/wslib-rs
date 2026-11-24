@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.7
+
+- Pins `wslib-appliance-core` at 0.1.7.
+
 ## 0.1.6
 
 - Pins `wslib-appliance-core` at 0.1.6 and re-exports its `Uncompressed`.

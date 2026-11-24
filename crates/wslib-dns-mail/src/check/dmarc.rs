@@ -13,7 +13,7 @@ use crate::{FaultCode, ReportUri};
 const NONCANONICAL_VERSION_RISK: &str =
     "a receiver that applies RFC 7489 §6.3 strictly ignores the whole record";
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DmarcCheck {
     pub discovery: DmarcDiscovery,

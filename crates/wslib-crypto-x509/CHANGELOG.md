@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.0
+
+- `Error::Decode`: base64, DER or a certificate the decoder refuses, its
+  error boxed as the source, in place of `Error::Malformed` holding its text.
+  `Malformed` keeps this crate's own sentences.
+- `Error::Mint` carries rcgen's or wslib-crypto's error, boxed, as its
+  source, in place of its text.
+- `chain::ChainError::Untrusted` and `Invalid` carry the verifier's or the
+  parser's error, boxed, as the source, in place of its text, and say "the
+  certificate is not issued under a trusted anchor" and "the certificate
+  does not verify".
+- `Error` and `ChainError` no longer derive `Clone`, `PartialEq` and `Eq`.
+- On wslib-crypto 0.2, whose `Error` `Mint` carries.
+
 ## 0.1.7
 
 - `pem::private_key` leaves no unwiped copy of the pasted text behind: it is

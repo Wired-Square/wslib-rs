@@ -49,11 +49,14 @@ pub(crate) fn elements(der: &[u8]) -> Result<Vec<&[u8]>, Error> {
 }
 
 /// What x509-parser read, provided it read every byte.
-pub(crate) fn whole<T>(parsed: x509_parser::error::X509Result<'_, T>) -> Result<T, Error> {
+pub(crate) fn whole<T>(
+    parsed: x509_parser::error::X509Result<'_, T>,
+    what: &'static str,
+) -> Result<T, Error> {
     match parsed {
         Ok(([], value)) => Ok(value),
         Ok(_) => Err(Error::Malformed("trailing bytes".into())),
-        Err(e) => Err(Error::Malformed(e.to_string())),
+        Err(e) => Err(decode(what)(e)),
     }
 }
 
@@ -125,9 +128,7 @@ pub(crate) fn signed(
     fields: &[(usize, &[u8])],
 ) -> Result<Vec<u8>, Error> {
     let [body, algorithm, _] = elements(draft)?[..] else {
-        return Err(Error::Encode(
-            "rcgen's draft has an unexpected shape".into(),
-        ));
+        return Err(Error::UnexpectedDraft);
     };
     let mut parts = elements(body)?;
     for &(position, field) in fields {
@@ -140,15 +141,22 @@ pub(crate) fn signed(
 }
 
 pub(crate) fn encode(e: rcgen::Error) -> Error {
-    Error::Encode(e.to_string())
+    Error::Encode(Box::new(e))
 }
 
-pub(crate) fn malformed(e: wslib_crypto_x509::Error) -> Error {
-    Error::Malformed(e.to_string())
+pub(crate) fn decode<E: std::error::Error + Send + Sync + 'static>(
+    what: &'static str,
+) -> impl FnOnce(E) -> Error {
+    move |e| Error::Decode {
+        what,
+        source: Box::new(e),
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use wslib_crypto_x509::signature::SignatureError;
+
     use super::*;
 
     #[test]
@@ -165,5 +173,46 @@ mod tests {
         assert_eq!(parts, [&tlv(0x02, &[1])[..], &tlv(0x04, &[0; 200])[..]]);
         assert!(elements(&der[..der.len() - 1]).is_err());
         assert!(elements(&tlv(0x31, &[])).is_err());
+    }
+
+    #[test]
+    fn an_error_says_only_its_own_part_and_carries_its_cause() {
+        let pem = "-----BEGIN CERTIFICATE REQUEST-----\n!!!!\n-----END CERTIFICATE REQUEST-----\n";
+        let undecoded = crate::CsrView::from_pem(pem).unwrap_err();
+        assert!(matches!(undecoded, Error::Decode { .. }), "{undecoded:?}");
+        assert_eq!(
+            undecoded.to_string(),
+            "the certificate request PEM does not decode"
+        );
+        let source = std::error::Error::source(&undecoded)
+            .and_then(|e| e.downcast_ref::<rustls_pki_types::pem::Error>());
+        assert!(source.is_some(), "{undecoded:?}");
+
+        let unencoded = encode(rcgen::Error::RemoteKeyError);
+        assert_eq!(unencoded.to_string(), "encoding or signing failed");
+        let source =
+            std::error::Error::source(&unencoded).and_then(|e| e.downcast_ref::<rcgen::Error>());
+        assert!(
+            matches!(source, Some(rcgen::Error::RemoteKeyError)),
+            "{unencoded:?}"
+        );
+
+        let keyless = Error::from(wslib_crypto::Error::NoProvider);
+        assert_eq!(keyless.to_string(), "the key or the crypto provider failed");
+        let source = std::error::Error::source(&keyless)
+            .and_then(|e| e.downcast_ref::<wslib_crypto::Error>());
+        assert!(
+            matches!(source, Some(wslib_crypto::Error::NoProvider)),
+            "{keyless:?}"
+        );
+
+        let unsigned = Error::from(SignatureError::BadSignature);
+        assert_eq!(unsigned.to_string(), "the signature does not hold");
+        let source =
+            std::error::Error::source(&unsigned).and_then(|e| e.downcast_ref::<SignatureError>());
+        assert!(
+            matches!(source, Some(SignatureError::BadSignature)),
+            "{unsigned:?}"
+        );
     }
 }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1
+
+- On wslib-file-atomic 0.2.
+
 ## 0.3.0
 
 - `identity::Mac` is a MAC address. It parses from twelve hex digits in

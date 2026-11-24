@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -6,8 +7,8 @@ mod common;
 
 use common::{Scratch, read};
 use wslib_file_atomic::{
-    CommitError, Options, Readers, RecordIdentity, Recovered, Refused, Transaction, recover,
-    recover_expecting, recover_identified, replace_private,
+    CommitError, Options, Readers, RecordIdentity, RecoverError, Recovered, Refused, Transaction,
+    recover, recover_expecting, recover_identified, replace_private,
 };
 
 const KEY: &str = "app.key";
@@ -309,8 +310,8 @@ fn a_name_with_a_separator_or_a_tab_is_refused() {
         let refused = Transaction::begin(&dir.0, name).unwrap_err();
         assert_eq!(refused.kind(), io::ErrorKind::InvalidInput, "{name:?}");
         assert_eq!(
-            recover(&dir.0, name).unwrap_err().kind(),
-            io::ErrorKind::InvalidInput
+            io_kind(&recover(&dir.0, name).unwrap_err()),
+            Some(io::ErrorKind::InvalidInput)
         );
     }
 }
@@ -399,25 +400,37 @@ fn a_malformed_record_is_an_error_and_nothing_is_touched() {
         fs::write(dir.join(RECORD), record).unwrap();
         stage_by_hand(&dir, &[STAGED_KEY]);
         let refused = recover(&dir.0, "tls").unwrap_err();
-        assert_eq!(refused.kind(), io::ErrorKind::InvalidData, "{case}");
-        assert!(refusal(&refused).is_none(), "{case}");
+        assert_eq!(
+            io_kind(&refused),
+            Some(io::ErrorKind::InvalidData),
+            "{case}"
+        );
         assert_old_pair(&dir);
         assert_only(&dir, &[KEY, CERT, STAGED_KEY, RECORD]);
     }
 }
 
-fn refusal(error: &io::Error) -> Option<&Refused> {
-    error.get_ref()?.downcast_ref()
+fn io_kind(error: &RecoverError) -> Option<io::ErrorKind> {
+    match error {
+        RecoverError::Io(error) => Some(error.kind()),
+        RecoverError::Refused(_) => None,
+    }
 }
 
-fn assert_refused(refused: &io::Error, path: &str) {
-    assert_eq!(refused.kind(), io::ErrorKind::PermissionDenied, "{refused}");
-    assert!(refused.to_string().contains(path), "{refused}");
-    let refusal = refusal(refused).expect("a refusal carries Refused");
-    assert_eq!(refusal.path().file_name().unwrap(), path, "{refused}");
+fn refusal(refused: &RecoverError) -> &Refused {
+    match refused {
+        RecoverError::Refused(refusal) => refusal,
+        RecoverError::Io(e) => panic!("not a refusal: {e}"),
+    }
 }
 
-fn assert_refused_untouched(dir: &Scratch, refused: io::Error) {
+fn assert_refused(refused: &RecoverError, path: &str) {
+    let refusal = refusal(refused);
+    assert!(refusal.to_string().contains(path), "{refusal}");
+    assert_eq!(refusal.path().file_name().unwrap(), path, "{refusal}");
+}
+
+fn assert_refused_untouched(dir: &Scratch, refused: RecoverError) {
     assert_refused(&refused, RECORD);
     assert_old_pair(dir);
     assert_eq!(
@@ -533,8 +546,8 @@ fn a_symlinked_record_is_refused() {
     }
     let refused = recover(&dir.0, "tls").unwrap_err();
     assert!(
-        refused.to_string().contains("not a regular file"),
-        "{refused}"
+        refusal(&refused).to_string().contains("not a regular file"),
+        "{refused:?}"
     );
     assert_refused_untouched(&dir, refused);
     assert!(planted.exists());
@@ -556,8 +569,8 @@ fn a_record_that_is_a_junction_or_a_directory_is_refused() {
     assert!(made.status.success(), "{made:?}");
     let refused = recover(&dir.0, "tls").unwrap_err();
     assert!(
-        refused.to_string().contains("not a regular file"),
-        "{refused}"
+        refusal(&refused).to_string().contains("not a regular file"),
+        "{refused:?}"
     );
     assert_refused_untouched(&dir, refused);
 
@@ -566,8 +579,8 @@ fn a_record_that_is_a_junction_or_a_directory_is_refused() {
     fs::create_dir(dir.join(RECORD)).unwrap();
     let refused = recover(&dir.0, "tls").unwrap_err();
     assert!(
-        refused.to_string().contains("not a regular file"),
-        "{refused}"
+        refusal(&refused).to_string().contains("not a regular file"),
+        "{refused:?}"
     );
     assert_refused_untouched(&dir, refused);
 }
@@ -581,8 +594,10 @@ fn a_record_owned_by_someone_else_is_refused() {
     }
     let refused = recover(&dir.0, "tls").unwrap_err();
     assert!(
-        refused.to_string().contains("owned by another user"),
-        "{refused}"
+        refusal(&refused)
+            .to_string()
+            .contains("owned by another user"),
+        "{refused:?}"
     );
     assert_refused_untouched(&dir, refused);
 }
@@ -638,9 +653,16 @@ fn a_commit_failing_before_the_commit_point_is_rolled_back() {
     let dir = pair("txn-commit-rolled-back");
     let transaction = stage_pair(&dir);
     occupy(&dir.join("tls.txn.new"));
-    let Err(CommitError::RolledBack(_)) = transaction.commit() else {
+    let Err(rolled_back @ CommitError::RolledBack(_)) = transaction.commit() else {
         panic!("the committed record could not be staged");
     };
+    assert_eq!(rolled_back.to_string(), "not committed, and rolled back");
+    assert!(
+        rolled_back
+            .source()
+            .is_some_and(|e| e.downcast_ref::<io::Error>().is_some()),
+        "{rolled_back:?}"
+    );
     assert_old_pair(&dir);
     assert_only(&dir, &[KEY, CERT, "tls.txn.new"]);
 }
@@ -650,9 +672,24 @@ fn a_commit_failing_after_the_commit_point_is_left_for_recover() {
     let dir = pair("txn-commit-committed");
     let transaction = stage_pair(&dir);
     occupy(&dir.join(CERT));
-    let Err(CommitError::Committed(_)) = transaction.commit() else {
+    let Err(committed @ CommitError::Committed(_)) = transaction.commit() else {
         panic!("the certificate could not be renamed over a directory");
     };
+    assert_eq!(
+        committed.to_string(),
+        "committed, but left for recovery to finish"
+    );
+    let recovery = committed
+        .source()
+        .and_then(|e| e.downcast_ref::<RecoverError>());
+    assert!(
+        matches!(recovery, Some(RecoverError::Io(_))),
+        "{committed:?}"
+    );
+    let io = recovery
+        .and_then(|e| e.source())
+        .and_then(|e| e.downcast_ref::<io::Error>());
+    assert!(io.is_some(), "{committed:?}");
     assert!(
         fs::read_to_string(dir.join(RECORD))
             .unwrap()
@@ -710,18 +747,49 @@ fn a_record_swapped_for_another_file_is_passed_over_by_its_identity() {
 }
 
 #[test]
-fn a_commit_error_says_which_side_and_keeps_its_kind() {
-    let committed = CommitError::Committed(io::ErrorKind::PermissionDenied.into());
-    assert!(
-        committed.to_string().starts_with("committed"),
-        "{committed}"
+fn a_commit_error_says_only_which_side_and_carries_its_cause() {
+    let refused = Refused::new("/app/tls.txn", "planted");
+    let committed = CommitError::Committed(RecoverError::Refused(refused));
+    assert_eq!(
+        committed.to_string(),
+        "committed, but left for recovery to finish"
     );
-    let error = io::Error::from(committed);
-    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
-    let rolled_back = CommitError::RolledBack(io::ErrorKind::NotFound.into());
+    let recovery = committed
+        .source()
+        .and_then(|e| e.downcast_ref::<RecoverError>());
     assert!(
-        rolled_back.to_string().contains("rolled back"),
-        "{rolled_back}"
+        matches!(recovery, Some(RecoverError::Refused(_))),
+        "{committed:?}"
+    );
+    let cause = recovery
+        .and_then(|e| e.source())
+        .and_then(|e| e.downcast_ref::<Refused>());
+    assert_eq!(cause.map(Refused::path), Some(Path::new("/app/tls.txn")));
+
+    let rolled_back = CommitError::RolledBack(io::Error::new(io::ErrorKind::NotFound, "gone"));
+    assert_eq!(rolled_back.to_string(), "not committed, and rolled back");
+    let cause = rolled_back
+        .source()
+        .and_then(|e| e.downcast_ref::<io::Error>());
+    assert_eq!(cause.map(io::Error::kind), Some(io::ErrorKind::NotFound));
+}
+
+#[test]
+fn a_recover_error_says_only_its_own_part_and_carries_its_cause() {
+    let refused = RecoverError::Refused(Refused::new("/app/tls.txn", "planted"));
+    assert_eq!(refused.to_string(), "recovery would not act on a file");
+    let refusal = refused.source().and_then(|e| e.downcast_ref::<Refused>());
+    assert_eq!(refusal.map(Refused::path), Some(Path::new("/app/tls.txn")));
+
+    let io = RecoverError::Io(io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        "the disk is gone",
+    ));
+    assert_eq!(io.to_string(), "the transaction could not be finished");
+    let cause = io.source().and_then(|e| e.downcast_ref::<io::Error>());
+    assert_eq!(
+        cause.map(io::Error::kind),
+        Some(io::ErrorKind::PermissionDenied)
     );
 }
 

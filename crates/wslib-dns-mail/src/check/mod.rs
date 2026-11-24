@@ -129,7 +129,7 @@ impl Default for CheckOptions {
 }
 
 /// Everything [`check_domain`] found and everything wrong with it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct DomainReport {

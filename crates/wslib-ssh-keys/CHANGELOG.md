@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- On wslib-file-atomic 0.2.
+
 ## 0.1.1
 
 - chrono's floor is 0.4.39.

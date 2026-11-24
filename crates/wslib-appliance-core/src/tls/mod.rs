@@ -13,6 +13,8 @@
 pub(crate) mod inspect;
 pub(crate) mod outbound;
 
+use std::error::Error;
+use std::iter;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -33,6 +35,8 @@ pub use outbound::Outbound;
 const ALWAYS: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
 
 const NO_PAIR: &str = "this installation serves no TLS certificate";
+
+const CAUSE_SEPARATOR: &str = ": ";
 
 const NAMED: &str = "These files were named in this appliance's configuration, so it will not \
                      move them aside and make its own";
@@ -296,13 +300,20 @@ fn ours(pair: wslib_tls::ServingPair) -> ServingPair {
     }
 }
 
+pub(crate) fn chain(error: &(dyn Error + 'static)) -> String {
+    iter::successors(Some(error), |&e| e.source())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(CAUSE_SEPARATOR)
+}
+
 /// Why the pair will not load, or an interrupted write of it will not finish,
 /// as the journal says it.
 fn unusable(e: &ServingError) -> String {
     match e {
         ServingError::Named { source, .. } => match **source {
             ServingError::RecordRefused { .. } | ServingError::Recover { .. } => {
-                format!("{source}. {NAMED}")
+                format!("{}. {NAMED}", chain(&**source))
             }
             _ => format!(
                 "{}. {NAMED}: correct them, or unset the setting to have the appliance manage \
@@ -316,8 +327,8 @@ fn unusable(e: &ServingError) -> String {
             present.display(),
             missing.display(),
         ),
-        ServingError::Refused(e) => format!("the pair on disk will not load: {e}"),
-        e => e.to_string(),
+        ServingError::Refused(e) => format!("the pair on disk will not load: {}", chain(e)),
+        e => chain(e),
     }
 }
 
@@ -333,16 +344,16 @@ fn cannot_write(directory: &Path, kind: std::io::ErrorKind) -> TlsError {
 fn tls_error(e: ServingError, location: &Location) -> TlsError {
     match e {
         ServingError::Unwritable { directory, kind } => cannot_write(&directory, kind),
-        ServingError::Refused(e) => TlsError::Unloadable(e.to_string()),
+        ServingError::Refused(e) => TlsError::Unloadable(chain(&e)),
         ServingError::Mismatched => TlsError::Mismatched,
-        e @ ServingError::RecordRefused { .. } => TlsError::Unsupported(e.to_string()),
+        e @ ServingError::RecordRefused { .. } => TlsError::Unsupported(chain(&e)),
         ServingError::Unfinished { ref source, .. } => TlsError::Unfinished {
-            because: crate::redact::foreign(source),
+            because: crate::redact::foreign(&chain(source)),
             next: e.next_step().unwrap_or_default(),
         },
         ServingError::Write { path, source, .. } => TlsError::Unwritable {
             path,
-            because: crate::redact::foreign(&source),
+            because: crate::redact::foreign(&chain(&source)),
         },
         ServingError::Interrupted { record } => TlsError::Internal(format!(
             "a write of the serving pair was interrupted and {} records it; start the \
@@ -355,15 +366,16 @@ fn tls_error(e: ServingError, location: &Location) -> TlsError {
             path.display()
         )),
         ServingError::Certificate(e) => TlsError::Internal(format!(
-            "the certificate on disk at {} is not PEM: {e}",
-            location.cert().display()
+            "the certificate on disk at {} is not PEM: {}",
+            location.cert().display(),
+            chain(&e)
         )),
         ServingError::Unreadable { path, source } => TlsError::Internal(format!(
             "could not read {}: {}",
             path.display(),
-            crate::redact::foreign(&source)
+            crate::redact::foreign(&chain(&source))
         )),
-        e => TlsError::Internal(e.to_string()),
+        e => TlsError::Internal(chain(&e)),
     }
 }
 
@@ -760,6 +772,7 @@ mod tests {
         ] {
             assert!(matches!(e, TlsError::Unsupported(_)), "{e}");
             assert!(e.to_string().contains("aside by hand"), "{e}");
+            assert!(e.to_string().contains("may be written by others"), "{e}");
         }
         let e = started.expect_err("a start over a record anybody could have left");
         assert!(e.to_string().contains("may be written by others"), "{e}");
@@ -1300,5 +1313,62 @@ mod tests {
         .await
         .expect("mints");
         assert!(sans(&minted).contains(&"widget.local".to_string()));
+    }
+
+    #[test]
+    fn an_operators_sentence_keeps_every_cause() {
+        let location = Location::managed("/srv/tls/cert.pem", "/srv/tls/key.pem");
+        let rustls = || rustls::Error::General("rustls says no".into());
+        let refused = |why: &str| wslib_file_atomic::Refused::new("/srv/tls/key.pem.txn", why);
+        let said = [
+            tls_error(ServingError::Refused(rustls()), &location),
+            tls_error(
+                ServingError::Unreadable {
+                    path: location.cert().to_path_buf(),
+                    source: std::io::Error::other("the disk is on fire"),
+                },
+                &location,
+            ),
+            tls_error(
+                ServingError::Certificate(wslib_crypto_x509::Error::Decode(Box::new(
+                    std::io::Error::other("the ink ran"),
+                ))),
+                &location,
+            ),
+            tls_error(
+                ServingError::RecordRefused {
+                    record: location.record(),
+                    source: refused("planted"),
+                },
+                &location,
+            ),
+            tls_error(
+                ServingError::KeyRefused(wslib_crypto::Error::Unsupported),
+                &location,
+            ),
+        ]
+        .map(|e| e.to_string());
+        for (said, cause) in said.iter().zip([
+            "rustls says no",
+            "the disk is on fire",
+            "the ink ran",
+            "planted",
+            "not a P-256, P-384, RSA-2048 or RSA-4096 key",
+        ]) {
+            assert!(said.contains(cause), "{said}");
+        }
+
+        let named = |source| ServingError::Named {
+            cert: location.cert().to_path_buf(),
+            key: location.key().to_path_buf(),
+            source: Box::new(source),
+        };
+        let unloadable = unusable(&named(ServingError::Refused(rustls())));
+        assert!(unloadable.contains("rustls says no"), "{unloadable}");
+        let unacted = unusable(&named(ServingError::RecordRefused {
+            record: location.record(),
+            source: refused("planted"),
+        }));
+        assert!(unacted.contains("planted"), "{unacted}");
     }
 }

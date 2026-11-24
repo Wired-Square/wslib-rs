@@ -23,11 +23,9 @@ fn every_golden_is_unchanged() {
 fn every_golden_reads_back() {
     let fixtures = fixtures();
     let event: s::DiscoveryEvent = serde_json::from_str(&fixtures["event_seen"]).unwrap();
-    assert_eq!(
-        event,
-        s::DiscoveryEvent::Seen {
-            device: ble_device()
-        }
+    assert!(
+        matches!(&event, s::DiscoveryEvent::Seen { device } if *device == ble_device()),
+        "{event:?}"
     );
     let device: s::Device = serde_json::from_str(&fixtures["device_mdns"]).unwrap();
     assert_eq!(device, mdns_device());

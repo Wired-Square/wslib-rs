@@ -1,6 +1,6 @@
 use reqwest::{Method, StatusCode};
 
-use super::{ClientError, GatewayClient, answer, cause_chain, refusal};
+use super::{ClientError, GatewayClient, answer, refusal};
 use crate::request::{percent_encode, query_string};
 use crate::{
     AssignCatalogue, AssignedCatalogue, AssignmentConflict, CatalogueFinding, CatalogueRejected,
@@ -60,7 +60,7 @@ async fn outcome(response: reqwest::Response) -> Result<AssignOutcome, ClientErr
     let body = response
         .bytes()
         .await
-        .map_err(|e| ClientError::Decode(cause_chain(&e)))?;
+        .map_err(|e| ClientError::Decode(Box::new(e)))?;
     let outcome = match status {
         StatusCode::CONFLICT => serde_json::from_slice(&body)
             .ok()
@@ -74,7 +74,7 @@ async fn outcome(response: reqwest::Response) -> Result<AssignOutcome, ClientErr
                 .map(|a| AssignOutcome::Done {
                     warnings: a.warnings,
                 })
-                .map_err(|e| ClientError::Decode(e.to_string()));
+                .map_err(|e| ClientError::Decode(Box::new(e)));
         }
         _ => None,
     };

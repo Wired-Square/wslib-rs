@@ -1,4 +1,4 @@
-use std::{error::Error, fmt, io, iter, time::Duration};
+use std::{error::Error, sync::Arc, time::Duration};
 
 #[cfg(test)]
 pub(crate) use wslib_can_bus::PortDirectory;
@@ -8,7 +8,11 @@ pub(crate) use wslib_can_bus::{DEVICE_SEPARATOR, PATH_SEPARATOR, SLCAN_PREFIX, p
 
 use super::frame::RawFrame;
 pub(crate) use super::task::open_bus;
-use crate::{probe::ProbeError, uri::BUS_FORMS};
+use crate::{probe::StartError, uri::BUS_FORMS};
+
+pub(crate) fn out_of_reach(bus: &CanBus) -> String {
+    OpenError::Unreachable(bus.clone()).explain(BUS_FORMS)
+}
 
 pub(crate) const fn feature(kind: BusKind) -> (&'static str, bool) {
     match kind {
@@ -24,49 +28,20 @@ pub(crate) fn name_the_bus(what: &str) -> String {
     wslib_can_bus::name_the_bus(what, BUS_FORMS)
 }
 
-pub(crate) fn refused(bus: &CanBus) -> io::Error {
+pub(crate) fn refused(bus: &CanBus) -> StartError {
     match feature(bus.kind()) {
-        (feature, false) => io::Error::new(
-            io::ErrorKind::Unsupported,
-            ProbeError::FeatureDisabled(feature),
-        ),
-        (_, true) => failed(OpenError::Unreachable(bus.clone())),
+        (feature, false) => StartError::FeatureDisabled(feature),
+        (_, true) => StartError::Unreachable(bus.clone()),
     }
 }
 
-pub(crate) fn failed(error: OpenError) -> io::Error {
-    io::Error::new(error.kind(), Unopened(error))
-}
+pub(crate) type Cause = Arc<dyn Error + Send + Sync>;
 
 #[derive(Debug)]
-struct Unopened(OpenError);
-
-impl fmt::Display for Unopened {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0.explain(BUS_FORMS))
-    }
-}
-
-impl Error for Unopened {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        self.0.source()
-    }
-}
-
-const CAUSE_SEPARATOR: &str = ": ";
-
-pub(crate) fn chain(error: &(dyn Error + 'static)) -> String {
-    iter::successors(Some(error), |&e| e.source())
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(CAUSE_SEPARATOR)
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code, reason = "only a CAN backend's bus raises it")]
 pub(crate) enum BusError {
-    Lost(String),
-    Ended(String),
+    Lost(Cause),
+    Ended(Option<Cause>),
 }
 
 pub(crate) trait Bus: Send {

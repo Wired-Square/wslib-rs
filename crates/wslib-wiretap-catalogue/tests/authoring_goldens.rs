@@ -48,7 +48,7 @@ fn recorded_steps(expected: &Value) -> Vec<Value> {
 
 fn apply(text: &str, ops: &Value) -> Result<String, String> {
     let ops: Vec<EditOp> = serde_json::from_value(ops.clone()).map_err(|e| e.to_string())?;
-    apply_edits(text, &ops)
+    apply_edits(text, &ops).map_err(|e| e.to_string())
 }
 
 fn data(text: &str) -> toml::Table {

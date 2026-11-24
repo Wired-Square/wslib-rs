@@ -214,7 +214,10 @@ pub fn target_for(id: &DeviceId, transport: Transport) -> ConnectTarget {
     match DeviceRegistry::open() {
         Ok(registry) => resolve_target(&registry, id, transport),
         Err(e) => {
-            tracing::warn!("device registry unreadable, falling back to discovery: {e}");
+            tracing::warn!(
+                error = &e as &dyn std::error::Error,
+                "device registry unreadable, falling back to discovery"
+            );
             ConnectTarget::Discover
         }
     }

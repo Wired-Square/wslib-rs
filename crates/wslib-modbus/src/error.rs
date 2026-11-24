@@ -12,7 +12,7 @@ pub enum RequestError {
         latency: Duration,
     },
     /// No usable answer; the socket has been dropped.
-    #[error(transparent)]
+    #[error("the request got no usable answer")]
     Transport(#[from] TransportError),
 }
 

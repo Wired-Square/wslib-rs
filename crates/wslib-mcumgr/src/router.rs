@@ -86,7 +86,12 @@ impl Router {
     fn deliver(&self, frame: Vec<u8>) {
         let header = match Header::decode(&frame) {
             Ok(header) => header,
-            Err(e) => return debug!("dropping an undecodable SMP frame: {e}"),
+            Err(e) => {
+                return debug!(
+                    error = &e as &dyn std::error::Error,
+                    "dropping an undecodable SMP frame"
+                );
+            }
         };
         let mut routes = self.lock();
         let Entry::Occupied(route) = routes.by_seq.entry(header.seq) else {
@@ -131,7 +136,10 @@ async fn read(transport: Arc<dyn Transport>, router: Weak<Router>) {
             Err(e) => break e,
         }
     };
-    debug!("SMP transport closed: {error}");
+    debug!(
+        error = &error as &dyn std::error::Error,
+        "SMP transport closed"
+    );
     if let Some(router) = router.upgrade() {
         router.close();
     }

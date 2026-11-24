@@ -73,14 +73,8 @@ fn session_goldens() -> Vec<(&'static str, String)> {
         (
             "event_error",
             json(&[
-                s::DiscoveryEvent::Error {
-                    source: s::ErrorSource::Ble,
-                    message: "scan start".into(),
-                },
-                s::DiscoveryEvent::Error {
-                    source: s::ErrorSource::Mdns,
-                    message: "no IPv4 address".into(),
-                },
+                s::DiscoveryEvent::error(s::ErrorSource::Ble, "scan start", None),
+                s::DiscoveryEvent::error(s::ErrorSource::Mdns, "no IPv4 address", None),
             ]),
         ),
         (

@@ -10,6 +10,7 @@
 mod byte_name;
 pub mod dbc;
 pub mod decode;
+mod document;
 pub mod edit;
 pub mod framing_detect;
 pub mod layout;
@@ -26,6 +27,7 @@ pub mod text;
 pub mod validate;
 
 pub use byte_name::{byte_name, parse_byte_name};
+pub use document::DocumentError;
 pub use layout::{FrameLayout, LayoutRange, RangeKind, frame_layout};
 pub use mirror::{MirrorTracker, MirrorVerdict};
 pub use model::{

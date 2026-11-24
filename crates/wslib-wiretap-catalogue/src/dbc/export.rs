@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::DocumentError;
 use crate::parse::parse_id;
 
 /// Signal from parsed TOML
@@ -636,7 +637,7 @@ pub enum MuxExportMode {
 pub fn render_catalogue_as_dbc(
     toml_content: &str,
     default_receiver: &str,
-) -> Result<String, String> {
+) -> Result<String, DocumentError> {
     render_catalogue_as_dbc_with_mode(toml_content, default_receiver, MuxExportMode::default())
 }
 
@@ -645,11 +646,16 @@ pub fn render_catalogue_as_dbc_with_mode(
     toml_content: &str,
     default_receiver: &str,
     mux_mode: MuxExportMode,
-) -> Result<String, String> {
-    // Parse TOML
-    let parsed: toml::Value =
-        toml::from_str(toml_content).map_err(|e| format!("Failed to parse TOML: {}", e))?;
+) -> Result<String, DocumentError> {
+    let parsed: toml::Value = toml::from_str(toml_content)?;
+    render(&parsed, default_receiver, mux_mode).map_err(DocumentError::Refused)
+}
 
+fn render(
+    parsed: &toml::Value,
+    default_receiver: &str,
+    mux_mode: MuxExportMode,
+) -> Result<String, String> {
     let table = parsed.as_table().ok_or("Catalogue must be a TOML table")?;
 
     // Get default endianness from meta section
@@ -1487,6 +1493,9 @@ length = 8
 signal = [{ name = "Speed", start_bit = 0, bit_length = 16 }]
 "#;
         let err = render_catalogue_as_dbc(toml, "Vector__XXX").unwrap_err();
-        assert!(err.contains("\"speed\""), "{err}");
+        assert!(
+            matches!(&err, DocumentError::Refused(why) if why.contains("\"speed\"")),
+            "{err:?}"
+        );
     }
 }

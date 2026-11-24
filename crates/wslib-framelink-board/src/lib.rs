@@ -836,6 +836,47 @@ mod tests {
     }
 
     #[test]
+    fn a_key_that_is_not_a_number_names_itself_and_keeps_the_parse_error() {
+        let toml = "[board]\nname = \"t\"\nrevision = \"a\"\n[interfaces.x]\nname = \"CAN0\"\ntype = \"can\"\n";
+
+        let refused = parse_board_def(toml).unwrap_err();
+
+        assert_eq!(refused.to_string(), "interface key 'x' is not a number");
+        assert!(
+            std::error::Error::source(&refused)
+                .and_then(|s| s.downcast_ref::<std::num::ParseIntError>())
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn a_malformed_signal_key_keeps_the_protocols_error() {
+        let toml =
+            "[board]\nname = \"t\"\nrevision = \"a\"\n[signals.\"nonsense\"]\nname = \"x\"\n";
+
+        let refused = parse_board_def(toml).unwrap_err();
+
+        assert_eq!(refused.to_string(), "a signal key is malformed");
+        assert!(
+            std::error::Error::source(&refused)
+                .and_then(|s| s.downcast_ref::<wslib_framelink_protocol::Error>())
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn an_io_failure_says_only_its_own_layer() {
+        let failed = Error::from(std::io::Error::other("the cause"));
+
+        assert_eq!(failed.to_string(), "I/O failed");
+        assert!(
+            std::error::Error::source(&failed)
+                .and_then(|s| s.downcast_ref::<std::io::Error>())
+                .is_some()
+        );
+    }
+
+    #[test]
     fn parse_board_def_rejects_duplicate_mcu_chip() {
         let toml = r#"mcus = [
             { chip = "esp32", usb = "self" },

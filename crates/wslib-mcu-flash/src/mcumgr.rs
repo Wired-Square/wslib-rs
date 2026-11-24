@@ -9,7 +9,7 @@ use std::time::Duration;
 use futures_core::Stream;
 use wslib_mcumgr::{Session, UploadOptions};
 
-use crate::error::{FlashError, Result};
+use crate::error::{FlashError, Result, failed};
 use crate::image;
 use crate::progress::{FlashProgress, FlashStage, check_cancel};
 
@@ -52,7 +52,7 @@ pub async fn flash(
         "Asking the device for its SMP buffers",
     );
     if let Err(e) = session.negotiate_params().await {
-        progress.on_progress(&format!("Keeping the default chunk size: {e}"));
+        progress.on_progress(&format!("Keeping the default chunk size: {}", chain(&e)));
     }
     check_cancel(progress)?;
 
@@ -110,8 +110,15 @@ async fn next_unless_cancelled<S: Stream + Unpin>(
     }
 }
 
+fn chain(error: &(dyn std::error::Error + 'static)) -> String {
+    std::iter::successors(Some(error), |e| e.source())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(": ")
+}
+
 fn smp(step: &'static str) -> impl Fn(wslib_mcumgr::Error) -> FlashError {
-    move |e| FlashError::Message(format!("SMP {step} failed: {e}"))
+    move |e| failed(format!("SMP {step} failed"), e)
 }
 
 #[cfg(test)]
@@ -131,6 +138,18 @@ mod tests {
     const CMD_PARAMS: u8 = 6;
     const CHUNK: usize = 64;
     const HASH: [u8; 32] = [0xAB; 32];
+
+    #[test]
+    fn a_progress_line_writes_each_cause() {
+        let refused = smp("params")(Error::Io(std::io::Error::other("the link dropped")));
+        assert_eq!(
+            chain(&refused),
+            format!(
+                "SMP params failed: {}: the link dropped",
+                std::error::Error::source(&refused).unwrap()
+            )
+        );
+    }
 
     #[derive(Debug, PartialEq)]
     enum Seen {
@@ -180,6 +199,7 @@ mod tests {
         replies: mpsc::UnboundedSender<Vec<u8>>,
         inbox: tokio::sync::Mutex<mpsc::UnboundedReceiver<Vec<u8>>>,
         answers_chunks: bool,
+        unreadable_params: bool,
         declared_len: Mutex<usize>,
         written: Mutex<Vec<u8>>,
         seen: Mutex<Vec<Seen>>,
@@ -187,11 +207,16 @@ mod tests {
 
     impl FakeDevice {
         fn new(answers_chunks: bool) -> Arc<Self> {
+            Self::answering(answers_chunks, false)
+        }
+
+        fn answering(answers_chunks: bool, unreadable_params: bool) -> Arc<Self> {
             let (replies, inbox) = mpsc::unbounded_channel();
             Arc::new(Self {
                 replies,
                 inbox: tokio::sync::Mutex::new(inbox),
                 answers_chunks,
+                unreadable_params,
                 declared_len: Mutex::new(0),
                 written: Mutex::new(Vec::new()),
                 seen: Mutex::new(Vec::new()),
@@ -248,7 +273,10 @@ mod tests {
                         buf_size: 128 + CHUNK,
                         buf_count: 4,
                     };
-                    self.reply(&header, &params);
+                    match self.unreadable_params {
+                        true => self.reply(&header, &"not the params"),
+                        false => self.reply(&header, &params),
+                    }
                 }
                 (Group::Image, CMD_UPLOAD) => {
                     self.seen().push(Seen::Chunk);
@@ -293,6 +321,7 @@ mod tests {
     }
 
     struct Sink {
+        lines: Vec<String>,
         stages: Vec<FlashStage>,
         bytes: Vec<u64>,
         cancel: Box<dyn Fn(&Sink) -> bool + Send>,
@@ -301,6 +330,7 @@ mod tests {
     impl Sink {
         fn new(cancel: impl Fn(&Sink) -> bool + Send + 'static) -> Self {
             Self {
+                lines: Vec::new(),
                 stages: Vec::new(),
                 bytes: Vec::new(),
                 cancel: Box::new(cancel),
@@ -309,7 +339,9 @@ mod tests {
     }
 
     impl FlashProgress for Sink {
-        fn on_progress(&mut self, _message: &str) {}
+        fn on_progress(&mut self, message: &str) {
+            self.lines.push(message.to_string());
+        }
 
         fn on_stage(&mut self, stage: FlashStage, _message: &str) {
             self.stages.push(stage);
@@ -396,6 +428,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unreadable_params_keep_the_default_chunk_size_saying_each_cause() {
+        let device = FakeDevice::answering(true, true);
+        let image = mcuboot_image(CHUNK);
+        let mut sink = Sink::new(never);
+
+        run(&device, &image, Activation::Test, &mut sink)
+            .await
+            .unwrap();
+
+        let kept = sink
+            .lines
+            .iter()
+            .find_map(|line| line.strip_prefix("Keeping the default chunk size: "))
+            .unwrap_or_else(|| panic!("no chunk-size line: {:?}", sink.lines));
+        let mut layers = kept.split(": ");
+        assert!(
+            layers
+                .next()
+                .is_some_and(|smp| smp.contains("mcumgr params")),
+            "{kept}"
+        );
+        assert!(layers.next().is_some(), "no cause: {kept}");
+    }
+
+    #[tokio::test]
     async fn a_confirm_flash_confirms_the_image_before_the_reset() {
         let device = FakeDevice::new(true);
         let mut sink = Sink::new(never);
@@ -440,7 +497,7 @@ mod tests {
 
         let result = run(&device, &image, Activation::Test, &mut sink).await;
 
-        assert_eq!(result, Err(FlashError::Cancelled));
+        assert!(matches!(result, Err(FlashError::Cancelled)), "{result:?}");
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(device.written.lock().unwrap().len() < image.len());
         assert!(
@@ -465,7 +522,7 @@ mod tests {
 
         let result = run(&device, &mcuboot_image(CHUNK), Activation::Test, &mut sink).await;
 
-        assert_eq!(result, Err(FlashError::Cancelled));
+        assert!(matches!(result, Err(FlashError::Cancelled)), "{result:?}");
         assert!(started.elapsed() < Duration::from_secs(2));
         assert!(device.seen().contains(&Seen::Chunk));
     }
@@ -477,9 +534,15 @@ mod tests {
 
         let err = run(&device, &[0; 256], Activation::Test, &mut sink)
             .await
-            .unwrap_err()
-            .to_string();
+            .unwrap_err();
 
-        assert!(err.contains("not an MCUboot image"), "{err}");
+        assert_eq!(err.to_string(), "SMP upload failed");
+        let source = std::error::Error::source(&err)
+            .and_then(|s| s.downcast_ref::<wslib_mcumgr::Error>())
+            .expect("the SMP error");
+        assert!(
+            matches!(source, wslib_mcumgr::Error::NotMcuboot(_)),
+            "{source:?}"
+        );
     }
 }

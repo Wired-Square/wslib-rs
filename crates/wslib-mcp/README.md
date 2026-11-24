@@ -51,7 +51,7 @@ The page halves of the `dom` and `tauri-bridge` features are the npm package
 From the `wired-square` registry (see the workspace README for its setup):
 
 ```toml
-wslib-mcp = { version = "0.2", registry = "wired-square", features = ["http"] }
+wslib-mcp = { version = "0.3", registry = "wired-square", features = ["http"] }
 ```
 
 rmcp's macros emit `rmcp::` paths into your crate, and the re-export satisfies

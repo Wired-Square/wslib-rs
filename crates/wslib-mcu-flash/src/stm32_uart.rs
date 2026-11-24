@@ -13,7 +13,7 @@ use std::time::Duration;
 use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
 
 use crate::chip::lookup_stm32_pid;
-use crate::error::{FlashError, Result};
+use crate::error::{FlashError, Result, failed};
 use crate::image::{self, pad_word_with_ff};
 use crate::output;
 use crate::progress::{FlashProgress, FlashStage, check_cancel};
@@ -222,9 +222,8 @@ fn read_memory_to(
             check_cancel(progress)?;
             let chunk_len = remaining.min(CHUNK as u32) as usize;
             let chunk = cmd_read_memory(p, current_offset, chunk_len)?;
-            file.write_all(&chunk).map_err(|e| {
-                FlashError::Message(format!("Failed to write {}: {e}", output_path.display()))
-            })?;
+            file.write_all(&chunk)
+                .map_err(|e| failed(format!("Failed to write {}", output_path.display()), e))?;
             let n = chunk.len() as u32;
             bytes_done += n as u64;
             current_offset = current_offset.saturating_add(n);
@@ -291,7 +290,7 @@ fn connect(port: &str, opts: &Stm32UartOptions) -> Result<Session> {
         .flow_control(FlowControl::None)
         .timeout(ACK_TIMEOUT)
         .open()
-        .map_err(|e| FlashError::Message(format!("Failed to open {port}: {e}")))?;
+        .map_err(|e| failed(format!("Failed to open {port}"), e))?;
     enter_bootloader(p.as_mut(), opts)?;
     autobaud(p.as_mut())?;
     let (bootloader_version, supported_cmds) = cmd_get(p.as_mut())?;
@@ -309,10 +308,10 @@ fn drive(p: &mut dyn SerialPort, pin: Option<Pin>, asserted: bool, invert: bool)
     match pin {
         Some(Pin::Rts) => p
             .write_request_to_send(level)
-            .map_err(|e| FlashError::Message(format!("Failed to set RTS: {e}"))),
+            .map_err(|e| failed("Failed to set RTS", e)),
         Some(Pin::Dtr) => p
             .write_data_terminal_ready(level)
-            .map_err(|e| FlashError::Message(format!("Failed to set DTR: {e}"))),
+            .map_err(|e| failed("Failed to set DTR", e)),
         None => Ok(()),
     }
 }
@@ -335,9 +334,8 @@ fn enter_bootloader(p: &mut dyn SerialPort, opts: &Stm32UartOptions) -> Result<(
 
 fn write_all(p: &mut dyn SerialPort, buf: &[u8]) -> Result<()> {
     p.write_all(buf)
-        .map_err(|e| FlashError::Message(format!("Serial write: {e}")))?;
-    p.flush()
-        .map_err(|e| FlashError::Message(format!("Serial flush: {e}")))
+        .map_err(|e| failed("Serial write failed", e))?;
+    p.flush().map_err(|e| failed("Serial flush failed", e))
 }
 
 fn read_exact(p: &mut dyn SerialPort, buf: &mut [u8]) -> Result<()> {
@@ -345,7 +343,7 @@ fn read_exact(p: &mut dyn SerialPort, buf: &mut [u8]) -> Result<()> {
     while filled < buf.len() {
         let n = p
             .read(&mut buf[filled..])
-            .map_err(|e| FlashError::Message(format!("Serial read: {e}")))?;
+            .map_err(|e| failed("Serial read failed", e))?;
         if n == 0 {
             return Err("Serial read returned 0 bytes (timeout)".into());
         }
@@ -363,7 +361,7 @@ fn read_byte(p: &mut dyn SerialPort) -> Result<u8> {
 fn wait_ack(p: &mut dyn SerialPort) -> Result<()> {
     match read_byte(p)? {
         ACK => Ok(()),
-        NACK => Err("Device returned NACK".into()),
+        NACK => Err(FlashError::Nack),
         other => Err(FlashError::Message(format!(
             "Unexpected byte 0x{other:02X} (expected ACK/NACK)"
         ))),
@@ -373,10 +371,11 @@ fn wait_ack(p: &mut dyn SerialPort) -> Result<()> {
 fn autobaud(p: &mut dyn SerialPort) -> Result<()> {
     write_all(p, &[SYNC_BYTE])?;
     wait_ack(p).map_err(|e| {
-        FlashError::Message(format!(
-            "Bootloader handshake failed: {e}. \
-             Check BOOT0/RESET wiring or hold BOOT0 manually before connecting."
-        ))
+        failed(
+            "Bootloader handshake failed. \
+             Check BOOT0/RESET wiring or hold BOOT0 manually before connecting.",
+            e,
+        )
     })
 }
 
@@ -453,10 +452,12 @@ fn cmd_read_memory(p: &mut dyn SerialPort, addr: u32, len: usize) -> Result<Vec<
 }
 
 fn rdp_hint_on_nack(err: FlashError) -> FlashError {
-    if err.to_string().contains("NACK") {
-        "Read protected (RDP Level 1) — disable readout protection to back up flash".into()
-    } else {
-        err
+    match err {
+        FlashError::Nack => failed(
+            "Read protected (RDP Level 1) — disable readout protection to back up flash",
+            err,
+        ),
+        other => other,
     }
 }
 
@@ -480,7 +481,7 @@ fn with_timeout<T>(
 ) -> Result<T> {
     let saved = p.timeout();
     p.set_timeout(new_timeout)
-        .map_err(|e| FlashError::Message(format!("set_timeout: {e}")))?;
+        .map_err(|e| failed("Setting the serial timeout failed", e))?;
     let result = f(p);
     let _ = p.set_timeout(saved);
     result
@@ -511,12 +512,49 @@ mod tests {
         assert_eq!(opts.baud, DEFAULT_BAUD);
     }
 
+    const UNEXPECTED: u8 = 0x42;
+
+    fn is_nack(error: &FlashError) -> bool {
+        std::error::Error::source(error)
+            .and_then(|s| s.downcast_ref::<FlashError>())
+            .is_some_and(|e| matches!(e, FlashError::Nack))
+    }
+
     #[test]
-    fn nack_on_read_becomes_an_rdp_hint() {
-        let hinted = rdp_hint_on_nack("Device returned NACK".into()).to_string();
-        assert!(hinted.contains("RDP"), "{hinted}");
-        let other = rdp_hint_on_nack("Serial read: timeout".into()).to_string();
-        assert_eq!(other, "Serial read: timeout");
+    fn a_nack_on_read_becomes_an_rdp_hint_keeping_the_nack() {
+        let mut port = FakePort::replying(&[NACK]);
+
+        let hinted = cmd_read_memory(&mut port, DEFAULT_FLASH_BASE, CHUNK).unwrap_err();
+
+        assert!(hinted.to_string().contains("RDP Level 1"), "{hinted}");
+        assert!(is_nack(&hinted), "{hinted:?}");
+    }
+
+    #[test]
+    fn an_unexpected_byte_on_read_is_not_an_rdp_hint() {
+        let mut port = FakePort::replying(&[UNEXPECTED]);
+
+        let refused = cmd_read_memory(&mut port, DEFAULT_FLASH_BASE, CHUNK).unwrap_err();
+
+        assert!(
+            matches!(&refused, FlashError::Message(why) if why.starts_with("Unexpected byte 0x42")),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
+    fn a_refused_handshake_names_the_wiring_and_keeps_the_nack() {
+        let mut port = FakePort::replying(&[NACK]);
+
+        let refused = autobaud(&mut port).unwrap_err();
+
+        assert!(
+            refused
+                .to_string()
+                .starts_with("Bootloader handshake failed."),
+            "{refused}"
+        );
+        assert!(is_nack(&refused), "{refused:?}");
     }
 
     struct FakePort {
@@ -525,6 +563,13 @@ mod tests {
     }
 
     impl FakePort {
+        fn replying(bytes: &[u8]) -> Self {
+            Self {
+                replies: bytes.iter().copied().collect(),
+                written: Vec::new(),
+            }
+        }
+
         fn acking_reads_then_nack(chunks: &[usize]) -> Self {
             let mut replies = std::collections::VecDeque::new();
             for &len in chunks {
@@ -708,7 +753,7 @@ mod tests {
         let path = existing_output(&dir);
         let mut port = FakePort::acking_reads_then_nack(&[]);
         let result = read_memory_to(&mut port, &path, DEFAULT_FLASH_BASE, 256, &mut Cancelled);
-        assert_eq!(result, Err(FlashError::Cancelled));
+        assert!(matches!(result, Err(FlashError::Cancelled)), "{result:?}");
         assert_eq!(std::fs::read(&path).unwrap(), b"earlier backup");
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
         std::fs::remove_dir_all(dir).unwrap();

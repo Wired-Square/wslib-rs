@@ -1,7 +1,7 @@
 use std::io;
 
 use wslib_instruments::{
-    probe::ProbeError,
+    probe::StartError,
     uri::{BUS_FORMS, ProbeUri, URI_FORMS, open},
 };
 
@@ -9,7 +9,7 @@ fn parsed(text: &str) -> ProbeUri {
     text.parse().unwrap_or_else(|e| panic!("{text}: {e}"))
 }
 
-fn open_error(text: &str) -> io::Error {
+fn open_error(text: &str) -> StartError {
     open(&parsed(text))
         .err()
         .unwrap_or_else(|| panic!("{text} opened"))
@@ -82,10 +82,10 @@ fn a_probe_whose_backend_is_left_out_parses_and_opening_it_names_the_feature() {
         }
         let error = open_error(text);
         assert_eq!(error.kind(), io::ErrorKind::Unsupported, "{text}");
-        let inner = error
-            .get_ref()
-            .and_then(|inner| inner.downcast_ref::<ProbeError>());
-        assert_eq!(inner, Some(&ProbeError::FeatureDisabled(feature)), "{text}");
+        assert!(
+            matches!(error, StartError::FeatureDisabled(named) if named == feature),
+            "{text}: {error:?}"
+        );
         assert!(error.to_string().contains(feature), "{text}: {error}");
     }
 }
@@ -147,7 +147,14 @@ fn opening_a_wiredreflow_from_inside_a_tokio_runtime_returns_the_error_rather_th
         .unwrap();
     let uri = parsed("wiredreflow:slcan=wslib-no-such-port@028F08");
     let error = runtime.block_on(async { open(&uri).err().unwrap() });
-    assert!(error.to_string().contains("wslib-no-such-port"), "{error}");
+    assert_eq!(error.to_string(), "the CAN bus did not open");
+    let opened = std::error::Error::source(&error)
+        .and_then(|s| s.downcast_ref::<wslib_can_bus::OpenError>())
+        .expect("the bus's open error");
+    assert!(
+        opened.to_string().contains("wslib-no-such-port"),
+        "{opened}"
+    );
 }
 
 #[cfg(all(feature = "can-socketcan", not(target_os = "linux")))]

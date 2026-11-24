@@ -105,7 +105,10 @@ impl Drop for PeripheralLease {
         let peripheral = self.peripheral.clone();
         ble_runtime().spawn(async move {
             if let Err(e) = peripheral.disconnect().await {
-                warn!("lease drop disconnect failed: {e}");
+                warn!(
+                    error = &e as &dyn std::error::Error,
+                    "lease drop disconnect failed"
+                );
             }
         });
     }
@@ -188,19 +191,21 @@ pub(super) fn spawn_scanner(
             }
 
             if let Err(e) = adapter.start_scan(ScanFilter::default()).await {
-                tracker
-                    .lock()
-                    .expect("tracker lock")
-                    .emit_error(ErrorSource::Ble, format!("scan start: {e}"));
+                tracker.lock().expect("tracker lock").emit_error(
+                    ErrorSource::Ble,
+                    "starting the BLE scan failed",
+                    Some(Arc::new(e)),
+                );
                 return;
             }
             let mut events = match adapter.events().await {
                 Ok(s) => s,
                 Err(e) => {
-                    tracker
-                        .lock()
-                        .expect("tracker lock")
-                        .emit_error(ErrorSource::Ble, format!("events stream: {e}"));
+                    tracker.lock().expect("tracker lock").emit_error(
+                        ErrorSource::Ble,
+                        "opening the BLE adapter's events failed",
+                        Some(Arc::new(e)),
+                    );
                     return;
                 }
             };
@@ -242,7 +247,7 @@ pub(super) fn spawn_scanner(
                         let known = match adapter.peripherals().await {
                             Ok(p) => p,
                             Err(e) => {
-                                debug!(error = %e, "peripherals enumerate failed");
+                                debug!(error = &e as &dyn std::error::Error, "peripherals enumerate failed");
                                 continue;
                             }
                         };
@@ -265,7 +270,10 @@ async fn observe_central_event(
     let peripheral = match adapter.peripheral(&id).await {
         Ok(p) => p,
         Err(e) => {
-            debug!(error = %e, "peripheral handle fetch failed");
+            debug!(
+                error = &e as &dyn std::error::Error,
+                "peripheral handle fetch failed"
+            );
             return;
         }
     };
@@ -281,7 +289,10 @@ async fn observe_peripheral(
         Ok(Some(p)) => p,
         Ok(None) => return,
         Err(e) => {
-            debug!(error = %e, "properties fetch failed");
+            debug!(
+                error = &e as &dyn std::error::Error,
+                "properties fetch failed"
+            );
             return;
         }
     };

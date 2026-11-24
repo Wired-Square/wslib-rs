@@ -85,6 +85,11 @@ async fn an_answer_can_refuse_stay_silent_or_hang_up() {
             silent,
             RequestError::Transport(TransportError::Timeout { .. })
         ));
+        assert_eq!(silent.to_string(), "the request got no usable answer");
+        assert!(matches!(
+            std::error::Error::source(&silent).and_then(|s| s.downcast_ref::<TransportError>()),
+            Some(TransportError::Timeout { .. })
+        ));
         let dropped = tcp.read(holding(3, 1)).await.unwrap_err();
         assert!(!dropped.device_replied(), "{dropped:?}");
         assert!(tcp.read(holding(0, 1)).await.is_ok());

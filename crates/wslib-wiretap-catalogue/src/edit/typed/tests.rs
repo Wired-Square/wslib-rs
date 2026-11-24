@@ -16,6 +16,13 @@ fn edit(text: &str, op: EditOp) -> String {
     apply_edit(text, op).expect("op applies")
 }
 
+fn said(result: Result<String, crate::DocumentError>) -> Result<String, String> {
+    result.map_err(|error| match error {
+        crate::DocumentError::Refused(why) => why,
+        other => panic!("{other:?}"),
+    })
+}
+
 fn assert_clean(text: &str) -> Catalogue {
     assert_eq!(validate(text), vec![], "{text}");
     Catalogue::parse(text).expect("parses")
@@ -585,7 +592,7 @@ fn a_header_field_with_both_forms_or_half_a_position_refuses_the_op() {
         ..at(0, 1)
     };
     assert_eq!(
-        apply_edit("", serial_fields(&[("id", both)])),
+        said(apply_edit("", serial_fields(&[("id", both)]))),
         Err("header field 'id' takes a mask or a start byte and bytes, not both".into())
     );
     let no_start = HeaderFieldFields {
@@ -594,7 +601,7 @@ fn a_header_field_with_both_forms_or_half_a_position_refuses_the_op() {
     };
     for half in [at(0, 0), no_start] {
         assert_eq!(
-            apply_edit("", serial_fields(&[("id", half)])),
+            said(apply_edit("", serial_fields(&[("id", half)]))),
             Err("header field 'id' needs a start byte and at least one byte".into())
         );
     }
@@ -605,7 +612,7 @@ fn a_header_field_with_both_forms_or_half_a_position_refuses_the_op() {
         },
     };
     assert_eq!(
-        apply_edit("", can),
+        said(apply_edit("", can)),
         Err("CAN header field 'source' takes a mask".into())
     );
 }
@@ -699,7 +706,7 @@ fn an_unparseable_mask_refuses_the_op() {
         },
     };
     assert_eq!(
-        apply_edit("", op("0xZZ")),
+        said(apply_edit("", op("0xZZ"))),
         Err("mask '0xZZ' is not hexadecimal".to_string())
     );
     assert!(!build(&[op(" ")]).contains("frame_id_mask"));
@@ -818,7 +825,7 @@ fn a_frame_key_is_trimmed_and_a_blank_one_refused() {
     let text = build(&[can_frame(" 0x100 ", 8)]);
     assert!(text.contains("[frame.can.0x100]"), "{text}");
     assert_eq!(
-        apply_edit("", can_frame(" ", 8)),
+        said(apply_edit("", can_frame(" ", 8))),
         Err("a frame key is required".to_string())
     );
 }
@@ -831,7 +838,7 @@ fn add_frame_refuses_an_existing_key_and_seeds_only_modbus() {
         frame: FrameFields::default(),
     };
     assert_eq!(
-        apply_edit(ONE_SIGNAL, add(Protocol::Can, "0x100")),
+        said(apply_edit(ONE_SIGNAL, add(Protocol::Can, "0x100"))),
         Err("frame '0x100' already exists".to_string())
     );
     assert!(!build(&[add(Protocol::Can, "0x200")]).contains("signals"));
@@ -846,11 +853,11 @@ fn add_frame_refuses_an_existing_key_and_seeds_only_modbus() {
 fn a_mux_needs_its_frame_and_parent_mux_but_not_its_case() {
     let on = |owner: &[&str]| apply_edit(ONE_SIGNAL, mux(owner, "", 0, 8));
     assert_eq!(
-        on(&["frame", "serial", "0x100"]),
+        said(on(&["frame", "serial", "0x100"])),
         Err("'frame.serial.0x100' does not exist".to_string())
     );
     assert_eq!(
-        on(&["frame", "can", "0x100", "mux", "1"]),
+        said(on(&["frame", "can", "0x100", "mux", "1"])),
         Err("'frame.can.0x100.mux' does not exist".to_string())
     );
     let text = apply_edits(
@@ -1062,7 +1069,7 @@ fn a_batch_is_all_or_nothing() {
             },
         ],
     );
-    assert_eq!(result, Err("'missing' not found".to_string()));
+    assert_eq!(said(result), Err("'missing' not found".to_string()));
 }
 
 const CRLF_CATALOGUE: &str = "# header\r\n[meta]\r\nname = \"old\"\r\nversion = 1\r\n\r\n[frame.can.0x100]\r\nlength = 8\r\nnotes = \"\"\"\r\nfirst\r\nsecond\r\n\"\"\"\r\n";

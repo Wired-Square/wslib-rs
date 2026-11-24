@@ -200,7 +200,10 @@ impl Discovery {
             );
             let session = Session::ble(BleTransport::open(peripheral, notifications).await?);
             if let Err(e) = session.negotiate_params().await {
-                tracing::warn!("mcumgr params unavailable; keeping the fallback chunk size: {e}");
+                tracing::warn!(
+                    error = &e as &dyn std::error::Error,
+                    "mcumgr params unavailable; keeping the fallback chunk size"
+                );
             }
             Ok(session)
         })

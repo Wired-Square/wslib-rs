@@ -14,7 +14,10 @@ use uuid::Uuid;
 
 const SUBSCRIBER_CHANNEL_DEPTH: usize = 16;
 
-type Routes = Arc<Mutex<HashMap<Uuid, mpsc::Sender<Result<Vec<u8>, String>>>>>;
+type Routes = Arc<Mutex<HashMap<Uuid, mpsc::Sender<Result<Vec<u8>, Ended>>>>>;
+
+#[derive(Debug)]
+pub(crate) struct Ended;
 
 pub(crate) struct NotifyDispatcher {
     routes: Routes,
@@ -48,10 +51,7 @@ impl NotifyDispatcher {
             warn!("btleplug notifications stream ended");
             let guard = routes_task.lock().await;
             for (uuid, tx) in guard.iter() {
-                if tx
-                    .try_send(Err("notifications stream ended".into()))
-                    .is_err()
-                {
+                if tx.try_send(Err(Ended)).is_err() {
                     debug!(uuid = %uuid, "subscriber channel full at stream end; stream-end error dropped");
                 }
             }
@@ -59,7 +59,7 @@ impl NotifyDispatcher {
         Self { routes, handle }
     }
 
-    pub(crate) async fn subscribe(&self, uuid: Uuid) -> mpsc::Receiver<Result<Vec<u8>, String>> {
+    pub(crate) async fn subscribe(&self, uuid: Uuid) -> mpsc::Receiver<Result<Vec<u8>, Ended>> {
         let (tx, rx) = mpsc::channel(SUBSCRIBER_CHANNEL_DEPTH);
         self.routes.lock().await.insert(uuid, tx);
         rx

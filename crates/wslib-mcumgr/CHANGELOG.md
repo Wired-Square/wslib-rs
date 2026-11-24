@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.0
+
+- `Error::Unencodable`: ciborium refused a payload, with its error, boxed,
+  as the `source()`. It was `Encode` with the error's text; `Encode` keeps
+  the crate's own sentence.
+- `Error::Undecodable { context, source }`: a payload's CBOR doesn't
+  decode, naming the request a reply answers, with ciborium's error, boxed,
+  as the `source()`. It was `Decode` with the error's text; `Decode` keeps
+  the crate's own sentences.
+- `Error::Io` says "I/O failed" and `Error::Ble` "BLE failed"; the error is
+  the `source()`.
+- Log lines record an error as an error, so a subscriber writes its causes
+  too, where they wrote its top layer alone.
+
 ## 0.1.1
 
 - tokio's floor is 1.53.3, where it meets wslib-serial-console.

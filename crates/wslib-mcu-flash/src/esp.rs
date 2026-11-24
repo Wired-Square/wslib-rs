@@ -19,7 +19,7 @@ use espflash::target::{Chip, ProgressCallbacks};
 use serialport::UsbPortInfo;
 
 use crate::chip::ESPTOOL_DEFAULT_BAUD;
-use crate::error::{FlashError, Result};
+use crate::error::{FlashError, Result, failed};
 use crate::identity::{Mac, reported_mac};
 use crate::output;
 use crate::ports;
@@ -29,6 +29,8 @@ const READ_CHUNK_SIZE: u32 = 64 * 1024;
 const READ_BLOCK_SIZE: u32 = 1024;
 const READ_MAX_IN_FLIGHT: u32 = 64;
 const ESP_IMAGE_MAGIC: u8 = 0xE9;
+const UNDETECTED_SIZE: &str =
+    "Could not auto-detect flash size; specify size or pick one from the form";
 
 /// Flasher tuning; `None` leaves espflash's own default in place.
 #[derive(Debug, Clone, Default)]
@@ -75,7 +77,7 @@ pub fn flash(
     let mut callbacks = Callbacks { progress, total };
     flasher
         .write_bin_to_flash(address, &buffer, &mut callbacks)
-        .map_err(|e| FlashError::Message(format!("Flash write failed: {e}")))?;
+        .map_err(|e| failed("Flash write failed", e))?;
 
     progress.on_stage(FlashStage::Resetting, "Flash complete; chip will reset");
     Ok(())
@@ -123,7 +125,7 @@ pub fn flash_images(
         .collect();
     flasher
         .write_bins_to_flash(&segments, &mut callbacks)
-        .map_err(|e| FlashError::Message(format!("Flash write failed: {e}")))?;
+        .map_err(|e| failed("Flash write failed", e))?;
 
     progress.on_stage(FlashStage::Resetting, "Flash complete; chip will reset");
     Ok(())
@@ -137,7 +139,7 @@ fn connect_for_write(
     progress.on_stage(FlashStage::Connecting, &format!("Opening {port}"));
     let mut flasher = open_flasher(port, options)?;
 
-    let info = chip_info_from(&mut flasher).ok();
+    let info = check_expected_mac(options, chip_info_from(&mut flasher))?;
     if let Some(info) = &info {
         progress.on_progress(&format!(
             "Connected: {} · MAC {} · {}",
@@ -148,7 +150,6 @@ fn connect_for_write(
                 .unwrap_or_else(|| "flash size unknown".to_string()),
         ));
     }
-    check_expected_mac(options, info.as_ref())?;
 
     if let Some(size) = options.flash_size {
         flasher.set_flash_size(size);
@@ -157,8 +158,7 @@ fn connect_for_write(
 }
 
 fn read_image(path: &Path) -> Result<Vec<u8>> {
-    std::fs::read(path)
-        .map_err(|e| FlashError::Message(format!("Failed to read {}: {e}", path.display())))
+    std::fs::read(path).map_err(|e| failed(format!("Failed to read {}", path.display()), e))
 }
 
 fn patch_bootloader(
@@ -227,15 +227,9 @@ pub fn read_flash(
         Some(s) => s,
         None => flasher
             .flash_detect()
-            .ok()
-            .flatten()
+            .map_err(|e| failed(UNDETECTED_SIZE, e))?
             .map(|detected| detected.size())
-            .ok_or_else(|| {
-                FlashError::Message(
-                    "Could not auto-detect flash size; specify size or pick one from the form"
-                        .to_string(),
-                )
-            })?,
+            .ok_or_else(|| FlashError::from(UNDETECTED_SIZE))?,
     };
 
     let total = resolved_size as u64;
@@ -264,9 +258,8 @@ pub fn read_flash(
                 READ_MAX_IN_FLIGHT,
             )?;
 
-            file.write_all(&chunk).map_err(|e| {
-                FlashError::Message(format!("Failed to write {}: {e}", output_path.display()))
-            })?;
+            file.write_all(&chunk)
+                .map_err(|e| failed(format!("Failed to write {}", output_path.display()), e))?;
 
             bytes_done += chunk.len() as u64;
             current_offset = current_offset.saturating_add(chunk.len() as u32);
@@ -288,15 +281,13 @@ pub fn erase(
     progress.on_stage(FlashStage::Connecting, &format!("Opening {port}"));
     let mut flasher = open_flasher(port, options)?;
     if options.expected_mac.is_some() {
-        check_expected_mac(options, chip_info_from(&mut flasher).ok().as_ref())?;
+        check_expected_mac(options, chip_info_from(&mut flasher))?;
     }
     progress.on_stage(
         FlashStage::Erasing,
         "Erasing entire flash — this can take a minute…",
     );
-    flasher
-        .erase_flash()
-        .map_err(|e| FlashError::Message(format!("Erase failed: {e}")))
+    flasher.erase_flash().map_err(|e| failed("Erase failed", e))
 }
 
 fn open_flasher(port: &str, options: &EspFlashOptions) -> Result<Flasher> {
@@ -306,7 +297,7 @@ fn open_flasher(port: &str, options: &EspFlashOptions) -> Result<Flasher> {
     let serial = serialport::new(port, 115_200)
         .timeout(Duration::from_millis(3_000))
         .open_native()
-        .map_err(|e| FlashError::Message(format!("Failed to open serial port {port}: {e}")))?;
+        .map_err(|e| failed(format!("Failed to open serial port {port}"), e))?;
 
     let connection = Connection::new(
         serial,
@@ -324,7 +315,7 @@ fn open_flasher(port: &str, options: &EspFlashOptions) -> Result<Flasher> {
         options.chip,
         Some(target_baud),
     )
-    .map_err(|e| FlashError::Message(format!("Bootloader handshake failed: {e}")))
+    .map_err(|e| failed("Bootloader handshake failed", e))
 }
 
 fn usb_port_info(port: &str) -> UsbPortInfo {
@@ -351,7 +342,7 @@ fn usb_port_info(port: &str) -> UsbPortInfo {
 fn chip_info_from(flasher: &mut Flasher) -> Result<EspChipInfo> {
     let info = flasher
         .device_info()
-        .map_err(|e| FlashError::Message(format!("Failed to read chip info: {e}")))?;
+        .map_err(|e| failed("Failed to read chip info", e))?;
     Ok(EspChipInfo {
         chip: info.chip.to_string(),
         features: info.features.clone(),
@@ -360,15 +351,25 @@ fn chip_info_from(flasher: &mut Flasher) -> Result<EspChipInfo> {
     })
 }
 
-fn check_expected_mac(options: &EspFlashOptions, info: Option<&EspChipInfo>) -> Result<()> {
+fn check_expected_mac(
+    options: &EspFlashOptions,
+    read: Result<EspChipInfo>,
+) -> Result<Option<EspChipInfo>> {
     let Some(expected) = options.expected_mac else {
-        return Ok(());
+        return Ok(read.ok());
     };
-    let actual = info.and_then(|i| i.mac);
-    if actual == Some(expected) {
-        Ok(())
-    } else {
-        Err(FlashError::IdentityMismatch { expected, actual })
+    match read {
+        Ok(info) if info.mac == Some(expected) => Ok(Some(info)),
+        Ok(info) => Err(FlashError::IdentityMismatch {
+            expected,
+            actual: info.mac,
+            unread: None,
+        }),
+        Err(e) => Err(FlashError::IdentityMismatch {
+            expected,
+            actual: None,
+            unread: Some(Box::new(e)),
+        }),
     }
 }
 
@@ -397,13 +398,13 @@ fn patch_image_header(
         if let Some(size) = options.flash_size {
             size_nibble = size
                 .encode_flash_size()
-                .map_err(|e| FlashError::Message(format!("Unsupported flash size: {e}")))?;
+                .map_err(|e| failed("Unsupported flash size", e))?;
             notes.push(format!("size={size:?}"));
         }
         if let Some(freq) = options.flash_freq {
             freq_nibble = freq
                 .encode_flash_frequency(chip)
-                .map_err(|e| FlashError::Message(format!("Unsupported flash freq: {e}")))?;
+                .map_err(|e| failed("Unsupported flash freq", e))?;
             notes.push(format!("freq={freq:?}"));
         }
 
@@ -429,18 +430,18 @@ fn read_chunk(
                 max_in_flight,
             })
         })
-        .map_err(|e| FlashError::Message(format!("ReadFlash command failed: {e}")))?;
+        .map_err(|e| failed("ReadFlash command failed", e))?;
 
     let mut data: Vec<u8> = Vec::with_capacity(size as usize);
     while data.len() < size as usize {
         let response = connection
             .read_flash_response()
-            .map_err(|e| FlashError::Message(format!("Flash read response failed: {e}")))?;
+            .map_err(|e| failed("Flash read response failed", e))?;
         let chunk: Vec<u8> = match response {
             Some(r) => r
                 .value
                 .try_into()
-                .map_err(|e| FlashError::Message(format!("Bad flash chunk response: {e}")))?,
+                .map_err(|e| failed("Bad flash chunk response", e))?,
             None => return Err("No response while reading flash".into()),
         };
         data.extend_from_slice(&chunk);
@@ -453,7 +454,7 @@ fn read_chunk(
         }
         connection
             .write_raw(data.len() as u32)
-            .map_err(|e| FlashError::Message(format!("Flash read ack failed: {e}")))?;
+            .map_err(|e| failed("Flash read ack failed", e))?;
     }
 
     // The bootloader follows up with an MD5 digest; drain it so the next command stays in sync.
@@ -546,7 +547,7 @@ pub fn parse_chip(s: Option<&str>) -> Result<Option<Chip>> {
     explicit(s)
         .map(|raw| {
             Chip::from_str(&raw.to_ascii_lowercase())
-                .map_err(|e| FlashError::Message(format!("Unknown chip {raw:?}: {e}")))
+                .map_err(|e| failed(format!("Unknown chip {raw:?}"), e))
         })
         .transpose()
 }
@@ -566,8 +567,7 @@ pub fn parse_flash_mode(s: Option<&str>) -> Result<Option<FlashMode>> {
 pub fn parse_flash_size(s: Option<&str>) -> Result<Option<FlashSize>> {
     explicit(s)
         .map(|raw| {
-            FlashSize::from_str(raw)
-                .map_err(|e| FlashError::Message(format!("Unknown flash size {raw:?}: {e}")))
+            FlashSize::from_str(raw).map_err(|e| failed(format!("Unknown flash size {raw:?}"), e))
         })
         .transpose()
 }
@@ -629,16 +629,13 @@ mod tests {
     #[test]
     fn an_expected_mac_accepts_the_chip_that_reports_it() {
         let right = chip_with_mac(Some(mac("68:09:47:1D:2F:0C")));
-        assert_eq!(
-            check_expected_mac(&expecting(EXPECTED), Some(&right)),
-            Ok(())
-        );
+        check_expected_mac(&expecting(EXPECTED), Ok(right)).unwrap();
     }
 
     #[test]
     fn an_expected_mac_refuses_any_other_chip() {
         let other = chip_with_mac(Some(mac("00:00:00:00:00:01")));
-        let err = check_expected_mac(&expecting(EXPECTED), Some(&other)).unwrap_err();
+        let err = check_expected_mac(&expecting(EXPECTED), Ok(other)).unwrap_err();
         let expected = "connected chip reports MAC 00:00:00:00:00:01, expected \
                         68:09:47:1d:2f:0c; nothing was written";
         assert_eq!(err.to_string(), expected);
@@ -646,32 +643,47 @@ mod tests {
 
     #[test]
     fn an_expected_mac_refuses_a_chip_whose_mac_is_unread() {
-        let mismatch = FlashError::IdentityMismatch {
-            expected: mac(EXPECTED),
-            actual: None,
-        };
         let options = expecting(EXPECTED);
-        assert_eq!(check_expected_mac(&options, None), Err(mismatch.clone()));
-        let silent = chip_with_mac(None);
-        assert_eq!(
-            check_expected_mac(&options, Some(&silent)),
-            Err(mismatch.clone())
-        );
-        let expected = "connected chip reports MAC (unknown), expected \
-                        68:09:47:1d:2f:0c; nothing was written";
-        assert_eq!(mismatch.to_string(), expected);
+        let unread = || {
+            failed(
+                "Failed to read chip info",
+                std::io::Error::other("no reply"),
+            )
+        };
+        for chip in [Err(unread()), Ok(chip_with_mac(None))] {
+            let was_read = chip.is_ok();
+            let mismatch = check_expected_mac(&options, chip).unwrap_err();
+            assert!(
+                matches!(
+                    &mismatch,
+                    FlashError::IdentityMismatch { expected, actual: None, .. } if *expected == mac(EXPECTED)
+                ),
+                "{mismatch:?}"
+            );
+            let expected = "connected chip reports MAC (unknown), expected \
+                            68:09:47:1d:2f:0c; nothing was written";
+            assert_eq!(mismatch.to_string(), expected);
+            let cause =
+                std::error::Error::source(&mismatch).and_then(|s| s.downcast_ref::<FlashError>());
+            assert_eq!(
+                cause.is_some_and(|c| matches!(c, FlashError::Failed { .. })),
+                !was_read,
+                "{mismatch:?}"
+            );
+        }
     }
 
     #[test]
     fn no_expected_mac_accepts_any_chip_or_none() {
         let options = EspFlashOptions::default();
-        assert_eq!(check_expected_mac(&options, None), Ok(()));
-        let any = chip_with_mac(Some(mac("00:00:00:00:00:01")));
-        assert_eq!(check_expected_mac(&options, Some(&any)), Ok(()));
-        assert_eq!(
-            check_expected_mac(&options, Some(&chip_with_mac(None))),
-            Ok(())
+        let unread = failed(
+            "Failed to read chip info",
+            std::io::Error::other("no reply"),
         );
+        assert!(check_expected_mac(&options, Err(unread)).unwrap().is_none());
+        let any = chip_with_mac(Some(mac("00:00:00:00:00:01")));
+        assert!(check_expected_mac(&options, Ok(any)).unwrap().is_some());
+        check_expected_mac(&options, Ok(chip_with_mac(None))).unwrap();
     }
 
     #[cfg(feature = "serde")]

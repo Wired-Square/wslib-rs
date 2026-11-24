@@ -1,11 +1,15 @@
 use std::{
     collections::{HashMap, HashSet},
+    error::Error,
     fmt,
     future::Future,
     hash::Hash,
     io,
     pin::Pin,
-    sync::mpsc::{self, Receiver, RecvTimeoutError, Sender},
+    sync::{
+        Arc,
+        mpsc::{self, Receiver, RecvTimeoutError, Sender},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -23,7 +27,7 @@ use uuid::Uuid;
 
 use super::{Chunk, Replay, Target, decode};
 use crate::{
-    probe::{Probe, ProbeError},
+    probe::{Probe, ProbeError, StartError},
     sample::{Sample, Stamp},
     signal::SignalKey,
     uri::ProbeUri,
@@ -131,17 +135,89 @@ type Link = (Receiver<Delivery>, Worker);
 type SpawnLink = fn(Target, StopRx, Tap) -> io::Result<Link>;
 type Events = Pin<Box<dyn Stream<Item = CentralEvent> + Send>>;
 
-enum Halt {
-    Stopped,
-    Failed(String),
+type Cause = Arc<dyn Error + Send + Sync>;
+
+#[derive(Debug)]
+struct Failure {
+    why: String,
+    source: Option<Cause>,
 }
 
-impl From<Halt> for io::Error {
-    fn from(halt: Halt) -> Self {
-        match halt {
-            Halt::Stopped => io::Error::new(io::ErrorKind::Interrupted, "stopped"),
-            Halt::Failed(why) => io::Error::other(why),
+impl Failure {
+    fn said(why: impl Into<String>) -> Self {
+        Self {
+            why: why.into(),
+            source: None,
         }
+    }
+
+    fn caused(why: impl Into<String>, source: impl Error + Send + Sync + 'static) -> Self {
+        Self {
+            why: why.into(),
+            source: Some(Arc::new(source)),
+        }
+    }
+}
+
+enum Halt {
+    Stopped,
+    Failed(Failure),
+}
+
+impl From<Failure> for Halt {
+    fn from(failure: Failure) -> Self {
+        Halt::Failed(failure)
+    }
+}
+
+/// Why a [`scan`] failed: a Bluetooth step, named by this crate's sentence,
+/// with btleplug's error as the source where there is one.
+#[derive(Debug)]
+pub struct ScanError(Failure);
+
+impl From<Failure> for ScanError {
+    fn from(failure: Failure) -> Self {
+        ScanError(failure)
+    }
+}
+
+impl fmt::Display for ScanError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0.why)
+    }
+}
+
+impl Error for ScanError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.0
+            .source
+            .as_deref()
+            .map(|source| source as &(dyn Error + 'static))
+    }
+}
+
+trait Stop {
+    type Halt: From<Failure>;
+
+    fn stopped(&self) -> impl Future<Output = Self::Halt> + Send;
+}
+
+impl Stop for StopRx {
+    type Halt = Halt;
+
+    async fn stopped(&self) -> Halt {
+        stopped(self).await;
+        Halt::Stopped
+    }
+}
+
+struct Unstoppable;
+
+impl Stop for Unstoppable {
+    type Halt = ScanError;
+
+    fn stopped(&self) -> impl Future<Output = ScanError> + Send {
+        std::future::pending()
     }
 }
 
@@ -164,21 +240,33 @@ async fn back_off(stop: &StopRx) -> bool {
         .is_some()
 }
 
-async fn step<T, E: fmt::Display>(
+async fn limited<T, S: Stop>(
     what: &str,
     limit: Duration,
-    fut: impl Future<Output = Result<T, E>>,
-    stop: &StopRx,
-) -> Result<T, Halt> {
-    match until_stopped(tokio::time::timeout(limit, fut), stop).await {
-        None => Err(Halt::Stopped),
-        Some(Err(_)) => Err(Halt::Failed(format!("{what}: timed out after {limit:?}"))),
-        Some(Ok(Err(e))) => Err(Halt::Failed(format!("{what}: {e}"))),
-        Some(Ok(Ok(value))) => Ok(value),
+    fut: impl Future<Output = T>,
+    stop: &S,
+) -> Result<T, S::Halt> {
+    tokio::select! {
+        biased;
+        halt = stop.stopped() => Err(halt),
+        out = tokio::time::timeout(limit, fut) => out.map_err(|_| {
+            Failure::said(format!("{what}: timed out after {limit:?}")).into()
+        }),
     }
 }
 
-async fn acquire_adapter(stop: &StopRx) -> Result<(Manager, Adapter), Halt> {
+async fn step<T, E: Error + Send + Sync + 'static, S: Stop>(
+    what: &str,
+    limit: Duration,
+    fut: impl Future<Output = Result<T, E>>,
+    stop: &S,
+) -> Result<T, S::Halt> {
+    limited(what, limit, fut, stop)
+        .await?
+        .map_err(|e| Failure::caused(format!("{what} failed"), e).into())
+}
+
+async fn acquire_adapter<S: Stop>(stop: &S) -> Result<(Manager, Adapter), S::Halt> {
     let manager = step("Bluetooth manager", ADAPTER_TIMEOUT, Manager::new(), stop).await?;
     let adapters = step(
         "Bluetooth adapters",
@@ -190,7 +278,7 @@ async fn acquire_adapter(stop: &StopRx) -> Result<(Manager, Adapter), Halt> {
     let adapter = adapters
         .into_iter()
         .next()
-        .ok_or_else(|| Halt::Failed("no Bluetooth adapter".into()))?;
+        .ok_or_else(|| Failure::said("no Bluetooth adapter"))?;
     Ok((manager, adapter))
 }
 
@@ -210,11 +298,11 @@ fn discard_ready<S: Stream + Unpin>(events: &mut S) {
     while let Some(Some(_)) = events.next().now_or_never() {}
 }
 
-async fn while_scanning<T>(
+async fn while_scanning<T, S: Stop>(
     adapter: &Adapter,
-    stop: &StopRx,
-    listen: impl AsyncFnOnce(&mut Events) -> Result<T, Halt>,
-) -> Result<T, Halt> {
+    stop: &S,
+    listen: impl AsyncFnOnce(&mut Events) -> Result<T, S::Halt>,
+) -> Result<T, S::Halt> {
     let mut events = step(
         "adapter events",
         SCAN_CONTROL_TIMEOUT,
@@ -403,7 +491,9 @@ async fn find(
         {
             None => Err(Halt::Stopped),
             Some(Err(_)) => Ok(None),
-            Some(Ok(found)) => found.map(Some).map_err(Halt::Failed),
+            Some(Ok(found)) => found
+                .map(Some)
+                .map_err(|why| Halt::Failed(Failure::said(why))),
         },
     )
     .await
@@ -453,13 +543,13 @@ async fn pump(
                 }
             }
             Ok(None) => {
-                let _ = tx.send(Err(ProbeError::Disconnected(
-                    "the notification stream ended".into(),
+                let _ = tx.send(Err(ProbeError::disconnected(
+                    "the notification stream ended",
                 )));
                 return;
             }
             Err(_) => {
-                let _ = tx.send(Err(ProbeError::Disconnected(format!(
+                let _ = tx.send(Err(ProbeError::disconnected(format!(
                     "no frames for {silence:?}"
                 ))));
                 return;
@@ -470,24 +560,24 @@ async fn pump(
 
 async fn subscribed(
     meter: &Peripheral,
-) -> Result<impl Stream<Item = ValueNotification> + Unpin + use<>, String> {
+) -> Result<impl Stream<Item = ValueNotification> + Unpin + use<>, Failure> {
     meter
         .discover_services()
         .await
-        .map_err(|e| format!("services: {e}"))?;
+        .map_err(|e| Failure::caused("discovering the meter's services failed", e))?;
     let data = meter
         .characteristics()
         .into_iter()
         .find(|c| c.uuid == DATA_CHARACTERISTIC)
-        .ok_or("the meter has no 121GW data characteristic")?;
+        .ok_or_else(|| Failure::said("the meter has no 121GW data characteristic"))?;
     let notifications = meter
         .notifications()
         .await
-        .map_err(|e| format!("notifications: {e}"))?;
+        .map_err(|e| Failure::caused("opening the meter's notifications failed", e))?;
     meter
         .subscribe(&data)
         .await
-        .map_err(|e| format!("subscribe: {e}"))?;
+        .map_err(|e| Failure::caused("subscribing to the meter's data failed", e))?;
     Ok(notifications)
 }
 
@@ -497,7 +587,9 @@ async fn connected(
     tap: &Tap,
     stop: &StopRx,
 ) -> Result<(), Halt> {
-    let notifications = step("subscribe", SUBSCRIBE_WITHIN, subscribed(meter), stop).await?;
+    let notifications = limited("subscribe", SUBSCRIBE_WITHIN, subscribed(meter), stop)
+        .await?
+        .map_err(Halt::Failed)?;
     pump(
         data_values(notifications),
         tx,
@@ -566,7 +658,9 @@ fn carry_on(outcome: Result<(), Halt>, tx: &Sender<Delivery>) -> bool {
     match outcome {
         Ok(()) => true,
         Err(Halt::Stopped) => false,
-        Err(Halt::Failed(why)) => tx.send(Err(ProbeError::Disconnected(why))).is_ok(),
+        Err(Halt::Failed(Failure { why, source })) => tx
+            .send(Err(ProbeError::Disconnected { why, source }))
+            .is_ok(),
     }
 }
 
@@ -593,7 +687,10 @@ fn spawn_link(target: Target, stop: StopRx, tap: Tap) -> io::Result<Link> {
         {
             Ok(runtime) => runtime,
             Err(e) => {
-                let _ = tx.send(Err(ProbeError::Disconnected(format!("tokio runtime: {e}"))));
+                let _ = tx.send(Err(ProbeError::cut_off(
+                    "the tokio runtime did not start",
+                    Arc::new(e),
+                )));
                 return;
             }
         };
@@ -612,17 +709,18 @@ pub struct Gw121Probe {
 }
 
 impl Gw121Probe {
-    pub fn start(target: Target) -> io::Result<Self> {
+    pub fn start(target: Target) -> Result<Self, StartError> {
         Self::spawned(target, None)
     }
 
-    pub fn start_tapped(target: Target, tap: Sender<Chunk>) -> io::Result<Self> {
+    pub fn start_tapped(target: Target, tap: Sender<Chunk>) -> Result<Self, StartError> {
         Self::spawned(target, Some(tap))
     }
 
-    fn spawned(target: Target, tap: Tap) -> io::Result<Self> {
+    fn spawned(target: Target, tap: Tap) -> Result<Self, StartError> {
         let (stop, stopping) = watch::channel(false);
-        let (readings, link) = spawn_link(target.clone(), stopping, tap.clone())?;
+        let (readings, link) =
+            spawn_link(target.clone(), stopping, tap.clone()).map_err(StartError::Thread)?;
         Ok(Self {
             target,
             readings,
@@ -635,17 +733,22 @@ impl Gw121Probe {
 
     fn relink(&mut self) -> ProbeError {
         if *self.stop.borrow() {
-            return ProbeError::Disconnected("the link thread stopped".into());
+            return ProbeError::disconnected("the link thread stopped");
         }
-        match (self.spawn)(self.target.clone(), self.stop.subscribe(), self.tap.clone()) {
-            Ok((readings, link)) => {
+        let panicked = self.link.panicked();
+        let restarted = (self.spawn)(self.target.clone(), self.stop.subscribe(), self.tap.clone())
+            .map(|(readings, link)| {
                 self.readings = readings;
                 self.link = link;
-                ProbeError::Disconnected("the link thread stopped; restarting".into())
+            });
+        match (panicked, restarted) {
+            (true, restarted) => ProbeError::Panicked {
+                unrestarted: restarted.err().map(|e| Arc::new(e) as Cause),
+            },
+            (false, Ok(())) => ProbeError::disconnected("the link thread stopped; restarting"),
+            (false, Err(e)) => {
+                ProbeError::cut_off("the link thread stopped and could not restart", Arc::new(e))
             }
-            Err(e) => ProbeError::Disconnected(format!(
-                "the link thread stopped and could not restart: {e}"
-            )),
         }
     }
 }
@@ -729,20 +832,18 @@ async fn overhear(events: &mut Events, duration: Duration) -> HashSet<Peripheral
 
 /// Runs on the caller's tokio runtime, which needs its time driver. On macOS, a
 /// process without Bluetooth permission finds nothing rather than failing.
-pub async fn scan(duration: Duration) -> io::Result<Vec<Seen>> {
-    let (_running, stop) = watch::channel(false);
-    let (_manager, adapter) = acquire_adapter(&stop).await?;
-    let heard = while_scanning(&adapter, &stop, async |events: &mut Events| {
+pub async fn scan(duration: Duration) -> Result<Vec<Seen>, ScanError> {
+    let (_manager, adapter) = acquire_adapter(&Unstoppable).await?;
+    let heard = while_scanning(&adapter, &Unstoppable, async |events: &mut Events| {
         Ok(overhear(events, duration).await)
     })
     .await?;
     let (advertisers, _) = tokio::time::timeout(DESCRIBE_TIMEOUT, describe(&adapter, &heard))
         .await
         .map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::TimedOut,
-                format!("describing what was heard: timed out after {DESCRIBE_TIMEOUT:?}"),
-            )
+            Failure::said(format!(
+                "describing what was heard: timed out after {DESCRIBE_TIMEOUT:?}"
+            ))
         })?;
     Ok(seen_meters(&heard, &advertisers))
 }
@@ -1069,7 +1170,7 @@ mod tests {
         );
         assert!(matches!(
             rx.try_recv(),
-            Ok(Err(ProbeError::Disconnected(_)))
+            Ok(Err(ProbeError::Disconnected { .. }))
         ));
     }
 
@@ -1117,7 +1218,7 @@ mod tests {
         );
         assert!(matches!(
             rx.try_recv(),
-            Ok(Err(ProbeError::Disconnected(_)))
+            Ok(Err(ProbeError::Disconnected { .. }))
         ));
     }
 
@@ -1140,7 +1241,7 @@ mod tests {
         );
         assert!(matches!(
             rx.try_recv(),
-            Ok(Err(ProbeError::Disconnected(_)))
+            Ok(Err(ProbeError::Disconnected { .. }))
         ));
     }
 
@@ -1263,7 +1364,7 @@ mod tests {
             started.elapsed()
         );
         assert!(
-            matches!(result, Err(ProbeError::Disconnected(_))),
+            matches!(result, Err(ProbeError::Disconnected { .. })),
             "{result:?}"
         );
         assert_eq!(
@@ -1279,22 +1380,22 @@ mod tests {
         tx.send(Ok(batch(ROOM_TENTHS))).unwrap();
         tx.send(Ok(batch(HOT_TENTHS))).unwrap();
         let mut probe = probe_on(rx, unexpected_link);
-        assert_eq!(
+        assert!(matches!(
             probe.next(Instant::now()).map(|s| thermocouple_tenths(&s)),
             Ok(Some(HOT_TENTHS))
-        );
+        ));
     }
 
     #[test]
     fn a_queued_error_newer_than_the_last_reading_is_returned() {
         let (tx, rx) = mpsc::channel();
         tx.send(Ok(batch(ROOM_TENTHS))).unwrap();
-        tx.send(Err(ProbeError::Disconnected("no frames for 5 s".into())))
+        tx.send(Err(ProbeError::disconnected("no frames for 5 s")))
             .unwrap();
         let mut probe = probe_on(rx, unexpected_link);
         assert!(matches!(
             probe.next(Instant::now()),
-            Err(ProbeError::Disconnected(_))
+            Err(ProbeError::Disconnected { .. })
         ));
     }
 
@@ -1366,6 +1467,110 @@ mod tests {
         assert_eq!(outcome, Ok(None));
     }
 
+    fn refused_step<S: Stop>(stop: &S) -> S::Halt {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let refused =
+            async { Err::<(), _>(io::Error::new(io::ErrorKind::ConnectionRefused, "no")) };
+        match watched(&runtime, step("connect", TEST_SILENCE, refused, stop)).unwrap() {
+            Ok(()) => panic!("the step succeeded"),
+            Err(halt) => halt,
+        }
+    }
+
+    fn is_refused(source: Option<&(dyn Error + 'static)>) -> bool {
+        source
+            .and_then(|s| s.downcast_ref::<io::Error>())
+            .is_some_and(|e| e.kind() == io::ErrorKind::ConnectionRefused)
+    }
+
+    #[test]
+    fn a_failed_step_reaches_the_reader_naming_the_step_with_its_error_typed() {
+        let (_running, stop) = running();
+        let (tx, rx) = mpsc::channel();
+
+        assert!(carry_on(Err(refused_step(&stop)), &tx));
+
+        let Ok(Err(error)) = rx.try_recv() else {
+            panic!("no error delivered");
+        };
+        assert_eq!(error.to_string(), "disconnected: connect failed");
+        assert!(is_refused(error.source()), "{error:?}");
+    }
+
+    #[test]
+    fn a_failed_scan_step_names_the_step_with_its_error_typed() {
+        let error = refused_step(&Unstoppable);
+
+        assert_eq!(error.to_string(), "connect failed");
+        assert!(is_refused(error.source()), "{error:?}");
+    }
+
+    fn failed_restart(_: Target, _: StopRx, _: Tap) -> io::Result<Link> {
+        Err(io::Error::new(io::ErrorKind::OutOfMemory, "no thread"))
+    }
+
+    fn restarted(_: Target, _: StopRx, _: Tap) -> io::Result<Link> {
+        Ok(finished_link())
+    }
+
+    fn panicked_link() -> Worker {
+        Worker::spawn("121gw", RELEASE_WITHIN, || panic!("the link failed")).unwrap()
+    }
+
+    fn is_out_of_memory(source: Option<&(dyn Error + 'static)>) -> bool {
+        source
+            .and_then(|s| s.downcast_ref::<io::Error>())
+            .is_some_and(|e| e.kind() == io::ErrorKind::OutOfMemory)
+    }
+
+    #[test]
+    fn a_link_thread_that_cannot_restart_keeps_the_spawn_error() {
+        let mut probe = probe_on(mpsc::channel().1, failed_restart);
+
+        let error = probe.next(Instant::now()).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "disconnected: the link thread stopped and could not restart"
+        );
+        assert!(is_out_of_memory(error.source()), "{error:?}");
+    }
+
+    #[test]
+    fn a_panicked_link_thread_is_typed_and_restarted() {
+        let mut probe = probe_on(mpsc::channel().1, restarted);
+        probe.link = panicked_link();
+
+        let error = probe.next(Instant::now()).unwrap_err();
+
+        assert!(
+            matches!(error, ProbeError::Panicked { unrestarted: None }),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_panicked_link_thread_that_cannot_restart_keeps_the_spawn_error() {
+        let mut probe = probe_on(mpsc::channel().1, failed_restart);
+        probe.link = panicked_link();
+
+        let error = probe.next(Instant::now()).unwrap_err();
+
+        assert!(
+            matches!(
+                error,
+                ProbeError::Panicked {
+                    unrestarted: Some(_)
+                }
+            ),
+            "{error:?}"
+        );
+        assert!(is_out_of_memory(error.source()), "{error:?}");
+    }
+
     #[test]
     fn a_step_that_overruns_its_deadline_fails_naming_the_step() {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -1373,11 +1578,12 @@ mod tests {
             .build()
             .unwrap();
         let (_running, stop) = running();
-        let never = futures_util::future::pending::<Result<(), String>>();
+        let never = futures_util::future::pending::<Result<(), io::Error>>();
         let outcome = watched(&runtime, step("subscribe", TEST_SILENCE, never, &stop)).unwrap();
-        assert!(
-            matches!(&outcome, Err(Halt::Failed(why)) if why.starts_with("subscribe: timed out"))
-        );
+        assert!(matches!(
+            &outcome,
+            Err(Halt::Failed(Failure { why, source: None })) if why.starts_with("subscribe: timed out")
+        ));
     }
 
     #[test]

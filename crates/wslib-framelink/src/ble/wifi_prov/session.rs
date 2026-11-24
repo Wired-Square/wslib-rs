@@ -18,7 +18,7 @@ use super::uuids::{
 };
 use crate::Error;
 use crate::ble::WIFI_PROV_SERVICE_UUID;
-use crate::ble::notify_dispatcher::NotifyDispatcher;
+use crate::ble::notify_dispatcher::{Ended, NotifyDispatcher};
 use crate::discovery::ble::PeripheralLease;
 use crate::runtime::ble_runtime;
 
@@ -73,8 +73,8 @@ impl ResolvedCharacteristics {
 }
 
 struct ProvNotifyRxs {
-    status: mpsc::Receiver<Result<Vec<u8>, String>>,
-    ip_addr: mpsc::Receiver<Result<Vec<u8>, String>>,
+    status: mpsc::Receiver<Result<Vec<u8>, Ended>>,
+    ip_addr: mpsc::Receiver<Result<Vec<u8>, Ended>>,
 }
 
 pub(crate) async fn open_session(lease: Arc<PeripheralLease>) -> Result<WifiProvSession, Error> {
@@ -214,8 +214,8 @@ impl WifiProvSession {
 
                 let value = match result {
                     Ok(v) => v,
-                    Err(e) => {
-                        emit!(Err(Error::NotifySubscribe { uuid, cause: e }));
+                    Err(Ended) => {
+                        emit!(Err(Error::NotificationsEnded(uuid)));
                         return;
                     }
                 };
@@ -280,8 +280,8 @@ impl WifiProvSession {
             while let Some((uuid, result)) = recv_either(&mut notifs).await {
                 let value = match result {
                     Ok(v) => v,
-                    Err(e) => {
-                        emit!(Err(Error::NotifySubscribe { uuid, cause: e }));
+                    Err(Ended) => {
+                        emit!(Err(Error::NotificationsEnded(uuid)));
                         return;
                     }
                 };
@@ -344,7 +344,7 @@ async fn read_with_timeout(peripheral: &Peripheral, char: &Characteristic) -> Op
         Ok(Ok(bytes)) if !bytes.is_empty() => Some(bytes),
         Ok(Ok(_)) => None,
         Ok(Err(e)) => {
-            warn!(uuid = %char.uuid, "read failed: {e}");
+            warn!(uuid = %char.uuid, error = &e as &dyn std::error::Error, "read failed");
             None
         }
         Err(_) => {
@@ -360,16 +360,10 @@ async fn start_notify_multiplex(
     chars: &ResolvedCharacteristics,
 ) -> Result<(NotifyDispatcher, ProvNotifyRxs), Error> {
     if !chars.status.properties.contains(CharPropFlags::NOTIFY) {
-        return Err(Error::NotifySubscribe {
-            uuid: CHAR_STATUS_UUID,
-            cause: "characteristic does not support NOTIFY".into(),
-        });
+        return Err(Error::NotifyUnsupported(CHAR_STATUS_UUID));
     }
     if !chars.ip_addr.properties.contains(CharPropFlags::NOTIFY) {
-        return Err(Error::NotifySubscribe {
-            uuid: CHAR_IP_ADDR_UUID,
-            cause: "characteristic does not support NOTIFY".into(),
-        });
+        return Err(Error::NotifyUnsupported(CHAR_IP_ADDR_UUID));
     }
 
     peripheral
@@ -377,14 +371,14 @@ async fn start_notify_multiplex(
         .await
         .map_err(|e| Error::NotifySubscribe {
             uuid: CHAR_STATUS_UUID,
-            cause: e.to_string(),
+            source: e,
         })?;
     peripheral
         .subscribe(&chars.ip_addr)
         .await
         .map_err(|e| Error::NotifySubscribe {
             uuid: CHAR_IP_ADDR_UUID,
-            cause: e.to_string(),
+            source: e,
         })?;
 
     let dispatcher =
@@ -392,7 +386,7 @@ async fn start_notify_multiplex(
             .await
             .map_err(|e| Error::NotifySubscribe {
                 uuid: CHAR_STATUS_UUID,
-                cause: e.to_string(),
+                source: e,
             })?;
     let rx_status = dispatcher.subscribe(CHAR_STATUS_UUID).await;
     let rx_ip = dispatcher.subscribe(CHAR_IP_ADDR_UUID).await;
@@ -406,7 +400,7 @@ async fn start_notify_multiplex(
     ))
 }
 
-async fn recv_either(rxs: &mut ProvNotifyRxs) -> Option<(Uuid, Result<Vec<u8>, String>)> {
+async fn recv_either(rxs: &mut ProvNotifyRxs) -> Option<(Uuid, Result<Vec<u8>, Ended>)> {
     tokio::select! {
         biased;
         item = rxs.status.recv() => item.map(|v| (CHAR_STATUS_UUID, v)),

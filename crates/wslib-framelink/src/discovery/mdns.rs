@@ -150,7 +150,7 @@ async fn follow(
                     .collect();
                 for instance in known {
                     if let Err(e) = browse.verify(&instance, VERIFY_TIMEOUT) {
-                        debug!(%instance, error = %e, "verify refused");
+                        debug!(%instance, error = &e as &dyn std::error::Error, "verify refused");
                     }
                 }
             }
@@ -163,7 +163,7 @@ async fn follow(
                 drop(browse.take());
                 browse = responder
                     .browse(&spec.kind())
-                    .inspect_err(|e| debug!(service = spec.service_type, error = %e, "rebrowse refused"))
+                    .inspect_err(|e| debug!(service = spec.service_type, error = e as &dyn std::error::Error, "rebrowse refused"))
                     .ok();
             }
         }
@@ -188,7 +188,7 @@ fn observe(tracker: &Mutex<PresenceTracker>, spec: ServiceSpec, found: &Resolved
                 found.instance, spec.service_type
             );
             warn!("{msg}");
-            tracker.emit_error(ErrorSource::Mdns, msg);
+            tracker.emit_error(ErrorSource::Mdns, msg, None);
         }
     }
 }

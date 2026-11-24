@@ -4,6 +4,18 @@
 
 - On wslib-wiretap-protocol 0.3, whose `Protocol` it re-exports, and
   wslib-can 0.2.
+- `ClientError::Transport` holds reqwest's error and says "API request
+  failed", and `ClientError::Decode` holds reqwest's or serde_json's error,
+  boxed, and says "API response decode failed"; each is the `source()`, in
+  place of the error and its causes joined as text. `ClientError` is no
+  longer `Clone`, `PartialEq` or `Eq`.
+- `ClientError::Build`: the HTTP client could not be built, with reqwest's
+  error as its `source()`; it was `Transport`.
+- `ClientError::BadHex { data_hex, source }` keeps wslib-bits' `HexError`
+  as its `source()`.
+- `ClientError`'s `Display` no longer writes reqwest's causes, such as the OS
+  error behind a refused connection. A caller that showed `to_string()` now
+  shows less and gets no compile error: walk `source()` for the rest.
 
 ## 0.2.3
 

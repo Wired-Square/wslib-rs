@@ -38,6 +38,12 @@ impl Worker {
         })
     }
 
+    pub(crate) fn panicked(&mut self) -> bool {
+        self.thread.take().is_some_and(|thread| {
+            thread.thread().id() != thread::current().id() && thread.join().is_err()
+        })
+    }
+
     pub(crate) fn release_within(&self) -> Duration {
         self.release_within
     }

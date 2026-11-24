@@ -155,7 +155,11 @@ async fn an_op_timeout_drops_the_socket_and_the_next_request_reconnects() {
             RequestError::Transport(TransportError::Timeout { after }) if after == quick().op_timeout
         ));
         assert!(!error.device_replied());
-        assert_eq!(error.to_string(), "timed out after 200ms");
+        assert_eq!(error.to_string(), "the request got no usable answer");
+        assert_eq!(
+            std::error::Error::source(&error).map(ToString::to_string),
+            Some("timed out after 200ms".to_owned())
+        );
         assert!(!tcp.is_connected());
 
         tcp.read(holding(0, 1)).await.unwrap();
@@ -176,7 +180,11 @@ async fn a_peer_close_is_a_transport_error() {
             error,
             RequestError::Transport(TransportError::Closed)
         ));
-        assert_eq!(error.to_string(), "connection closed by the device");
+        assert_eq!(error.to_string(), "the request got no usable answer");
+        assert_eq!(
+            std::error::Error::source(&error).map(ToString::to_string),
+            Some("connection closed by the device".to_owned())
+        );
         assert!(!tcp.is_connected());
         tcp.read(holding(0, 1)).await.unwrap();
     })
@@ -202,7 +210,11 @@ async fn a_device_that_hangs_up_between_reads_is_reported_as_closed() {
             error,
             RequestError::Transport(TransportError::Closed)
         ));
-        assert_eq!(error.to_string(), "connection closed by the device");
+        assert_eq!(error.to_string(), "the request got no usable answer");
+        assert_eq!(
+            std::error::Error::source(&error).map(ToString::to_string),
+            Some("connection closed by the device".to_owned())
+        );
     })
     .await
 }

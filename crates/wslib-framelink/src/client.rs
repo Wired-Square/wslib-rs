@@ -370,7 +370,10 @@ async fn reader_task(
                     Received::PeerVersion(peer)
                 }
                 Err(error) => {
-                    tracing::debug!(%error, "frame that doesn't parse");
+                    tracing::debug!(
+                        error = &error as &dyn std::error::Error,
+                        "frame that doesn't parse"
+                    );
                     framing.unparsed();
                     continue;
                 }
@@ -411,7 +414,10 @@ async fn send_each(
 ) {
     while let Some(wire) = write_rx.recv().await {
         if let Err(error) = link.send(&wire).await {
-            tracing::debug!(%error, "ISO-TP send failed");
+            tracing::debug!(
+                error = &error as &dyn std::error::Error,
+                "ISO-TP send failed"
+            );
             framing.send_failed();
         }
     }

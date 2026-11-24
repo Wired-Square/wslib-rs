@@ -1,14 +1,7 @@
 # Changelog
 
-## 0.2.0
+## 0.2.1
 
-- On wslib-can 0.2, whose `SendRefused` and `WriteFailed` `SendFailed`
-  carries.
-- `SendFailed::Io` is `SendFailed::Write`, carrying the adapter's
-  `WriteFailed` in place of an `io::Error`, and `SendFailures::io` is
-  `write`.
-- `SendFailed::Refused` and `Write` name only their own layer, and return the
-  `SendRefused` or `WriteFailed` from `source()`.
 - `Framing` sets the addressing (`Addressing::Normal`, `Extended` or `Mixed`,
   with the sent and expected byte apart), the `FrameFormat` (classic, or
   CAN FD at an `FdLength` of 8 to 64), padding, and `max_message`. Its
@@ -27,10 +20,10 @@
 - `link`: `LinkConfig::framing` and `brs`. A CAN FD link sends CAN FD frames
   and reads classic and CAN FD ones.
 - `IsoTpTap` reassembles both sides of a conversation it watches, from
-  `TimedFrame`s, with no clock of its own. It yields `TapMessage`s with their
-  side, frame count, times and flow controls (64 kept, all counted), and
-  `TapNotice`s for a dropped message, a wait, or a resynchronisation. A
-  message times out after N_Cr with no sender frame and no flow control it
+  `TimedFrame`s stamped in microseconds (`at_us`), with no clock of its own.
+  It yields `TapMessage`s with their side, frame count, `_us` times and flow
+  controls (64 kept, all counted), and `TapNotice`s for a dropped message, a
+  wait, or a resynchronisation. A message times out after N_Cr with no sender frame and no flow control it
   was due (one arriving when none is due restarts nothing), and one wait past
   `TapConfig::wait_limit` drops it. Frames on the conversation's ids with
   another address byte are not its own; `IsoTpTap::new` refuses, with
@@ -48,11 +41,21 @@
   request through `answer`, and `Conversation`, which runs a tester against
   it and stamps both sides' frames.
 - `serde`: serde derives on the framing, flow control, tap and detection
-  types, times as whole microseconds; a time out of range is a serde error.
-  `ts`: their ts-rs declarations, named
-  `IsoTp…`.
+  types, with camelCase fields.
+- Their enum variants serialise snake_case.
+- `ts`: their ts-rs declarations, named `IsoTp…`.
 - `docs/iso-tp.md` lists the wire facts the crate relies on, each pinned by
   a test.
+
+## 0.2.0
+
+- On wslib-can 0.2, whose `SendRefused` and `WriteFailed` `SendFailed`
+  carries.
+- `SendFailed::Io` is `SendFailed::Write`, carrying the adapter's
+  `WriteFailed` in place of an `io::Error`, and `SendFailures::io` is
+  `write`.
+- `SendFailed::Refused` and `Write` name only their own layer, and return the
+  `SendRefused` or `WriteFailed` from `source()`.
 
 ## 0.1.0
 

@@ -175,6 +175,9 @@ of several, it says so here.
   `tap::a_wait_chain_longer_than_n_cr_keeps_the_message_while_each_wait_is_due`,
   `tap::a_continue_to_send_when_none_is_due_restarts_nothing`,
   `tap::a_flow_control_at_the_end_of_a_block_restarts_the_timer`
+- Frame times are whole microseconds from any fixed origin. A frame stamped
+  before the timer started is no gap at all.
+  `tap::a_frame_stamped_before_the_timer_started_times_nothing_out`
 - One wait more than the tap's wait limit (10 by default, as the link's)
   drops the message; a continue-to-send restarts the count. A message keeps
   its first 64 flow controls and counts them all.

@@ -1,10 +1,10 @@
 use std::collections::HashMap;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use crate::flow_control::FlowStatus;
 use crate::framing::{Addressing, FdLength, FrameFormat, Framing, Pdu};
 use crate::pci::{CLASSIC_LEN, LOW_NIBBLE, SN_FIRST};
-use crate::tap::TimedFrame;
+use crate::tap::{TimedFrame, micros};
 
 /// How soon after a first frame, or after a wait answering it, a flow control
 /// on another id must come to answer it.
@@ -20,6 +20,7 @@ const MAX_CANDIDATES: usize = 4;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpKindCounts"))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct KindCounts {
     pub single: u32,
     pub first: u32,
@@ -41,6 +42,7 @@ pub struct KindCounts {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpIdEvidence"))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct IdEvidence {
     pub id: u32,
     pub extended: bool,
@@ -69,6 +71,7 @@ pub struct IdEvidence {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpPair"))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct Pair {
     /// The lower id, or on one id the lower address byte.
     pub a_id: u32,
@@ -85,6 +88,7 @@ pub struct Pair {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpDetection"))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct Detection {
     /// Every id, or id and address byte, in the order first seen.
     pub ids: Vec<IdEvidence>,
@@ -194,7 +198,7 @@ struct Open {
     received: usize,
     next_sn: u8,
     cf_capacity: usize,
-    deadline: SystemTime,
+    deadline_us: u64,
     candidates: Vec<Candidate>,
     cleared: bool,
     started: bool,
@@ -214,7 +218,7 @@ struct Track {
 }
 
 struct Reading {
-    window: Duration,
+    window_us: u64,
     index: HashMap<Key, usize>,
     tracks: Vec<Track>,
     opens: Vec<usize>,
@@ -232,7 +236,7 @@ impl Reading {
         address_byte: impl Fn(&TimedFrame) -> Option<Option<u8>>,
     ) -> Judged {
         let mut reading = Self {
-            window,
+            window_us: micros(window),
             index: HashMap::new(),
             tracks: Vec::new(),
             opens: Vec::new(),
@@ -271,7 +275,7 @@ impl Reading {
     }
 
     fn frame(&mut self, order: usize, key: Key, frame: &TimedFrame) {
-        self.close_expired(frame.at);
+        self.close_expired(frame.at_us);
         let at = self.track(order, key);
         let track = &mut self.tracks[at];
         track.evidence.frames += 1;
@@ -303,7 +307,7 @@ impl Reading {
                     received: first.data.len(),
                     next_sn: SN_FIRST,
                     cf_capacity: first.cf_capacity,
-                    deadline: frame.at + self.window,
+                    deadline_us: frame.at_us.saturating_add(self.window_us),
                     candidates: Vec::new(),
                     cleared: false,
                     started: false,
@@ -315,18 +319,18 @@ impl Reading {
             }
             Some(Pdu::FlowControl(Ok(flow))) => {
                 counts.flow_control += 1;
-                self.flow_control(at, frame.at, flow.status);
+                self.flow_control(at, frame.at_us, flow.status);
             }
         }
     }
 
-    fn close_expired(&mut self, now: SystemTime) {
+    fn close_expired(&mut self, now: u64) {
         let tracks = &mut self.tracks;
         self.opens.retain(|&at| {
             let open = &mut tracks[at].open;
             if open
                 .as_ref()
-                .is_some_and(|open| !open.started && now > open.deadline)
+                .is_some_and(|open| !open.started && now > open.deadline_us)
             {
                 *open = None;
             }
@@ -359,7 +363,7 @@ impl Reading {
         }
     }
 
-    fn flow_control(&mut self, answerer: usize, now: SystemTime, status: FlowStatus) {
+    fn flow_control(&mut self, answerer: usize, now: u64, status: FlowStatus) {
         let (extended, addressed) = {
             let evidence = &self.tracks[answerer].evidence;
             (evidence.extended, evidence.address_byte.is_some())
@@ -376,7 +380,7 @@ impl Reading {
             let candidate = match known {
                 Some(known) => &mut open.candidates[known],
                 None if !open.started
-                    && now <= open.deadline
+                    && now <= open.deadline_us
                     && open.candidates.len() < MAX_CANDIDATES =>
                 {
                     open.candidates.push(Candidate {
@@ -394,7 +398,7 @@ impl Reading {
                 FlowStatus::Overflow => false,
             };
             if extends && !open.started {
-                open.deadline = open.deadline.max(now + self.window);
+                open.deadline_us = open.deadline_us.max(now.saturating_add(self.window_us));
             }
         }
     }
@@ -523,8 +527,6 @@ fn paired(
 
 #[cfg(test)]
 mod tests {
-    use std::time::UNIX_EPOCH;
-
     use super::*;
     use crate::flow_control::{FlowControl, StMin};
     use crate::segment::Segmenter;
@@ -561,7 +563,7 @@ mod tests {
                 id,
                 extended: false,
                 data,
-                at: UNIX_EPOCH + self.now,
+                at_us: micros(self.now),
             });
         }
 
@@ -972,7 +974,7 @@ mod tests {
                 id,
                 extended: false,
                 data,
-                at: UNIX_EPOCH + Duration::from_micros(u64::from(k) * 50),
+                at_us: u64::from(k) * 50,
             });
         }
         let detection = detect(&frames, WINDOW);

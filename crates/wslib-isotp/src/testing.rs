@@ -2,14 +2,14 @@
 //! conversation that stamps both sides' frames for golden fixtures.
 
 use std::collections::VecDeque;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use crate::flow_control::{FlowControl, FlowStatus, StMin};
 use crate::framing::Framing;
 use crate::pci::PciKind;
 use crate::reassemble::{Reassembler, Step};
 use crate::segment::Segmenter;
-use crate::tap::TimedFrame;
+use crate::tap::{TimedFrame, micros};
 
 /// A frame to send, `delay` after the frame this end sent before it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -205,7 +205,7 @@ pub struct Conversation<A> {
     extended: bool,
     tester: Endpoint,
     responder: Responder<A>,
-    now: SystemTime,
+    now_us: u64,
     frame_gap: Duration,
     frames: Vec<TimedFrame>,
 }
@@ -215,12 +215,12 @@ impl<A: FnMut(&[u8]) -> Vec<Vec<u8>>> Conversation<A> {
 
     /// The tester sends on `tester_id` with the responder's peer framing,
     /// asking for whole messages with no gap; the responder on
-    /// `responder_id`. The first frame goes one gap after `start`.
+    /// `responder_id`. The first frame goes one gap after `start_us`.
     pub fn new(
         tester_id: u32,
         responder_id: u32,
         extended: bool,
-        start: SystemTime,
+        start_us: u64,
         responder: Responder<A>,
     ) -> Self {
         Self {
@@ -229,7 +229,7 @@ impl<A: FnMut(&[u8]) -> Vec<Vec<u8>>> Conversation<A> {
             extended,
             tester: Endpoint::new(responder.framing().peer(), 0, StMin(0)),
             responder,
-            now: start,
+            now_us: start_us,
             frame_gap: Self::DEFAULT_FRAME_GAP,
             frames: Vec::new(),
         }
@@ -257,7 +257,7 @@ impl<A: FnMut(&[u8]) -> Vec<Vec<u8>>> Conversation<A> {
             .map(|frame| (Speaker::Tester, frame))
             .collect();
         while let Some((speaker, frame)) = wire.pop_front() {
-            self.now += self.frame_gap.max(frame.delay);
+            self.pause(self.frame_gap.max(frame.delay));
             let id = match speaker {
                 Speaker::Tester => self.tester_id,
                 Speaker::Responder => self.responder_id,
@@ -266,7 +266,7 @@ impl<A: FnMut(&[u8]) -> Vec<Vec<u8>>> Conversation<A> {
                 id,
                 extended: self.extended,
                 data: frame.data.clone(),
-                at: self.now,
+                at_us: self.now_us,
             });
             match speaker {
                 Speaker::Tester => wire.extend(
@@ -287,7 +287,7 @@ impl<A: FnMut(&[u8]) -> Vec<Vec<u8>>> Conversation<A> {
 
     /// Lets `quiet` pass with nothing on the bus.
     pub fn pause(&mut self, quiet: Duration) {
-        self.now += quiet;
+        self.now_us = self.now_us.saturating_add(micros(quiet));
     }
 
     pub fn frames(&self) -> &[TimedFrame] {
@@ -388,8 +388,7 @@ mod tests {
         let responder = Responder::new(Framing::default(), move |_: &[u8]| {
             vec![p.clone(), d.clone()]
         });
-        let mut conversation =
-            Conversation::new(0x7E0, 0x7E8, false, SystemTime::UNIX_EPOCH, responder);
+        let mut conversation = Conversation::new(0x7E0, 0x7E8, false, 0, responder);
         assert_eq!(
             conversation.exchange(&[0x31, 0x01, 0xFF, 0x00]),
             [pending, done]
@@ -403,8 +402,7 @@ mod tests {
             FrameFormat::Fd(FdLength::new(16).unwrap()),
         );
         let responder = Responder::new(framing, echo).flow_control(2, StMin(3));
-        let start = SystemTime::UNIX_EPOCH;
-        let mut conversation = Conversation::new(0x18DA10F1, 0x18DAF110, true, start, responder)
+        let mut conversation = Conversation::new(0x18DA10F1, 0x18DAF110, true, 0, responder)
             .tester_flow_control(1, StMin(0));
         let request = message(60);
         assert_eq!(
@@ -412,13 +410,12 @@ mod tests {
             std::slice::from_ref(&request)
         );
         let frames = conversation.frames();
-        assert!(frames.windows(2).all(|pair| pair[0].at < pair[1].at));
+        assert!(frames.windows(2).all(|pair| pair[0].at_us < pair[1].at_us));
         assert_eq!(frames[0].id, 0x18DA10F1);
         assert_eq!(frames[0].data[0], 0x10);
         assert_eq!(frames[1].id, 0x18DAF110);
         assert_eq!(frames[1].data[..2], [0xF1, 0x30]);
-        let gap = frames[3].at.duration_since(frames[2].at).unwrap();
-        assert_eq!(gap, Duration::from_millis(3));
+        assert_eq!(frames[3].at_us - frames[2].at_us, 3_000);
         assert!(frames.iter().all(|frame| frame.extended));
     }
 }

@@ -1,4 +1,4 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use wslib_isotp::testing::{Conversation, Responder};
 use wslib_isotp::{
@@ -45,7 +45,7 @@ fn conversation(ecu: Framing) -> Conversation<impl FnMut(&[u8]) -> Vec<Vec<u8>>>
     let responder = Responder::new(ecu, reversed)
         .flow_control(ECU_BLOCK, ECU_ST_MIN)
         .waits(WAITS, WAIT_GAP);
-    Conversation::new(TESTER, ECU, false, UNIX_EPOCH, responder)
+    Conversation::new(TESTER, ECU, false, 0, responder)
         .tester_flow_control(TESTER_BLOCK, TESTER_ST_MIN)
 }
 
@@ -85,11 +85,8 @@ fn the_tap_reassembles_a_scripted_conversation_in_every_framing() {
         for event in feed(&mut tap_for(&ecu), &frames) {
             match event {
                 TapEvent::Message(message) => {
-                    let first = frames
-                        .iter()
-                        .position(|f| f.at == message.first_at)
-                        .unwrap();
-                    let last = frames.iter().position(|f| f.at == message.last_at).unwrap();
+                    let at = |at_us| frames.iter().position(|f| f.at_us == at_us).unwrap();
+                    let (first, last) = (at(message.first_at_us), at(message.last_at_us));
                     let sender = if message.from == Side::A { TESTER } else { ECU };
                     let sent = frames[first..=last]
                         .iter()
@@ -180,16 +177,15 @@ fn detection_finds_the_scripted_conversation_among_periodic_traffic() {
         script.exchange(&message(len));
     }
     let mut frames = script.into_frames();
-    let start = SystemTime::UNIX_EPOCH;
     for i in 0..500_u32 {
         frames.push(TimedFrame {
             id: 0x101,
             extended: false,
             data: vec![0x10, 0x30, i as u8, 0x21, 0, 0, 0, 0],
-            at: start + Duration::from_millis(u64::from(i) * 10),
+            at_us: u64::from(i) * 10_000,
         });
     }
-    frames.sort_by_key(|frame| frame.at);
+    frames.sort_by_key(|frame| frame.at_us);
     let detection = detect(&frames, DEFAULT_FLOW_CONTROL_WINDOW);
     let iso_tp: Vec<u32> = detection
         .ids

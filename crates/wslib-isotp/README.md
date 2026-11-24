@@ -53,8 +53,10 @@ address byte.
 ## Watching a conversation
 
 `IsoTpTap` reassembles both sides of one conversation from the frames a
-passive listener sees, `TimedFrame`s fed in bus order whatever their id. It
-keeps no clock: N_Cr is judged from frame times, so a capture replayed gives
+passive listener sees, `TimedFrame`s fed in bus order whatever their id. A
+frame's `at_us` is microseconds from any fixed origin, and the tap's times
+are on that scale, each in a `_us` field. The tap keeps no clock: N_Cr is
+judged from frame times, so a capture replayed gives
 what the live bus gave. It yields `TapEvent`s: each `TapMessage` with its
 side, frame count, first and last frame times and the flow controls it drew
 (the first 64 kept, all counted); and each `TapNotice`, a dropped message
@@ -101,7 +103,7 @@ is: its first byte cannot be told from a signal's.
 None is on by default. The codec, the tap and detection need only thiserror.
 
 - `serde`: serde derives on the framing, flow control, tap and detection
-  types. Times serialise as whole microseconds, under `_us` names.
+  types, with camelCase fields and snake_case variants.
 - `ts`: ts-rs declarations for those types, each named `IsoTp…`. Implies
   `serde`.
 - `testing`: `testing::Responder`, a clockless simulated peer that answers

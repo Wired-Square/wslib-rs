@@ -18,8 +18,6 @@ mod link;
 mod pci;
 mod reassemble;
 mod segment;
-#[cfg(feature = "serde")]
-mod serde_micros;
 mod tap;
 #[cfg(feature = "testing")]
 pub mod testing;

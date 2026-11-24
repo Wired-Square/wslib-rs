@@ -13,6 +13,8 @@ const FD_MAX: usize = 64;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpAddressing"))]
+#[cfg_attr(feature = "serde", serde(rename_all_fields = "camelCase"))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum Addressing {
     #[default]
     Normal,
@@ -98,6 +100,7 @@ impl From<FdLength> for u8 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpFrameFormat"))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum FrameFormat {
     #[default]
     Classic,
@@ -110,6 +113,7 @@ pub enum FrameFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpFraming"))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 #[non_exhaustive]
 pub struct Framing {
     pub addressing: Addressing,

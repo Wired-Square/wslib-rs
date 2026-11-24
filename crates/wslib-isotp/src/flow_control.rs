@@ -49,6 +49,7 @@ impl StMin {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpFlowStatus"))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[repr(u8)]
 pub enum FlowStatus {
     ContinueToSend = 0x0,
@@ -80,6 +81,7 @@ pub enum FlowControlError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpFlowControl"))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct FlowControl {
     pub status: FlowStatus,
     pub block_size: u8,

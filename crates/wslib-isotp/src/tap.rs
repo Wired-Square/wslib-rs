@@ -1,25 +1,25 @@
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use crate::flow_control::{FlowControl, FlowControlError, FlowStatus};
 use crate::framing::{Framing, Pdu};
 use crate::pci::{LOW_NIBBLE, SN_FIRST};
 
-/// A CAN data frame seen on a bus, and when.
+/// A CAN data frame seen on a bus, and when, in microseconds from any fixed
+/// origin.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpTimedFrame"))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct TimedFrame {
     pub id: u32,
     /// A 29-bit id, or 11-bit.
     pub extended: bool,
     pub data: Vec<u8>,
-    /// Serialised as whole microseconds since the Unix epoch.
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "at_us", with = "crate::serde_micros::since_epoch")
-    )]
-    #[cfg_attr(feature = "ts", ts(type = "number"))]
-    pub at: SystemTime,
+    pub at_us: u64,
+}
+
+pub(crate) fn micros(span: Duration) -> u64 {
+    u64::try_from(span.as_micros()).unwrap_or(u64::MAX)
 }
 
 /// One end of a tapped conversation: A sends on [`TapConfig::a_id`], B on
@@ -27,6 +27,7 @@ pub struct TimedFrame {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpSide"))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum Side {
     A,
     B,
@@ -95,23 +96,14 @@ pub struct IndistinctSides {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpTapMessage"))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct TapMessage {
     pub from: Side,
     pub data: Vec<u8>,
     /// Its single frame, or its first and consecutive frames.
     pub frames: u32,
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "first_at_us", with = "crate::serde_micros::since_epoch")
-    )]
-    #[cfg_attr(feature = "ts", ts(type = "number"))]
-    pub first_at: SystemTime,
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "last_at_us", with = "crate::serde_micros::since_epoch")
-    )]
-    #[cfg_attr(feature = "ts", ts(type = "number"))]
-    pub last_at: SystemTime,
+    pub first_at_us: u64,
+    pub last_at_us: u64,
     /// The first [`MAX_FLOW_CONTROLS`](Self::MAX_FLOW_CONTROLS) flow controls
     /// the other side sent for it, waits included, in order.
     pub flow_controls: Vec<FlowControl>,
@@ -128,22 +120,20 @@ impl TapMessage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpTapNotice"))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct TapNotice {
     /// The side sending the message it concerns.
     pub side: Side,
     /// The time of the frame that showed it.
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "at_us", with = "crate::serde_micros::since_epoch")
-    )]
-    #[cfg_attr(feature = "ts", ts(type = "number"))]
-    pub at: SystemTime,
+    pub at_us: u64,
     pub kind: NoticeKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpNoticeKind"))]
+#[cfg_attr(feature = "serde", serde(rename_all_fields = "camelCase"))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum NoticeKind {
     /// A consecutive frame out of sequence dropped the message.
     OutOfSequence { expected: u8, received: u8 },
@@ -152,14 +142,7 @@ pub enum NoticeKind {
     /// A single or first frame, valid or not, dropped the message.
     Superseded,
     /// The message's frames stopped for N_Cr or more, and it was dropped.
-    TimedOut {
-        #[cfg_attr(
-            feature = "serde",
-            serde(rename = "gap_us", with = "crate::serde_micros")
-        )]
-        #[cfg_attr(feature = "ts", ts(type = "number"))]
-        gap: Duration,
-    },
+    TimedOut { gap_us: u64 },
     /// The receiver refused the message with an overflow.
     Overflow,
     /// The receiver asked the sender to wait.
@@ -179,6 +162,7 @@ pub enum NoticeKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpTapEvent"))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum TapEvent {
     Message(TapMessage),
     Notice(TapNotice),
@@ -191,12 +175,12 @@ struct Receiving {
     next_sn: u8,
     cf_capacity: usize,
     frames: u32,
-    first_at: SystemTime,
-    last_at: SystemTime,
+    first_at_us: u64,
+    last_at_us: u64,
     flow_controls: Vec<FlowControl>,
     flow_control_count: u32,
     waits: u32,
-    timed_from: SystemTime,
+    timed_from_us: u64,
     awaiting_flow: bool,
     block_left: Option<u8>,
 }
@@ -207,8 +191,8 @@ impl Receiving {
             from,
             data: self.message,
             frames: self.frames,
-            first_at: self.first_at,
-            last_at: self.last_at,
+            first_at_us: self.first_at_us,
+            last_at_us: self.last_at_us,
             flow_controls: self.flow_controls,
             flow_control_count: self.flow_control_count,
         }
@@ -268,7 +252,7 @@ impl IsoTpTap {
     /// is.
     pub fn push(&mut self, frame: &TimedFrame) -> Vec<TapEvent> {
         let mut events = Vec::new();
-        self.expire(frame.at, &mut events);
+        self.expire(frame.at_us, &mut events);
         if let Some(side) = self.side_of(frame) {
             self.on_frame(side, frame, &mut events);
         }
@@ -301,20 +285,20 @@ impl IsoTpTap {
         }
     }
 
-    fn expire(&mut self, at: SystemTime, events: &mut Vec<TapEvent>) {
+    fn expire(&mut self, at: u64, events: &mut Vec<TapEvent>) {
         for side in [Side::A, Side::B] {
             let Some(receiving) = &self.sides[side.index()].receiving else {
                 continue;
             };
-            let gap = at.duration_since(receiving.timed_from).unwrap_or_default();
-            if gap >= self.config.n_cr {
-                self.drop_message(side, at, NoticeKind::TimedOut { gap }, events);
+            let gap_us = at.saturating_sub(receiving.timed_from_us);
+            if Duration::from_micros(gap_us) >= self.config.n_cr {
+                self.drop_message(side, at, NoticeKind::TimedOut { gap_us }, events);
             }
         }
     }
 
     fn on_frame(&mut self, side: Side, frame: &TimedFrame, events: &mut Vec<TapEvent>) {
-        let at = frame.at;
+        let at = frame.at_us;
         let reader = &self.readers[side.index()];
         match reader.decode(&frame.data) {
             None | Some(Pdu::FlowControl(Err(FlowControlError::NotFlowControl))) => {
@@ -332,8 +316,8 @@ impl IsoTpTap {
                         from: side,
                         data: data.to_vec(),
                         frames: 1,
-                        first_at: at,
-                        last_at: at,
+                        first_at_us: at,
+                        last_at_us: at,
                         flow_controls: Vec::new(),
                         flow_control_count: 0,
                     }));
@@ -352,12 +336,12 @@ impl IsoTpTap {
                         next_sn: SN_FIRST,
                         cf_capacity: first.cf_capacity,
                         frames: 1,
-                        first_at: at,
-                        last_at: at,
+                        first_at_us: at,
+                        last_at_us: at,
                         flow_controls: Vec::new(),
                         flow_control_count: 0,
                         waits: 0,
-                        timed_from: at,
+                        timed_from_us: at,
                         awaiting_flow: true,
                         block_left: None,
                     });
@@ -368,13 +352,7 @@ impl IsoTpTap {
     }
 
     /// Ends the message in progress and says whether a new one starts.
-    fn begin(
-        &mut self,
-        side: Side,
-        at: SystemTime,
-        start: Start,
-        events: &mut Vec<TapEvent>,
-    ) -> bool {
+    fn begin(&mut self, side: Side, at: u64, start: Start, events: &mut Vec<TapEvent>) -> bool {
         let state = &mut self.sides[side.index()];
         if state.receiving.take().is_some() {
             notice(events, side, at, NoticeKind::Superseded);
@@ -406,7 +384,7 @@ impl IsoTpTap {
         side: Side,
         sn: u8,
         data: &[u8],
-        at: SystemTime,
+        at: u64,
         events: &mut Vec<TapEvent>,
     ) {
         let state = &mut self.sides[side.index()];
@@ -435,8 +413,8 @@ impl IsoTpTap {
         receiving.message.extend_from_slice(data);
         receiving.next_sn = (sn + 1) & LOW_NIBBLE;
         receiving.frames += 1;
-        receiving.last_at = at;
-        receiving.timed_from = at;
+        receiving.last_at_us = at;
+        receiving.timed_from_us = at;
         receiving.awaiting_flow = receiving.block_left.as_mut().is_some_and(|left| {
             *left = left.saturating_sub(1);
             *left == 0
@@ -453,7 +431,7 @@ impl IsoTpTap {
         &mut self,
         sender: Side,
         flow: Result<FlowControl, FlowControlError>,
-        at: SystemTime,
+        at: u64,
         events: &mut Vec<TapEvent>,
     ) {
         let Some(receiving) = self.sides[sender.index()].receiving.as_mut() else {
@@ -476,7 +454,7 @@ impl IsoTpTap {
                 receiving.waits = 0;
                 if receiving.awaiting_flow {
                     receiving.awaiting_flow = false;
-                    receiving.timed_from = at;
+                    receiving.timed_from_us = at;
                     receiving.block_left = (flow.block_size != 0).then_some(flow.block_size);
                 }
             }
@@ -486,7 +464,7 @@ impl IsoTpTap {
                     self.drop_message(sender, at, NoticeKind::TooManyWaits, events);
                 } else {
                     if receiving.awaiting_flow {
-                        receiving.timed_from = at;
+                        receiving.timed_from_us = at;
                     }
                     notice(events, sender, at, NoticeKind::Wait);
                 }
@@ -495,13 +473,7 @@ impl IsoTpTap {
         }
     }
 
-    fn drop_message(
-        &mut self,
-        side: Side,
-        at: SystemTime,
-        kind: NoticeKind,
-        events: &mut Vec<TapEvent>,
-    ) {
+    fn drop_message(&mut self, side: Side, at: u64, kind: NoticeKind, events: &mut Vec<TapEvent>) {
         let state = &mut self.sides[side.index()];
         state.receiving = None;
         state.lost = true;
@@ -509,14 +481,12 @@ impl IsoTpTap {
     }
 }
 
-fn notice(events: &mut Vec<TapEvent>, side: Side, at: SystemTime, kind: NoticeKind) {
-    events.push(TapEvent::Notice(TapNotice { side, at, kind }));
+fn notice(events: &mut Vec<TapEvent>, side: Side, at_us: u64, kind: NoticeKind) {
+    events.push(TapEvent::Notice(TapNotice { side, at_us, kind }));
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::UNIX_EPOCH;
-
     use super::*;
     use crate::flow_control::StMin;
     use crate::framing::{Addressing, FrameFormat};
@@ -526,9 +496,10 @@ mod tests {
     const ECU: u32 = 0x7E8;
     const OTHER: u32 = 0x123;
     const N_CR: Duration = TapConfig::DEFAULT_N_CR;
+    const N_CR_US: u64 = N_CR.as_micros() as u64;
 
-    fn ms(millis: u64) -> SystemTime {
-        UNIX_EPOCH + Duration::from_millis(millis)
+    fn ms(millis: u64) -> u64 {
+        millis * 1000
     }
 
     fn frame(id: u32, data: &[u8], millis: u64) -> TimedFrame {
@@ -536,7 +507,7 @@ mod tests {
             id,
             extended: false,
             data: data.to_vec(),
-            at: ms(millis),
+            at_us: ms(millis),
         }
     }
 
@@ -632,8 +603,8 @@ mod tests {
                     from: Side::A,
                     data: vec![0x10, 0x01],
                     frames: 1,
-                    first_at: ms(5),
-                    last_at: ms(5),
+                    first_at_us: ms(5),
+                    last_at_us: ms(5),
                     flow_controls: vec![],
                     flow_control_count: 0,
                 },
@@ -641,8 +612,8 @@ mod tests {
                     from: Side::B,
                     data: vec![0x50, 0x01],
                     frames: 1,
-                    first_at: ms(7),
-                    last_at: ms(7),
+                    first_at_us: ms(7),
+                    last_at_us: ms(7),
                     flow_controls: vec![],
                     flow_control_count: 0,
                 },
@@ -661,8 +632,8 @@ mod tests {
                 from: Side::B,
                 data,
                 frames: 3,
-                first_at: ms(100),
-                last_at: ms(103),
+                first_at_us: ms(100),
+                last_at_us: ms(103),
                 flow_controls: vec![cts(0, 5)],
                 flow_control_count: 1,
             }]
@@ -734,7 +705,7 @@ mod tests {
         let events = tap.push(&frame(OTHER, &[0xFF], N_CR.as_millis() as u64));
         assert_eq!(
             notices(&events),
-            [(Side::A, NoticeKind::TimedOut { gap: N_CR })]
+            [(Side::A, NoticeKind::TimedOut { gap_us: N_CR_US })]
         );
         assert!(!tap.is_receiving(Side::A));
     }
@@ -765,7 +736,7 @@ mod tests {
         let events = tap.push(&frame(OTHER, &[0xFF], 1010));
         assert_eq!(
             notices(&events),
-            [(Side::A, NoticeKind::TimedOut { gap: N_CR })]
+            [(Side::A, NoticeKind::TimedOut { gap_us: N_CR_US })]
         );
         assert!(!tap.is_receiving(Side::A));
     }
@@ -779,12 +750,7 @@ mod tests {
         let events = tap.push(&frame(TESTER, &[0x22, 13, 14, 15, 16, 17, 18, 19], 1800));
         assert_eq!(
             notices(&events),
-            [(
-                Side::A,
-                NoticeKind::TimedOut {
-                    gap: Duration::from_millis(1798)
-                }
-            )]
+            [(Side::A, NoticeKind::TimedOut { gap_us: ms(1798) })]
         );
     }
 
@@ -802,8 +768,16 @@ mod tests {
         let events = tap.push(&frame(OTHER, &[0xFF], 3700));
         assert_eq!(
             notices(&events),
-            [(Side::A, NoticeKind::TimedOut { gap: N_CR })]
+            [(Side::A, NoticeKind::TimedOut { gap_us: N_CR_US })]
         );
+    }
+
+    #[test]
+    fn a_frame_stamped_before_the_timer_started_times_nothing_out() {
+        let mut tap = tap();
+        tap.push(&frame(TESTER, &[0x10, 0x14, 0, 1, 2, 3, 4, 5], 5_000));
+        assert_eq!(tap.push(&frame(OTHER, &[0xFF], 0)), []);
+        assert!(tap.is_receiving(Side::A));
     }
 
     #[test]
@@ -812,7 +786,7 @@ mod tests {
         let mut frames = multi_frame(TESTER, &data, ECU, cts(0, 0), 0);
         let under = N_CR.as_millis() as u64 - 1;
         for (i, frame) in frames.iter_mut().enumerate().skip(2) {
-            frame.at = ms(under * (i as u64 - 1));
+            frame.at_us = ms(under * (i as u64 - 1));
         }
         let events = feed(&mut tap(), &frames);
         assert_eq!(notices(&events), []);

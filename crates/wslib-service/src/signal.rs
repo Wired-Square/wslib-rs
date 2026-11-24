@@ -71,6 +71,10 @@ pub(crate) fn stop_signal() -> impl Future<Output = Signal> + Send + 'static {
 }
 
 async fn registration_failed(which: Signal, e: std::io::Error) -> Signal {
-    tracing::error!(signal = which.as_str(), error = %e, "could not listen for a signal");
+    tracing::error!(
+        signal = which.as_str(),
+        error = &e as &dyn std::error::Error,
+        "could not listen for a signal"
+    );
     std::future::pending().await
 }

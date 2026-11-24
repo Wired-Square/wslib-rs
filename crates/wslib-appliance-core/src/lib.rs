@@ -99,7 +99,7 @@ pub mod backend {
     pub use crate::ingress::serve_ingress;
     pub use crate::logs::{close_audit_queue, logs_writing_to};
     pub use crate::reauth::prove_password;
-    pub use crate::redact::foreign;
+    pub use crate::redact::{chain, foreign};
     pub use crate::routes::logs::LogsRung;
     pub use crate::state::Listening;
 
@@ -125,10 +125,12 @@ pub mod backend {
 
     #[cfg(feature = "sessions")]
     pub fn sessions(state: &ApplianceState) -> Result<&wslib_appliance_auth::Sessions, ApiError> {
-        state
-            .sessions
-            .get()
-            .ok_or_else(|| ApiError::internal("issue a session", &"this backend keeps no sessions"))
+        state.sessions.get().ok_or_else(|| {
+            ApiError::internal(
+                "issue a session",
+                &crate::error::Fault("this backend keeps no sessions"),
+            )
+        })
     }
 
     pub fn signed_in(who: &Identity) -> Result<&User, ApiError> {
@@ -169,7 +171,10 @@ pub mod backend {
         let joined = async {
             for task in tasks {
                 if let Err(e) = task.await {
-                    tracing::error!(error = %e, "a registered task panicked");
+                    tracing::error!(
+                        error = &e as &dyn std::error::Error,
+                        "a registered task panicked"
+                    );
                 }
             }
         };
@@ -569,7 +574,7 @@ impl Chassis {
                 .inspect_err(|error| {
                     let path = path.display();
                     let why = "the bundle's index.html is unreadable, so its page answers 404";
-                    tracing::warn!(%path, %error, "{why}");
+                    tracing::warn!(%path, error = error as &dyn std::error::Error, "{why}");
                 })
                 .ok()
         });
@@ -711,7 +716,7 @@ async fn healthz(State(app): State<ApplianceState>) -> Result<impl IntoResponse,
     app.store
         .setting(HEALTH_PROBE)
         .await
-        .map_err(|e| ApiError::unavailable("reach the database", &crate::tls::chain(&e)))?;
+        .map_err(|e| ApiError::unavailable("reach the database", &e))?;
 
     Ok((
         [(
@@ -732,6 +737,32 @@ mod tests {
             BOX_ID_APP.simple().to_string(),
             "6e882fe490034dc4973989aa7425c9b9"
         );
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_database_is_journalled_with_each_cause() {
+        let probe = probe::Probe::new().await;
+        probe.store().close().await;
+        let logs = crate::logs(&[]).ring().clone();
+        let _logging = tracing::subscriber::set_default(logs.subscriber());
+
+        let response = probe.https("/healthz", None).await;
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        let records = logs.snapshot().records;
+        let failed = records
+            .iter()
+            .find(|r| r.message == "request failed")
+            .unwrap_or_else(|| panic!("nothing journalled: {records:?}"));
+        let because = failed
+            .fields
+            .iter()
+            .find_map(|(name, value)| (name == "because").then_some(value))
+            .unwrap_or_else(|| panic!("no cause: {:?}", failed.fields));
+        let cause = because.strip_prefix("the database query failed: ");
+        assert!(cause.is_some_and(|cause| !cause.is_empty()), "{because}");
     }
 
     #[test]
@@ -787,7 +818,7 @@ mod tests {
             tokio::task::yield_now().await;
             Err(ServeError::Bind {
                 address: "[::]:443".into(),
-                because: "in use".into(),
+                source: std::io::ErrorKind::AddrInUse.into(),
             })
         };
 

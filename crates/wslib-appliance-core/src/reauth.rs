@@ -193,12 +193,20 @@ pub async fn prove_password(
         wslib_appliance_auth::verify_password(&tried, password.expose())
     })
     .await
-    .map_err(|e| ApiError::internal("check the password", &e))?;
+    .map_err(|e| unjoined("check the password", e))?;
 
     match verified {
         true => Ok(account),
         false => Err(wrong_password(&account.user.username, id, what)),
     }
+}
+
+fn unjoined(what: &'static str, e: tokio::task::JoinError) -> ApiError {
+    let why = match e.is_panic() {
+        true => AuthError::Panicked,
+        false => AuthError::Cancelled,
+    };
+    ApiError::internal(what, &why)
 }
 
 #[cfg(test)]
@@ -456,5 +464,33 @@ mod tests {
             let refused = attempt(&socket).await.expect_err("nobody");
             assert!(matches!(refused, ApiError::NotFound(_)), "{refused:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn a_password_check_that_panicked_or_was_cancelled_journals_which() {
+        let journalled = |error: ApiError| match error {
+            ApiError::Internal {
+                context, because, ..
+            } => (context, because),
+            other => panic!("not internal: {other:?}"),
+        };
+        let panicked = tokio::spawn(async { panic!("boom") }).await.unwrap_err();
+        assert_eq!(
+            journalled(unjoined("check the password", panicked)),
+            (
+                "check the password",
+                "hashing or checking the password panicked".to_string()
+            )
+        );
+        let pending = tokio::spawn(std::future::pending::<()>());
+        pending.abort();
+        let cancelled = pending.await.unwrap_err();
+        assert_eq!(
+            journalled(unjoined("check the password", cancelled)),
+            (
+                "check the password",
+                "the runtime shut down before the password was hashed or checked".to_string()
+            )
+        );
     }
 }

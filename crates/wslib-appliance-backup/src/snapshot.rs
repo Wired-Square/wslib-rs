@@ -285,7 +285,7 @@ impl Snapshot {
         if self.leaves_out(name) {
             return Ok(());
         }
-        let value = serde_json::to_value(rows).map_err(BackupError::internal)?;
+        let value = serde_json::to_value(rows).map_err(BackupError::failed)?;
         self.body.app.insert(name.to_string(), value);
         Ok(())
     }
@@ -344,7 +344,7 @@ impl Snapshot {
     ) -> Result<String, BackupError> {
         check_passphrase(passphrase)?;
         let mut plaintext = envelope::Wiping::default();
-        serde_json::to_writer(&mut plaintext, &self.body).map_err(BackupError::internal)?;
+        serde_json::to_writer(&mut plaintext, &self.body).map_err(BackupError::failed)?;
         envelope::seal(
             &plaintext.0,
             self.body.contains(),

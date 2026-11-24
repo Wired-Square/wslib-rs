@@ -1,8 +1,22 @@
 # Changelog
 
-## 0.1.6
+## 0.2.0
 
+- `Daemon::run` takes `main` returning `Result<T, E>` with
+  `E: Into<Box<dyn Error + Send + Sync>>`, in place of `E: Display`: any
+  `Error + Send + Sync + 'static`, or such a box. A `Box<dyn Error>` without
+  `Send + Sync` no longer converts.
+  `Failure::Ended` holds that error as its `source()`, in place of its text,
+  and says only that the service ended in error. The log line writes each
+  cause `source()` gives.
+- `Failure::Runtime` and `Failure::ServiceManager` say only what failed, and
+  give the error through `source()`. `Failure::ServiceManager` holds the
+  service control manager's error, boxed, in place of an `io::Error`.
+  `Failure::NeverStarted` is the dispatcher returning without having started
+  the service.
 - On wslib-file-atomic 0.2.
+- Log lines record an error as an error, so a subscriber writes its causes
+  too, where they wrote its top layer alone.
 
 ## 0.1.5
 

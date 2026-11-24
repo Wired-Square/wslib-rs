@@ -270,7 +270,7 @@ async fn unclamped(parts: &Parts, app: &ApplianceState) -> Result<Identity, ApiE
     if principal.id.is_empty() {
         return Err(ApiError::internal(
             "resolve the caller",
-            &"the resolver vouched for an account with no id",
+            &crate::error::Fault("the resolver vouched for an account with no id"),
         ));
     }
     Ok(Identity::Resolved(principal))
@@ -971,7 +971,7 @@ mod tests {
         let (failing, _) = resolving(|| {
             Err(ApiError::internal(
                 "resolve the caller",
-                &"the identity channel is down",
+                &std::io::Error::other("the identity channel is down"),
             ))
         })
         .await;

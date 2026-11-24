@@ -38,7 +38,9 @@ async fn current(
             let mut account = app.store.user_by_id(&principal.id).await?.ok_or_else(|| {
                 ApiError::internal(
                     "answer who is asking",
-                    &"the resolver vouched for an account the store does not have",
+                    &crate::error::Fault(
+                        "the resolver vouched for an account the store does not have",
+                    ),
                 )
             })?;
             account.user.role = principal.role;

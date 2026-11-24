@@ -28,7 +28,7 @@
 //!         let served = server.ui(bootstrap.ui.clone()).serve(&bootstrap, socket, stop).await;
 //!         polling.await?;
 //!         served?;
-//!         Ok::<_, Box<dyn std::error::Error>>(())
+//!         Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
 //!     })
 //!     .map_or_else(std::process::ExitCode::from, |()| std::process::ExitCode::SUCCESS)
 //! # }
@@ -244,12 +244,13 @@ impl Server {
         ingress: Ingress,
         stop: impl Future<Output = ()>,
     ) -> Result<(), ServeError> {
-        let listener = TcpListener::bind(ingress.bind)
-            .await
-            .map_err(|e| ServeError::Bind {
-                address: ingress.bind.to_string(),
-                because: e.to_string(),
-            })?;
+        let listener =
+            TcpListener::bind(ingress.bind)
+                .await
+                .map_err(|source| ServeError::Bind {
+                    address: ingress.bind.to_string(),
+                    source,
+                })?;
         self.serve_ingress_on(listener, ingress, stop).await
     }
 

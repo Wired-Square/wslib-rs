@@ -4,6 +4,23 @@
 
 - Pins `wslib-appliance-core` at 0.2.0. On wslib-appliance-store 0.2 and
   wslib-file-atomic 0.2.
+- `BackupError::KdfParameters` and `BackupError::Derive` hold the KDF's
+  error as `source` where `Malformed` and `Passphrase` carried its text;
+  both keep this crate's own sentences.
+- `BackupError::Failed` holds the error behind a fault on the write path as
+  `source`, `Unwritten` the `io::Error` of a sealed bundle that could not be
+  written to its path, and `Panicked` and `Cancelled` its blocking work;
+  `Internal` keeps this crate's own sentences.
+- `BackupError::Store` says only that the store failed, and gives the
+  `StoreError` through `source()`.
+- A refusal's body, a restore report's sentence about the serving pair or
+  the outbound trust, and a scheduled backup's failure write each cause of
+  the error behind them; an unfinished pair's cause is redacted and bounded
+  as the journal's is. A scheduled write that panicked or was cancelled says
+  which, without tokio's text, and so does the journal line of a deletion,
+  a restore, or a seal or open on the blocking pool that did.
+- Log lines record an error as an error, so a subscriber writes its causes
+  too, where they wrote its top layer alone.
 
 ## 0.2.4
 

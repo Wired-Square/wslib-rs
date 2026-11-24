@@ -13,7 +13,7 @@ use serde::Deserialize;
 
 /// The family crates whose layout and keys the rendered files assume.
 pub const RENDERS_FOR: [(&str, &str); 3] = [
-    ("wslib-appliance-config", "0.1.2"),
+    ("wslib-appliance-config", "0.2.0"),
     ("wslib-appliance-store", "0.2.0"),
     ("wslib-appliance-server", "0.2.0"),
 ];
@@ -103,7 +103,11 @@ pub fn run(root: &Path, release: bool) -> ExitCode {
         "lock",
         match std::fs::read_to_string(root.join("Cargo.lock")) {
             Ok(text) => lock(&text),
-            Err(e) => failed(format!("Cargo.lock could not be read: {e}")).into(),
+            Err(e) => failed(format!(
+                "Cargo.lock could not be read: {}",
+                crate::chain(&e)
+            ))
+            .into(),
         },
     );
     report("rustls provider", rustls_provider(root).into());
@@ -177,7 +181,12 @@ pub fn forbidden_names(root: &Path) -> Outcome {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Outcome::Skipped(format!("no {FORBIDDEN_NAMES}"));
         }
-        Err(e) => return failed(format!("{FORBIDDEN_NAMES} could not be read: {e}")),
+        Err(e) => {
+            return failed(format!(
+                "{FORBIDDEN_NAMES} could not be read: {}",
+                crate::chain(&e)
+            ));
+        }
         Ok(names) if names.trim().is_empty() => {
             return Outcome::Skipped(format!("{FORBIDDEN_NAMES} names nothing"));
         }
@@ -223,7 +232,7 @@ struct Locked {
 pub fn lock(text: &str) -> Verdict {
     let lock: Lock = match toml::from_str(text) {
         Ok(lock) => lock,
-        Err(e) => return failed(format!("Cargo.lock does not parse: {e}")).into(),
+        Err(e) => return failed(format!("Cargo.lock does not parse: {}", crate::chain(&e))).into(),
     };
     let family: Vec<&Locked> = lock
         .package
@@ -321,7 +330,7 @@ fn packaging(root: &Path) -> Verdict {
         return Outcome::Skipped(format!("no {}", crate::CONFIG)).into();
     }
     match crate::owned(root) {
-        Err(e) => failed(e.to_string()).into(),
+        Err(e) => failed(crate::chain(&*e)).into(),
         Ok((artefacts, warnings)) => {
             let drifted = crate::drifted(&root.join(crate::SCAFFOLD), &artefacts);
             Verdict {
@@ -365,7 +374,7 @@ fn cross_target(root: &Path) -> Result<(), String> {
         .args(["--print", "target-libdir", "--target", CROSS])
         .current_dir(root)
         .output()
-        .map_err(|e| format!("rustc could not run: {e}"))?;
+        .map_err(|e| format!("rustc could not run: {}", crate::chain(&e)))?;
     let libdir = String::from_utf8_lossy(&libdir.stdout);
     if Path::new(libdir.trim()).is_dir() {
         Ok(())
@@ -488,7 +497,7 @@ mod tests {
     #[test]
     fn family_crates_from_the_registry_pass_and_others_do_not() {
         let fine = lock_of(&[
-            locked("wslib-appliance-config", "0.1.2", Some(REGISTRY)),
+            locked("wslib-appliance-config", "0.2.0", Some(REGISTRY)),
             locked(
                 "wslib-appliance-core",
                 "0.1.0",
@@ -538,7 +547,7 @@ mod tests {
         assert_eq!(verdict.outcome, Outcome::Passed);
         assert_eq!(
             verdict.warnings,
-            ["wslib-appliance-config is locked at 0.1.0; this tool renders for 0.1.2"]
+            ["wslib-appliance-config is locked at 0.1.0; this tool renders for 0.2.0"]
         );
     }
 

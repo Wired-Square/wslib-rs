@@ -8,11 +8,12 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 
 use chrono::{DateTime, Utc};
+use wslib_appliance_core::backend;
 use wslib_appliance_core::{Actor, ApplianceState, CancellationToken, audit};
 use wslib_appliance_types::backup::{BackupSchedule, BackupState};
 
 use crate::routes::{Engine, HostHalf, PASSPHRASE_SECRET, SCHEDULE_SETTING, STATE_KEY};
-use crate::{Sections, schedule};
+use crate::{BackupError, Sections, schedule};
 
 struct Scheduler;
 
@@ -60,7 +61,10 @@ impl<S: Sections, H: HostHalf> Engine<S, H> {
 
         while stop.run_until_cancelled(ticks.tick()).await.is_some() {
             if let Err(e) = self.check(&app).await {
-                tracing::warn!(error = %e, "the backup schedule's check could not read or record");
+                tracing::warn!(
+                    error = &e as &dyn std::error::Error,
+                    "the backup schedule's check could not read or record"
+                );
             }
         }
     }
@@ -95,7 +99,7 @@ impl<S: Sections, H: HostHalf> Engine<S, H> {
     }
 
     /// The error is prose for the schedule's view.
-    async fn take_scheduled(
+    pub(crate) async fn take_scheduled(
         &self,
         app: &ApplianceState,
         wanted: &BackupSchedule,
@@ -105,7 +109,7 @@ impl<S: Sections, H: HostHalf> Engine<S, H> {
             .store
             .secret(PASSPHRASE_SECRET)
             .await
-            .map_err(|e| e.to_string())?
+            .map_err(|e| backend::chain(&e))?
             .ok_or("no passphrase is set, so there is nothing to seal a backup with")?;
         let erasures_before = self.erasures();
         let sealed = self
@@ -130,13 +134,16 @@ impl<S: Sections, H: HostHalf> Engine<S, H> {
             match schedule::rotate(&this.dir, &this.name, keep.saturating_sub(1)) {
                 Ok(gone) if !gone.is_empty() => tracing::info!(?gone, "rotated older backups out"),
                 Ok(_) => {}
-                Err(e) => tracing::warn!(error = %e, "could not rotate older backups"),
+                Err(e) => tracing::warn!(
+                    error = &e as &dyn std::error::Error,
+                    "could not rotate older backups"
+                ),
             }
             write_into(&this.dir, &written, sealed.as_bytes())
                 .map_err(|e| format!("{written}: {e}"))
         })
         .await
-        .map_err(|e| format!("writing the backup panicked: {e}"))??;
+        .map_err(|e| backend::chain(&BackupError::unjoined(e)))??;
         Ok(file)
     }
 }

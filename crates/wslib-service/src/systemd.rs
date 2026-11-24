@@ -41,7 +41,10 @@ fn extend_usec(grace: Duration) -> String {
 
 fn told(sent: io::Result<()>) {
     if let Err(e) = sent {
-        tracing::warn!(error = %e, "could not notify systemd");
+        tracing::warn!(
+            error = &e as &dyn std::error::Error,
+            "could not notify systemd"
+        );
     }
 }
 

@@ -122,7 +122,10 @@ where
             let anchor = match store.box_state_doc(ANCHOR).await {
                 Ok(anchor) => anchor,
                 Err(e) => {
-                    tracing::warn!(error = %e, "could not read the sweep anchor; skipping this sweep");
+                    tracing::warn!(
+                        error = &e as &dyn std::error::Error,
+                        "could not read the sweep anchor; skipping this sweep"
+                    );
                     continue;
                 }
             };
@@ -131,7 +134,10 @@ where
             if let Some(anchor) = anchor
                 && let Err(e) = store.set_box_state_doc(ANCHOR, &anchor).await
             {
-                tracing::warn!(error = %e, "could not record the sweep anchor");
+                tracing::warn!(
+                    error = &e as &dyn std::error::Error,
+                    "could not record the sweep anchor"
+                );
             }
             if wall - at > AHEAD && !std::mem::replace(&mut said_ahead, true) {
                 tracing::info!(
@@ -143,12 +149,18 @@ where
             if let Some(before) = audit_cutoff(window, at) {
                 match store.sweep_audit(before).await {
                     Ok(swept) => tracing::debug!(swept, "swept the audit log"),
-                    Err(e) => tracing::warn!(error = %e, "could not sweep the audit log"),
+                    Err(e) => tracing::warn!(
+                        error = &e as &dyn std::error::Error,
+                        "could not sweep the audit log"
+                    ),
                 }
             }
             sweeps(store.clone(), at).await;
             if let Err(e) = store.set_box_state(LAST_SWEEP, &stamp(wall)).await {
-                tracing::warn!(error = %e, "could not record the sweep");
+                tracing::warn!(
+                    error = &e as &dyn std::error::Error,
+                    "could not record the sweep"
+                );
             }
         }
     })
@@ -289,7 +301,10 @@ async fn last_sweep(store: &Store) -> Option<DateTime<Utc>> {
             .transpose()
     });
     read.unwrap_or_else(|e| {
-        tracing::warn!(error = %e, "could not read when this box last swept");
+        tracing::warn!(
+            error = &e as &dyn std::error::Error,
+            "could not read when this box last swept"
+        );
         None
     })
 }

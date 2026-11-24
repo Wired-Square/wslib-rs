@@ -4,8 +4,14 @@
 
 - Pins `wslib-appliance-core` at 0.2.0. On wslib-appliance-store 0.2,
   wslib-appliance-auth 0.2 and wslib-http-server 0.2.
-- A listener's failure writes each cause of wslib-http-server's
-  `ServeError` in `ServeError::Serving`'s text.
+- A listener's failure is `ServeError::Serving` with wslib-http-server's
+  `ServeError` as `source`, and a refused bind `ServeError::Bind` with the
+  `io::Error`. The control socket's directory that cannot be made is
+  `ServeError::SocketFailed`.
+- On wslib-appliance-config 0.2 and wslib-service 0.2.
+- A password hash that panicked or was cancelled on the blocking pool
+  journals wslib-appliance-auth's `AuthError::Panicked` or `Cancelled`, not
+  tokio's text.
 
 ## 0.1.6
 

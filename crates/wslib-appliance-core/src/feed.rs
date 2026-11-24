@@ -31,7 +31,11 @@ where
                 Ok(message) => match Event::default().event(name).json_data(W::from(message)) {
                     Ok(event) => return Some((Ok(event), rx)),
                     Err(e) => {
-                        tracing::warn!(feed = name, error = %e, "could not serialise an event")
+                        tracing::warn!(
+                            feed = name,
+                            error = &e as &dyn std::error::Error,
+                            "could not serialise an event"
+                        )
                     }
                 },
                 Err(RecvError::Lagged(_)) => {}

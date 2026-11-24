@@ -73,13 +73,59 @@ pub(super) async fn serve_endpoint(
     }: ControlEndpoint,
     stop: CancellationToken,
 ) -> Result<(), ServeError> {
-    let security = Security::new(group.as_deref(), service.as_deref()).map_err(|because| {
-        ServeError::Socket {
-            path: path.clone(),
-            because,
-        }
-    })?;
+    let security = Security::new(group.as_deref(), service.as_deref())
+        .map_err(|unsecured| unsecured.at(&path))?;
     serve_secured(router, path, ceiling, security, stop).await
+}
+
+#[derive(Debug)]
+struct Step {
+    what: String,
+    source: io::Error,
+}
+
+impl std::fmt::Display for Step {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.what)
+    }
+}
+
+impl std::error::Error for Step {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+#[derive(Debug)]
+enum Unsecured {
+    Refused(String),
+    Failed(Step),
+}
+
+impl From<String> for Unsecured {
+    fn from(because: String) -> Self {
+        Self::Refused(because)
+    }
+}
+
+impl Unsecured {
+    fn at(self, path: &Path) -> ServeError {
+        match self {
+            Self::Refused(because) => ServeError::Socket {
+                path: path.to_path_buf(),
+                because,
+            },
+            Self::Failed(step) => ServeError::SocketFailed {
+                path: path.to_path_buf(),
+                source: Box::new(step),
+            },
+        }
+    }
+}
+
+fn failing(what: impl Into<String>) -> impl FnOnce(io::Error) -> Unsecured {
+    let what = what.into();
+    move |source| Unsecured::Failed(Step { what, source })
 }
 
 pub(super) async fn serve_secured(
@@ -107,14 +153,19 @@ pub(super) async fn serve_secured(
                 "this process may not make {} the pipe's owner",
                 security.expected.owner
             )),
-            _ => failed(e.to_string()),
+            _ => ServeError::SocketFailed {
+                path: name.clone(),
+                source: Box::new(e),
+            },
         }
     })?;
-    security.verify(&first).map_err(failed)?;
+    security
+        .verify(&first)
+        .map_err(|unsecured| unsecured.at(&name))?;
     drop(
         security
             .create(&name, false)
-            .map_err(|e| failed(format!("a second instance: {e}")))?,
+            .map_err(|e| failing("creating a second instance")(e).at(&name))?,
     );
     tracing::info!(
         pipe = %name.display(),
@@ -167,7 +218,7 @@ impl PipeListener {
                 Ok(pipe) => return pipe,
                 Err(e) => {
                     let pipe = self.name.display();
-                    tracing::error!(%pipe, error = %e, retry = ?delay, "could not create a pipe instance");
+                    tracing::error!(%pipe, error = &e as &dyn std::error::Error, retry = ?delay, "could not create a pipe instance");
                     tokio::time::sleep(delay).await;
                     delay = (delay * 2).min(RETRY_CAP);
                 }
@@ -189,12 +240,12 @@ impl Listener for PipeListener {
             match connected {
                 Ok(()) => {
                     let peer = wslib_host::pipe_client_user(&pipe)
-                        .inspect_err(|e| tracing::debug!(pipe = %name, error = %e, "a control pipe client's account is unread"))
+                        .inspect_err(|e| tracing::debug!(pipe = %name, error = e as &dyn std::error::Error, "a control pipe client's account is unread"))
                         .ok();
                     return (pipe, peer);
                 }
                 Err(e) => {
-                    tracing::debug!(pipe = %name, error = %e, "a control pipe client left before it was accepted");
+                    tracing::debug!(pipe = %name, error = &e as &dyn std::error::Error, "a control pipe client left before it was accepted");
                 }
             }
         }
@@ -214,19 +265,18 @@ pub(super) struct Security {
 }
 
 impl Security {
-    fn new(group: Option<&str>, service: Option<&str>) -> Result<Self, String> {
+    fn new(group: Option<&str>, service: Option<&str>) -> Result<Self, Unsecured> {
         let owner = match service {
             Some(service) => {
                 let account = format!(r"NT SERVICE\{service}");
                 wslib_host::service_account(service)
-                    .map_err(|e| format!("no service account {account}: {e}"))?
+                    .map_err(failing(format!("looking up the service account {account}")))?
                     .ok_or_else(|| format!("no service account {account}: it is not one installed service's account"))?
             }
-            None => wslib_host::current_user()
-                .map_err(|e| format!("reading this process's user: {e}"))?,
+            None => wslib_host::current_user().map_err(failing("reading this process's user"))?,
         };
         let group = group.map(local_group).transpose()?;
-        Self::granting(&owner, group.as_ref()).map_err(|e| e.to_string())
+        Self::granting(&owner, group.as_ref()).map_err(failing("building the pipe's security"))
     }
 
     /// SYSTEM and `owner` full control, and `group` [`CLIENT_ACCESS`].
@@ -261,12 +311,13 @@ impl Security {
 
     /// Refuses an instance whose pipe carries another descriptor, as one that
     /// joined a pipe another process created would.
-    fn verify(&self, pipe: &NamedPipeServer) -> Result<(), String> {
-        let found = read_security(pipe.as_raw_handle())
-            .map_err(|e| format!("reading its security: {e}"))?;
+    fn verify(&self, pipe: &NamedPipeServer) -> Result<(), Unsecured> {
+        let found = read_security(pipe.as_raw_handle()).map_err(failing("reading its security"))?;
         if found != self.expected {
             tracing::error!(expected = ?self.expected, ?found, "a control pipe's security differs");
-            return Err("its security does not read back as it was created".to_string());
+            return Err("its security does not read back as it was created"
+                .to_string()
+                .into());
         }
         Ok(())
     }
@@ -397,13 +448,14 @@ pub(super) fn account_name(sid: Sid) -> Option<String> {
 /// An alias one RID under this computer's account domain, as a product's
 /// installer creates: never a well-known or BUILTIN group, and a domain's only
 /// on that domain's controller, whose account domain it is.
-fn local_group(name: &str) -> Result<Sid, String> {
-    let (sid, kind) = lookup_account(name).map_err(|e| format!("no local group {name}: {e}"))?;
-    let domain = account_domain().map_err(|e| format!("reading the account domain: {e}"))?;
+fn local_group(name: &str) -> Result<Sid, Unsecured> {
+    let (sid, kind) =
+        lookup_account(name).map_err(failing(format!("looking up the local group {name}")))?;
+    let domain = account_domain().map_err(failing("reading the account domain"))?;
     if kind == SidTypeAlias && one_rid_under(&domain.to_string(), &sid.to_string()) {
         Ok(sid)
     } else {
-        Err(format!("{name} is not a local group of this computer"))
+        Err(format!("{name} is not a local group of this computer").into())
     }
 }
 
@@ -586,8 +638,9 @@ mod tests {
             };
             let refused = Security::new(Some(&named), None).err().expect("refused");
             assert!(
-                refused.ends_with("is not a local group of this computer"),
-                "{refused}"
+                matches!(&refused, Unsecured::Refused(because)
+                    if because.ends_with("is not a local group of this computer")),
+                "{refused:?}"
             );
         }
     }

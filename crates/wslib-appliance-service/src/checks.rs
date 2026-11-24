@@ -1,4 +1,4 @@
-//! The control endpoints' directories; each error is the sentence a refusal ends with.
+//! The control endpoints' directories.
 
 use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;
@@ -11,15 +11,29 @@ const LOOKUP_DEADLINE: Duration = Duration::from_secs(1);
 /// The gid, `None` for no such group, or the errno of a failed lookup.
 pub(crate) type Lookup = Result<Option<u32>, i32>;
 
+#[derive(Debug)]
+pub(crate) enum Unfit {
+    Refused(String),
+    Unreadable(std::io::Error),
+    NotLookedUp(std::io::Error),
+    LookupPanicked,
+}
+
+impl From<String> for Unfit {
+    fn from(because: String) -> Self {
+        Self::Refused(because)
+    }
+}
+
 /// One its group or others could write would let them swap the socket for a
 /// link before the chmod.
-pub(crate) async fn endpoint_directory(dir: &Path, group: &str) -> Result<(), String> {
+pub(crate) async fn endpoint_directory(dir: &Path, group: &str) -> Result<(), Unfit> {
     let metadata = std::fs::symlink_metadata(dir).map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => "it is missing".to_string(),
-        _ => e.to_string(),
+        std::io::ErrorKind::NotFound => Unfit::Refused("it is missing".to_string()),
+        _ => Unfit::Unreadable(e),
     })?;
     if !metadata.is_dir() {
-        return Err("it is not a directory".to_string());
+        return Err("it is not a directory".to_string().into());
     }
     // SAFETY: `geteuid` reads this process's own credentials and cannot fail.
     let euid = unsafe { libc::geteuid() };
@@ -27,21 +41,19 @@ pub(crate) async fn endpoint_directory(dir: &Path, group: &str) -> Result<(), St
         return Err(format!(
             "it is owned by uid {}, neither this process's {euid} nor root",
             metadata.uid()
-        ));
+        )
+        .into());
     }
     let mode = metadata.permissions().mode() & 0o7777;
     if mode & 0o022 != 0 {
-        return Err(format!(
-            "its mode is {mode:04o}; neither its group nor others may write it"
-        ));
+        return Err(
+            format!("its mode is {mode:04o}; neither its group nor others may write it").into(),
+        );
     }
-    wslib_service::no_extended_acl(dir).map_err(|refused| refused.because)?;
+    wslib_service::no_extended_acl(dir).map_err(|refused| Unfit::Refused(refused.because))?;
     let gid = group_id(group, LOOKUP_DEADLINE, gid_of).await?;
     if metadata.gid() != gid {
-        return Err(format!(
-            "it is owned by gid {}, not {group}'s {gid}",
-            metadata.gid()
-        ));
+        return Err(format!("it is owned by gid {}, not {group}'s {gid}", metadata.gid()).into());
     }
     Ok(())
 }
@@ -52,24 +64,21 @@ pub(crate) async fn group_id(
     group: &str,
     deadline: Duration,
     lookup: impl FnOnce(&CStr) -> Lookup + Send + 'static,
-) -> Result<u32, String> {
+) -> Result<u32, Unfit> {
     let name = CString::new(group).map_err(|_| format!("{group:?} is not a group name"))?;
     let (answer, answered) = tokio::sync::oneshot::channel();
     std::thread::Builder::new()
         .name("group lookup".to_string())
         .spawn(move || answer.send(lookup(&name)).ok())
-        .map_err(|e| format!("could not look up the group {group}: {e}"))?;
+        .map_err(Unfit::NotLookedUp)?;
     match tokio::time::timeout(deadline, answered).await {
         Ok(Ok(Ok(Some(gid)))) => Ok(gid),
-        Ok(Ok(Ok(None))) => Err(format!("there is no group named {group}")),
-        Ok(Ok(Err(errno))) => Err(format!(
-            "looking up the group {group} failed: {}",
-            std::io::Error::from_raw_os_error(errno)
-        )),
-        Ok(Err(_)) => Err(format!("looking up the group {group} failed")),
-        Err(_) => Err(format!(
-            "looking up the group {group} did not answer within {deadline:?}"
-        )),
+        Ok(Ok(Ok(None))) => Err(format!("there is no group named {group}").into()),
+        Ok(Ok(Err(errno))) => Err(Unfit::NotLookedUp(std::io::Error::from_raw_os_error(errno))),
+        Ok(Err(_)) => Err(Unfit::LookupPanicked),
+        Err(_) => {
+            Err(format!("looking up the group {group} did not answer within {deadline:?}").into())
+        }
     }
 }
 

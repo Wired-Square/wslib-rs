@@ -2,17 +2,47 @@
 
 ## 0.2.0
 
+- `ApiError::internal` and `ApiError::unavailable` take the cause as
+  `&(dyn Error + 'static)`, in place of `&dyn Display`, and journal it with
+  each cause its `source()` gives; `redact::foreign` does the same.
+  `backend::chain` renders an error and its causes for an operator's
+  sentence.
+- `TlsError` keeps this crate's own sentences as text (`Pem`, `Unsupported`,
+  `Internal`) and every other error behind it as `source`, saying only its
+  own layer: `Unloadable`, `Target` and `Unreachable` hold the rustls or
+  wslib-tls error, `Unwritable` the `io::Error`, `Unfinished` the recovery's
+  error beside `next`. `Unusable` is a certificate or key that did not decode
+  or that the crypto provider refused, `RecordRefused` an interrupted write's
+  record this appliance will not act on, `Unreadable` a dialled host's
+  certificate that cannot be read, `Corrupt` the certificate on disk that
+  cannot be read, and `Failed` anything else reading or writing the pair.
+  A certificate refusal's response body writes the sentence and each cause,
+  a dialled host's redacted and bounded as the journal's are.
+- `ServeError::Tls`, `Trust` and `Serving` hold the error behind them as
+  `source` in place of its text; `Bind` holds the `io::Error`.
+  `ServeError::Tls::named` is a pair named in the configuration whose
+  files will not load; its sentence tells the operator to correct them, or
+  to unset the setting that names them to have the appliance manage its own
+  pair. It is false, and the sentence ends without that, for a refused or
+  unrecoverable record of an interrupted write and for a start that
+  panicked or was cancelled.
+  `ServeError::SocketFailed` is a socket, its directory or its security that
+  could not be made, with the error as `source`; `Socket` keeps this crate's
+  own sentences. A start whose pair panicked or was cancelled on the
+  blocking pool is `Tls` with wslib-tls's `ServingError::Panicked` or
+  `Cancelled` as `source`.
 - A failed store or sign-in call's journal line, and a failed health
   check's, writes each cause of the `StoreError` or `AuthError` behind it,
-  which keep them only through `source()`.
+  which keep them only through `source()`. A re-authentication's password
+  check that panicked or was cancelled journals `AuthError::Panicked` or
+  `Cancelled`, not tokio's text.
 - On wslib-appliance-store 0.2 and wslib-appliance-auth 0.2, whose
   `StoreError` and `AuthError` its `ApiError` converts from.
-- An operator's TLS sentence writes each cause of the wslib-tls,
-  wslib-crypto or wslib-crypto-x509 error behind it, so a Settings screen,
-  an API body and the journal keep the detail those errors carry only
-  through `source()`.
 - On wslib-tls 0.3, wslib-crypto 0.2, wslib-crypto-x509 0.2,
-  wslib-file-atomic 0.2 and wslib-http-server 0.2.
+  wslib-file-atomic 0.2, wslib-http-server 0.2, wslib-appliance-config 0.2
+  and wslib-service 0.2.
+- Log lines record an error as an error, so a subscriber writes its causes
+  too, where they wrote its top layer alone.
 
 ## 0.1.6
 

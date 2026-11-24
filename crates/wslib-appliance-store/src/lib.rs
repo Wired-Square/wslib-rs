@@ -72,7 +72,7 @@ pub const SESSION_SECRETS_TABLE: &str = "platform_session_secrets";
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum StoreError {
-    #[error("database: {0}")]
+    #[error("the database query failed")]
     Db(#[from] sqlx::Error),
 
     /// A settings key inside the `secret.` or `box.` namespace, handed to
@@ -84,7 +84,7 @@ pub enum StoreError {
     )]
     Reserved(String),
 
-    #[error("migration: {0}")]
+    #[error("migrating the database failed")]
     Migrate(#[from] MigrateError),
 
     /// [`Store::open_existing`] found no file.
@@ -149,8 +149,9 @@ pub enum StoreError {
     #[error("that cursor did not come from this appliance: {0:?}")]
     BadCursor(String),
 
-    /// What the migration chains refuse beyond the variants above.
-    #[error("the migration chains were refused")]
+    /// What wslib-db-sqlite refuses beyond the variants above: a migration
+    /// chain, or the settings' local prefix.
+    #[error("the database's migration chains or settings were refused")]
     Database(#[source] wslib_db_sqlite::Error),
 }
 
@@ -317,6 +318,23 @@ mod tests {
 
     fn spawnable<F: Future + Send + 'static>(future: F) -> F {
         future
+    }
+
+    #[test]
+    fn a_query_or_migration_failure_says_only_its_layer_and_keeps_sqlxs_error() {
+        let db = StoreError::from(sqlx::Error::RowNotFound);
+        assert_eq!(db.to_string(), "the database query failed");
+        assert!(matches!(
+            std::error::Error::source(&db).and_then(|e| e.downcast_ref::<sqlx::Error>()),
+            Some(sqlx::Error::RowNotFound)
+        ));
+
+        let migrate = StoreError::from(MigrateError::VersionMissing(7));
+        assert_eq!(migrate.to_string(), "migrating the database failed");
+        assert!(matches!(
+            std::error::Error::source(&migrate).and_then(|e| e.downcast_ref::<MigrateError>()),
+            Some(MigrateError::VersionMissing(7))
+        ));
     }
 
     #[test]
@@ -569,7 +587,10 @@ mod tests {
     #[test]
     fn a_chain_refusal_is_its_own_layer_over_the_databases_error() {
         let e = StoreError::from(wslib_db_sqlite::Error::InvalidName("Bad".into()));
-        assert_eq!(e.to_string(), "the migration chains were refused");
+        assert_eq!(
+            e.to_string(),
+            "the database's migration chains or settings were refused"
+        );
         let source = std::error::Error::source(&e).expect("the database's refusal");
         assert!(
             matches!(

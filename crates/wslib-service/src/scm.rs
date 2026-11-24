@@ -57,24 +57,13 @@ pub(crate) fn run(name: &str, grace: Duration, main: Main) -> Result<Result<Valu
         {
             Err(main)
         }
-        (Err(e), _) => Ok(Err(Failure::ServiceManager(io_error(e)))),
-        (Ok(()), _) => Ok(lock(&OUTCOME).take().unwrap_or_else(|| {
-            Err(Failure::ServiceManager(std::io::Error::other(
-                "the service control manager never started the service",
-            )))
-        })),
+        (Err(e), _) => Ok(Err(Failure::ServiceManager(Box::new(e)))),
+        (Ok(()), _) => Ok(lock(&OUTCOME).take().unwrap_or(Err(Failure::NeverStarted))),
     }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|e| e.into_inner())
-}
-
-fn io_error(e: windows_service::Error) -> std::io::Error {
-    match e {
-        windows_service::Error::Winapi(e) => e,
-        other => std::io::Error::other(other.to_string()),
-    }
 }
 
 fn service_main(_: Vec<OsString>) {
@@ -102,13 +91,15 @@ fn service_main(_: Vec<OsString>) {
     let handle = match handle {
         Ok(handle) => handle,
         Err(e) => {
-            let e = io_error(e);
             record(
                 &name,
                 Level::Error,
-                format_args!("could not register for service controls: {e}"),
+                format_args!(
+                    "could not register for service controls: {}",
+                    crate::chain(&e)
+                ),
             );
-            *lock(&OUTCOME) = Some(Err(Failure::ServiceManager(e)));
+            *lock(&OUTCOME) = Some(Err(Failure::ServiceManager(Box::new(e))));
             return;
         }
     };

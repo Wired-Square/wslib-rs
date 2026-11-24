@@ -6,7 +6,7 @@ use crate::{Request, sid};
 /// docs for the table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsSafety"))]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum Safety {
     ReadOnly,
     StateChanging,

@@ -254,7 +254,7 @@ pub struct DtcStatus {
 /// A ReadDTCInformation request by its report type; the common ones typed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsDtcRequest"))]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "camelCase")]
 #[serde(rename_all_fields = "camelCase")]
 pub enum DtcRequest {
     NumberByStatusMask { status_mask: u8 },
@@ -320,7 +320,7 @@ impl DtcRequest {
 /// A ReadDTCInformation positive response by its report type; the common ones typed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsDtcResponse"))]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "camelCase")]
 #[serde(rename_all_fields = "camelCase")]
 pub enum DtcResponse {
     NumberByStatusMask {
@@ -408,7 +408,7 @@ impl DtcResponse {
 /// A request, typed for the services this crate models and opaque for the rest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsRequest"))]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "camelCase")]
 #[serde(rename_all_fields = "camelCase")]
 pub enum Request {
     DiagnosticSessionControl {
@@ -676,7 +676,7 @@ impl Request {
 /// or opaque.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsResponse"))]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "camelCase")]
 #[serde(rename_all_fields = "camelCase")]
 pub enum Response {
     Negative {

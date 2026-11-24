@@ -420,14 +420,14 @@ fn a_sub_function_cannot_hold_a_value_over_0x7f() {
 }
 
 #[test]
-fn fields_serialise_camel_case_and_variants_snake_case() {
+fn fields_and_variants_serialise_camel_case() {
     let request = Request::RoutineControl {
         sub_function: SubFunction::suppressed(0x01),
         routine: 0xFF00,
         data: vec![],
     };
     let json = serde_json::json!({
-        "kind": "routine_control",
+        "kind": "routineControl",
         "subFunction": { "value": 1, "suppressPositiveResponse": true },
         "routine": 0xFF00,
         "data": [],
@@ -439,7 +439,7 @@ fn fields_serialise_camel_case_and_variants_snake_case() {
         max_block_length: BlockLength::new(0x0FFF, 2).unwrap(),
     };
     let json = serde_json::json!({
-        "kind": "request_download",
+        "kind": "requestDownload",
         "maxBlockLength": { "value": 0x0FFF, "width": 2 },
     });
     assert_eq!(serde_json::to_value(&response).unwrap(), json);

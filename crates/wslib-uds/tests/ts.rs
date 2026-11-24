@@ -47,7 +47,7 @@ fn exported<T: TS + 'static>() -> String {
 fn request() {
     assert_eq!(
         exported::<Request>(),
-        r#"import type { UdsDtcRequest } from "./UdsDtcRequest"; import type { UdsMemoryRange } from "./UdsMemoryRange"; import type { UdsSubFunction } from "./UdsSubFunction"; export type UdsRequest = { "kind": "diagnostic_session_control", subFunction: UdsSubFunction, } | { "kind": "ecu_reset", subFunction: UdsSubFunction, } | { "kind": "clear_diagnostic_information", group: number, memorySelection: number | null, } | { "kind": "read_dtc_information", report: UdsDtcRequest, suppressPositiveResponse: boolean, } | { "kind": "read_data_by_identifier", dids: Array<number>, } | { "kind": "read_memory_by_address", range: UdsMemoryRange, } | { "kind": "security_access", subFunction: UdsSubFunction, data: Array<number>, } | { "kind": "communication_control", subFunction: UdsSubFunction, communicationType: number, node: number | null, } | { "kind": "write_data_by_identifier", did: number, data: Array<number>, } | { "kind": "input_output_control_by_identifier", did: number, data: Array<number>, } | { "kind": "routine_control", subFunction: UdsSubFunction, routine: number, data: Array<number>, } | { "kind": "request_download", dataFormat: number, range: UdsMemoryRange, } | { "kind": "request_upload", dataFormat: number, range: UdsMemoryRange, } | { "kind": "transfer_data", sequence: number, data: Array<number>, } | { "kind": "request_transfer_exit", data: Array<number>, } | { "kind": "tester_present", subFunction: UdsSubFunction, } | { "kind": "control_dtc_setting", subFunction: UdsSubFunction, data: Array<number>, } | { "kind": "other", service: number, data: Array<number>, };"#
+        r#"import type { UdsDtcRequest } from "./UdsDtcRequest"; import type { UdsMemoryRange } from "./UdsMemoryRange"; import type { UdsSubFunction } from "./UdsSubFunction"; export type UdsRequest = { "kind": "diagnosticSessionControl", subFunction: UdsSubFunction, } | { "kind": "ecuReset", subFunction: UdsSubFunction, } | { "kind": "clearDiagnosticInformation", group: number, memorySelection: number | null, } | { "kind": "readDtcInformation", report: UdsDtcRequest, suppressPositiveResponse: boolean, } | { "kind": "readDataByIdentifier", dids: Array<number>, } | { "kind": "readMemoryByAddress", range: UdsMemoryRange, } | { "kind": "securityAccess", subFunction: UdsSubFunction, data: Array<number>, } | { "kind": "communicationControl", subFunction: UdsSubFunction, communicationType: number, node: number | null, } | { "kind": "writeDataByIdentifier", did: number, data: Array<number>, } | { "kind": "inputOutputControlByIdentifier", did: number, data: Array<number>, } | { "kind": "routineControl", subFunction: UdsSubFunction, routine: number, data: Array<number>, } | { "kind": "requestDownload", dataFormat: number, range: UdsMemoryRange, } | { "kind": "requestUpload", dataFormat: number, range: UdsMemoryRange, } | { "kind": "transferData", sequence: number, data: Array<number>, } | { "kind": "requestTransferExit", data: Array<number>, } | { "kind": "testerPresent", subFunction: UdsSubFunction, } | { "kind": "controlDtcSetting", subFunction: UdsSubFunction, data: Array<number>, } | { "kind": "other", service: number, data: Array<number>, };"#
     );
 }
 
@@ -55,7 +55,7 @@ fn request() {
 fn response() {
     assert_eq!(
         exported::<Response>(),
-        r#"import type { UdsBlockLength } from "./UdsBlockLength"; import type { UdsDtcResponse } from "./UdsDtcResponse"; import type { UdsNrc } from "./UdsNrc"; import type { UdsSessionTiming } from "./UdsSessionTiming"; export type UdsResponse = { "kind": "negative", service: number, code: UdsNrc, } | { "kind": "diagnostic_session_control", session: number, timing: UdsSessionTiming | null, } | { "kind": "ecu_reset", resetType: number, powerDownTime: number | null, } | { "kind": "clear_diagnostic_information" } | { "kind": "read_dtc_information", report: UdsDtcResponse, } | { "kind": "read_data_by_identifier", did: number, data: Array<number>, } | { "kind": "read_memory_by_address", data: Array<number>, } | { "kind": "security_access", subFunction: number, data: Array<number>, } | { "kind": "communication_control", controlType: number, } | { "kind": "write_data_by_identifier", did: number, } | { "kind": "input_output_control_by_identifier", did: number, data: Array<number>, } | { "kind": "routine_control", subFunction: number, routine: number, data: Array<number>, } | { "kind": "request_download", maxBlockLength: UdsBlockLength, } | { "kind": "request_upload", maxBlockLength: UdsBlockLength, } | { "kind": "transfer_data", sequence: number, data: Array<number>, } | { "kind": "request_transfer_exit", data: Array<number>, } | { "kind": "tester_present", subFunction: number, } | { "kind": "control_dtc_setting", setting: number, } | { "kind": "other", service: number, data: Array<number>, };"#
+        r#"import type { UdsBlockLength } from "./UdsBlockLength"; import type { UdsDtcResponse } from "./UdsDtcResponse"; import type { UdsNrc } from "./UdsNrc"; import type { UdsSessionTiming } from "./UdsSessionTiming"; export type UdsResponse = { "kind": "negative", service: number, code: UdsNrc, } | { "kind": "diagnosticSessionControl", session: number, timing: UdsSessionTiming | null, } | { "kind": "ecuReset", resetType: number, powerDownTime: number | null, } | { "kind": "clearDiagnosticInformation" } | { "kind": "readDtcInformation", report: UdsDtcResponse, } | { "kind": "readDataByIdentifier", did: number, data: Array<number>, } | { "kind": "readMemoryByAddress", data: Array<number>, } | { "kind": "securityAccess", subFunction: number, data: Array<number>, } | { "kind": "communicationControl", controlType: number, } | { "kind": "writeDataByIdentifier", did: number, } | { "kind": "inputOutputControlByIdentifier", did: number, data: Array<number>, } | { "kind": "routineControl", subFunction: number, routine: number, data: Array<number>, } | { "kind": "requestDownload", maxBlockLength: UdsBlockLength, } | { "kind": "requestUpload", maxBlockLength: UdsBlockLength, } | { "kind": "transferData", sequence: number, data: Array<number>, } | { "kind": "requestTransferExit", data: Array<number>, } | { "kind": "testerPresent", subFunction: number, } | { "kind": "controlDtcSetting", setting: number, } | { "kind": "other", service: number, data: Array<number>, };"#
     );
 }
 
@@ -95,7 +95,7 @@ fn dtc_status() {
 fn dtc_request() {
     assert_eq!(
         exported::<DtcRequest>(),
-        r#"export type UdsDtcRequest = { "kind": "number_by_status_mask", statusMask: number, } | { "kind": "by_status_mask", statusMask: number, } | { "kind": "snapshot_record_by_dtc", dtc: number, record: number, } | { "kind": "extended_data_record_by_dtc", dtc: number, record: number, } | { "kind": "supported_dtcs" } | { "kind": "other", reportType: number, data: Array<number>, };"#
+        r#"export type UdsDtcRequest = { "kind": "numberByStatusMask", statusMask: number, } | { "kind": "byStatusMask", statusMask: number, } | { "kind": "snapshotRecordByDtc", dtc: number, record: number, } | { "kind": "extendedDataRecordByDtc", dtc: number, record: number, } | { "kind": "supportedDtcs" } | { "kind": "other", reportType: number, data: Array<number>, };"#
     );
 }
 
@@ -103,7 +103,7 @@ fn dtc_request() {
 fn dtc_response() {
     assert_eq!(
         exported::<DtcResponse>(),
-        r#"import type { UdsDtcStatus } from "./UdsDtcStatus"; export type UdsDtcResponse = { "kind": "number_by_status_mask", availabilityMask: number, format: number, count: number, } | { "kind": "by_status_mask", availabilityMask: number, dtcs: Array<UdsDtcStatus>, } | { "kind": "supported_dtcs", availabilityMask: number, dtcs: Array<UdsDtcStatus>, } | { "kind": "other", reportType: number, data: Array<number>, };"#
+        r#"import type { UdsDtcStatus } from "./UdsDtcStatus"; export type UdsDtcResponse = { "kind": "numberByStatusMask", availabilityMask: number, format: number, count: number, } | { "kind": "byStatusMask", availabilityMask: number, dtcs: Array<UdsDtcStatus>, } | { "kind": "supportedDtcs", availabilityMask: number, dtcs: Array<UdsDtcStatus>, } | { "kind": "other", reportType: number, data: Array<number>, };"#
     );
 }
 
@@ -116,7 +116,7 @@ fn nrc() {
 fn safety() {
     assert_eq!(
         exported::<Safety>(),
-        r#"export type UdsSafety = "read_only" | "state_changing" | "destructive";"#
+        r#"export type UdsSafety = "readOnly" | "stateChanging" | "destructive";"#
     );
 }
 
@@ -132,7 +132,7 @@ fn identity() {
 fn detail() {
     assert_eq!(
         exported::<Detail>(),
-        r#"export type UdsDetail = { "kind": "session", session: number, } | { "kind": "reset", resetType: number, } | { "kind": "dtc_group", group: number, } | { "kind": "dtc_report", reportType: number, } | { "kind": "dids", dids: Array<number>, } | { "kind": "memory", address: number, size: number, } | { "kind": "security_access", subFunction: number, } | { "kind": "communication", controlType: number, } | { "kind": "routine", routine: number, subFunction: number, } | { "kind": "block", sequence: number, } | { "kind": "dtc_setting", setting: number, };"#
+        r#"export type UdsDetail = { "kind": "session", session: number, } | { "kind": "reset", resetType: number, } | { "kind": "dtcGroup", group: number, } | { "kind": "dtcReport", reportType: number, } | { "kind": "dids", dids: Array<number>, } | { "kind": "memory", address: number, size: number, } | { "kind": "securityAccess", subFunction: number, } | { "kind": "communication", controlType: number, } | { "kind": "routine", routine: number, subFunction: number, } | { "kind": "block", sequence: number, } | { "kind": "dtcSetting", setting: number, };"#
     );
 }
 
@@ -156,7 +156,7 @@ fn transaction() {
 fn outcome() {
     assert_eq!(
         exported::<Outcome>(),
-        r#"export type UdsOutcome = { "kind": "answered", response: Array<number>, latencyUs: number, } | { "kind": "malformed", response: Array<number>, latencyUs: number, } | { "kind": "suppressed" } | { "kind": "superseded" } | { "kind": "timed_out" } | { "kind": "unfinished" };"#
+        r#"export type UdsOutcome = { "kind": "answered", response: Array<number>, latencyUs: number, } | { "kind": "malformed", response: Array<number>, latencyUs: number, } | { "kind": "suppressed" } | { "kind": "superseded" } | { "kind": "timedOut" } | { "kind": "unfinished" };"#
     );
 }
 
@@ -180,7 +180,7 @@ fn scan_progress() {
 fn service_verdict() {
     assert_eq!(
         exported::<ServiceVerdict>(),
-        r#"import type { UdsNrc } from "./UdsNrc"; export type UdsServiceVerdict = { "kind": "present", code: UdsNrc, } | { "kind": "absent" } | { "kind": "not_in_session" } | { "kind": "busy" } | { "kind": "executed" } | { "kind": "inconclusive" };"#
+        r#"import type { UdsNrc } from "./UdsNrc"; export type UdsServiceVerdict = { "kind": "present", code: UdsNrc, } | { "kind": "absent" } | { "kind": "notInSession" } | { "kind": "busy" } | { "kind": "executed" } | { "kind": "inconclusive" };"#
     );
 }
 
@@ -196,7 +196,7 @@ fn service_finding() {
 fn did_verdict() {
     assert_eq!(
         exported::<DidVerdict>(),
-        r#"import type { UdsNrc } from "./UdsNrc"; export type UdsDidVerdict = { "kind": "present", length: number, } | { "kind": "absent" } | { "kind": "locked" } | { "kind": "not_in_session" } | { "kind": "busy" } | { "kind": "inconclusive", code: UdsNrc | null, };"#
+        r#"import type { UdsNrc } from "./UdsNrc"; export type UdsDidVerdict = { "kind": "present", length: number, } | { "kind": "absent" } | { "kind": "locked" } | { "kind": "notInSession" } | { "kind": "busy" } | { "kind": "inconclusive", code: UdsNrc | null, };"#
     );
 }
 
@@ -213,7 +213,7 @@ fn did_finding() {
 fn session_verdict() {
     assert_eq!(
         exported::<wslib_uds::SessionVerdict>(),
-        r#"import type { UdsNrc } from "./UdsNrc"; import type { UdsSessionTiming } from "./UdsSessionTiming"; export type UdsSessionVerdict = { "kind": "supported", timing: UdsSessionTiming | null, } | { "kind": "unsupported" } | { "kind": "not_from_this_session" } | { "kind": "conditions_not_correct" } | { "kind": "locked" } | { "kind": "busy" } | { "kind": "inconclusive", code: UdsNrc | null, } | { "kind": "not_restored", code: UdsNrc | null, };"#
+        r#"import type { UdsNrc } from "./UdsNrc"; import type { UdsSessionTiming } from "./UdsSessionTiming"; export type UdsSessionVerdict = { "kind": "supported", timing: UdsSessionTiming | null, } | { "kind": "unsupported" } | { "kind": "notFromThisSession" } | { "kind": "conditionsNotCorrect" } | { "kind": "locked" } | { "kind": "busy" } | { "kind": "inconclusive", code: UdsNrc | null, } | { "kind": "notRestored", code: UdsNrc | null, };"#
     );
 }
 

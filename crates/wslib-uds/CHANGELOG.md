@@ -41,3 +41,4 @@
 - `testing`: `testing::Ecu`, a simulated ECU that refuses in the standard's
   order.
 - `ts`: TypeScript declarations for the data types.
+- Serialised fields and variant values are camelCase.

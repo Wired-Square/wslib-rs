@@ -153,7 +153,7 @@ impl AddressScan {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsServiceVerdict"))]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "camelCase")]
 #[serde(rename_all_fields = "camelCase")]
 pub enum ServiceVerdict {
     /// `code` is the refusal that proved it.
@@ -284,7 +284,7 @@ impl ServiceScan {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsDidVerdict"))]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "camelCase")]
 #[serde(rename_all_fields = "camelCase")]
 pub enum DidVerdict {
     Present {
@@ -406,7 +406,7 @@ mod session {
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
     #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsSessionVerdict"))]
-    #[serde(tag = "kind", rename_all = "snake_case")]
+    #[serde(tag = "kind", rename_all = "camelCase")]
     #[serde(rename_all_fields = "camelCase")]
     pub enum SessionVerdict {
         /// `timing` is `None` when the answer did not report one or failed strict decoding.

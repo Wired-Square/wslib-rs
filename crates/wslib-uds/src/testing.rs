@@ -256,7 +256,7 @@ impl Ecu {
             Request::CommunicationControl { sub_function, .. } => Response::CommunicationControl {
                 control_type: sub_function.value(),
             },
-            Request::WriteDataByIdentifier { did, data } => self.write_did(did, data)?,
+            Request::WriteDataByIdentifier { did, data } => self.write_did(did, data.into_vec())?,
             Request::RoutineControl {
                 sub_function,
                 routine,

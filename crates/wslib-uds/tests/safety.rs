@@ -1,5 +1,5 @@
 use wslib_uds::Safety::{Destructive, ReadOnly, StateChanging};
-use wslib_uds::{ReadOnly as ReadOnlyRequest, Request, Safety, SubFunction, sid};
+use wslib_uds::{NonEmpty, ReadOnly as ReadOnlyRequest, Request, Safety, SubFunction, sid};
 
 #[test]
 fn safety_is_ordered_read_only_state_changing_destructive() {
@@ -121,11 +121,13 @@ fn a_typed_request_has_the_class_of_its_bytes() {
 
 #[test]
 fn the_read_only_wrapper_refuses_any_other_class() {
-    let read = Request::ReadDataByIdentifier { dids: vec![0xF190] };
+    let read = Request::ReadDataByIdentifier {
+        dids: NonEmpty::one(0xF190),
+    };
     assert_eq!(ReadOnlyRequest::new(read.clone()).unwrap().request(), &read);
     let write = Request::WriteDataByIdentifier {
         did: 0xF190,
-        data: vec![0],
+        data: NonEmpty::one(0),
     };
     let refused = ReadOnlyRequest::new(write.clone()).unwrap_err();
     assert_eq!(refused.safety, Destructive);

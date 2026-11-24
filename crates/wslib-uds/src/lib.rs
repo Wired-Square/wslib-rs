@@ -37,12 +37,15 @@ pub use client::SendError;
 pub use client::{Busy, Client, Event, Timing};
 pub use codec::{
     BlockLength, DEFAULT_SESSION, DecodeError, Dtc, DtcRequest, DtcResponse, DtcStatus,
-    EXTENDED_SESSION, InvalidReportType, InvalidWidth, MemoryRange, OtherReportType,
-    PROGRAMMING_SESSION, Request, Response, SessionTiming, SubFunction,
+    EXTENDED_SESSION, EmptyList, InvalidReportType, InvalidWidth, MemoryRange, NonEmpty,
+    OtherReportType, OtherResponseReportType, PROGRAMMING_SESSION, Request, Response,
+    SessionTiming, SubFunction,
 };
 pub use identify::{Detail, Identity, identify};
 pub use nrc::Nrc;
-pub use pairing::{DEFAULT_TIMEOUT_US, Observed, Outcome, Sender, Tracker, Transaction};
+pub use pairing::{
+    DEFAULT_TIMEOUT_US, MAX_OPEN_REQUESTS, Observed, Outcome, Sender, Tracker, Transaction,
+};
 pub use safety::{NotReadOnly, ReadOnly, Safety};
 pub use scan::{
     AddressProbe, AddressScan, DEFAULT_BUSY_RETRIES, DidFinding, DidProbe, DidScan, DidVerdict,

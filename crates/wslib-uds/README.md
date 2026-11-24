@@ -22,15 +22,17 @@ S3 timers. It hands back bytes to send and turns received bytes into events;
 responsePending answers; `abandon` gives up on the outstanding request. A
 session change or ECU reset that goes unanswered locks security and leaves
 `session()` `None`, with no keep-alive, until an answer says which session it
-is or S3 returns the server to the default one. No timing panics: a wait too
-long for an `Instant` to hold never ends.
+is or S3 returns the server to the default one; so does a suppressed
+SecurityAccess that draws no refusal, for security. No timing panics: a wait
+too long for an `Instant` to hold never ends, and a keep-alive interval of
+zero sends none.
 
 ```rust
 use std::time::Instant;
-use wslib_uds::{Client, Event, ReadOnly, Request, Timing};
+use wslib_uds::{Client, Event, NonEmpty, ReadOnly, Request, Timing};
 
 let mut client = Client::new(Timing::default());
-let read = ReadOnly::new(Request::ReadDataByIdentifier { dids: vec![0xF190] })?;
+let read = ReadOnly::new(Request::ReadDataByIdentifier { dids: NonEmpty::one(0xF190) })?;
 link.send(&client.send_read_only(read, Instant::now())?)?;
 match client.receive(&link.recv()?, Instant::now()) {
     Event::Positive(response) => println!("{response:?}"),
@@ -64,8 +66,10 @@ for finding in scan.findings() {
 - Codec: services 0x10, 0x11, 0x14, 0x19, 0x22, 0x23, 0x27, 0x28, 0x2E, 0x2F,
   0x31, 0x34, 0x35, 0x36, 0x37, 0x3E and 0x85 typed, any other kept as its
   service id and bytes; negative responses; the suppress-positive-response
-  bit apart from the sub-function. `sid::name`, `Nrc::name` and `identify`
-  label them.
+  bit apart from the sub-function. A value that would not decode back to
+  itself cannot be built: a DTC over 24 bits, an untyped report type that is
+  a typed one, an empty DID list or write. `sid::name`, `Nrc::name` and
+  `identify` label them.
 - `answers(request, response)`: whether a response is the positive or
   negative answer to a request, by service id and the echoed DID, routine or
   sub-function. The client, the tracker and the scans all match this way.
@@ -74,7 +78,9 @@ for finding in scan.findings() {
 - `Tracker` pairs a capture's requests and responses, counting
   responsePending answers and timing each; a keep-alive tester present does
   not disturb a request still owed a response, and a request that suppressed
-  its positive response stays open to the timeout for a late refusal.
+  its positive response stays open to the timeout for a late refusal. A
+  response goes to the newest open request it answers that is owed one, and
+  at most `MAX_OPEN_REQUESTS` stay open.
 - Scans: `AddressScan` (tester present per candidate id), `ServiceScan` (bare
   service ids: the read-only ones, or with `write` up to a class the caller
   names; it stops if a bare id above read-only is acted on), `DidScan`, and

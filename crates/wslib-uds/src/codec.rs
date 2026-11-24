@@ -133,6 +133,59 @@ impl From<Dtc> for u32 {
     }
 }
 
+/// An empty list where a request needs at least one item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("an empty list where at least one item is needed")]
+pub struct EmptyList;
+
+/// At least one item; serialised as an ordinary array.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "Vec<T>", into = "Vec<T>")]
+#[serde(bound(
+    serialize = "T: Serialize + Clone",
+    deserialize = "T: Deserialize<'de>"
+))]
+pub struct NonEmpty<T>(Vec<T>);
+
+impl<T> NonEmpty<T> {
+    pub fn new(items: Vec<T>) -> Result<Self, EmptyList> {
+        if items.is_empty() {
+            return Err(EmptyList);
+        }
+        Ok(Self(items))
+    }
+
+    pub fn one(item: T) -> Self {
+        Self(vec![item])
+    }
+
+    pub fn into_vec(self) -> Vec<T> {
+        self.0
+    }
+}
+
+impl<T> std::ops::Deref for NonEmpty<T> {
+    type Target = [T];
+
+    fn deref(&self) -> &[T] {
+        &self.0
+    }
+}
+
+impl<T> TryFrom<Vec<T>> for NonEmpty<T> {
+    type Error = EmptyList;
+
+    fn try_from(items: Vec<T>) -> Result<Self, EmptyList> {
+        Self::new(items)
+    }
+}
+
+impl<T> From<NonEmpty<T>> for Vec<T> {
+    fn from(items: NonEmpty<T>) -> Vec<T> {
+        items.0
+    }
+}
+
 /// An address and a size, each big-endian over 1 to 8 bytes, as an
 /// addressAndLengthFormatIdentifier lays them out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -289,9 +342,9 @@ pub struct DtcStatus {
     pub status: u8,
 }
 
-/// A report type over 0x7F, or one with its own [`DtcRequest`] variant.
+/// A report type with its own variant, or a request's over 0x7F.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("a report type over 0x7F, or one with its own variant")]
+#[error("a report type with its own variant, or a request's over 0x7F")]
 pub struct InvalidReportType;
 
 /// A ReadDTCInformation report type with no variant of its own.
@@ -407,6 +460,43 @@ impl DtcRequest {
     }
 }
 
+/// A ReadDTCInformation response's report type with no variant of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "ts",
+    derive(ts_rs::TS),
+    ts(rename = "UdsOtherResponseReportType")
+)]
+#[serde(try_from = "u8", into = "u8")]
+pub struct OtherResponseReportType(u8);
+
+impl OtherResponseReportType {
+    pub const fn new(value: u8) -> Result<Self, InvalidReportType> {
+        match value {
+            0x01 | 0x02 | 0x0A => Err(InvalidReportType),
+            _ => Ok(Self(value)),
+        }
+    }
+
+    pub const fn value(self) -> u8 {
+        self.0
+    }
+}
+
+impl TryFrom<u8> for OtherResponseReportType {
+    type Error = InvalidReportType;
+
+    fn try_from(value: u8) -> Result<Self, InvalidReportType> {
+        Self::new(value)
+    }
+}
+
+impl From<OtherResponseReportType> for u8 {
+    fn from(report_type: OtherResponseReportType) -> u8 {
+        report_type.0
+    }
+}
+
 /// A ReadDTCInformation positive response by its report type; the common ones typed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsDtcResponse"))]
@@ -427,7 +517,7 @@ pub enum DtcResponse {
         dtcs: Vec<DtcStatus>,
     },
     Other {
-        report_type: u8,
+        report_type: OtherResponseReportType,
         data: Vec<u8>,
     },
 }
@@ -438,7 +528,7 @@ impl DtcResponse {
             Self::NumberByStatusMask { .. } => 0x01,
             Self::ByStatusMask { .. } => 0x02,
             Self::SupportedDtcs { .. } => 0x0A,
-            Self::Other { report_type, .. } => *report_type,
+            Self::Other { report_type, .. } => report_type.0,
         }
     }
 
@@ -459,7 +549,7 @@ impl DtcResponse {
                 dtcs: r.dtcs()?,
             },
             _ => Self::Other {
-                report_type,
+                report_type: OtherResponseReportType(report_type),
                 data: r.rest(),
             },
         })
@@ -516,7 +606,8 @@ pub enum Request {
         suppress_positive_response: bool,
     },
     ReadDataByIdentifier {
-        dids: Vec<u16>,
+        #[cfg_attr(feature = "ts", ts(as = "Vec<u16>"))]
+        dids: NonEmpty<u16>,
     },
     ReadMemoryByAddress {
         range: MemoryRange,
@@ -532,11 +623,13 @@ pub enum Request {
     },
     WriteDataByIdentifier {
         did: u16,
-        data: Vec<u8>,
+        #[cfg_attr(feature = "ts", ts(as = "Vec<u8>"))]
+        data: NonEmpty<u8>,
     },
     InputOutputControlByIdentifier {
         did: u16,
-        data: Vec<u8>,
+        #[cfg_attr(feature = "ts", ts(as = "Vec<u8>"))]
+        data: NonEmpty<u8>,
     },
     RoutineControl {
         sub_function: SubFunction,
@@ -565,6 +658,8 @@ pub enum Request {
         sub_function: SubFunction,
         data: Vec<u8>,
     },
+    /// For a service this crate does not model; one it models decodes as its
+    /// own variant.
     Other {
         service: u8,
         data: Vec<u8>,
@@ -597,11 +692,9 @@ impl Request {
                 let (dids, []) = std::mem::take(&mut r.rest).as_chunks::<2>() else {
                     return Err(DecodeError::Length(service));
                 };
-                if dids.is_empty() {
-                    return Err(DecodeError::Length(service));
-                }
+                let dids = dids.iter().map(|d| u16::from_be_bytes(*d)).collect();
                 Self::ReadDataByIdentifier {
-                    dids: dids.iter().map(|d| u16::from_be_bytes(*d)).collect(),
+                    dids: NonEmpty::new(dids).map_err(|EmptyList| DecodeError::Length(service))?,
                 }
             }
             sid::READ_MEMORY_BY_ADDRESS => Self::ReadMemoryByAddress {
@@ -704,7 +797,7 @@ impl Request {
             Self::WriteDataByIdentifier { did, data }
             | Self::InputOutputControlByIdentifier { did, data } => {
                 out.extend(did.to_be_bytes());
-                out.extend(data);
+                out.extend_from_slice(data);
             }
             Self::RoutineControl {
                 sub_function,
@@ -832,7 +925,8 @@ pub enum Response {
     ControlDtcSetting {
         setting: u8,
     },
-    /// `service` is the response's own first byte.
+    /// For a service this crate does not model, one it models decoding as its
+    /// own variant; `service` is the response's own first byte.
     Other {
         service: u8,
         data: Vec<u8>,
@@ -1029,7 +1123,7 @@ impl<'a> Reader<'a> {
         Ok(u16::from_be_bytes([b[0], b[1]]))
     }
 
-    fn dtc(&mut self) -> Result<Dtc, DecodeError> {
+    pub(crate) fn dtc(&mut self) -> Result<Dtc, DecodeError> {
         let b = self.take(3)?;
         Ok(Dtc(u32::from_be_bytes([0, b[0], b[1], b[2]])))
     }
@@ -1079,11 +1173,9 @@ impl<'a> Reader<'a> {
         std::mem::take(&mut self.rest).to_vec()
     }
 
-    fn non_empty_rest(&mut self) -> Result<Vec<u8>, DecodeError> {
-        if self.rest.is_empty() {
-            return Err(DecodeError::Length(self.service));
-        }
-        Ok(self.rest())
+    fn non_empty_rest(&mut self) -> Result<NonEmpty<u8>, DecodeError> {
+        let service = self.service;
+        NonEmpty::new(self.rest()).map_err(|EmptyList| DecodeError::Length(service))
     }
 
     fn end(&self) -> Result<(), DecodeError> {

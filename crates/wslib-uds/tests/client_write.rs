@@ -2,8 +2,8 @@ use std::time::{Duration, Instant};
 
 use wslib_uds::testing::{Did, Ecu};
 use wslib_uds::{
-    Client, DEFAULT_SESSION, EXTENDED_SESSION, Event, Request, Safety, SendError, SubFunction,
-    Timing,
+    Client, DEFAULT_SESSION, EXTENDED_SESSION, Event, NonEmpty, Request, Safety, SendError,
+    SubFunction, Timing,
 };
 
 fn ms(n: u64) -> Duration {
@@ -116,7 +116,7 @@ fn a_write_reaches_the_ecu_once_unlocked() {
     let t0 = Instant::now();
     let write = Request::WriteDataByIdentifier {
         did: 0x0100,
-        data: vec![0xAB, 0xCD],
+        data: NonEmpty::new(vec![0xAB, 0xCD]).unwrap(),
     };
     exchange(&mut client, &mut ecu, session(EXTENDED_SESSION), t0);
     assert!(matches!(
@@ -445,6 +445,84 @@ fn no_timing_however_long_panics_and_a_wait_too_long_to_represent_never_ends() {
 }
 
 #[test]
+fn the_keep_alives_final_answer_after_response_pending_is_the_keep_alives() {
+    let t0 = Instant::now();
+    let mut client = in_extended_session(t0);
+    let keep_alive_at = t0 + ms(2000);
+    client.poll(keep_alive_at);
+    let tester_present = Request::TesterPresent {
+        sub_function: SubFunction::new(0),
+    };
+    client.send(tester_present, keep_alive_at + ms(5)).unwrap();
+    assert_eq!(
+        client.receive(&[0x7F, 0x3E, 0x78], keep_alive_at + ms(10)),
+        Event::KeepAlivePending
+    );
+    assert_eq!(
+        client.receive(&[0x7E, 0x00], keep_alive_at + ms(100)),
+        Event::KeepAliveAnswered
+    );
+    assert!(client.is_busy());
+    assert!(matches!(
+        client.receive(&[0x7E, 0x00], keep_alive_at + ms(110)),
+        Event::Positive(_)
+    ));
+}
+
+#[test]
+fn once_the_keep_alive_drew_response_pending_a_tester_present_from_the_caller_ends_its_window() {
+    let t0 = Instant::now();
+    let mut client = in_extended_session(t0);
+    let keep_alive_at = t0 + ms(2000);
+    client.poll(keep_alive_at);
+    client.receive(&[0x7F, 0x3E, 0x78], keep_alive_at + ms(10));
+    let tester_present = Request::TesterPresent {
+        sub_function: SubFunction::new(0),
+    };
+    client.send(tester_present, keep_alive_at + ms(20)).unwrap();
+    assert_eq!(
+        client.receive(&[0x7F, 0x3E, 0x12], keep_alive_at + ms(30)),
+        Event::Negative {
+            service: 0x3E,
+            code: wslib_uds::Nrc::SUB_FUNCTION_NOT_SUPPORTED
+        }
+    );
+}
+
+#[test]
+fn a_zero_keep_alive_interval_sends_no_keep_alive() {
+    let timing = Timing {
+        keep_alive: Some(Duration::ZERO),
+        ..Timing::default()
+    };
+    let mut client = writer(timing);
+    let t0 = Instant::now();
+    client.send(session(EXTENDED_SESSION), t0).unwrap();
+    client.receive(&[0x50, 0x03, 0x00, 0x32, 0x01, 0xF4], t0);
+    assert_eq!(client.poll(t0), None);
+    assert_eq!(client.next_deadline(), Some(t0 + timing.s3));
+}
+
+#[test]
+fn a_suppressed_security_access_that_draws_no_refusal_locks_security() {
+    let timing = Timing::default();
+    let mut ecu = unlocking_ecu();
+    let mut client = writer(timing);
+    let t0 = Instant::now();
+    unlock(&mut client, &mut ecu, t0);
+    let key = Request::SecurityAccess {
+        sub_function: SubFunction::suppressed(0x02),
+        data: vec![!0x12, !0x34],
+    };
+    client.send(key, t0).unwrap();
+    assert_eq!(
+        client.poll(t0 + timing.p2 + timing.margin),
+        Some(Event::Suppressed { service: 0x27 })
+    );
+    assert_eq!(client.security_level(), None);
+}
+
+#[test]
 fn a_tester_present_refusal_after_the_keep_alive_window_is_unexpected() {
     let t0 = Instant::now();
     let mut client = in_extended_session(t0);
@@ -564,7 +642,7 @@ fn a_state_changing_ceiling_refuses_destructive_and_vendor_requests_and_keeps_th
     exchange(&mut client, &mut ecu, session(EXTENDED_SESSION), t0);
     let write = Request::WriteDataByIdentifier {
         did: 0x0100,
-        data: vec![0xAB],
+        data: NonEmpty::one(0xAB),
     };
     let vendor = Request::Other {
         service: 0xBA,

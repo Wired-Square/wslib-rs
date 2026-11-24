@@ -5,8 +5,9 @@ use ts_rs::{Config, TS};
 
 use wslib_uds::{
     Answer, BlockLength, Detail, DidFinding, DidVerdict, Dtc, DtcRequest, DtcResponse, DtcStatus,
-    Identity, MemoryRange, Nrc, Observed, OtherReportType, Outcome, Request, Response, Safety,
-    ScanProgress, Sender, ServiceFinding, ServiceVerdict, SessionTiming, SubFunction, Transaction,
+    Identity, MemoryRange, Nrc, Observed, OtherReportType, OtherResponseReportType, Outcome,
+    Request, Response, Safety, ScanProgress, Sender, ServiceFinding, ServiceVerdict, SessionTiming,
+    SubFunction, Transaction,
 };
 
 #[test]
@@ -97,6 +98,14 @@ fn other_report_type() {
 }
 
 #[test]
+fn other_response_report_type() {
+    assert_eq!(
+        exported::<OtherResponseReportType>(),
+        "export type UdsOtherResponseReportType = number;"
+    );
+}
+
+#[test]
 fn dtc_status() {
     assert_eq!(
         exported::<DtcStatus>(),
@@ -116,7 +125,7 @@ fn dtc_request() {
 fn dtc_response() {
     assert_eq!(
         exported::<DtcResponse>(),
-        r#"import type { UdsDtcStatus } from "./UdsDtcStatus"; export type UdsDtcResponse = { "kind": "numberByStatusMask", availabilityMask: number, format: number, count: number, } | { "kind": "byStatusMask", availabilityMask: number, dtcs: Array<UdsDtcStatus>, } | { "kind": "supportedDtcs", availabilityMask: number, dtcs: Array<UdsDtcStatus>, } | { "kind": "other", reportType: number, data: Array<number>, };"#
+        r#"import type { UdsDtcStatus } from "./UdsDtcStatus"; import type { UdsOtherResponseReportType } from "./UdsOtherResponseReportType"; export type UdsDtcResponse = { "kind": "numberByStatusMask", availabilityMask: number, format: number, count: number, } | { "kind": "byStatusMask", availabilityMask: number, dtcs: Array<UdsDtcStatus>, } | { "kind": "supportedDtcs", availabilityMask: number, dtcs: Array<UdsDtcStatus>, } | { "kind": "other", reportType: UdsOtherResponseReportType, data: Array<number>, };"#
     );
 }
 
@@ -145,7 +154,7 @@ fn identity() {
 fn detail() {
     assert_eq!(
         exported::<Detail>(),
-        r#"export type UdsDetail = { "kind": "session", session: number, } | { "kind": "reset", resetType: number, } | { "kind": "dtcGroup", group: number, } | { "kind": "dtcReport", reportType: number, } | { "kind": "dids", dids: Array<number>, } | { "kind": "memory", address: number, size: number, } | { "kind": "securityAccess", subFunction: number, } | { "kind": "communication", controlType: number, } | { "kind": "routine", routine: number, subFunction: number, } | { "kind": "block", sequence: number, } | { "kind": "dtcSetting", setting: number, };"#
+        r#"import type { UdsDtc } from "./UdsDtc"; export type UdsDetail = { "kind": "session", session: number, } | { "kind": "reset", resetType: number, } | { "kind": "dtcGroup", group: UdsDtc, } | { "kind": "dtcReport", reportType: number, } | { "kind": "dids", dids: Array<number>, } | { "kind": "memory", address: number, size: number, } | { "kind": "securityAccess", subFunction: number, } | { "kind": "communication", controlType: number, } | { "kind": "routine", routine: number, subFunction: number, } | { "kind": "block", sequence: number, } | { "kind": "dtcSetting", setting: number, };"#
     );
 }
 

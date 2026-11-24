@@ -6,7 +6,7 @@ use std::ops::RangeInclusive;
 
 use serde::{Deserialize, Serialize};
 
-use crate::codec::SubFunction;
+use crate::codec::{NonEmpty, SubFunction};
 use crate::{Answer, Nrc, ReadOnly, Request, Safety, answers, sid};
 
 /// How many times a plan re-offers a probe answered busyRepeatRequest.
@@ -320,7 +320,7 @@ pub struct DidProbe {
 impl DidProbe {
     pub fn request(&self) -> ReadOnly {
         let read = Request::ReadDataByIdentifier {
-            dids: vec![self.did],
+            dids: NonEmpty::one(self.did),
         };
         ReadOnly::new(read).expect("ReadDataByIdentifier is read-only")
     }

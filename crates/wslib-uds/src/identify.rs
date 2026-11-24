@@ -2,7 +2,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::codec::{MemoryRange, Reader};
+use crate::codec::{Dtc, MemoryRange, Reader};
 use crate::sid;
 
 /// A request named from its leading bytes.
@@ -27,7 +27,7 @@ pub enum Detail {
         reset_type: u8,
     },
     DtcGroup {
-        group: u32,
+        group: Dtc,
     },
     DtcReport {
         report_type: u8,
@@ -67,9 +67,10 @@ pub fn identify(request: &[u8]) -> Option<Identity> {
     let detail = match service {
         sid::DIAGNOSTIC_SESSION_CONTROL => sub.map(|session| Detail::Session { session }),
         sid::ECU_RESET => sub.map(|reset_type| Detail::Reset { reset_type }),
-        sid::CLEAR_DIAGNOSTIC_INFORMATION => rest.get(..3).map(|b| Detail::DtcGroup {
-            group: u32::from_be_bytes([0, b[0], b[1], b[2]]),
-        }),
+        sid::CLEAR_DIAGNOSTIC_INFORMATION => {
+            let group = Reader { service, rest }.dtc().ok();
+            group.map(|group| Detail::DtcGroup { group })
+        }
         sid::READ_DTC_INFORMATION => sub.map(|report_type| Detail::DtcReport { report_type }),
         sid::READ_DATA_BY_IDENTIFIER => {
             let dids: Vec<u16> = rest.as_chunks::<2>().0.iter().map(|d| did(d)).collect();
@@ -123,7 +124,7 @@ impl fmt::Display for Detail {
         match self {
             Self::Session { session } => write!(f, "session 0x{session:02X}"),
             Self::Reset { reset_type } => write!(f, "reset 0x{reset_type:02X}"),
-            Self::DtcGroup { group } => write!(f, "group 0x{group:06X}"),
+            Self::DtcGroup { group } => write!(f, "group 0x{:06X}", group.value()),
             Self::DtcReport { report_type } => write!(f, "report 0x{report_type:02X}"),
             Self::Dids { dids } => {
                 f.write_str(if dids.len() == 1 { "DID" } else { "DIDs" })?;

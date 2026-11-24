@@ -62,29 +62,37 @@ fn a_service_scan_up_to_destructive_tells_present_absent_and_not_in_session_apar
 
 #[test]
 fn a_scan_through_a_client_sends_only_up_to_the_lower_of_the_two_ceilings() {
-    let mut ecu = Ecu::new();
-    let mut client = Client::up_to(Timing::default(), Safety::StateChanging);
-    let mut scan = ServiceScan::up_to(Safety::Destructive);
-    let now = Instant::now();
-    let mut sent = Vec::new();
-    while let Some(probe) = scan.next_probe() {
-        let reply = match client.send(probe.request(), now) {
-            Ok(bytes) => {
-                sent.push(bytes[0]);
-                let reply = ecu.answer(&bytes).pop();
-                client.abandon(now);
-                reply
-            }
-            Err(SendError::AboveCeiling { .. }) => None,
-            Err(SendError::Busy) => unreachable!(),
-        };
-        scan.report(reply.as_deref());
-    }
     let state_changing: Vec<u8> = probed(ServiceScan::up_to(Safety::StateChanging))
         .into_iter()
         .map(|(s, _)| s)
         .collect();
-    assert_eq!(sent, state_changing);
+    for (scan_ceiling, client_ceiling) in [
+        (Safety::Destructive, Safety::StateChanging),
+        (Safety::StateChanging, Safety::Destructive),
+    ] {
+        let mut ecu = Ecu::new();
+        let mut client = Client::up_to(Timing::default(), client_ceiling);
+        let mut scan = ServiceScan::up_to(scan_ceiling);
+        let now = Instant::now();
+        let mut sent = Vec::new();
+        while let Some(probe) = scan.next_probe() {
+            let mut reply = None;
+            match client.send(probe.request(), now) {
+                Ok(bytes) => {
+                    sent.push(bytes[0]);
+                    for answer in ecu.answer(&bytes) {
+                        client.receive(&answer, now);
+                        reply = Some(answer);
+                    }
+                    assert!(!client.is_busy());
+                }
+                Err(SendError::AboveCeiling { .. }) => {}
+                Err(SendError::Busy) => unreachable!(),
+            }
+            scan.report(reply.as_deref());
+        }
+        assert_eq!(sent, state_changing);
+    }
 }
 
 #[test]

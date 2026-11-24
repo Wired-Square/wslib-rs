@@ -1,5 +1,7 @@
 use wslib_uds::testing::{Did, Ecu};
-use wslib_uds::{DEFAULT_TIMEOUT_US, Observed, Outcome, Sender, Tracker, Transaction};
+use wslib_uds::{
+    DEFAULT_TIMEOUT_US, MAX_OPEN_REQUESTS, Observed, Outcome, Sender, Tracker, Transaction,
+};
 
 fn transaction(observed: impl IntoIterator<Item = Observed>) -> Transaction {
     let observed: Vec<Observed> = observed.into_iter().collect();
@@ -125,6 +127,56 @@ fn a_suppressed_request_stays_open_to_its_timeout_so_a_late_refusal_still_pairs_
         !seen
             .iter()
             .any(|o| matches!(o, Observed::Unsolicited { .. }))
+    );
+}
+
+#[test]
+fn a_response_pairs_with_the_newest_request_owed_one_before_any_suppressed_one() {
+    let mut tracker = Tracker::new();
+    tracker.observe(Sender::Tester, &[0x85, 0x82], 0);
+    tracker.observe(Sender::Tester, &[0x85, 0x01], 100_000);
+    let t = transaction(tracker.observe(Sender::Ecu, &[0x7F, 0x85, 0x22], 110_000));
+    assert_eq!(t.request, [0x85, 0x01]);
+
+    let mut tracker = Tracker::new();
+    tracker.observe(Sender::Tester, &[0x10, 0x83], 0);
+    tracker.observe(Sender::Tester, &[0x10, 0x03], 100_000);
+    assert!(
+        tracker
+            .observe(Sender::Ecu, &[0x7F, 0x10, 0x78], 110_000)
+            .is_empty()
+    );
+    let session = [0x50, 0x03, 0x00, 0x32, 0x01, 0xF4];
+    let t = transaction(tracker.observe(Sender::Ecu, &session, 200_000));
+    assert_eq!(t.request, [0x10, 0x03]);
+    assert_eq!(t.pending_responses, 1);
+}
+
+#[test]
+fn of_two_suppressed_requests_to_one_service_a_refusal_pairs_with_the_newer() {
+    let mut tracker = Tracker::new();
+    tracker.observe(Sender::Tester, &[0x85, 0x82], 0);
+    tracker.observe(Sender::Tester, &[0x85, 0x81], 100_000);
+    let t = transaction(tracker.observe(Sender::Ecu, &[0x7F, 0x85, 0x22], 110_000));
+    assert_eq!(t.request, [0x85, 0x81]);
+}
+
+#[test]
+fn the_open_requests_are_capped_by_closing_the_oldest_suppressed_one() {
+    let mut tracker = Tracker::new().with_timeout_us(u64::MAX);
+    let mut closed = Vec::new();
+    for i in 0..1_000 {
+        closed.extend(tracker.observe(Sender::Tester, &[0x3E, 0x80], 1_000_000 - i));
+    }
+    let still_open = tracker.finish();
+    assert_eq!(still_open.len(), MAX_OPEN_REQUESTS);
+    assert_eq!(closed.len() + still_open.len(), 1_000);
+    let Observed::Transaction(oldest) = &closed[0] else {
+        panic!("{:?}", closed[0])
+    };
+    assert_eq!(
+        (oldest.requested_at_us, &oldest.outcome),
+        (1_000_000, &Outcome::Superseded)
     );
 }
 

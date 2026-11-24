@@ -2,11 +2,15 @@ use std::time::{Duration, Instant};
 
 use wslib_uds::testing::{Did, Ecu};
 use wslib_uds::{
-    Busy, Client, DEFAULT_SESSION, Event, Nrc, ReadOnly, Request, Response, SubFunction, Timing,
+    Busy, Client, DEFAULT_SESSION, Event, NonEmpty, Nrc, ReadOnly, Request, Response, SubFunction,
+    Timing,
 };
 
 fn read(did: u16) -> ReadOnly {
-    ReadOnly::new(Request::ReadDataByIdentifier { dids: vec![did] }).unwrap()
+    ReadOnly::new(Request::ReadDataByIdentifier {
+        dids: NonEmpty::one(did),
+    })
+    .unwrap()
 }
 
 fn ms(n: u64) -> Duration {

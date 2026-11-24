@@ -71,6 +71,10 @@ pub enum Observed {
 /// P2* at its usual 5 s, so a request quiet that long after its last answer is over.
 pub const DEFAULT_TIMEOUT_US: u64 = 5_000_000;
 
+/// How many requests a [`Tracker`] holds open; a new one beyond it supersedes
+/// the oldest, which can only be a suppressed request still within its timeout.
+pub const MAX_OPEN_REQUESTS: usize = 32;
+
 #[derive(Debug, Clone)]
 pub struct Tracker {
     timeout_us: u64,
@@ -143,10 +147,12 @@ impl Tracker {
     /// Feeds one message, first ending the open requests that `at_us` shows
     /// have timed out; an empty message is ignored. A new request supersedes
     /// any request owed a response; one that suppressed its positive response
-    /// stays open to its timeout, so a late refusal still pairs with it. A
-    /// suppressed tester present while a request is owed a response is a
-    /// keep-alive: it is reported at once as suppressed and leaves the open
-    /// requests alone.
+    /// stays open to its timeout, so a late refusal still pairs with it, until
+    /// [`MAX_OPEN_REQUESTS`] newer ones supersede it. A response goes to the
+    /// newest open request it answers that is owed one, or failing that to
+    /// the newest suppressed one. A suppressed tester present while a request
+    /// is owed a response is a keep-alive: it is reported at once as
+    /// suppressed and leaves the open requests alone.
     pub fn observe(&mut self, sender: Sender, message: &[u8], at_us: u64) -> Vec<Observed> {
         if message.is_empty() {
             return Vec::new();
@@ -185,27 +191,30 @@ impl Tracker {
     }
 
     fn request(&mut self, open: Open) -> Vec<Observed> {
-        let superseded = self
+        let mut superseded: Vec<Observed> = self
             .open
             .extract_if(.., |o| o.owed_a_response())
             .map(|o| o.close(Outcome::Superseded))
             .collect();
+        if self.open.len() == MAX_OPEN_REQUESTS {
+            superseded.push(self.open.remove(0).close(Outcome::Superseded));
+        }
         self.open.push(open);
         superseded
     }
 
-    /// The oldest open request this answers, preferring one that may draw
-    /// it: a suppressed request draws a positive answer only after a
-    /// responsePending.
+    /// The newest open request this answers that is owed a response, or
+    /// failing that the newest suppressed one it answers.
     fn answered(&self, message: &[u8]) -> Option<(usize, Answer)> {
         let answering = || {
             self.open
                 .iter()
                 .enumerate()
+                .rev()
                 .filter_map(|(i, o)| Some((i, answers(&o.request, message)?, o)))
         };
         answering()
-            .find(|(_, a, o)| matches!(a, Answer::Negative { .. }) || o.owed_a_response())
+            .find(|(_, _, o)| o.owed_a_response())
             .or_else(|| answering().next())
             .map(|(i, a, _)| (i, a))
     }

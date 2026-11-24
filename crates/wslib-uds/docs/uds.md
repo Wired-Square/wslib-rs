@@ -76,14 +76,25 @@ the tracker and the scan verdicts all use it (`tests/answer.rs`):
   (`a_session_change_or_reset_that_goes_unanswered_locks_security_and_leaves_the_session_unknown`,
   `a_security_access_that_goes_unanswered_locks_security_and_keeps_the_session`,
   `an_unknown_session_gets_no_keep_alive_and_becomes_the_default_at_s3`).
+  A suppressed 0x27 that draws no refusal by P2 is not known to have
+  unlocked anything, so it too locks security
+  (`a_suppressed_security_access_that_draws_no_refusal_locks_security`).
 - A refusal of a tester present (0x7F 0x3E) within P2 of the client's
   keep-alive belongs to the keep-alive, which was always sent before any
   caller request still open: it is reported as a refused keep-alive and never
   closes the caller's request
   (`a_refusal_of_the_keep_alive_is_its_own_event_and_never_closes_the_callers_request`).
-  responsePending (0x78) to the keep-alive is no refusal: it moves the
-  keep-alive's window to P2* from then
-  (`response_pending_to_the_keep_alive_is_no_refusal_and_holds_its_window_open_to_p2_star`).
+  responsePending (0x78) to the keep-alive is no refusal: the keep-alive is
+  then owed a final answer, refusal or positive (0x7E 0x00), for P2* from
+  then, and that answer is the keep-alive's before any caller request is
+  matched
+  (`response_pending_to_the_keep_alive_is_no_refusal_and_holds_its_window_open_to_p2_star`,
+  `the_keep_alives_final_answer_after_response_pending_is_the_keep_alives`).
+  A tester present the caller sends after that responsePending ends the wait,
+  so its own answer is its own
+  (`once_the_keep_alive_drew_response_pending_a_tester_present_from_the_caller_ends_its_window`).
+  A keep-alive interval of zero sends none
+  (`a_zero_keep_alive_interval_sends_no_keep_alive`).
 - In a capture, a suppressed tester present (0x3E 0x80) while a request is
   still owed a response is a keep-alive: it is reported at once as its own
   suppressed transaction and leaves the open request alone
@@ -91,10 +102,17 @@ the tracker and the scan verdicts all use it (`tests/answer.rs`):
   `a_keep_alive_tester_present_does_not_supersede_a_request_owed_a_response`).
   A request that suppressed its positive response, and drew no
   responsePending, is owed nothing but may still be refused: it stays open to
-  the timeout whatever follows it, and ends suppressed if no refusal comes. A
-  response goes to the oldest open request it answers that could draw it
+  the timeout whatever follows it, and ends suppressed if no refusal comes
   (`a_suppressed_request_stays_open_to_its_timeout_so_a_late_refusal_still_pairs_with_it`,
   `a_suppressed_request_ends_suppressed_at_its_timeout_not_when_the_next_request_comes`).
+  A response goes to the newest open request it answers that is owed a
+  response, or failing that to the newest suppressed one it answers
+  (`a_response_pairs_with_the_newest_request_owed_one_before_any_suppressed_one`,
+  `of_two_suppressed_requests_to_one_service_a_refusal_pairs_with_the_newer`).
+  At most 32 requests stay open; a new one beyond that supersedes the oldest,
+  which can only be a suppressed one, so stamps that run backwards cannot grow
+  the tracker
+  (`the_open_requests_are_capped_by_closing_the_oldest_suppressed_one`).
   The tracker ends an open request that has timed out before it reads the
   next message, by that message's time
   (`a_reply_after_the_timeout_ends_the_request_timed_out_and_is_itself_unsolicited`,
@@ -132,16 +150,23 @@ A DTC or group of DTCs is three bytes and cannot be built over 24 bits
 (`a_dtc_cannot_hold_more_than_24_bits`). A 0x19 report type with no variant of
 its own cannot be over 0x7F, where it would set the suppress bit, or one of
 the typed ones
-(`an_untyped_report_type_cannot_carry_the_suppress_bit_or_a_typed_report_type`).
+(`an_untyped_report_type_cannot_carry_the_suppress_bit_or_a_typed_report_type`);
+in a 0x59 response it cannot be 0x01, 0x02 or 0x0A
+(`an_untyped_response_report_type_cannot_be_a_typed_one`). A 0x22 request
+names at least one DID, and a 0x2E or 0x2F request carries at least one data
+byte (`a_did_read_write_or_io_control_cannot_be_empty`).
 Several DIDs' data cannot be split without each DID's length, so a 0x62
 response keeps everything after the first DID together
 (`read_data_by_identifier_takes_several_dids_in_one_request`). Any other
-service is kept as its id and bytes (`any_other_service_is_kept_byte_for_byte`),
-and every message the decoder accepts re-encodes byte for byte
+service is kept as its id and bytes in `Other`
+(`any_other_service_is_kept_byte_for_byte`); an `Other` naming a modelled
+service decodes as that service's variant. Every message the decoder accepts
+re-encodes byte for byte
 (`every_two_byte_message_decodes_without_panic_and_re_encodes_exactly`,
-`arbitrary_messages_decode_without_panic_and_re_encode_exactly`); every typed
-request and response decodes back from its encoding (`tests/round_trip.rs`:
-`every_typed_request_and_response_decodes_back_from_its_encoding`).
+`arbitrary_messages_decode_without_panic_and_re_encode_exactly`), and every
+request and response, with `Other` holding only a service this crate does not
+model, decodes back from its encoding (`tests/round_trip.rs`:
+`every_request_and_response_decodes_back_from_its_encoding`).
 
 ## Response pending and timing
 

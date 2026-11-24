@@ -1,6 +1,6 @@
 use wslib_uds::{
-    BlockLength, Dtc, DtcRequest, DtcResponse, DtcStatus, MemoryRange, Nrc, OtherReportType,
-    Request, Response, SessionTiming, SubFunction,
+    BlockLength, Dtc, DtcRequest, DtcResponse, DtcStatus, MemoryRange, NonEmpty, Nrc,
+    OtherReportType, OtherResponseReportType, Request, Response, SessionTiming, SubFunction,
 };
 
 /// xorshift64: the same values every run.
@@ -74,12 +74,25 @@ impl Values {
             .collect()
     }
 
-    fn other_report_type(&mut self) -> OtherReportType {
+    /// The first value a type's own constructor accepts, from values drawn
+    /// across its whole input.
+    fn accepted<T, E>(&mut self, mut make: impl FnMut(&mut Self) -> Result<T, E>) -> T {
         loop {
-            if let Ok(report_type) = OtherReportType::new(self.u8()) {
-                return report_type;
+            if let Ok(value) = make(self) {
+                return value;
             }
         }
+    }
+
+    fn non_empty_bytes(&mut self) -> NonEmpty<u8> {
+        self.accepted(|v| NonEmpty::new(v.bytes(0)))
+    }
+
+    fn unmodelled_service(&mut self) -> u8 {
+        self.accepted(|v| {
+            let service = v.u8();
+            (!MODELLED.contains(&service)).then_some(service).ok_or(())
+        })
     }
 
     fn dtc_request(&mut self) -> DtcRequest {
@@ -100,14 +113,14 @@ impl Values {
             },
             4 => DtcRequest::SupportedDtcs,
             _ => DtcRequest::Other {
-                report_type: self.other_report_type(),
+                report_type: self.accepted(|v| OtherReportType::new(v.u8())),
                 data: self.bytes(0),
             },
         }
     }
 
     fn request(&mut self) -> Request {
-        match self.below(17) {
+        match self.below(18) {
             0 => Request::DiagnosticSessionControl {
                 sub_function: self.sub_function(),
             },
@@ -123,7 +136,7 @@ impl Values {
                 suppress_positive_response: self.flag(),
             },
             4 => Request::ReadDataByIdentifier {
-                dids: (0..1 + self.below(4)).map(|_| self.u16()).collect(),
+                dids: self.accepted(|v| NonEmpty::new((0..v.below(4)).map(|_| v.u16()).collect())),
             },
             5 => Request::ReadMemoryByAddress {
                 range: self.range(),
@@ -139,11 +152,11 @@ impl Values {
             },
             8 => Request::WriteDataByIdentifier {
                 did: self.u16(),
-                data: self.bytes(1),
+                data: self.non_empty_bytes(),
             },
             9 => Request::InputOutputControlByIdentifier {
                 did: self.u16(),
-                data: self.bytes(1),
+                data: self.non_empty_bytes(),
             },
             10 => Request::RoutineControl {
                 sub_function: self.sub_function(),
@@ -168,8 +181,12 @@ impl Values {
             15 => Request::TesterPresent {
                 sub_function: self.sub_function(),
             },
-            _ => Request::ControlDtcSetting {
+            16 => Request::ControlDtcSetting {
                 sub_function: self.sub_function(),
+                data: self.bytes(0),
+            },
+            _ => Request::Other {
+                service: self.unmodelled_service(),
                 data: self.bytes(0),
             },
         }
@@ -191,14 +208,14 @@ impl Values {
                 dtcs: self.dtcs(),
             },
             _ => DtcResponse::Other {
-                report_type: [0x04, 0x06, 0x42][self.below(3) as usize],
+                report_type: self.accepted(|v| OtherResponseReportType::new(v.u8())),
                 data: self.bytes(0),
             },
         }
     }
 
     fn response(&mut self) -> Response {
-        match self.below(18) {
+        match self.below(19) {
             0 => Response::Negative {
                 service: self.u8(),
                 code: Nrc(self.u8()),
@@ -258,13 +275,29 @@ impl Values {
             16 => Response::TesterPresent {
                 sub_function: self.u8(),
             },
-            _ => Response::ControlDtcSetting { setting: self.u8() },
+            17 => Response::ControlDtcSetting { setting: self.u8() },
+            _ => Response::Other {
+                service: self.accepted(|v| {
+                    let first = v.u8();
+                    let answers = first.wrapping_sub(0x40);
+                    (first != 0x7F && !MODELLED.contains(&answers))
+                        .then_some(first)
+                        .ok_or(())
+                }),
+                data: self.bytes(0),
+            },
         }
     }
 }
 
+/// The services `Request` and `Response` type.
+const MODELLED: [u8; 17] = [
+    0x10, 0x11, 0x14, 0x19, 0x22, 0x23, 0x27, 0x28, 0x2E, 0x2F, 0x31, 0x34, 0x35, 0x36, 0x37, 0x3E,
+    0x85,
+];
+
 #[test]
-fn every_typed_request_and_response_decodes_back_from_its_encoding() {
+fn every_request_and_response_decodes_back_from_its_encoding() {
     let mut values = Values(0x9E37_79B9_7F4A_7C15);
     for _ in 0..5_000 {
         let request = values.request();

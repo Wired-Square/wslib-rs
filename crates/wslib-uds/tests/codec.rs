@@ -1,7 +1,7 @@
 use wslib_uds::{
-    BlockLength, DecodeError, Dtc, DtcRequest, DtcResponse, DtcStatus, InvalidReportType,
-    InvalidWidth, MemoryRange, Nrc, OtherReportType, Request, Response, SessionTiming, SubFunction,
-    sid,
+    BlockLength, DecodeError, Dtc, DtcRequest, DtcResponse, DtcStatus, EmptyList,
+    InvalidReportType, InvalidWidth, MemoryRange, NonEmpty, Nrc, OtherReportType,
+    OtherResponseReportType, Request, Response, SessionTiming, SubFunction, sid,
 };
 
 fn dtc(value: u32) -> Dtc {
@@ -189,7 +189,7 @@ fn read_dtc_information_types_the_common_report_types() {
         &[0x59, 0x04, 0x12, 0x34, 0x56, 0x09, 0x01],
         Response::ReadDtcInformation {
             report: DtcResponse::Other {
-                report_type: 0x04,
+                report_type: OtherResponseReportType::new(0x04).unwrap(),
                 data: vec![0x12, 0x34, 0x56, 0x09, 0x01],
             },
         },
@@ -209,7 +209,7 @@ fn read_data_by_identifier_takes_several_dids_in_one_request() {
     request_round_trips(
         &[0x22, 0xF1, 0x90, 0xF1, 0x8C],
         Request::ReadDataByIdentifier {
-            dids: vec![0xF190, 0xF18C],
+            dids: NonEmpty::new(vec![0xF190, 0xF18C]).unwrap(),
         },
     );
     response_round_trips(
@@ -313,7 +313,7 @@ fn write_data_by_identifier_needs_data() {
         &[0x2E, 0xF1, 0x90, 0x01],
         Request::WriteDataByIdentifier {
             did: 0xF190,
-            data: vec![0x01],
+            data: NonEmpty::one(0x01),
         },
     );
     assert_eq!(
@@ -332,7 +332,7 @@ fn input_output_control_round_trips() {
         &[0x2F, 0x01, 0x23, 0x03, 0x7F],
         Request::InputOutputControlByIdentifier {
             did: 0x0123,
-            data: vec![0x03, 0x7F],
+            data: NonEmpty::new(vec![0x03, 0x7F]).unwrap(),
         },
     );
     response_round_trips(
@@ -450,6 +450,44 @@ fn an_untyped_report_type_cannot_carry_the_suppress_bit_or_a_typed_report_type()
     }
     let other = serde_json::json!({ "kind": "other", "reportType": 0x42, "data": [] });
     assert!(serde_json::from_value::<DtcRequest>(other).is_ok());
+}
+
+#[test]
+fn an_untyped_response_report_type_cannot_be_a_typed_one() {
+    for typed in [0x01, 0x02, 0x0A] {
+        assert_eq!(OtherResponseReportType::new(typed), Err(InvalidReportType));
+        let other = serde_json::json!({ "kind": "other", "reportType": typed, "data": [] });
+        assert!(serde_json::from_value::<DtcResponse>(other).is_err());
+    }
+    for untyped in [0x04, 0x06, 0x80, 0xFF] {
+        assert!(OtherResponseReportType::new(untyped).is_ok());
+    }
+}
+
+#[test]
+fn a_did_read_write_or_io_control_cannot_be_empty() {
+    assert_eq!(NonEmpty::<u16>::new(vec![]), Err(EmptyList));
+    for empty in [
+        serde_json::json!({ "kind": "readDataByIdentifier", "dids": [] }),
+        serde_json::json!({ "kind": "writeDataByIdentifier", "did": 256, "data": [] }),
+        serde_json::json!({ "kind": "inputOutputControlByIdentifier", "did": 256, "data": [] }),
+    ] {
+        assert!(serde_json::from_value::<Request>(empty).is_err());
+    }
+    let read = serde_json::json!({ "kind": "readDataByIdentifier", "dids": [0xF190] });
+    assert_eq!(
+        serde_json::from_value::<Request>(read.clone()).unwrap(),
+        Request::ReadDataByIdentifier {
+            dids: NonEmpty::one(0xF190)
+        }
+    );
+    assert_eq!(
+        serde_json::to_value(Request::ReadDataByIdentifier {
+            dids: NonEmpty::one(0xF190)
+        })
+        .unwrap(),
+        read
+    );
 }
 
 #[test]

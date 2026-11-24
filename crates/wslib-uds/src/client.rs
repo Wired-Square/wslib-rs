@@ -17,7 +17,7 @@ pub struct Timing {
     pub p2_star: Duration,
     pub s3: Duration,
     /// How long the client stays quiet in a non-default session before it
-    /// sends a tester present; `None` sends none.
+    /// sends a tester present; `None` or zero sends none.
     pub keep_alive: Option<Duration>,
     /// Added to P2 and P2* for the transport's own delay.
     pub margin: Duration,
@@ -75,9 +75,11 @@ pub enum Event {
     KeepAliveRefused {
         code: Nrc,
     },
-    /// responsePending to the keep-alive: a refusal of it may still come up to
-    /// P2* from now.
+    /// responsePending to the keep-alive: its final answer may still come up
+    /// to P2* from now.
     KeepAlivePending,
+    /// The keep-alive's final positive answer, after its responsePending.
+    KeepAliveAnswered,
     /// S3 ran out, so the server has returned to the default session.
     SessionExpired,
 }
@@ -111,7 +113,7 @@ pub struct Client {
     session: Option<u8>,
     security_level: Option<u8>,
     outstanding: Option<Outstanding>,
-    keep_alive: Option<Wait>,
+    keep_alive: Option<KeepAlive>,
     last_activity: Option<Instant>,
 }
 
@@ -119,6 +121,12 @@ pub struct Client {
 struct Outstanding {
     request: Vec<u8>,
     wait: Wait,
+    pending: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct KeepAlive {
+    window: Wait,
     pending: bool,
 }
 
@@ -165,9 +173,10 @@ impl Client {
         }
     }
 
-    /// `None` after a session change or reset went unanswered: the server may
-    /// have acted on it. It is known again from the next session-control or
-    /// reset answer, or at S3, when any non-default session has lapsed.
+    /// `None` after a session change or reset timed out or was abandoned: the
+    /// server may have acted on it. An answer to it arriving later is
+    /// [`Event::Unexpected`] and changes nothing; the session stays unknown
+    /// until the next answered session change or reset, or S3.
     pub fn session(&self) -> Option<u8> {
         self.session
     }
@@ -209,6 +218,9 @@ impl Client {
             return Err(Busy);
         }
         let bytes = request.encode();
+        if bytes[0] == sid::TESTER_PRESENT {
+            self.keep_alive.take_if(|k| k.pending);
+        }
         self.last_activity = Some(now);
         self.outstanding = Some(Outstanding {
             request: bytes.clone(),
@@ -226,19 +238,31 @@ impl Client {
         Some(abandoned.request)
     }
 
-    /// A refusal of a tester present goes to the keep-alive while one is
-    /// within P2 of being sent, or of its responsePending: it always went
-    /// before any caller request.
+    /// A refusal of a tester present goes to the keep-alive within P2 plus the
+    /// margin of its sending, since it always went before any caller request.
+    /// After a responsePending to it, its final answer, refusal or positive,
+    /// is awaited for P2* plus the margin, until the caller sends a tester
+    /// present of its own.
     pub fn receive(&mut self, message: &[u8], now: Instant) -> Event {
         let unexpected = || Event::Unexpected(message.to_vec());
-        if let Some(Answer::Negative { code }) = answers(&TESTER_PRESENT_SUPPRESSED, message)
-            && self.keep_alive.take_if(|w| !w.is_over(now)).is_some()
+        if let Some(answer) = answers(&TESTER_PRESENT_SUPPRESSED, message)
+            && let Some(keep_alive) = self.keep_alive.filter(|k| !k.window.is_over(now))
+            && (keep_alive.pending || matches!(answer, Answer::Negative { .. }))
         {
-            if code == Nrc::RESPONSE_PENDING {
-                self.keep_alive = Some(self.timing.answer_within(self.timing.p2_star, now));
-                return Event::KeepAlivePending;
-            }
-            return Event::KeepAliveRefused { code };
+            self.keep_alive = None;
+            return match answer {
+                Answer::Negative {
+                    code: Nrc::RESPONSE_PENDING,
+                } => {
+                    self.keep_alive = Some(KeepAlive {
+                        window: self.timing.answer_within(self.timing.p2_star, now),
+                        pending: true,
+                    });
+                    Event::KeepAlivePending
+                }
+                Answer::Negative { code } => Event::KeepAliveRefused { code },
+                Answer::Positive => Event::KeepAliveAnswered,
+            };
         }
         let Some(outstanding) = self.outstanding.as_mut() else {
             return unexpected();
@@ -298,6 +322,7 @@ impl Client {
                     self.enter_session(Some(sub & 0x7F), None)
                 }
                 [sid::ECU_RESET, ..] => self.enter_session(Some(DEFAULT_SESSION), None),
+                [sid::SECURITY_ACCESS, ..] => self.security_level = None,
                 _ => {}
             }
             return Some(Event::Suppressed { service });
@@ -311,7 +336,10 @@ impl Client {
         }
         if self.keep_alive_after()?.is_over(now) {
             self.last_activity = Some(now);
-            self.keep_alive = Some(self.timing.answer_within(self.timing.p2, now));
+            self.keep_alive = Some(KeepAlive {
+                window: self.timing.answer_within(self.timing.p2, now),
+                pending: false,
+            });
             return Some(Event::TesterPresent(TESTER_PRESENT_SUPPRESSED.to_vec()));
         }
         None
@@ -344,7 +372,10 @@ impl Client {
     fn keep_alive_after(&self) -> Option<Wait> {
         Some(Wait {
             since: self.last_activity?,
-            length: self.timing.keep_alive.filter(|_| self.session.is_some())?,
+            length: self
+                .timing
+                .keep_alive
+                .filter(|k| !k.is_zero() && self.session.is_some())?,
         })
     }
 

@@ -37,9 +37,10 @@
   every open first frame in its window, which runs from the first frame and
   only a candidate's wait or first continue-to-send extends. Each sender's
   answering id is settled across its completed messages: the candidate in
-  the most of them, a tie going to the one that answered first more often,
-  when it is in more than half or no rival is in more than one; what cannot
-  be settled is `ambiguous`. A flow control frame is credited once however
+  the most of them, a tie going to the one with fewer flow controls that
+  answered no open first frame at all, when it is in more than half or no
+  rival is in more than one; what cannot be settled, including a tie on
+  both, is `ambiguous`. A flow control frame is credited once however
   many messages it settles. Each id is read with normal addressing and, with
   at most `MAX_ADDRESS_BYTES` leading bytes, addressed per byte, and keeps
   the reading under which more exchanges complete.

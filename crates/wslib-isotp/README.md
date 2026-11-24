@@ -87,20 +87,24 @@ is: its first byte cannot be told from a signal's.
   it. While several first frames are open, a flow control is a candidate
   answer to each, at most 4 ids a first frame.
 - A sender's answering id is settled across all its completed messages: an
-  id with non-ISO-TP frames loses, then the id answering the most of them
-  wins, provided it answers more than half or no rival answers more than
-  one. A tie goes to the id that answered first more often, so a look-alike
-  arriving after the real answer loses. Where nothing separates two
-  pairings, neither is reported and the messages count as `ambiguous`.
+  id with non-ISO-TP frames loses, then the id that is a candidate for the
+  most of them wins, provided it is a candidate for more than half or no
+  rival is a candidate for more than one. A tie goes to the id with fewer
+  flow controls that answered no open first frame at all, so a periodic
+  look-alike, which also sends between exchanges, loses. Where nothing
+  separates two ids, neither is paired and the messages count as
+  `ambiguous`.
 - Each id is read with normal addressing and, if its frames lead with at
   most `MAX_ADDRESS_BYTES` (8) distinct bytes, with that byte as an address,
   one entry per byte; it keeps the reading under which more exchanges
   complete, normal on a tie. A tester id addressing several targets gives
   one entry, and one pair, per target.
-- It cannot call a single-frame-only id ISO-TP, separate two senders
-  answered by two ids at once when no later exchange repeats a pairing,
-  find an addressed tester with more than 8 targets on one id, or find an
-  exchange whose first flow control comes after the window.
+- It cannot call a single-frame-only id ISO-TP, separate two ECUs answering
+  one functional request at the same time, tell apart two ids that both send
+  a flow control inside every window and never outside one, pair more than
+  the majority tester when two testers take turns on one ECU, find an
+  addressed tester with more than 8 targets on one id, or find an exchange
+  whose first flow control comes after the window.
 
 ## Features
 

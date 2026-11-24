@@ -1,4 +1,6 @@
+use std::cmp::Reverse;
 use std::collections::HashMap;
+use std::ops::RangeInclusive;
 use std::time::Duration;
 
 use crate::flow_control::FlowStatus;
@@ -188,10 +190,11 @@ fn reader(address_byte: Option<u8>) -> Framing {
 
 type Key = (u32, bool, Option<u8>);
 
+/// Once a candidate, every later flow control from its id goes to the open
+/// first frame too, so the ones it sent are a run of that id's flow controls.
 struct Candidate {
     track: usize,
-    flow_controls: Vec<usize>,
-    alone_first: bool,
+    flow_controls: RangeInclusive<u32>,
 }
 
 struct Open {
@@ -216,6 +219,7 @@ struct Track {
     first_seen: usize,
     open: Option<Open>,
     completions: Vec<Completion>,
+    flow_controls_answering_nothing: u32,
 }
 
 struct Reading {
@@ -236,6 +240,14 @@ impl Reading {
         window: Duration,
         address_byte: impl Fn(&TimedFrame) -> Option<Option<u8>>,
     ) -> Judged {
+        Self::read(frames, window, address_byte).settle()
+    }
+
+    fn read(
+        frames: &[TimedFrame],
+        window: Duration,
+        address_byte: impl Fn(&TimedFrame) -> Option<Option<u8>>,
+    ) -> Self {
         let mut reading = Self {
             window_us: micros(window),
             index: HashMap::new(),
@@ -247,7 +259,7 @@ impl Reading {
                 reading.frame(order, (frame.id, frame.extended, byte), frame);
             }
         }
-        reading.settle()
+        reading
     }
 
     fn track(&mut self, order: usize, key: Key) -> usize {
@@ -270,6 +282,7 @@ impl Reading {
                 first_seen: order,
                 open: None,
                 completions: Vec::new(),
+                flow_controls_answering_nothing: 0,
             });
             tracks.len() - 1
         })
@@ -320,7 +333,7 @@ impl Reading {
             }
             Some(Pdu::FlowControl(Ok(flow))) => {
                 counts.flow_control += 1;
-                self.flow_control(at, order, frame.at_us, flow.status);
+                self.flow_control(at, frame.at_us, flow.status);
             }
         }
     }
@@ -364,12 +377,13 @@ impl Reading {
         }
     }
 
-    fn flow_control(&mut self, answerer: usize, order: usize, now: u64, status: FlowStatus) {
-        let (extended, addressed) = {
+    fn flow_control(&mut self, answerer: usize, now: u64, status: FlowStatus) {
+        let (extended, addressed, serial) = {
             let evidence = &self.tracks[answerer].evidence;
-            (evidence.extended, evidence.address_byte.is_some())
+            let serial = evidence.counts.flow_control - 1;
+            (evidence.extended, evidence.address_byte.is_some(), serial)
         };
-        let mut first_answered = Vec::new();
+        let mut answers_any = false;
         for &sender in &self.opens {
             let track = &mut self.tracks[sender];
             let compatible = sender != answerer
@@ -385,19 +399,16 @@ impl Reading {
                     && now <= open.deadline_us
                     && open.candidates.len() < MAX_CANDIDATES =>
                 {
-                    if open.candidates.is_empty() {
-                        first_answered.push(sender);
-                    }
                     open.candidates.push(Candidate {
                         track: answerer,
-                        flow_controls: Vec::new(),
-                        alone_first: false,
+                        flow_controls: serial..=serial,
                     });
                     open.candidates.last_mut().expect("just pushed")
                 }
                 None => continue,
             };
-            candidate.flow_controls.push(order);
+            candidate.flow_controls = *candidate.flow_controls.start()..=serial;
+            answers_any = true;
             let extends = match status {
                 FlowStatus::ContinueToSend => !std::mem::replace(&mut open.cleared, true),
                 FlowStatus::Wait => true,
@@ -407,10 +418,8 @@ impl Reading {
                 open.deadline_us = open.deadline_us.max(now.saturating_add(self.window_us));
             }
         }
-        if let [sender] = first_answered[..]
-            && let Some(open) = &mut self.tracks[sender].open
-        {
-            open.candidates[0].alone_first = true;
+        if !answers_any {
+            self.tracks[answerer].flow_controls_answering_nothing += 1;
         }
     }
 
@@ -420,11 +429,16 @@ impl Reading {
             .iter()
             .map(|track| track.evidence.counts.undecodable == 0)
             .collect();
+        let answering_nothing: Vec<u32> = self
+            .tracks
+            .iter()
+            .map(|track| track.flow_controls_answering_nothing)
+            .collect();
         let mut credited = Vec::new();
         let mut settled = Vec::new();
         for sender in 0..self.tracks.len() {
             let completions = std::mem::take(&mut self.tracks[sender].completions);
-            let winner = answering_id(&completions, &clean);
+            let winner = answering_id(&completions, &clean, &answering_nothing);
             for completion in completions {
                 let won = winner.and_then(|winner| {
                     completion
@@ -434,12 +448,8 @@ impl Reading {
                 });
                 match won {
                     Some(candidate) => {
-                        credited.extend(
-                            candidate
-                                .flow_controls
-                                .iter()
-                                .map(|&fc| (candidate.track, fc)),
-                        );
+                        let run = candidate.flow_controls.clone().into_inner();
+                        credited.push((candidate.track, run));
                         settled.push((completion.order, sender, candidate.track));
                     }
                     None => self.tracks[sender].evidence.ambiguous += 1,
@@ -447,10 +457,17 @@ impl Reading {
             }
         }
         credited.sort_unstable();
-        credited.dedup();
         let mut answered = vec![0_u32; self.tracks.len()];
-        for (track, _) in credited {
-            answered[track] += 1;
+        let mut counted_to: Option<(usize, u32)> = None;
+        for (track, (first, last)) in credited {
+            let from = match counted_to {
+                Some((counted, end)) if counted == track => first.max(end.saturating_add(1)),
+                _ => first,
+            };
+            if from <= last {
+                answered[track] += last - from + 1;
+                counted_to = Some((track, last));
+            }
         }
         settled.sort_by_key(|(order, ..)| *order);
         let mut pairs = Vec::new();
@@ -475,32 +492,34 @@ impl Reading {
 }
 
 /// The id answering a sender's messages: among clean candidates if there are
-/// any, the one in the most of them, a tie broken by the messages it answered
-/// first and answered no other at once. It must beat every rival, and be in
+/// any, the one in the most of them, a tie going to the one with fewer flow
+/// controls that answered nothing at all. It must beat every rival, and be in
 /// more than half of them or have no rival in more than one.
-fn answering_id(completions: &[Completion], clean: &[bool]) -> Option<usize> {
-    let mut tally: Vec<(usize, (usize, usize))> = Vec::new();
+fn answering_id(
+    completions: &[Completion],
+    clean: &[bool],
+    answering_nothing: &[u32],
+) -> Option<usize> {
+    let mut tally: Vec<(usize, usize)> = Vec::new();
     for candidate in completions.iter().flat_map(|c| &c.candidates) {
-        let score = match tally
+        match tally
             .iter_mut()
             .find(|(track, _)| *track == candidate.track)
         {
-            Some((_, score)) => score,
-            None => {
-                tally.push((candidate.track, (0, 0)));
-                &mut tally.last_mut().expect("just pushed").1
-            }
-        };
-        score.0 += 1;
-        score.1 += usize::from(candidate.alone_first);
+            Some((_, seen)) => *seen += 1,
+            None => tally.push((candidate.track, 1)),
+        }
     }
     if tally.iter().any(|&(track, _)| clean[track]) {
         tally.retain(|&(track, _)| clean[track]);
     }
-    tally.sort_by_key(|&(_, score)| std::cmp::Reverse(score));
-    let &(top, score) = tally.first()?;
-    let rival = tally.get(1).map_or((0, 0), |&(_, score)| score);
-    (score > rival && (2 * score.0 > completions.len() || rival.0 <= 1)).then_some(top)
+    let rank = |&(track, seen): &(usize, usize)| (Reverse(seen), answering_nothing[track]);
+    tally.sort_by_key(rank);
+    let top = tally.first()?;
+    let rival = tally.get(1);
+    let beats_rival = rival.is_none_or(|rival| rank(top) < rank(rival));
+    let rival_seen = rival.map_or(0, |&(_, seen)| seen);
+    (beats_rival && (2 * top.1 > completions.len() || rival_seen <= 1)).then_some(top.0)
 }
 
 fn paired(
@@ -984,53 +1003,151 @@ mod tests {
         assert_eq!(evidence(&detection, ECU).exchanges, 1);
     }
 
-    #[test]
-    fn a_flow_control_look_alike_after_the_answer_every_time_loses_to_the_answer() {
-        let (first, rest) = ecu_reply();
-        let mut bus = Bus::new();
-        for n in 0..20_u8 {
-            bus.send(TESTER, vec![0x02, 0x22, 0xF1]);
-            bus.send(ECU, first.clone());
-            bus.send(TESTER, CTS.encode());
-            bus.send(0x100, vec![0x30, 0, 0, n, 0, 0, 0, 0]);
-            for frame in &rest {
-                bus.send(ECU, frame.clone());
-            }
-        }
-        let detection = detect(&bus.frames, WINDOW);
-        let pairs: Vec<(u32, u32, u32)> = detection
-            .pairs
-            .iter()
-            .map(|pair| (pair.a_id, pair.b_id, pair.from_b))
-            .collect();
-        assert_eq!(pairs, [(TESTER, ECU, 20)]);
-        assert_eq!(evidence(&detection, ECU).ambiguous, 0);
-        assert!(!evidence(&detection, 0x100).iso_tp);
-    }
+    const LOOK_ALIKE: u32 = 0x100;
 
-    #[test]
-    fn the_first_to_answer_beats_a_look_alike_that_cleared_during_its_waits() {
+    /// Rounds of the ECU's reply, answered by the tester (with a wait first in
+    /// odd rounds) and by a look-alike before or after it. With `between`, the
+    /// look-alike also sends 5 frames between rounds, outside any window.
+    fn look_alike_rounds(
+        rounds: u8,
+        look_alike_first: impl Fn(u8) -> bool,
+        between: bool,
+        stray_first_frame: bool,
+    ) -> Detection {
         let (first, rest) = ecu_reply();
         let wait = FlowControl {
             status: FlowStatus::Wait,
             ..CTS
         };
+        let look_alike = |n: u8| vec![0x30 + n % 3, 0, 0, n, 0, 0, 0, 0];
         let mut bus = Bus::new();
-        for n in 0..20_u8 {
+        for n in 0..rounds {
+            if between {
+                for _ in 0..5 {
+                    bus.after(Duration::from_millis(150), LOOK_ALIKE, look_alike(n));
+                }
+            }
+            if stray_first_frame {
+                bus.send(0x200, vec![0x10, 0x14, 0, 0, 0, 0, 0, 0]);
+            }
             bus.send(ECU, first.clone());
-            bus.send(TESTER, wait.encode());
-            bus.send(0x100, vec![0x30, 0, 0, n, 0, 0, 0, 0]);
+            if look_alike_first(n) {
+                bus.send(LOOK_ALIKE, look_alike(n));
+            }
+            if n % 2 == 1 {
+                bus.send(TESTER, wait.encode());
+            }
             bus.send(TESTER, CTS.encode());
+            if !look_alike_first(n) {
+                bus.send(LOOK_ALIKE, look_alike(n));
+            }
+            for frame in &rest {
+                bus.send(ECU, frame.clone());
+            }
+        }
+        detect(&bus.frames, WINDOW)
+    }
+
+    fn pairs_from_b(detection: &Detection) -> Vec<(u32, u32, u32)> {
+        detection
+            .pairs
+            .iter()
+            .map(|pair| (pair.a_id, pair.b_id, pair.from_b))
+            .collect()
+    }
+
+    #[test]
+    fn a_periodic_look_alike_loses_to_the_answer_before_or_after_it() {
+        let orders: [fn(u8) -> bool; 3] = [|_| false, |_| true, |n| n < 14];
+        for (case, first) in orders.into_iter().enumerate() {
+            let detection = look_alike_rounds(20, first, true, false);
+            assert_eq!(pairs_from_b(&detection), [(TESTER, ECU, 20)], "{case}");
+            let look_alike = evidence(&detection, LOOK_ALIKE);
+            assert!(!look_alike.iso_tp, "{case}");
+            assert_eq!(look_alike.counts.sequence_breaks, 120, "{case}");
+            assert_eq!(evidence(&detection, TESTER).counts.sequence_breaks, 0);
+        }
+    }
+
+    #[test]
+    fn a_periodic_look_alike_loses_beside_a_stray_first_frame() {
+        let detection = look_alike_rounds(20, |_| true, true, true);
+        assert_eq!(pairs_from_b(&detection), [(TESTER, ECU, 20)]);
+        assert!(!evidence(&detection, LOOK_ALIKE).iso_tp);
+    }
+
+    #[test]
+    fn a_look_alike_only_ever_inside_the_window_leaves_the_messages_ambiguous() {
+        for rounds in [1, 2, 20] {
+            for first in [true, false] {
+                let detection = look_alike_rounds(rounds, |_| first, false, false);
+                assert_eq!(detection.pairs, [], "{rounds} {first}");
+                assert_eq!(
+                    evidence(&detection, ECU).ambiguous,
+                    u32::from(rounds),
+                    "{rounds} {first}"
+                );
+                assert!(detection.ids.iter().all(|ids| !ids.iso_tp));
+            }
+        }
+    }
+
+    #[test]
+    fn two_ecus_answering_one_functional_request_every_round_stay_ambiguous() {
+        let (first, rest) = ecu_reply();
+        let mut bus = Bus::new();
+        for _ in 0..20 {
+            bus.send(0x7DF, vec![0x02, 0x10, 0x03]);
+            bus.send(0x7E8, first.clone());
+            bus.send(0x7E9, first.clone());
+            bus.send(0x7E0, CTS.encode());
+            bus.send(0x7E1, CTS.encode());
+            for frame in &rest {
+                bus.send(0x7E8, frame.clone());
+                bus.send(0x7E9, frame.clone());
+            }
+        }
+        let detection = detect(&bus.frames, WINDOW);
+        assert_eq!(detection.pairs, []);
+        assert_eq!(evidence(&detection, 0x7E8).ambiguous, 20);
+        assert_eq!(evidence(&detection, 0x7E9).ambiguous, 20);
+    }
+
+    #[test]
+    fn two_testers_taking_turns_pair_only_the_majority_tester() {
+        let (first, rest) = ecu_reply();
+        let mut bus = Bus::new();
+        for round in 0..20 {
+            bus.send(ECU, first.clone());
+            bus.send(if round < 12 { TESTER } else { 0x7E1 }, CTS.encode());
             for frame in &rest {
                 bus.send(ECU, frame.clone());
             }
         }
         let detection = detect(&bus.frames, WINDOW);
-        assert_eq!(detection.pairs.len(), 1);
-        assert_eq!(
-            (detection.pairs[0].a_id, detection.pairs[0].from_b),
-            (TESTER, 20)
-        );
+        assert_eq!(pairs_from_b(&detection), [(TESTER, ECU, 12)]);
+        assert_eq!(evidence(&detection, ECU).ambiguous, 8);
+    }
+
+    #[test]
+    fn waits_on_a_first_frame_that_never_starts_keep_one_run_per_candidate() {
+        let (first, _) = ecu_reply();
+        let wait = FlowControl {
+            status: FlowStatus::Wait,
+            ..CTS
+        };
+        let mut bus = Bus::new();
+        bus.send(ECU, first);
+        for _ in 0..200 {
+            bus.send(TESTER, wait.encode());
+        }
+        let reading = Reading::read(&bus.frames, WINDOW, |_| Some(None));
+        let ecu = &reading.tracks[reading.index[&(ECU, false, None)]];
+        let candidates = &ecu.open.as_ref().unwrap().candidates;
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].flow_controls, 0..=199);
+        let detection = detect(&bus.frames, WINDOW);
+        assert_eq!(evidence(&detection, TESTER).counts.sequence_breaks, 200);
     }
 
     #[test]

@@ -215,24 +215,25 @@ of several, it says so here.
 - A flow control within the window of several open first frames is a
   candidate answer to each. A sender's answering id is settled across all
   its completed messages: an id with frames no ISO-TP frame could be loses
-  to one without. Each remaining id scores the messages it is a candidate
-  for, then, to break a tie, the messages it answered first with a flow
-  control that was the first answer to no other open first frame. The top
-  score wins if no rival equals it, and the winner is a candidate for more
-  than half of the messages or no rival is a candidate for more than one. A
+  to one without. The winner is the id that is a candidate for the most of
+  the messages; where ids tie on that, the one with fewer flow controls that
+  were a candidate for no open first frame at all, and where they tie on
+  both, no one. The winner must also be a candidate for more than half of
+  the messages, or have no rival that is a candidate for more than one. A
   message whose candidates do not include the winner, or a sender with no
-  winner, counts as ambiguous. Two ECUs answered by two testers at once,
-  each once, report neither pair. Each flow control frame answers at most
-  once however many messages it settles; one that answers no completed
-  message is a sequence break.
+  winner, counts as ambiguous. Each flow control frame answers at most once
+  however many messages it settles; one that answers no completed message
+  is a sequence break.
   `detect::two_first_frames_answered_from_two_ids_at_once_pair_neither`,
   `detect::a_first_frame_look_alike_between_a_first_frame_and_its_flow_control_takes_nothing`,
   `detect::a_stray_flow_control_once_loses_to_the_id_answering_every_message`,
   `detect::a_stray_from_an_id_carrying_non_iso_tp_frames_loses_even_once`,
-  `detect::a_flow_control_look_alike_after_the_answer_every_time_loses_to_the_answer`,
-  `detect::the_first_to_answer_beats_a_look_alike_that_cleared_during_its_waits`,
+  `detect::a_periodic_look_alike_loses_to_the_answer_before_or_after_it`,
+  `detect::a_periodic_look_alike_loses_beside_a_stray_first_frame`,
+  `detect::a_look_alike_only_ever_inside_the_window_leaves_the_messages_ambiguous`,
   `detect::a_stray_twice_does_not_hide_the_id_answering_all_but_one_message`,
-  `detect::one_flow_control_answering_two_senders_at_once_is_credited_once`
+  `detect::one_flow_control_answering_two_senders_at_once_is_credited_once`,
+  `detect::waits_on_a_first_frame_that_never_starts_keep_one_run_per_candidate`
 - Each id is read twice: with normal addressing, and, if its frames lead
   with at most 8 distinct bytes, with that byte as an address, one entry per
   byte. It keeps the reading under which more of its exchanges complete,
@@ -244,7 +245,12 @@ of several, it says so here.
   `detect::an_id_with_more_leading_bytes_than_the_cap_is_one_entry`,
   `detect::a_million_frames_over_200_ids_stay_one_entry_per_id`
 - What detection cannot do: call an id carrying only single frames ISO-TP;
-  separate two senders answered by two ids at once when nothing later
-  repeats one of the pairings; find an addressed tester that talks to more
-  than 8 targets on one id; or find an exchange whose first flow control
-  comes later than the window.
+  separate two ECUs answering one functional request at the same time, which
+  tie on every round; tell apart two ids that both send a flow control
+  inside every window and never outside one; pair more than the majority
+  tester when two testers take turns on one ECU; find an addressed tester
+  that talks to more than 8 targets on one id; or find an exchange whose
+  first flow control comes later than the window.
+  `detect::two_ecus_answering_one_functional_request_every_round_stay_ambiguous`,
+  `detect::a_look_alike_only_ever_inside_the_window_leaves_the_messages_ambiguous`,
+  `detect::two_testers_taking_turns_pair_only_the_majority_tester`

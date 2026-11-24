@@ -802,10 +802,11 @@ mod tests {
         let events = feed(
             &mut tap(),
             &[
-                stamped(TESTER, &[0x10, 0x14, 0, 1, 2, 3, 4, 5], 5_000_000),
+                stamped(TESTER, &[0x10, 0x1B, 0, 1, 2, 3, 4, 5], 5_000_000),
                 stamped(ECU, &cts(0, 0).encode(), 5_000_100),
                 stamped(TESTER, &[0x21, 6, 7, 8, 9, 10, 11, 12], 0),
                 stamped(TESTER, &[0x22, 13, 14, 15, 16, 17, 18, 19], 5_000_200),
+                stamped(TESTER, &[0x23, 20, 21, 22, 23, 24, 25, 26], 1),
             ],
         );
         assert_eq!(notices(&events), []);

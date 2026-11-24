@@ -27,7 +27,7 @@ pub(crate) fn micros(span: Duration) -> u64 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpSide"))]
-#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub enum Side {
     A,
     B,
@@ -132,8 +132,10 @@ pub struct TapNotice {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpNoticeKind"))]
-#[cfg_attr(feature = "serde", serde(rename_all_fields = "camelCase"))]
-#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[cfg_attr(
+    feature = "serde",
+    serde(rename_all = "camelCase", rename_all_fields = "camelCase")
+)]
 pub enum NoticeKind {
     /// A consecutive frame out of sequence dropped the message.
     OutOfSequence { expected: u8, received: u8 },
@@ -162,7 +164,7 @@ pub enum NoticeKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpTapEvent"))]
-#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub enum TapEvent {
     Message(TapMessage),
     Notice(TapNotice),

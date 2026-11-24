@@ -66,7 +66,7 @@ fn flow_control() {
     );
     assert_eq!(
         exported::<FlowStatus>(),
-        r#"export type IsoTpFlowStatus = "continue_to_send" | "wait" | "overflow";"#
+        r#"export type IsoTpFlowStatus = "continueToSend" | "wait" | "overflow";"#
     );
     assert_eq!(exported::<StMin>(), r#"export type IsoTpStMin = number;"#);
 }
@@ -92,7 +92,7 @@ fn tap_event() {
     );
     assert_eq!(
         exported::<NoticeKind>(),
-        r#"export type IsoTpNoticeKind = { "out_of_sequence": { expected: number, received: number, } } | { "truncated": { needed: number, carried: number, } } | "superseded" | { "timed_out": { gapUs: number, } } | "overflow" | "wait" | "too_many_waits" | { "reserved_flow_status": { status: number, } } | { "too_long": { len: number, } } | { "resynchronised": { skipped: number, } };"#
+        r#"export type IsoTpNoticeKind = { "outOfSequence": { expected: number, received: number, } } | { "truncated": { needed: number, carried: number, } } | "superseded" | { "timedOut": { gapUs: number, } } | "overflow" | "wait" | "tooManyWaits" | { "reservedFlowStatus": { status: number, } } | { "tooLong": { len: number, } } | { "resynchronised": { skipped: number, } };"#
     );
     assert_eq!(
         exported::<TapEvent>(),
@@ -129,7 +129,7 @@ where
 }
 
 #[test]
-fn serde_writes_camel_case_fields_snake_case_variants_and_fd_lengths_as_numbers() {
+fn serde_writes_camel_case_fields_and_variants_and_fd_lengths_as_numbers() {
     round_trips(
         TimedFrame {
             id: 0x7E8,
@@ -145,7 +145,7 @@ fn serde_writes_camel_case_fields_snake_case_variants_and_fd_lengths_as_numbers(
             at_us: 7,
             kind: NoticeKind::TimedOut { gap_us: 1_000_000 },
         }),
-        r#"{"notice":{"side":"b","atUs":7,"kind":{"timed_out":{"gapUs":1000000}}}}"#,
+        r#"{"notice":{"side":"b","atUs":7,"kind":{"timedOut":{"gapUs":1000000}}}}"#,
     );
     round_trips(
         FlowControl {
@@ -153,7 +153,7 @@ fn serde_writes_camel_case_fields_snake_case_variants_and_fd_lengths_as_numbers(
             block_size: 8,
             st_min: StMin(0xF1),
         },
-        r#"{"status":"continue_to_send","blockSize":8,"stMin":241}"#,
+        r#"{"status":"continueToSend","blockSize":8,"stMin":241}"#,
     );
     round_trips(
         Addressing::Extended { tx: 0x10, rx: 0xF1 },

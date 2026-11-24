@@ -41,8 +41,7 @@
   request through `answer`, and `Conversation`, which runs a tester against
   it and stamps both sides' frames.
 - `serde`: serde derives on the framing, flow control, tap and detection
-  types, with camelCase fields.
-- Their enum variants serialise snake_case.
+  types. Fields and enum variants are camelCase.
 - `ts`: their ts-rs declarations, named `IsoTp…`.
 - `docs/iso-tp.md` lists the wire facts the crate relies on, each pinned by
   a test.

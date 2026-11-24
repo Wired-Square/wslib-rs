@@ -103,7 +103,7 @@ is: its first byte cannot be told from a signal's.
 None is on by default. The codec, the tap and detection need only thiserror.
 
 - `serde`: serde derives on the framing, flow control, tap and detection
-  types, with camelCase fields and snake_case variants.
+  types. Fields and enum variants are camelCase.
 - `ts`: ts-rs declarations for those types, each named `IsoTp…`. Implies
   `serde`.
 - `testing`: `testing::Responder`, a clockless simulated peer that answers

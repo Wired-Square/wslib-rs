@@ -15,6 +15,10 @@
   answer, is `Unsettled` with its candidates, and a periodic id is never
   paired by coincidence. Messages up to `MAX_MESSAGE_BYTES` (64 KiB) are
   read.
+- `ReadOnlyServiceScan`, the scan `ServiceScan::new` builds, hands out
+  `ReadOnlyServiceProbe`s whose `request()` is already `ReadOnly`, so a
+  read-only scan loop has no fallible step. `ServiceProbe::request` is
+  unchanged.
 - Now on wslib-isotp 0.3, whose serialised enums are tagged with `kind`.
 
 ## 0.1.0

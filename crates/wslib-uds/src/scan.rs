@@ -282,6 +282,60 @@ impl ServiceScan {
     }
 }
 
+/// A bare service id whose class is read-only, from a [`ReadOnlyServiceScan`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadOnlyServiceProbe {
+    service: u8,
+}
+
+impl ReadOnlyServiceProbe {
+    pub fn service(&self) -> u8 {
+        self.service
+    }
+
+    pub fn request(&self) -> ReadOnly {
+        let bare = Request::Other {
+            service: self.service,
+            data: Vec::new(),
+        };
+        ReadOnly::new(bare).expect("a read-only scan offers only read-only bare ids")
+    }
+}
+
+/// [`ServiceScan::new`]'s scan, whose probes are already [`ReadOnly`] for a
+/// client's `send_read_only`.
+#[derive(Debug, Clone, Default)]
+pub struct ReadOnlyServiceScan(ServiceScan);
+
+impl ReadOnlyServiceScan {
+    pub fn new() -> Self {
+        Self(ServiceScan::new())
+    }
+
+    pub fn with_busy_retries(self, retries: u32) -> Self {
+        Self(self.0.with_busy_retries(retries))
+    }
+
+    /// The same probe until it is reported, and again after a busy answer.
+    pub fn next_probe(&self) -> Option<ReadOnlyServiceProbe> {
+        let service = self.0.next_probe()?.service;
+        Some(ReadOnlyServiceProbe { service })
+    }
+
+    /// `None` when the scan is done.
+    pub fn report(&mut self, reply: Option<&[u8]>) -> Option<ServiceVerdict> {
+        self.0.report(reply)
+    }
+
+    pub fn progress(&self) -> ScanProgress {
+        self.0.progress()
+    }
+
+    pub fn findings(&self) -> &[ServiceFinding] {
+        self.0.findings()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsDidVerdict"))]
 #[serde(tag = "kind", rename_all = "camelCase")]

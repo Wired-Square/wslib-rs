@@ -55,8 +55,8 @@ pub use pairing::{
 pub use safety::{NotReadOnly, ReadOnly, Safety};
 pub use scan::{
     AddressProbe, AddressScan, DEFAULT_BUSY_RETRIES, DidFinding, DidProbe, DidScan, DidVerdict,
-    ScanProgress, ServiceFinding, ServiceProbe, ServiceScan, ServiceVerdict, did_verdict,
-    ecu_answered, service_verdict,
+    ReadOnlyServiceProbe, ReadOnlyServiceScan, ScanProgress, ServiceFinding, ServiceProbe,
+    ServiceScan, ServiceVerdict, did_verdict, ecu_answered, service_verdict,
 };
 #[cfg(feature = "write")]
 pub use scan::{SessionFinding, SessionProbe, SessionScan, SessionVerdict, session_verdict};

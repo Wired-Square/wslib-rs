@@ -7,7 +7,11 @@ use wslib_uds::{
 fn run(scan: &mut SessionScan, ecu: &mut Ecu) -> Vec<(u8, bool)> {
     let mut sent = Vec::new();
     while let Some(probe) = scan.next_probe() {
-        assert_eq!(probe.safety(), Safety::StateChanging);
+        let class = match probe.session {
+            PROGRAMMING_SESSION => Safety::Destructive,
+            _ => Safety::StateChanging,
+        };
+        assert_eq!(probe.safety(), class);
         sent.push((probe.session, probe.restore));
         let reply = ecu.answer(&probe.request().encode()).pop();
         scan.report(reply.as_deref());
@@ -47,7 +51,23 @@ fn a_session_scan_skips_programming_and_returns_to_default_after_each_session_en
 }
 
 #[test]
-fn the_programming_session_is_probed_only_when_asked_for() {
+fn the_programming_session_is_probed_only_under_a_destructive_ceiling() {
+    let mut ecu = Ecu::new().with_session(PROGRAMMING_SESSION);
+    for highest in [Safety::ReadOnly, Safety::StateChanging] {
+        let mut scan = SessionScan::up_to(0x01..=0x02, highest);
+        let expected: &[(u8, bool)] = match highest {
+            Safety::ReadOnly => &[],
+            _ => &[(0x01, false)],
+        };
+        assert_eq!(run(&mut scan, &mut ecu), expected, "{highest:?}");
+    }
+    let mut scan = SessionScan::up_to(0x02..=0x02, Safety::Destructive);
+    assert_eq!(run(&mut scan, &mut ecu), [(0x02, false), (0x01, true)]);
+}
+
+#[test]
+#[allow(deprecated)]
+fn including_programming_is_a_destructive_ceiling() {
     let mut ecu = Ecu::new().with_session(PROGRAMMING_SESSION);
     let mut scan = SessionScan::including_programming(0x02..=0x02);
     assert_eq!(run(&mut scan, &mut ecu), [(0x02, false), (0x01, true)]);

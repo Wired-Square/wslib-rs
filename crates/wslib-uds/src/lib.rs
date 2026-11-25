@@ -12,7 +12,8 @@
 //! | --- | --- |
 //! | ReadDTCInformation 0x19, ReadDataByIdentifier 0x22, TesterPresent 0x3E | read-only |
 //! | RoutineControl 0x31 requestRoutineResults (0x03) | read-only |
-//! | DiagnosticSessionControl 0x10, ECUReset 0x11, ReadMemoryByAddress 0x23, SecurityAccess 0x27, CommunicationControl 0x28, ControlDTCSetting 0x85 | state-changing |
+//! | DiagnosticSessionControl 0x10 to any session but programming, ECUReset 0x11, ReadMemoryByAddress 0x23, SecurityAccess 0x27, CommunicationControl 0x28, ControlDTCSetting 0x85 | state-changing |
+//! | DiagnosticSessionControl 0x10 to the programming session (0x02) | destructive |
 //! | ClearDiagnosticInformation 0x14, WriteDataByIdentifier 0x2E, InputOutputControlByIdentifier 0x2F | destructive |
 //! | RoutineControl 0x31 start, stop, any other sub-function or none | destructive |
 //! | RequestDownload 0x34, RequestUpload 0x35, TransferData 0x36, RequestTransferExit 0x37 | destructive |

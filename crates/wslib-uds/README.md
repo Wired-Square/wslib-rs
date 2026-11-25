@@ -83,8 +83,11 @@ for finding in scan.findings() {
   at most `MAX_OPEN_REQUESTS` stay open.
 - Scans: `AddressScan` (tester present per candidate id), `ServiceScan` (bare
   service ids: the read-only ones, or with `write` up to a class the caller
-  names; it stops if a bare id above read-only is acted on), `DidScan`, and
-  with `write` `SessionScan`, which skips the programming session unless asked,
+  names; it stops if a bare id above read-only is acted on),
+  `ReadOnlyServiceScan` (the read-only one, whose probes are already
+  `ReadOnly`, like `DidScan`'s, for `send_read_only`), `DidScan`, and
+  with `write` `SessionScan`, which skips the programming session unless
+  `SessionScan::up_to` is given a destructive ceiling,
   returns to the default session after any probe that may have left it, and
   stops if that return is not answered positively. No scan searches for a
   security key.

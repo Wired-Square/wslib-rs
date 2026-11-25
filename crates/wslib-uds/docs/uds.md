@@ -278,7 +278,7 @@ A client sends nothing above its ceiling: read-only unless it was built with
 `write` and a higher one. A scan run through a client is bounded by the lower
 of the scan's class and the client's ceiling (`tests/client_write.rs`:
 `by_default_a_client_refuses_a_state_changing_request_and_sends_nothing`,
-`a_state_changing_ceiling_refuses_destructive_and_vendor_requests_and_keeps_the_session_alive`;
+`a_state_changing_ceiling_refuses_destructive_and_programming_requests_and_keeps_the_session`;
 `tests/service_scan_write.rs`:
 `a_scan_through_a_client_sends_only_up_to_the_lower_of_the_two_ceilings`).
 
@@ -287,7 +287,8 @@ of the scan's class and the client's ceiling (`tests/client_write.rs`:
 | 0x19, 0x22 | read-only | `reading_dtcs_and_data_is_read_only` |
 | 0x3E | read-only | `tester_present_is_read_only` |
 | 0x31 with sub-function 0x03 | read-only | `routine_start_and_stop_are_destructive_and_its_results_read_only` |
-| 0x10 | state-changing | `session_control_is_state_changing` |
+| 0x10 to any session but programming, and a bare 0x10 | state-changing | `session_control_is_state_changing` |
+| 0x10 to the programming session (0x02), where a server takes new software and may leave its application | destructive | `entering_the_programming_session_is_destructive` |
 | 0x11 | state-changing | `ecu_reset_is_state_changing` |
 | 0x23: memory-mapped registers can have side effects, and a bad address can fault the ECU | state-changing | `reading_memory_is_state_changing_for_its_side_effects` |
 | 0x27 | state-changing | `security_access_is_state_changing` |
@@ -337,5 +338,5 @@ of the scan's class and the client's ceiling (`tests/client_write.rs`:
   A restore not answered positively stops the plan, with a finding that the
   ECU may still be in the session probed
   (`a_refused_or_silent_restore_stops_the_plan_with_the_session_the_ecu_may_still_be_in`).
-  The programming session (0x02) is probed only when asked
-  (`the_programming_session_is_probed_only_when_asked_for`).
+  The programming session (0x02) is probed only under a destructive ceiling
+  (`the_programming_session_is_probed_only_under_a_destructive_ceiling`).

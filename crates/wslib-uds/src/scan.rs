@@ -455,7 +455,7 @@ mod session {
     use serde::{Deserialize, Serialize};
 
     use super::Plan;
-    use crate::codec::{DEFAULT_SESSION, PROGRAMMING_SESSION, SessionTiming, SubFunction};
+    use crate::codec::{DEFAULT_SESSION, SessionTiming, SubFunction};
     use crate::{Answer, Nrc, Request, Response, Safety, ScanProgress, answers, sid};
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -542,8 +542,8 @@ mod session {
     /// Which sessions a server enters from the default one. After any probe
     /// of a non-default session that did not end in a definite refusal, it
     /// returns to the default session, and stops if that return is not
-    /// answered positively. The programming session is skipped unless asked
-    /// for.
+    /// answered positively. The programming session, destructive, is skipped
+    /// unless the scan's ceiling is.
     #[derive(Debug, Clone)]
     pub struct SessionScan {
         plan: Plan<u8, SessionFinding>,
@@ -551,19 +551,27 @@ mod session {
     }
 
     impl SessionScan {
+        /// The sessions whose session-control request is at most
+        /// state-changing, which leaves out the programming session.
         pub fn new(sessions: RangeInclusive<u8>) -> Self {
-            Self::over(sessions.filter(|s| *s != PROGRAMMING_SESSION))
+            Self::up_to(sessions, Safety::StateChanging)
         }
 
-        pub fn including_programming(sessions: RangeInclusive<u8>) -> Self {
-            Self::over(sessions)
-        }
-
-        fn over(sessions: impl Iterator<Item = u8>) -> Self {
+        /// The sessions whose session-control request is at most `highest`:
+        /// the programming session only with [`Safety::Destructive`].
+        pub fn up_to(sessions: RangeInclusive<u8>, highest: Safety) -> Self {
+            let probed = |s: &u8| {
+                *s <= 0x7F && Safety::of(&[sid::DIAGNOSTIC_SESSION_CONTROL, *s]) <= highest
+            };
             Self {
-                plan: Plan::new(sessions.filter(|s| *s <= 0x7F)),
+                plan: Plan::new(sessions.filter(probed)),
                 restore_from: None,
             }
+        }
+
+        #[deprecated(note = "use `SessionScan::up_to(sessions, Safety::Destructive)`")]
+        pub fn including_programming(sessions: RangeInclusive<u8>) -> Self {
+            Self::up_to(sessions, Safety::Destructive)
         }
 
         pub fn with_busy_retries(mut self, retries: u32) -> Self {

@@ -31,6 +31,16 @@ fn session_control_is_state_changing() {
 }
 
 #[test]
+fn entering_the_programming_session_is_destructive() {
+    assert_eq!(Safety::of(&[0x10, 0x02]), Destructive);
+    assert_eq!(Safety::of(&[0x10, 0x82]), Destructive);
+    let programming = Request::DiagnosticSessionControl {
+        sub_function: SubFunction::new(0x02),
+    };
+    assert_eq!(programming.safety(), Destructive);
+}
+
+#[test]
 fn ecu_reset_is_state_changing() {
     assert_eq!(Safety::of(&[0x11, 0x01]), StateChanging);
 }

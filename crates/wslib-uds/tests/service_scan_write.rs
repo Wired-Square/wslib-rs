@@ -25,7 +25,7 @@ fn a_service_scan_never_offers_a_probe_above_the_highest_class_allowed() {
         .collect();
     assert_eq!(
         state_changing,
-        [0x10, 0x11, 0x19, 0x22, 0x23, 0x27, 0x28, 0x3E, 0x85]
+        [0x11, 0x19, 0x22, 0x23, 0x27, 0x28, 0x3E, 0x85]
     );
     assert_eq!(probed(ServiceScan::up_to(Safety::Destructive)).len(), 26);
     assert_eq!(
@@ -98,12 +98,12 @@ fn a_scan_through_a_client_sends_only_up_to_the_lower_of_the_two_ceilings() {
 #[test]
 fn a_positive_answer_to_a_bare_id_above_read_only_is_recorded_executed_and_stops_the_scan() {
     let mut scan = ServiceScan::up_to(Safety::StateChanging);
-    assert_eq!(scan.next_probe().unwrap().service(), 0x10);
-    assert_eq!(scan.report(Some(&[0x50])), Some(ServiceVerdict::Executed));
+    assert_eq!(scan.next_probe().unwrap().service(), 0x11);
+    assert_eq!(scan.report(Some(&[0x51])), Some(ServiceVerdict::Executed));
     assert_eq!(scan.next_probe(), None);
     assert_eq!(scan.report(None), None);
     let progress = scan.progress();
-    assert_eq!((progress.done, progress.total), (1, 9));
+    assert_eq!((progress.done, progress.total), (1, 8));
     assert!(progress.stopped_early);
     assert_eq!(scan.findings()[0].verdict, ServiceVerdict::Executed);
 }

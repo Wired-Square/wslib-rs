@@ -25,7 +25,9 @@ impl Safety {
                 Self::ReadOnly
             }
             (sid::ROUTINE_CONTROL, Some(REQUEST_ROUTINE_RESULTS)) => Self::ReadOnly,
-            (sid::DIAGNOSTIC_SESSION_CONTROL, Some(PROGRAMMING_SESSION)) => Self::Destructive,
+            (sid::DIAGNOSTIC_SESSION_CONTROL, Some(PROGRAMMING_SESSION) | None) => {
+                Self::Destructive
+            }
             (
                 sid::DIAGNOSTIC_SESSION_CONTROL
                 | sid::ECU_RESET

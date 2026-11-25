@@ -20,10 +20,11 @@
   read-only scan loop has no fallible step. `ServiceProbe::request` is
   unchanged.
 - DiagnosticSessionControl to the programming session (0x02) is now
-  `Safety::Destructive`; every other session, and a bare 0x10, stays
-  state-changing. A request 0.1.0 classed state-changing is now destructive:
-  a client with a `StateChanging` ceiling refuses it. `ServiceScan::up_to`
-  probes bare ids, so it is unchanged. `write`:
+  `Safety::Destructive`, and so is a bare 0x10, whose session is unknown, as
+  a bare RoutineControl already was; every other session stays
+  state-changing. Requests 0.1.0 classed state-changing are now destructive:
+  a client with a `StateChanging` ceiling refuses them, and
+  `ServiceScan::up_to(Safety::StateChanging)` no longer probes 0x10. `write`:
   `SessionScan::up_to(sessions, highest)` probes the programming session
   only with a destructive ceiling; `SessionScan::new` is
   `up_to(sessions, Safety::StateChanging)`, and `including_programming` is

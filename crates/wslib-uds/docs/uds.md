@@ -287,8 +287,8 @@ of the scan's class and the client's ceiling (`tests/client_write.rs`:
 | 0x19, 0x22 | read-only | `reading_dtcs_and_data_is_read_only` |
 | 0x3E | read-only | `tester_present_is_read_only` |
 | 0x31 with sub-function 0x03 | read-only | `routine_start_and_stop_are_destructive_and_its_results_read_only` |
-| 0x10 to any session but programming, and a bare 0x10 | state-changing | `session_control_is_state_changing` |
-| 0x10 to the programming session (0x02), where a server takes new software and may leave its application | destructive | `entering_the_programming_session_is_destructive` |
+| 0x10 to any session but programming | state-changing | `session_control_is_state_changing` |
+| 0x10 to the programming session (0x02), where a server takes new software and may leave its application, and a bare 0x10, whose session is unknown | destructive | `entering_the_programming_session_is_destructive` |
 | 0x11 | state-changing | `ecu_reset_is_state_changing` |
 | 0x23: memory-mapped registers can have side effects, and a bad address can fault the ECU | state-changing | `reading_memory_is_state_changing_for_its_side_effects` |
 | 0x27 | state-changing | `security_access_is_state_changing` |

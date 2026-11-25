@@ -144,7 +144,12 @@ fn reassembler(address_byte: Option<u8>) -> Reassembler {
         tx: byte,
         rx: byte,
     });
-    let mut framing = Framing::new(addressing, FrameFormat::Fd(FdLength::MAX));
+    let mut framing = Framing::new(
+        addressing,
+        FrameFormat::Fd {
+            length: FdLength::MAX,
+        },
+    );
     framing.max_message = MAX_MESSAGE_BYTES as u32;
     Reassembler::with_framing(0, StMin(0), framing)
 }

@@ -33,10 +33,17 @@ fn ecu_framings() -> Vec<Framing> {
     vec![
         Framing::default(),
         padded,
-        Framing::new(Addressing::Normal, FrameFormat::Fd(FdLength::MAX)),
+        Framing::new(
+            Addressing::Normal,
+            FrameFormat::Fd {
+                length: FdLength::MAX,
+            },
+        ),
         Framing::new(
             Addressing::Mixed { tx: 0x33, rx: 0x44 },
-            FrameFormat::Fd(FdLength::new(12).unwrap()),
+            FrameFormat::Fd {
+                length: FdLength::new(12).unwrap(),
+            },
         ),
     ]
 }

@@ -130,6 +130,8 @@ pub struct TapNotice {
     /// The time of the frame that showed it.
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub at_us: u64,
+    /// Serialised as `notice`, since a [`TapEvent`] carrying it takes `kind`.
+    #[cfg_attr(feature = "serde", serde(rename = "notice"))]
     pub kind: NoticeKind,
 }
 
@@ -138,7 +140,11 @@ pub struct TapNotice {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpNoticeKind"))]
 #[cfg_attr(
     feature = "serde",
-    serde(rename_all = "camelCase", rename_all_fields = "camelCase")
+    serde(
+        tag = "kind",
+        rename_all = "camelCase",
+        rename_all_fields = "camelCase"
+    )
 )]
 pub enum NoticeKind {
     /// A consecutive frame out of sequence dropped the message.
@@ -171,7 +177,7 @@ pub enum NoticeKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpTapEvent"))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[cfg_attr(feature = "serde", serde(tag = "kind", rename_all = "camelCase"))]
 pub enum TapEvent {
     Message(TapMessage),
     Notice(TapNotice),
@@ -1062,7 +1068,12 @@ mod tests {
     #[test]
     fn a_consecutive_frame_longer_than_the_first_frame_is_skipped() {
         let mut config = TapConfig::new(TESTER, ECU, false);
-        config.framing = Framing::new(Addressing::Normal, FrameFormat::Fd(crate::FdLength::MAX));
+        config.framing = Framing::new(
+            Addressing::Normal,
+            FrameFormat::Fd {
+                length: crate::FdLength::MAX,
+            },
+        );
         let mut tap = IsoTpTap::new(config).unwrap();
         tap.push(&frame(TESTER, &[0x10, 0x0A, 0, 1, 2, 3, 4, 5], 0));
         tap.push(&frame(

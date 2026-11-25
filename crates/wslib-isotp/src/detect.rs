@@ -183,7 +183,12 @@ fn reader(address_byte: Option<u8>) -> Framing {
         tx: byte,
         rx: byte,
     });
-    let mut framing = Framing::new(addressing, FrameFormat::Fd(FdLength::MAX));
+    let mut framing = Framing::new(
+        addressing,
+        FrameFormat::Fd {
+            length: FdLength::MAX,
+        },
+    );
     framing.max_message = u32::MAX;
     framing
 }
@@ -787,7 +792,12 @@ mod tests {
 
     #[test]
     fn a_can_fd_conversation_is_detected_as_fd() {
-        let framing = Framing::new(Addressing::Normal, FrameFormat::Fd(FdLength::MAX));
+        let framing = Framing::new(
+            Addressing::Normal,
+            FrameFormat::Fd {
+                length: FdLength::MAX,
+            },
+        );
         let mut bus = Bus::new();
         bus.exchange(&framing, TESTER, ECU, &[0x36; 300]);
         let detection = detect(&bus.frames, WINDOW);

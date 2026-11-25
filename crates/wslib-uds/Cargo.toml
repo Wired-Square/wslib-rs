@@ -20,11 +20,11 @@ isotp = ["dep:wslib-isotp"]
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.20"
 ts-rs = { version = "12", features = ["no-serde-warnings"], optional = true }
-wslib-isotp = { path = "../wslib-isotp", version = "0.2.1", registry = "wired-square", optional = true }
+wslib-isotp = { path = "../wslib-isotp", version = "0.3.0", registry = "wired-square", optional = true }
 
 [dev-dependencies]
 serde_json = "1.0.85"
-wslib-isotp = { path = "../wslib-isotp", version = "0.2.1", registry = "wired-square", features = ["testing"] }
+wslib-isotp = { path = "../wslib-isotp", version = "0.3.0", registry = "wired-square", features = ["testing"] }
 
 [[test]]
 name = "client"

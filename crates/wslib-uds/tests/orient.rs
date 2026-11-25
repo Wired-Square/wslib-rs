@@ -865,7 +865,12 @@ fn a_29_bit_conversation_is_found_and_a_29_bit_id_never_pairs_with_an_11_bit_one
 
 #[test]
 fn a_can_fd_conversation_is_found_escaped_single_frames_included() {
-    let fd = Framing::new(Addressing::Normal, FrameFormat::Fd(FdLength::MAX));
+    let fd = Framing::new(
+        Addressing::Normal,
+        FrameFormat::Fd {
+            length: FdLength::MAX,
+        },
+    );
     let frames = script(TESTER, ECU, fd, &[&LONG_READ, &SHORT_READ, &long_write()]);
     assert!(frames.iter().any(|frame| frame.data[..2] == [0x00, 0x14]));
     assert_eq!(

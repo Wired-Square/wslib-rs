@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0
+
+- `serde`: the data-carrying enums `Addressing`, `FrameFormat`,
+  `NoticeKind` and `TapEvent` are tagged with `kind`, their variant names
+  and fields camelCase beside it: `{"kind":"extended","tx":16,"rx":241}` was
+  `{"extended":{"tx":16,"rx":241}}`, and a `TapEvent` is
+  `{"kind":"notice","side":"b",…}` where it was `{"notice":{…}}`. Unit-only
+  enums stay plain strings. The `ts` declarations follow.
+- `FrameFormat::Fd(FdLength)` is `FrameFormat::Fd { length }`, serialised
+  `{"kind":"fd","length":64}`; a tag cannot sit beside a bare number.
+- `TapNotice::kind` serialises as `notice`, since the `TapEvent` carrying it
+  takes `kind`.
+
 ## 0.2.1
 
 - `Framing` sets the addressing (`Addressing::Normal`, `Extended` or `Mixed`,

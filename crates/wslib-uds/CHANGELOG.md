@@ -15,6 +15,7 @@
   answer, is `Unsettled` with its candidates, and a periodic id is never
   paired by coincidence. Messages up to `MAX_MESSAGE_BYTES` (64 KiB) are
   read.
+- Now on wslib-isotp 0.3, whose serialised enums are tagged with `kind`.
 
 ## 0.1.0
 

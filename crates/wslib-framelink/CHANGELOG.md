@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0
+
+- `can`: on wslib-isotp 0.3, so the `IsoTpLink` and `Messages` that
+  `FrameLinkSession::connect_isotp` takes and the `LinkConfig` that
+  `can_link_config` returns are that version's. Nothing else changes.
+
 ## 0.6.0
 
 - On wslib-can-bus 0.3, whose `OpenError` is `Error::CanOpen`'s and whose

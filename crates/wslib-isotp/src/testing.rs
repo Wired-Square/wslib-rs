@@ -399,7 +399,9 @@ mod tests {
     fn a_conversation_stamps_both_sides_in_order() {
         let framing = Framing::new(
             Addressing::Extended { tx: 0xF1, rx: 0x10 },
-            FrameFormat::Fd(FdLength::new(16).unwrap()),
+            FrameFormat::Fd {
+                length: FdLength::new(16).unwrap(),
+            },
         );
         let responder = Responder::new(framing, echo).flow_control(2, StMin(3));
         let mut conversation = Conversation::new(0x18DA10F1, 0x18DAF110, true, 0, responder)

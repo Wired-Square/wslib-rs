@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.2
+
+- `isotp`: `Conversation::tap_config(frames)` gives the wslib-isotp
+  `TapConfig` that reads the conversation's messages with an `IsoTpTap`:
+  the tester as side A and the ECU as side B, extended addressing from the
+  two address bytes, CAN FD when a frame on either id carries more than 8
+  bytes, and messages up to `MAX_MESSAGE_BYTES`, as `orient` read them.
+
 ## 0.1.1
 
 - `testing::Ecu` is tested answering through wslib-isotp's `Responder`:

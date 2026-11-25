@@ -117,6 +117,8 @@ for finding in scan.findings() {
   addressed only where `wslib_isotp::detect` reads them so, which needs
   multi-frame exchanges, and mixed addressing reads as extended; a message
   over `MAX_MESSAGE_BYTES` (64 KiB) is not read.
+  `Conversation::tap_config(frames)` is the `TapConfig` an `IsoTpTap` reads
+  the conversation's messages with, the tester as side A.
 - `ts`: TypeScript declarations for the data types, every name prefixed `Uds`.
   64-bit fields are declared `number`, so an address, size or block length
   above 2^53 loses precision in JavaScript.

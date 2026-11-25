@@ -8,7 +8,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use wslib_isotp::{
     Addressing, DEFAULT_FLOW_CONTROL_WINDOW, FdLength, FrameFormat, Framing, Pair, PciKind,
-    Reassembler, StMin, Step, TimedFrame, detect,
+    Reassembler, StMin, Step, TapConfig, TimedFrame, detect,
 };
 
 use crate::answer::suppresses_positive_response;
@@ -62,6 +62,26 @@ pub struct Conversation {
     pub flow_controlled_requests: u32,
     /// Multi-frame responses the tester answered with flow control.
     pub flow_controlled_responses: u32,
+}
+
+impl Conversation {
+    /// How a `wslib_isotp::IsoTpTap` reads this conversation's messages in
+    /// `frames`, with the tester as side A and the ECU as side B.
+    pub fn tap_config(&self, frames: &[TimedFrame]) -> TapConfig {
+        let addressing = self.tester.address_byte.zip(self.ecu.address_byte).map_or(
+            Addressing::Normal,
+            |(tx, rx)| Addressing::Extended { tx, rx },
+        );
+        let fd = frames.iter().any(|frame| {
+            frame.extended == self.extended
+                && [self.tester.id, self.ecu.id].contains(&frame.id)
+                && frame.data.len() > CLASSIC_DATA_BYTES
+        });
+        let format = if fd { FD } else { FrameFormat::Classic };
+        let mut config = TapConfig::new(self.tester.id, self.ecu.id, self.extended);
+        config.framing = framing(addressing, format);
+        config
+    }
 }
 
 /// An id that exchanged UDS with others, whose partner in one role could not
@@ -153,18 +173,26 @@ fn endpoint((id, _, address_byte): Key) -> Endpoint {
     Endpoint { id, address_byte }
 }
 
+const CLASSIC_DATA_BYTES: usize = 8;
+
+/// A receiver reads a CAN FD frame of any length up to 64 whatever its
+/// framing's length, which sets only what it sends.
+const FD: FrameFormat = FrameFormat::Fd {
+    length: FdLength::MAX,
+};
+
+fn framing(addressing: Addressing, format: FrameFormat) -> Framing {
+    let mut framing = Framing::new(addressing, format);
+    framing.max_message = MAX_MESSAGE_BYTES as u32;
+    framing
+}
+
 fn reader(address_byte: Option<u8>) -> (Framing, Reassembler, Option<u64>) {
     let addressing = address_byte.map_or(Addressing::Normal, |byte| Addressing::Extended {
         tx: byte,
         rx: byte,
     });
-    let mut framing = Framing::new(
-        addressing,
-        FrameFormat::Fd {
-            length: FdLength::MAX,
-        },
-    );
-    framing.max_message = MAX_MESSAGE_BYTES as u32;
+    let framing = framing(addressing, FD);
     (
         framing,
         Reassembler::with_framing(0, StMin(0), framing),

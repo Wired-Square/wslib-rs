@@ -84,7 +84,9 @@ async fn the_link_talks_to_the_responder_through_waits_blocks_and_st_min() {
 async fn a_can_fd_link_with_extended_addressing_talks_to_the_responder() {
     let mut ecu = Framing::new(
         Addressing::Extended { tx: 0xF1, rx: 0x10 },
-        FrameFormat::Fd(FdLength::MAX),
+        FrameFormat::Fd {
+            length: FdLength::MAX,
+        },
     );
     ecu.padding = Some(0x00);
     let responder = Responder::new(ecu, reversed).flow_control(8, StMin(0xF2));

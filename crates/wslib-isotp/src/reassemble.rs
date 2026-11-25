@@ -208,9 +208,15 @@ mod tests {
         ];
         let formats = [
             FrameFormat::Classic,
-            FrameFormat::Fd(FdLength::new(8).unwrap()),
-            FrameFormat::Fd(FdLength::new(20).unwrap()),
-            FrameFormat::Fd(FdLength::MAX),
+            FrameFormat::Fd {
+                length: FdLength::new(8).unwrap(),
+            },
+            FrameFormat::Fd {
+                length: FdLength::new(20).unwrap(),
+            },
+            FrameFormat::Fd {
+                length: FdLength::MAX,
+            },
         ];
         let mut framings = Vec::new();
         for addressing in addressings {
@@ -325,7 +331,12 @@ mod tests {
 
     #[test]
     fn a_consecutive_frame_longer_than_the_first_frame_is_ignored() {
-        let fd = Framing::new(Addressing::Normal, FrameFormat::Fd(FdLength::MAX));
+        let fd = Framing::new(
+            Addressing::Normal,
+            FrameFormat::Fd {
+                length: FdLength::MAX,
+            },
+        );
         let mut reassembler = Reassembler::with_framing(0, ST_MIN, fd);
         let first = [0x10, 30, 0, 1, 2, 3, 4, 5];
         assert_eq!(reassembler.on_frame(&first), Outcome::of(cts(0)));
@@ -355,7 +366,12 @@ mod tests {
 
     #[test]
     fn a_can_fd_receiver_reads_consecutive_frames_as_long_as_the_first() {
-        let fd = Framing::new(Addressing::Normal, FrameFormat::Fd(FdLength::MAX));
+        let fd = Framing::new(
+            Addressing::Normal,
+            FrameFormat::Fd {
+                length: FdLength::MAX,
+            },
+        );
         let mut reassembler = Reassembler::with_framing(0, ST_MIN, fd);
         let mut first = vec![0x10, 30];
         first.extend(0..10);

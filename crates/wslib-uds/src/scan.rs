@@ -282,6 +282,60 @@ impl ServiceScan {
     }
 }
 
+/// A bare service id whose class is read-only, from a [`ReadOnlyServiceScan`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadOnlyServiceProbe {
+    service: u8,
+}
+
+impl ReadOnlyServiceProbe {
+    pub fn service(&self) -> u8 {
+        self.service
+    }
+
+    pub fn request(&self) -> ReadOnly {
+        let bare = Request::Other {
+            service: self.service,
+            data: Vec::new(),
+        };
+        ReadOnly::new(bare).expect("a read-only scan offers only read-only bare ids")
+    }
+}
+
+/// [`ServiceScan::new`]'s scan, whose probes are already [`ReadOnly`] for a
+/// client's `send_read_only`.
+#[derive(Debug, Clone, Default)]
+pub struct ReadOnlyServiceScan(ServiceScan);
+
+impl ReadOnlyServiceScan {
+    pub fn new() -> Self {
+        Self(ServiceScan::new())
+    }
+
+    pub fn with_busy_retries(self, retries: u32) -> Self {
+        Self(self.0.with_busy_retries(retries))
+    }
+
+    /// The same probe until it is reported, and again after a busy answer.
+    pub fn next_probe(&self) -> Option<ReadOnlyServiceProbe> {
+        let service = self.0.next_probe()?.service;
+        Some(ReadOnlyServiceProbe { service })
+    }
+
+    /// `None` when the scan is done.
+    pub fn report(&mut self, reply: Option<&[u8]>) -> Option<ServiceVerdict> {
+        self.0.report(reply)
+    }
+
+    pub fn progress(&self) -> ScanProgress {
+        self.0.progress()
+    }
+
+    pub fn findings(&self) -> &[ServiceFinding] {
+        self.0.findings()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "UdsDidVerdict"))]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -401,7 +455,7 @@ mod session {
     use serde::{Deserialize, Serialize};
 
     use super::Plan;
-    use crate::codec::{DEFAULT_SESSION, PROGRAMMING_SESSION, SessionTiming, SubFunction};
+    use crate::codec::{DEFAULT_SESSION, SessionTiming, SubFunction};
     use crate::{Answer, Nrc, Request, Response, Safety, ScanProgress, answers, sid};
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -488,8 +542,8 @@ mod session {
     /// Which sessions a server enters from the default one. After any probe
     /// of a non-default session that did not end in a definite refusal, it
     /// returns to the default session, and stops if that return is not
-    /// answered positively. The programming session is skipped unless asked
-    /// for.
+    /// answered positively. The programming session, destructive, is skipped
+    /// unless the scan's ceiling is.
     #[derive(Debug, Clone)]
     pub struct SessionScan {
         plan: Plan<u8, SessionFinding>,
@@ -497,19 +551,27 @@ mod session {
     }
 
     impl SessionScan {
+        /// The sessions whose session-control request is at most
+        /// state-changing, which leaves out the programming session.
         pub fn new(sessions: RangeInclusive<u8>) -> Self {
-            Self::over(sessions.filter(|s| *s != PROGRAMMING_SESSION))
+            Self::up_to(sessions, Safety::StateChanging)
         }
 
-        pub fn including_programming(sessions: RangeInclusive<u8>) -> Self {
-            Self::over(sessions)
-        }
-
-        fn over(sessions: impl Iterator<Item = u8>) -> Self {
+        /// The sessions whose session-control request is at most `highest`:
+        /// the programming session only with [`Safety::Destructive`].
+        pub fn up_to(sessions: RangeInclusive<u8>, highest: Safety) -> Self {
+            let probed = |s: &u8| {
+                *s <= 0x7F && Safety::of(&[sid::DIAGNOSTIC_SESSION_CONTROL, *s]) <= highest
+            };
             Self {
-                plan: Plan::new(sessions.filter(|s| *s <= 0x7F)),
+                plan: Plan::new(sessions.filter(probed)),
                 restore_from: None,
             }
+        }
+
+        #[deprecated(note = "use `SessionScan::up_to(sessions, Safety::Destructive)`")]
+        pub fn including_programming(sessions: RangeInclusive<u8>) -> Self {
+            Self::up_to(sessions, Safety::Destructive)
         }
 
         pub fn with_busy_retries(mut self, retries: u32) -> Self {

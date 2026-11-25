@@ -1,7 +1,7 @@
 [package]
 name = "wslib-uds"
-version = "0.1.0"
-description = "UDS (ISO 14229-1), sans-IO: every service decoded and encoded, a request's safety class, request-response pairing for a capture, a client on the caller's clock with writes behind a feature, scan plans, and a simulated ECU."
+version = "0.1.1"
+description = "UDS (ISO 14229-1), sans-IO: every service decoded and encoded, a request's safety class, request-response pairing for a capture, testers and ECUs found in a window of CAN frames, a client on the caller's clock with writes behind a feature, scan plans, and a simulated ECU."
 readme = "README.md"
 edition.workspace = true
 rust-version.workspace = true
@@ -14,14 +14,17 @@ publish = ["wired-square"]
 write = []
 testing = []
 ts = ["dep:ts-rs"]
+isotp = ["dep:wslib-isotp"]
 
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.20"
 ts-rs = { version = "12", features = ["no-serde-warnings"], optional = true }
+wslib-isotp = { path = "../wslib-isotp", version = "0.3.0", registry = "wired-square", optional = true }
 
 [dev-dependencies]
 serde_json = "1.0.85"
+wslib-isotp = { path = "../wslib-isotp", version = "0.3.0", registry = "wired-square", features = ["testing"] }
 
 [[test]]
 name = "client"
@@ -33,6 +36,14 @@ required-features = ["testing", "write"]
 
 [[test]]
 name = "ecu"
+required-features = ["testing"]
+
+[[test]]
+name = "orient"
+required-features = ["isotp", "testing"]
+
+[[test]]
+name = "over_isotp"
 required-features = ["testing"]
 
 [[test]]

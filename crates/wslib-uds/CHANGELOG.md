@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.1.1
+
+- `testing::Ecu` is tested answering through wslib-isotp's `Responder`:
+  single and multi-frame requests and responses, responsePending before the
+  final answer, and negative responses, with the frames read back through
+  `IsoTpTap` into `Tracker` as the same transactions.
+- `isotp`: `orient(frames, timing)` finds the UDS conversations in a window
+  of wslib-isotp `TimedFrame`s, single frames alone included, and says which
+  side is the tester. Each `Conversation` counts its exchanges, negative and
+  responsePending answers, and the multi-frame messages flow control paced
+  each way. Only requests decoded as a typed `Request` count. A pair is
+  reported only with two exchanges or one paced by flow control, when
+  rivals, the ECU's unsolicited messages, the tester's unanswered requests,
+  frames ISO-TP ignores, and exchanges in single frames padded with varying
+  bytes are each at most an eighth of its exchanges, and when untyped
+  traffic does not outnumber the typed; every other id with an exchange,
+  such as a functional request two ECUs answer or an ECU padding with stale
+  bytes, is `Unsettled` with its candidates. Ids read as addressed only
+  where `wslib_isotp::detect` finds multi-frame exchanges. Two periodic ids
+  at about one rate whose frames are a typed request and its answer,
+  uniformly padded, still look like a conversation. Messages up to
+  `MAX_MESSAGE_BYTES` (64 KiB) are read.
+- `ReadOnlyServiceScan`, the scan `ServiceScan::new` builds, hands out
+  `ReadOnlyServiceProbe`s whose `request()` is already `ReadOnly`, so a
+  read-only scan loop has no fallible step. `ServiceProbe::request` is
+  unchanged.
+- DiagnosticSessionControl to the programming session (0x02) is now
+  `Safety::Destructive`, and so is a bare 0x10, whose session is unknown, as
+  a bare RoutineControl already was; every other session stays
+  state-changing. Requests 0.1.0 classed state-changing are now destructive:
+  a client with a `StateChanging` ceiling refuses them, and
+  `ServiceScan::up_to(Safety::StateChanging)` no longer probes 0x10. `write`:
+  `SessionScan::up_to(sessions, highest)` probes the programming session
+  only with a destructive ceiling; `SessionScan::new` is
+  `up_to(sessions, Safety::StateChanging)`, and `including_programming` is
+  deprecated for `up_to(sessions, Safety::Destructive)`.
+- Now on wslib-isotp 0.3, whose serialised enums are tagged with `kind`.
+
 ## 0.1.0
 
 - `Request` and `Response`: services 0x10, 0x11, 0x14, 0x19, 0x22, 0x23, 0x27,

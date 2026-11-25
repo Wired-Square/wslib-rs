@@ -83,14 +83,40 @@ for finding in scan.findings() {
   at most `MAX_OPEN_REQUESTS` stay open.
 - Scans: `AddressScan` (tester present per candidate id), `ServiceScan` (bare
   service ids: the read-only ones, or with `write` up to a class the caller
-  names; it stops if a bare id above read-only is acted on), `DidScan`, and
-  with `write` `SessionScan`, which skips the programming session unless asked,
+  names; it stops if a bare id above read-only is acted on),
+  `ReadOnlyServiceScan` (the read-only one, whose probes are already
+  `ReadOnly`, like `DidScan`'s, for `send_read_only`), `DidScan`, and
+  with `write` `SessionScan`, which skips the programming session unless
+  `SessionScan::up_to` is given a destructive ceiling,
   returns to the default session after any probe that may have left it, and
   stops if that return is not answered positively. No scan searches for a
   security key.
 - `testing`: `testing::Ecu`, a simulated ECU with DIDs, sessions, one
   security level, DTCs, a routine and responsePending answers, whose
   `answer(&[u8]) -> Vec<Vec<u8>>` drives a transport's responder.
+- `isotp`: `orient(frames, timing)`, the UDS conversations in a window of
+  wslib-isotp `TimedFrame`s, each with its tester and ECU and the evidence:
+  exchanges, negative and responsePending answers, and multi-frame messages
+  paced by flow control each way. Single frames alone are enough, which
+  ISO-TP detection cannot use. Only a request this crate decodes as a typed
+  `Request` (not `Request::Other`) counts towards an exchange; an answer to a
+  vendor, KWP, OBD or unmodelled ISO request counts for nothing either way.
+  A pair is a `Conversation` only with two exchanges or more, or one paced by
+  flow control, and only when every rival on either side, the ECU's messages
+  answering nothing, the tester's unanswered requests, frames from either
+  that ISO-TP ignores, and exchanges in single frames padded with varying
+  bytes are each at most an eighth of its exchanges; when untyped traffic
+  does not outnumber the typed; and when neither id is in another such pair
+  in the other role. Every other id with an exchange is `Unsettled` with its
+  candidates, at most `MAX_PARTNERS` (4): a single exchange, two ECUs
+  answering one functional request, two testers whose requests every answer
+  could answer, a periodic look-alike answering every request beside a real
+  ECU, an ECU that pads with stale bytes. Limits: two periodic ids at about
+  the same rate whose frames are a typed request and its answer, uniformly
+  padded, cannot be told from a conversation, in step or not; ids read as
+  addressed only where `wslib_isotp::detect` reads them so, which needs
+  multi-frame exchanges, and mixed addressing reads as extended; a message
+  over `MAX_MESSAGE_BYTES` (64 KiB) is not read.
 - `ts`: TypeScript declarations for the data types, every name prefixed `Uds`.
   64-bit fields are declared `number`, so an address, size or block length
   above 2^53 loses precision in JavaScript.

@@ -30,7 +30,7 @@ fn exported<T: TS + 'static>() -> String {
 fn addressing() {
     assert_eq!(
         exported::<Addressing>(),
-        r#"export type IsoTpAddressing = "normal" | { "extended": { tx: number, rx: number, } } | { "mixed": { tx: number, rx: number, } };"#
+        r#"export type IsoTpAddressing = { "kind": "normal" } | { "kind": "extended", tx: number, rx: number, } | { "kind": "mixed", tx: number, rx: number, };"#
     );
 }
 
@@ -46,7 +46,7 @@ fn fd_length() {
 fn frame_format() {
     assert_eq!(
         exported::<FrameFormat>(),
-        r#"import type { IsoTpFdLength } from "./IsoTpFdLength"; export type IsoTpFrameFormat = "classic" | { "fd": IsoTpFdLength };"#
+        r#"import type { IsoTpFdLength } from "./IsoTpFdLength"; export type IsoTpFrameFormat = { "kind": "classic" } | { "kind": "fd", length: IsoTpFdLength, };"#
     );
 }
 
@@ -88,15 +88,15 @@ fn tap_event() {
     );
     assert_eq!(
         exported::<TapNotice>(),
-        r#"import type { IsoTpNoticeKind } from "./IsoTpNoticeKind"; import type { IsoTpSide } from "./IsoTpSide"; export type IsoTpTapNotice = { side: IsoTpSide, atUs: number, kind: IsoTpNoticeKind, };"#
+        r#"import type { IsoTpNoticeKind } from "./IsoTpNoticeKind"; import type { IsoTpSide } from "./IsoTpSide"; export type IsoTpTapNotice = { side: IsoTpSide, atUs: number, notice: IsoTpNoticeKind, };"#
     );
     assert_eq!(
         exported::<NoticeKind>(),
-        r#"export type IsoTpNoticeKind = { "outOfSequence": { expected: number, received: number, } } | { "truncated": { needed: number, carried: number, } } | "superseded" | { "timedOut": { gapUs: number, } } | "overflow" | "wait" | "tooManyWaits" | { "reservedFlowStatus": { status: number, } } | { "tooLong": { len: number, } } | { "resynchronised": { skipped: number, } };"#
+        r#"export type IsoTpNoticeKind = { "kind": "outOfSequence", expected: number, received: number, } | { "kind": "truncated", needed: number, carried: number, } | { "kind": "superseded" } | { "kind": "timedOut", gapUs: number, } | { "kind": "overflow" } | { "kind": "wait" } | { "kind": "tooManyWaits" } | { "kind": "reservedFlowStatus", status: number, } | { "kind": "tooLong", len: number, } | { "kind": "resynchronised", skipped: number, };"#
     );
     assert_eq!(
         exported::<TapEvent>(),
-        r#"import type { IsoTpTapMessage } from "./IsoTpTapMessage"; import type { IsoTpTapNotice } from "./IsoTpTapNotice"; export type IsoTpTapEvent = { "message": IsoTpTapMessage } | { "notice": IsoTpTapNotice };"#
+        r#"import type { IsoTpTapMessage } from "./IsoTpTapMessage"; import type { IsoTpTapNotice } from "./IsoTpTapNotice"; export type IsoTpTapEvent = { "kind": "message" } & IsoTpTapMessage | { "kind": "notice" } & IsoTpTapNotice;"#
     );
 }
 
@@ -145,8 +145,21 @@ fn serde_writes_camel_case_fields_and_variants_and_fd_lengths_as_numbers() {
             at_us: 7,
             kind: NoticeKind::TimedOut { gap_us: 1_000_000 },
         }),
-        r#"{"notice":{"side":"b","atUs":7,"kind":{"timedOut":{"gapUs":1000000}}}}"#,
+        r#"{"kind":"notice","side":"b","atUs":7,"notice":{"kind":"timedOut","gapUs":1000000}}"#,
     );
+    round_trips(
+        TapEvent::Message(TapMessage {
+            from: Side::A,
+            data: vec![0x3E, 0x00],
+            frames: 1,
+            first_at_us: 5,
+            last_at_us: 5,
+            flow_controls: vec![],
+            flow_control_count: 0,
+        }),
+        r#"{"kind":"message","from":"a","data":[62,0],"frames":1,"firstAtUs":5,"lastAtUs":5,"flowControls":[],"flowControlCount":0}"#,
+    );
+    round_trips(NoticeKind::Superseded, r#"{"kind":"superseded"}"#);
     round_trips(
         FlowControl {
             status: FlowStatus::ContinueToSend,
@@ -157,8 +170,15 @@ fn serde_writes_camel_case_fields_and_variants_and_fd_lengths_as_numbers() {
     );
     round_trips(
         Addressing::Extended { tx: 0x10, rx: 0xF1 },
-        r#"{"extended":{"tx":16,"rx":241}}"#,
+        r#"{"kind":"extended","tx":16,"rx":241}"#,
     );
-    round_trips(FrameFormat::Fd(FdLength::MAX), r#"{"fd":64}"#);
-    assert!(serde_json::from_str::<FrameFormat>(r#"{"fd":13}"#).is_err());
+    round_trips(Addressing::Normal, r#"{"kind":"normal"}"#);
+    round_trips(
+        FrameFormat::Fd {
+            length: FdLength::MAX,
+        },
+        r#"{"kind":"fd","length":64}"#,
+    );
+    round_trips(FrameFormat::Classic, r#"{"kind":"classic"}"#);
+    assert!(serde_json::from_str::<FrameFormat>(r#"{"kind":"fd","length":13}"#).is_err());
 }

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{Request, sid};
+use crate::{PROGRAMMING_SESSION, Request, sid};
 
 /// What sending a request may do to the ECU, least to most; see the crate
 /// docs for the table.
@@ -25,6 +25,9 @@ impl Safety {
                 Self::ReadOnly
             }
             (sid::ROUTINE_CONTROL, Some(REQUEST_ROUTINE_RESULTS)) => Self::ReadOnly,
+            (sid::DIAGNOSTIC_SESSION_CONTROL, Some(PROGRAMMING_SESSION) | None) => {
+                Self::Destructive
+            }
             (
                 sid::DIAGNOSTIC_SESSION_CONTROL
                 | sid::ECU_RESET

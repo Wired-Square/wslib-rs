@@ -2,8 +2,8 @@ use std::time::Instant;
 
 use wslib_uds::testing::{Did, Ecu};
 use wslib_uds::{
-    AddressScan, Client, DidScan, DidVerdict, Event, Nrc, ReadOnly, Safety, ServiceScan,
-    ServiceVerdict, Timing, ecu_answered,
+    AddressScan, Client, DidScan, DidVerdict, Event, Nrc, ReadOnly, ReadOnlyServiceScan, Safety,
+    ServiceScan, ServiceVerdict, Timing, ecu_answered,
 };
 
 fn final_answer(ecu: &mut Ecu, request: &[u8]) -> Option<Vec<u8>> {
@@ -86,6 +86,30 @@ fn without_write_a_service_scan_probes_only_bare_ids_that_are_read_only() {
         }));
     assert_eq!(scan.progress().found, 3);
     assert!(!scan.progress().stopped_early);
+}
+
+#[test]
+fn a_read_only_service_scan_hands_out_read_only_probes_and_matches_the_plain_scan() {
+    let mut ecu = Ecu::new();
+    let mut client = Client::new(Timing::default());
+    let mut scan = ReadOnlyServiceScan::new().with_busy_retries(1);
+    let now = Instant::now();
+    let mut probed = Vec::new();
+    while let Some(probe) = scan.next_probe() {
+        let sent = client.send_read_only(probe.request(), now).unwrap();
+        assert_eq!(sent, [probe.service()]);
+        probed.push(probe.service());
+        let reply = final_answer(&mut ecu, &sent).unwrap();
+        client.receive(&reply, now);
+        scan.report(Some(&reply));
+    }
+    assert_eq!(probed, [0x19, 0x22, 0x3E]);
+    let mut plain = ServiceScan::new();
+    while plain.next_probe().is_some() {
+        plain.report(Some(&[0x7F, plain.next_probe().unwrap().service(), 0x13]));
+    }
+    assert_eq!(scan.findings(), plain.findings());
+    assert_eq!(scan.progress(), plain.progress());
 }
 
 #[test]

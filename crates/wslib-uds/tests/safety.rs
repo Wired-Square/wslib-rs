@@ -31,6 +31,17 @@ fn session_control_is_state_changing() {
 }
 
 #[test]
+fn entering_the_programming_session_is_destructive() {
+    assert_eq!(Safety::of(&[0x10, 0x02]), Destructive);
+    assert_eq!(Safety::of(&[0x10, 0x82]), Destructive);
+    assert_eq!(Safety::of(&[0x10]), Destructive);
+    let programming = Request::DiagnosticSessionControl {
+        sub_function: SubFunction::new(0x02),
+    };
+    assert_eq!(programming.safety(), Destructive);
+}
+
+#[test]
 fn ecu_reset_is_state_changing() {
     assert_eq!(Safety::of(&[0x11, 0x01]), StateChanging);
 }
@@ -97,7 +108,7 @@ fn a_bare_service_id_has_its_services_class_with_the_sub_function_unknown() {
     for service in sid::iso() {
         let expected = match service {
             0x19 | 0x22 | 0x3E => ReadOnly,
-            0x10 | 0x11 | 0x23 | 0x27 | 0x28 | 0x85 => StateChanging,
+            0x11 | 0x23 | 0x27 | 0x28 | 0x85 => StateChanging,
             _ => Destructive,
         };
         assert_eq!(Safety::of(&[service]), expected, "0x{service:02X}");

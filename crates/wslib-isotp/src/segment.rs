@@ -122,7 +122,9 @@ mod tests {
     fn fd(len: u8) -> Framing {
         Framing::new(
             Addressing::Normal,
-            FrameFormat::Fd(FdLength::new(len).unwrap()),
+            FrameFormat::Fd {
+                length: FdLength::new(len).unwrap(),
+            },
         )
     }
 

@@ -15,7 +15,11 @@ const FD_MAX: usize = 64;
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpAddressing"))]
 #[cfg_attr(
     feature = "serde",
-    serde(rename_all = "camelCase", rename_all_fields = "camelCase")
+    serde(
+        tag = "kind",
+        rename_all = "camelCase",
+        rename_all_fields = "camelCase"
+    )
 )]
 pub enum Addressing {
     #[default]
@@ -102,11 +106,20 @@ impl From<FdLength> for u8 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(rename = "IsoTpFrameFormat"))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[cfg_attr(
+    feature = "serde",
+    serde(
+        tag = "kind",
+        rename_all = "camelCase",
+        rename_all_fields = "camelCase"
+    )
+)]
 pub enum FrameFormat {
     #[default]
     Classic,
-    Fd(FdLength),
+    Fd {
+        length: FdLength,
+    },
 }
 
 /// How ISO-TP lays its frames out on one conversation, from one end's side.
@@ -189,7 +202,7 @@ impl Framing {
     }
 
     pub fn is_fd(&self) -> bool {
-        matches!(self.format, FrameFormat::Fd(_))
+        matches!(self.format, FrameFormat::Fd { .. })
     }
 
     /// A received frame's kind, or `None` for one too long for the format,
@@ -219,7 +232,7 @@ impl Framing {
     pub(crate) fn tx_dl(&self) -> usize {
         match self.format {
             FrameFormat::Classic => CLASSIC_LEN,
-            FrameFormat::Fd(len) => len.get(),
+            FrameFormat::Fd { length } => length.get(),
         }
     }
 
@@ -276,7 +289,7 @@ impl Framing {
     fn max_frame(&self) -> usize {
         match self.format {
             FrameFormat::Classic => CLASSIC_LEN,
-            FrameFormat::Fd(_) => FD_MAX,
+            FrameFormat::Fd { .. } => FD_MAX,
         }
     }
 
@@ -341,7 +354,9 @@ mod tests {
     };
 
     fn fd(len: u8) -> FrameFormat {
-        FrameFormat::Fd(FdLength::new(len).unwrap())
+        FrameFormat::Fd {
+            length: FdLength::new(len).unwrap(),
+        }
     }
 
     #[test]

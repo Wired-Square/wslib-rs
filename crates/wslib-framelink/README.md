@@ -88,5 +88,5 @@ None is on by default.
 serialise as they did before the move; `tests/goldens.rs` pins them.
 
 ```toml
-wslib-framelink = { version = "0.6", registry = "wired-square" }
+wslib-framelink = { version = "0.7", registry = "wired-square" }
 ```

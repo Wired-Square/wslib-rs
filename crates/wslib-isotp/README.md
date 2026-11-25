@@ -111,7 +111,9 @@ is: its first byte cannot be told from a signal's.
 None is on by default. The codec, the tap and detection need only thiserror.
 
 - `serde`: serde derives on the framing, flow control, tap and detection
-  types. Fields and enum variants are camelCase.
+  types. Fields and enum variants are camelCase, and an enum whose variants
+  carry data is tagged with `kind`: `{"kind":"fd","length":64}`. A
+  `TapNotice`'s kind is its `notice` field.
 - `ts`: ts-rs declarations for those types, each named `IsoTp…`. Implies
   `serde`.
 - `testing`: `testing::Responder`, a clockless simulated peer that answers
@@ -168,5 +170,5 @@ let reply = messages.recv().await;
 ```
 
 ```toml
-wslib-isotp = { version = "0.2", registry = "wired-square", features = ["link"] }
+wslib-isotp = { version = "0.3", registry = "wired-square", features = ["link"] }
 ```

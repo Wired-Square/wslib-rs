@@ -118,6 +118,103 @@ the tracker and the scan verdicts all use it (`tests/answer.rs`):
   (`a_reply_after_the_timeout_ends_the_request_timed_out_and_is_itself_unsolicited`,
   `a_new_request_long_after_the_last_closes_it_timed_out_not_superseded`).
 
+## Orienting a window of frames
+
+`orient` (feature `isotp`) leans on the facts above and no others. A
+request counts only if this crate decodes it as a typed `Request`, not
+`Request::Other`; any other message that answers nothing still opens a
+request, whose answer counts for nothing either way (`tests/orient.rs`:
+`a_message_whose_first_byte_is_no_iso_request_service_counts_for_nothing`,
+`a_message_that_does_not_decode_as_its_service_counts_for_nothing`,
+`a_request_of_a_service_the_crate_does_not_model_counts_for_nothing`,
+`untyped_traffic_costs_an_ecu_nothing_while_it_does_not_outnumber_the_typed`,
+`two_periodic_ids_pair_only_when_one_sends_a_typed_request`). A server
+starts its response within P2 of the request, or within P2* of its own
+responsePending
+(`a_reply_is_in_time_up_to_p2_plus_the_margin_or_p2_star_plus_the_margin_after_pending`),
+and a request that suppresses its positive response is owed none but may be
+refused (`a_refusal_of_a_suppressed_request_is_an_exchange`); a positive
+answer to it with no responsePending first answers nothing
+(`a_positive_response_to_a_suppressed_request_with_no_pending_is_unsolicited`).
+A tester present or a suppressed request is held beside the request before
+it, and the next other request closes both
+(`a_keep_alive_while_the_ecu_is_pending_leaves_the_request_open_to_its_final_answer`,
+`a_tester_present_while_the_ecu_is_pending_costs_no_exchange`,
+`a_normal_request_closes_the_tester_present_held_beside_the_last`). A response
+answers a request on another id as `answers` judges, so a conversation of
+single frames is found
+(`a_conversation_of_single_frames_alone_is_found_and_oriented_whichever_id_is_lower`).
+
+The rest is this crate's judgement, not the standard's. Two ids are a
+conversation only with two exchanges or more, or one in which flow control
+paced a multi-frame message
+(`a_conversation_needs_two_exchanges_or_one_paced_by_flow_control`), and
+only when each leads the other's exchanges and every rival on either side
+has at most an eighth as many, however poor the rival's own record
+(`a_rival_settles_with_an_eighth_of_the_leaders_exchanges_and_not_with_more`,
+`a_rival_with_more_than_an_eighth_of_the_leaders_exchanges_leaves_the_id_unsettled`,
+`a_rival_unsettles_however_poor_its_own_record`,
+`a_tester_answered_by_several_ids_none_in_most_rounds_is_unsettled`,
+`a_periodic_look_alike_answering_or_asking_every_request_unsettles_the_real_pair`);
+the ECU's messages answering nothing and the tester's unanswered counted
+requests are each at most an eighth of the exchanges
+(`a_periodic_pair_out_of_step_is_never_a_conversation`,
+`a_tester_with_many_unanswered_requests_is_unsettled_not_dropped`,
+`a_held_tester_present_answered_after_p2_is_unanswered_and_its_answer_unsolicited`,
+`an_answer_past_the_per_request_partner_cap_counts_as_answering_nothing`).
+An id's own requests are messages answering nothing, so an id that mostly
+asks is never the ECU of a conversation. A request whose deadline is later
+than the window's last frame is not held unanswered
+(`a_request_the_window_ends_on_is_not_held_unanswered`); a window that starts
+on a response cannot be known to, so a window cut mid-exchange can cost a
+short conversation one unsolicited message. Frames the ISO-TP reassembler
+ignores or refuses, other than a flow control while another id has a first
+frame open, count against either id as unsolicited messages do
+(`frames_the_reassembler_ignores_count_against_an_id_beyond_an_eighth`);
+exchanges either of whose messages was a single frame padded with varying
+bytes are at most an eighth, so an ECU that pads with stale bytes is
+unsettled, its tester its candidate
+(`exchanges_in_frames_padded_with_varying_bytes_unsettle_a_pair_beyond_an_eighth`);
+the ECU's answers to untyped requests are no more than the exchanges, and
+the tester's untyped requests no more than its typed ones
+(`neutral_traffic_outnumbering_the_typed_unsettles_a_pair`). A request
+leaves the open list only once two frames in a row are stamped past its
+deadline, so one stray stamp far ahead costs nothing
+(`one_stamp_far_ahead_between_a_request_and_its_answer_expires_nothing`,
+`two_frames_in_a_row_past_a_requests_deadline_expire_it`);
+no ISO-TP flow control contradicts the pair
+(`ids_whose_multi_frame_messages_another_id_paced_are_not_paired_by_their_answers`);
+and neither id is in another such pair in the other role
+(`an_id_settled_as_both_a_tester_and_an_ecu_is_in_no_conversation`,
+`ids_that_each_diagnose_the_other_are_reported_in_neither_orientation`); an
+id in a conversation can still be unsettled in the other role
+(`an_id_in_a_conversation_can_be_unsettled_in_the_other_role`).
+Every other id with an exchange is unsettled, its partner slots full or not
+(`a_tester_whose_ecu_settled_on_another_tester_is_unsettled`,
+`a_ring_of_ids_diagnosing_the_next_puts_no_id_in_both_roles_and_drops_none`,
+`junk_filling_an_ecus_partner_slots_leaves_every_id_reported`,
+`an_id_answering_more_testers_than_the_cap_is_unsettled_however_clear_the_lead`).
+
+What it cannot do: tell two periodic ids at about the same rate, whose
+frames are a typed request and its answer uniformly padded, from a
+conversation, in step or not
+(`two_periodic_ids_pair_only_when_one_sends_a_typed_request`); report an ECU
+that pads single frames with stale bytes as more than unsettled; count a
+vendor, KWP, OBD or unmodelled ISO service; read an id as addressed unless
+`wslib_isotp::detect` does, which needs multi-frame exchanges; or read a
+message over `MAX_MESSAGE_BYTES` (64 KiB), which answers and opens nothing
+(`a_response_up_to_max_message_bytes_is_an_exchange_and_one_byte_over_is_not`).
+Time is the frames times the ids with a request open
+(`time_grows_with_the_frames_times_the_ids_with_a_request_open`); with stamps
+that never advance no request expires, which makes it the frames times every
+request opened. A message whose first byte does not name an open request's
+service costs nothing more for that request
+(`a_long_open_request_costs_a_message_not_naming_its_service_no_more_than_a_short_one`);
+one that does is judged by `answers`, which reads the request's DIDs. Memory, per id
+and address byte, is an open first frame's reservation of at most 4095
+bytes, which grows only as frames arrive, as wslib-isotp pins; two open
+requests of up to `MAX_MESSAGE_BYTES`; and `MAX_PARTNERS` partners a role.
+
 ## Layouts
 
 | Service | Request after the id | Positive response after its id |
@@ -229,7 +326,7 @@ A client sends nothing above its ceiling: read-only unless it was built with
 `write` and a higher one. A scan run through a client is bounded by the lower
 of the scan's class and the client's ceiling (`tests/client_write.rs`:
 `by_default_a_client_refuses_a_state_changing_request_and_sends_nothing`,
-`a_state_changing_ceiling_refuses_destructive_and_vendor_requests_and_keeps_the_session_alive`;
+`a_state_changing_ceiling_refuses_destructive_and_programming_requests_and_keeps_the_session`;
 `tests/service_scan_write.rs`:
 `a_scan_through_a_client_sends_only_up_to_the_lower_of_the_two_ceilings`).
 
@@ -238,7 +335,8 @@ of the scan's class and the client's ceiling (`tests/client_write.rs`:
 | 0x19, 0x22 | read-only | `reading_dtcs_and_data_is_read_only` |
 | 0x3E | read-only | `tester_present_is_read_only` |
 | 0x31 with sub-function 0x03 | read-only | `routine_start_and_stop_are_destructive_and_its_results_read_only` |
-| 0x10 | state-changing | `session_control_is_state_changing` |
+| 0x10 to any session but programming | state-changing | `session_control_is_state_changing` |
+| 0x10 to the programming session (0x02), where a server takes new software and may leave its application, and a bare 0x10, whose session is unknown | destructive | `entering_the_programming_session_is_destructive` |
 | 0x11 | state-changing | `ecu_reset_is_state_changing` |
 | 0x23: memory-mapped registers can have side effects, and a bad address can fault the ECU | state-changing | `reading_memory_is_state_changing_for_its_side_effects` |
 | 0x27 | state-changing | `security_access_is_state_changing` |
@@ -288,5 +386,5 @@ of the scan's class and the client's ceiling (`tests/client_write.rs`:
   A restore not answered positively stops the plan, with a finding that the
   ECU may still be in the session probed
   (`a_refused_or_silent_restore_stops_the_plan_with_the_session_the_ecu_may_still_be_in`).
-  The programming session (0x02) is probed only when asked
-  (`the_programming_session_is_probed_only_when_asked_for`).
+  The programming session (0x02) is probed only under a destructive ceiling
+  (`the_programming_session_is_probed_only_under_a_destructive_ceiling`).

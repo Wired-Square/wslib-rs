@@ -12,7 +12,8 @@
 //! | --- | --- |
 //! | ReadDTCInformation 0x19, ReadDataByIdentifier 0x22, TesterPresent 0x3E | read-only |
 //! | RoutineControl 0x31 requestRoutineResults (0x03) | read-only |
-//! | DiagnosticSessionControl 0x10, ECUReset 0x11, ReadMemoryByAddress 0x23, SecurityAccess 0x27, CommunicationControl 0x28, ControlDTCSetting 0x85 | state-changing |
+//! | DiagnosticSessionControl 0x10 to any session but programming, ECUReset 0x11, ReadMemoryByAddress 0x23, SecurityAccess 0x27, CommunicationControl 0x28, ControlDTCSetting 0x85 | state-changing |
+//! | DiagnosticSessionControl 0x10 to the programming session (0x02), or a bare 0x10 | destructive |
 //! | ClearDiagnosticInformation 0x14, WriteDataByIdentifier 0x2E, InputOutputControlByIdentifier 0x2F | destructive |
 //! | RoutineControl 0x31 start, stop, any other sub-function or none | destructive |
 //! | RequestDownload 0x34, RequestUpload 0x35, TransferData 0x36, RequestTransferExit 0x37 | destructive |
@@ -23,6 +24,8 @@ mod client;
 mod codec;
 mod identify;
 mod nrc;
+#[cfg(feature = "isotp")]
+mod orient;
 mod pairing;
 mod safety;
 mod scan;
@@ -43,14 +46,18 @@ pub use codec::{
 };
 pub use identify::{Detail, Identity, identify};
 pub use nrc::Nrc;
+#[cfg(feature = "isotp")]
+pub use orient::{
+    Conversation, Endpoint, MAX_MESSAGE_BYTES, MAX_PARTNERS, Orientation, Unsettled, orient,
+};
 pub use pairing::{
     DEFAULT_TIMEOUT_US, MAX_OPEN_REQUESTS, Observed, Outcome, Sender, Tracker, Transaction,
 };
 pub use safety::{NotReadOnly, ReadOnly, Safety};
 pub use scan::{
     AddressProbe, AddressScan, DEFAULT_BUSY_RETRIES, DidFinding, DidProbe, DidScan, DidVerdict,
-    ScanProgress, ServiceFinding, ServiceProbe, ServiceScan, ServiceVerdict, did_verdict,
-    ecu_answered, service_verdict,
+    ReadOnlyServiceProbe, ReadOnlyServiceScan, ScanProgress, ServiceFinding, ServiceProbe,
+    ServiceScan, ServiceVerdict, did_verdict, ecu_answered, service_verdict,
 };
 #[cfg(feature = "write")]
 pub use scan::{SessionFinding, SessionProbe, SessionScan, SessionVerdict, session_verdict};

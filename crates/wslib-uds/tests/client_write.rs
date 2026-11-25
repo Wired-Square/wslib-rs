@@ -2,8 +2,8 @@ use std::time::{Duration, Instant};
 
 use wslib_uds::testing::{Did, Ecu};
 use wslib_uds::{
-    Client, DEFAULT_SESSION, EXTENDED_SESSION, Event, NonEmpty, Request, Safety, SendError,
-    SubFunction, Timing,
+    Client, DEFAULT_SESSION, EXTENDED_SESSION, Event, NonEmpty, PROGRAMMING_SESSION, Request,
+    Safety, SendError, SubFunction, Timing,
 };
 
 fn ms(n: u64) -> Duration {
@@ -634,7 +634,7 @@ fn by_default_a_client_refuses_a_state_changing_request_and_sends_nothing() {
 }
 
 #[test]
-fn a_state_changing_ceiling_refuses_destructive_and_vendor_requests_and_keeps_the_session_alive() {
+fn a_state_changing_ceiling_refuses_destructive_and_programming_requests_and_keeps_the_session() {
     let mut ecu = unlocking_ecu();
     let timing = Timing::default();
     let mut client = Client::up_to(timing, Safety::StateChanging);
@@ -648,7 +648,7 @@ fn a_state_changing_ceiling_refuses_destructive_and_vendor_requests_and_keeps_th
         service: 0xBA,
         data: vec![0x01],
     };
-    for request in [write, vendor] {
+    for request in [write, vendor, session(PROGRAMMING_SESSION)] {
         assert!(matches!(
             client.send(request, t0),
             Err(SendError::AboveCeiling {

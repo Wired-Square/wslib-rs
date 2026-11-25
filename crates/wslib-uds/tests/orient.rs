@@ -2,12 +2,13 @@ use std::time::Duration;
 
 use wslib_isotp::testing::{Conversation as Script, Responder};
 use wslib_isotp::{
-    Addressing, DEFAULT_FLOW_CONTROL_WINDOW, FdLength, FrameFormat, Framing, TimedFrame, detect,
+    Addressing, DEFAULT_FLOW_CONTROL_WINDOW, FdLength, FrameFormat, Framing, IsoTpTap, Side,
+    TapEvent, TimedFrame, detect,
 };
 use wslib_uds::testing::{Did, Ecu};
 use wslib_uds::{
-    Conversation, Endpoint, MAX_MESSAGE_BYTES, MAX_PARTNERS, Orientation, Request, Sender, Timing,
-    Unsettled, orient,
+    Conversation, Endpoint, MAX_MESSAGE_BYTES, MAX_PARTNERS, Observed, Orientation, Outcome,
+    Request, Sender, Timing, Tracker, Transaction, Unsettled, orient,
 };
 
 const TESTER: u32 = 0x7E0;
@@ -33,6 +34,15 @@ fn ecu() -> Ecu {
 
 fn long_write() -> Vec<u8> {
     [0x2E, 0x02, 0x00].into_iter().chain(VIN).collect()
+}
+
+fn fd() -> Framing {
+    Framing::new(
+        Addressing::Normal,
+        FrameFormat::Fd {
+            length: FdLength::MAX,
+        },
+    )
 }
 
 fn script(tester: u32, ecu_id: u32, framing: Framing, requests: &[&[u8]]) -> Vec<TimedFrame> {
@@ -878,13 +888,7 @@ fn a_29_bit_conversation_is_found_and_a_29_bit_id_never_pairs_with_an_11_bit_one
 
 #[test]
 fn a_can_fd_conversation_is_found_escaped_single_frames_included() {
-    let fd = Framing::new(
-        Addressing::Normal,
-        FrameFormat::Fd {
-            length: FdLength::MAX,
-        },
-    );
-    let frames = script(TESTER, ECU, fd, &[&LONG_READ, &SHORT_READ, &long_write()]);
+    let frames = script(TESTER, ECU, fd(), &[&LONG_READ, &SHORT_READ, &long_write()]);
     assert!(frames.iter().any(|frame| frame.data[..2] == [0x00, 0x14]));
     assert_eq!(
         orient(&frames, &Timing::default()).conversations,
@@ -1802,4 +1806,128 @@ fn fuzzed_windows_orient_the_same_twice_and_keep_every_id_to_one_role_and_one_en
             assert!(!settled.contains(&this), "{round} {found:#?}");
         }
     }
+}
+
+/// The exchanges, negative answers and responsePending answers a tap
+/// configured from the window's only conversation, tester as side A, reads
+/// into a tracker.
+fn read_through_tap(frames: &[TimedFrame]) -> (Conversation, [u32; 3]) {
+    let conversation = only_conversation(frames);
+    let mut tap = IsoTpTap::new(conversation.tap_config(frames)).unwrap();
+    let mut tracker = Tracker::new();
+    let mut seen = Vec::new();
+    for frame in frames {
+        for event in tap.push(frame) {
+            let TapEvent::Message(message) = event else {
+                panic!("{event:?}")
+            };
+            let sender = match message.from {
+                Side::A => Sender::Tester,
+                Side::B => Sender::Ecu,
+            };
+            seen.extend(tracker.observe(sender, &message.data, message.last_at_us));
+        }
+    }
+    seen.extend(tracker.finish());
+    let mut read = [0; 3];
+    for observed in seen {
+        let Observed::Transaction(Transaction {
+            pending_responses,
+            outcome: Outcome::Answered { response, .. },
+            ..
+        }) = observed
+        else {
+            panic!("{observed:?}")
+        };
+        read[0] += 1;
+        read[1] += u32::from(response[0] == 0x7F);
+        read[2] += pending_responses;
+    }
+    (conversation, read)
+}
+
+fn counted(conversation: &Conversation) -> [u32; 3] {
+    [
+        conversation.exchanges,
+        conversation.negative,
+        conversation.pending,
+    ]
+}
+
+#[test]
+fn a_tap_configured_from_a_conversation_reads_the_exchanges_orient_counted() {
+    let write = long_write();
+    let frames = script(
+        TESTER,
+        ECU,
+        Framing::default(),
+        &[
+            &LONG_READ,
+            &write,
+            &ROUTINE_START,
+            &UNKNOWN_READ,
+            &SHORT_READ,
+        ],
+    );
+    let (conversation, read) = read_through_tap(&frames);
+    assert_eq!(read, [5, 1, 2]);
+    assert_eq!(read, counted(&conversation));
+}
+
+#[test]
+fn a_tap_configured_from_an_addressed_conversation_reads_each_side_by_its_address_byte() {
+    let ecu_framing = Framing::new(
+        Addressing::Extended { tx: 0xF1, rx: 0x10 },
+        FrameFormat::Classic,
+    );
+    let frames = script(
+        0x6F1,
+        0x610,
+        ecu_framing,
+        &[&LONG_READ, &SHORT_READ, &LONG_READ, &UNKNOWN_READ],
+    );
+    let (conversation, read) = read_through_tap(&frames);
+    assert_eq!(conversation.tester.address_byte, Some(0x10));
+    assert_eq!(read, [4, 1, 0]);
+    assert_eq!(read, counted(&conversation));
+}
+
+#[test]
+fn a_tap_configured_from_a_can_fd_conversation_reads_its_frames_over_8_bytes() {
+    let frames = script(TESTER, ECU, fd(), &[&LONG_READ, &SHORT_READ, &long_write()]);
+    assert!(frames.iter().any(|frame| frame.data.len() > 8));
+    let (conversation, read) = read_through_tap(&frames);
+    assert_eq!(read, [3, 0, 0]);
+    assert_eq!(read, counted(&conversation));
+}
+
+#[test]
+fn a_tap_configured_from_a_conversation_reads_a_message_up_to_max_message_bytes() {
+    for len in [5_000, MAX_MESSAGE_BYTES] {
+        let (conversation, read) = read_through_tap(&long_responses(len));
+        assert_eq!(read, [3, 0, 0], "{len}");
+        assert_eq!(read, counted(&conversation), "{len}");
+    }
+}
+
+#[test]
+fn only_a_frame_over_8_bytes_on_the_conversations_ids_makes_its_tap_can_fd() {
+    let classic = script(TESTER, ECU, Framing::default(), &[&LONG_READ, &SHORT_READ]);
+    let elsewhere = merged(
+        classic.clone(),
+        vec![
+            raw(0x123, 50_000, &[0xCC; 64]),
+            TimedFrame {
+                extended: true,
+                ..raw(TESTER, 60_000, &[0xCC; 64])
+            },
+        ],
+    );
+    for frames in [classic, elsewhere] {
+        let config = only_conversation(&frames).tap_config(&frames);
+        assert_eq!(config.framing.format, FrameFormat::Classic);
+    }
+    let frames = script(TESTER, ECU, fd(), &[&LONG_READ, &SHORT_READ]);
+    let config = only_conversation(&frames).tap_config(&frames);
+    assert_eq!(config.framing.format, fd().format);
 }

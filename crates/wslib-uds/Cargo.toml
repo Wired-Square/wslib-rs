@@ -1,6 +1,6 @@
 [package]
 name = "wslib-uds"
-version = "0.1.1"
+version = "0.1.2"
 description = "UDS (ISO 14229-1), sans-IO: every service decoded and encoded, a request's safety class, request-response pairing for a capture, testers and ECUs found in a window of CAN frames, a client on the caller's clock with writes behind a feature, scan plans, and a simulated ECU."
 readme = "README.md"
 edition.workspace = true

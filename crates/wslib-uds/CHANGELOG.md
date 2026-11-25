@@ -10,10 +10,13 @@
   of wslib-isotp `TimedFrame`s, single frames alone included, and says which
   side is the tester. Each `Conversation` counts its exchanges, negative and
   responsePending answers, and the multi-frame messages flow control paced
-  each way. Only well-formed requests of ISO 14229-1 services count. An id
-  whose partner cannot be settled, such as a functional request two ECUs
-  answer, is `Unsettled` with its candidates, and a periodic id is never
-  paired by coincidence. Messages up to `MAX_MESSAGE_BYTES` (64 KiB) are
+  each way. Only requests decoded as a typed `Request` count. A pair is
+  reported only when rivals, the ECU's unsolicited messages and the tester's
+  unanswered requests are each at most an eighth of its exchanges; every
+  other id with an exchange, such as a functional request two ECUs answer,
+  is `Unsettled` with its candidates. Two periodic ids at about one rate
+  whose frames are a typed request and its answer, uniformly padded, still
+  look like a conversation. Messages up to `MAX_MESSAGE_BYTES` (64 KiB) are
   read.
 - `ReadOnlyServiceScan`, the scan `ServiceScan::new` builds, hands out
   `ReadOnlyServiceProbe`s whose `request()` is already `ReadOnly`, so a

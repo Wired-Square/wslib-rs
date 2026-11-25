@@ -6,7 +6,7 @@ use wslib_isotp::{
 };
 use wslib_uds::testing::{Did, Ecu};
 use wslib_uds::{
-    Conversation, Endpoint, MAX_MESSAGE_BYTES, MAX_PARTNERS, Orientation, Sender, Timing,
+    Conversation, Endpoint, MAX_MESSAGE_BYTES, MAX_PARTNERS, Orientation, Request, Sender, Timing,
     Unsettled, orient,
 };
 
@@ -230,9 +230,11 @@ fn real_reads() -> Vec<TimedFrame> {
     script(TESTER, ECU, Framing::default(), &[&SHORT_READ[..]; 20])
 }
 
-/// The reads alone are paired, and neither of their ids is unsettled.
-fn assert_only_the_reads_found(frames: &[TimedFrame]) {
-    let found = orient(frames, &Timing::default());
+#[test]
+fn a_periodic_id_whose_frames_are_no_typed_request_or_answer_leaves_a_conversation_found() {
+    let real = real_reads();
+    let end = real.last().unwrap().at_us;
+    let found = orient(&merged(real, counter(end)), &Timing::default());
     assert_eq!(
         found.conversations,
         [Conversation {
@@ -240,33 +242,30 @@ fn assert_only_the_reads_found(frames: &[TimedFrame]) {
             ..conversation(TESTER, ECU)
         }]
     );
-    assert!(
-        found
+}
+
+#[test]
+fn a_periodic_look_alike_answering_or_asking_every_request_unsettles_the_real_pair() {
+    let real = real_reads();
+    let end = real.last().unwrap().at_us;
+    let request_look_alike = every_10_ms(end, 0x101, |_| [&[0x03][..], &SHORT_READ].concat());
+    for (look_alike, side) in [
+        (reply_look_alike(end), Sender::Tester),
+        (request_look_alike, Sender::Ecu),
+    ] {
+        let found = orient(&merged(real.clone(), look_alike), &Timing::default());
+        assert_eq!(found.conversations, [], "{side:?}");
+        let rivalled = found
             .unsettled
             .iter()
-            .all(|u| u.endpoint != at(TESTER) && u.endpoint != at(ECU)),
-        "{found:#?}"
-    );
+            .find(|u| u.side == side && [at(TESTER), at(ECU)].contains(&u.endpoint))
+            .unwrap();
+        assert_eq!(rivalled.candidates.len(), 2, "{found:#?}");
+    }
 }
 
 #[test]
-fn periodic_ids_beside_a_real_conversation_are_never_paired() {
-    let real = real_reads();
-    let end = real.last().unwrap().at_us;
-    let periodic = merged(reply_look_alike(end), counter(end));
-    assert_only_the_reads_found(&merged(real, periodic));
-}
-
-#[test]
-fn a_periodic_request_look_alike_loses_the_ecu_to_the_tester_it_was_answering() {
-    let real = real_reads();
-    let end = real.last().unwrap().at_us;
-    let look_alike = every_10_ms(end, 0x101, |_| [&[0x03][..], &SHORT_READ].concat());
-    assert_only_the_reads_found(&merged(real, look_alike));
-}
-
-#[test]
-fn a_periodic_reply_look_alike_is_no_ecu_even_for_a_tester_nothing_else_answers() {
+fn a_periodic_reply_look_alike_is_never_paired_with_a_tester_nothing_else_answers() {
     let requests: Vec<TimedFrame> = (0..20_u64)
         .map(|round| single(TESTER, round * 100_000 + 5_000, &SHORT_READ))
         .collect();
@@ -276,7 +275,13 @@ fn a_periodic_reply_look_alike_is_no_ecu_even_for_a_tester_nothing_else_answers(
             &merged(requests, reply_look_alike(until)),
             &Timing::default()
         ),
-        Orientation::default()
+        Orientation {
+            conversations: vec![],
+            unsettled: vec![
+                unsettled(0x100, Sender::Ecu, &[TESTER]),
+                unsettled(TESTER, Sender::Tester, &[0x100]),
+            ],
+        }
     );
 }
 
@@ -383,15 +388,17 @@ fn an_id_answering_more_testers_than_the_cap_is_unsettled_however_clear_the_lead
         frames.push(single(0x700, t, &TESTER_PRESENT));
         frames.push(single(ECU, t + 1_000, &[0x7E, 0x00]));
     }
-    let found = orient(&frames, &Timing::default());
-    assert_eq!(found.conversations, []);
-    let ecu = found
-        .unsettled
-        .iter()
-        .find(|unsettled| unsettled.endpoint == at(ECU))
-        .unwrap();
-    assert_eq!(ecu.side, Sender::Ecu);
-    assert_eq!(ecu.candidates.len(), MAX_PARTNERS);
+    let mut expected: Vec<Unsettled> = (0x700..0x700 + MAX_PARTNERS as u32 + 1)
+        .map(|tester| unsettled(tester, Sender::Tester, &[ECU]))
+        .collect();
+    expected.push(unsettled(ECU, Sender::Ecu, &[0x700, 0x701, 0x702, 0x703]));
+    assert_eq!(
+        orient(&frames, &Timing::default()),
+        Orientation {
+            conversations: vec![],
+            unsettled: expected,
+        }
+    );
 }
 
 #[test]
@@ -449,7 +456,7 @@ fn real_conversations_in_noise_never_panic_and_pair_each_id_once_a_role_one_way_
                 data.truncate(8);
             }
             frames.push(TimedFrame {
-                id: 0x7E0 + (r >> 52) as u32 % 16,
+                id: 0x700 + (r >> 52) as u32 % 16,
                 extended: r % 7 == 0,
                 data,
                 at_us: next() % end_us,
@@ -499,11 +506,11 @@ fn real_conversations_in_noise_never_panic_and_pair_each_id_once_a_role_one_way_
                 .all(|u| (1..=MAX_PARTNERS).contains(&u.candidates.len()))
         );
     }
-    assert!(paired > 10, "{paired}");
+    assert!(paired >= 20, "{paired}");
 }
 
 #[test]
-fn a_message_whose_first_byte_is_no_iso_request_service_opens_no_request() {
+fn a_message_whose_first_byte_is_no_iso_request_service_counts_for_nothing() {
     let byte_one_0x40_apart = rounds(50, |t| {
         vec![
             raw(0x1A0, t, &[0x01, 0x00, t as u8, 0, 0, 0, 0, 0]),
@@ -552,7 +559,7 @@ fn a_message_whose_first_byte_is_no_iso_request_service_opens_no_request() {
 }
 
 #[test]
-fn a_message_that_does_not_decode_as_its_service_opens_no_request() {
+fn a_message_that_does_not_decode_as_its_service_counts_for_nothing() {
     let frames = rounds(20, |t| {
         vec![
             single(TESTER, t, &[0x22, 0x01]),
@@ -563,21 +570,26 @@ fn a_message_that_does_not_decode_as_its_service_opens_no_request() {
 }
 
 #[test]
-fn a_periodic_pair_at_twice_or_half_the_rate_is_neither_tester_nor_ecu() {
-    for (request_every, reply_every) in [(10_000, 20_000), (20_000, 10_000)] {
+fn a_periodic_pair_out_of_step_is_never_a_conversation() {
+    for (request_every, reply_every) in [
+        (10_000, 20_000),
+        (20_000, 10_000),
+        (10_000, 17_000),
+        (17_000, 10_000),
+        (10_000, 19_000),
+        (20_000, 12_501),
+        (100_000, 60_000),
+    ] {
         let mut frames = Vec::new();
-        for t in (0..2_000_000).step_by(request_every) {
+        for t in (0..4_000_000).step_by(request_every) {
             frames.push(single(0x1A0, t, &TESTER_PRESENT));
         }
-        for t in (0..2_000_000).step_by(reply_every) {
+        for t in (0..4_000_000).step_by(reply_every) {
             frames.push(single(0x2B0, t + 3_000, &[0x7E, 0x00]));
         }
         frames.sort_by_key(|frame| frame.at_us);
-        assert_eq!(
-            orient(&frames, &Timing::default()),
-            Orientation::default(),
-            "{request_every} {reply_every}"
-        );
+        let found = orient(&frames, &Timing::default());
+        assert_eq!(found.conversations, [], "{request_every} {reply_every}");
     }
 }
 
@@ -941,7 +953,16 @@ fn a_reply_stamped_before_its_request_answers_nothing_and_no_stamp_panics() {
             ..conversation(TESTER, ECU)
         }]
     );
-    assert_eq!(orient(&frames, &timing), Orientation::default());
+    assert_eq!(
+        orient(&frames, &timing),
+        Orientation {
+            conversations: vec![],
+            unsettled: vec![
+                unsettled(TESTER, Sender::Tester, &[ECU]),
+                unsettled(ECU, Sender::Ecu, &[TESTER]),
+            ],
+        }
+    );
     assert_eq!(orient(&[], &timing), Orientation::default());
     assert_eq!(
         orient(&[raw(1, 0, &[]), raw(1, 0, &[])], &timing),
@@ -961,4 +982,453 @@ fn a_response_with_a_consecutive_frame_out_of_sequence_is_no_answer() {
         ]
     });
     assert_eq!(orient(&frames, &Timing::default()).conversations, []);
+}
+
+/// `count` reads of DID 0x0100, each answered, from `start_us` 100 ms apart.
+fn reads(count: u64, start_us: u64) -> Vec<TimedFrame> {
+    (0..count)
+        .flat_map(|i| {
+            let t = start_us + i * 100_000;
+            [
+                single(TESTER, t, &SHORT_READ),
+                single(ECU, t + 1_000, &[0x62, 0x01, 0x00, 0x01, 0x02]),
+            ]
+        })
+        .collect()
+}
+
+fn only_conversation(frames: &[TimedFrame]) -> Conversation {
+    let found = orient(frames, &Timing::default());
+    assert_eq!(found.conversations.len(), 1, "{found:#?}");
+    found.conversations[0].clone()
+}
+
+#[test]
+fn a_request_of_a_service_the_crate_does_not_model_counts_for_nothing() {
+    for service in [
+        0x24_u8, 0x29, 0x2A, 0x2C, 0x38, 0x3D, 0x83, 0x84, 0x86, 0x87, 0x01,
+    ] {
+        let frames = rounds(50, |t| {
+            vec![
+                single(0x1A0, t, &[service]),
+                single(0x2B0, t + 3_000, &[service + 0x40, 0x12]),
+            ]
+        });
+        assert_eq!(
+            orient(&frames, &Timing::default()),
+            Orientation::default(),
+            "{service:#04x}"
+        );
+    }
+}
+
+#[test]
+fn answers_to_requests_the_crate_does_not_type_leave_an_ecu_unpenalised() {
+    let frames = rounds(10, |t| {
+        vec![
+            single(TESTER, t, &SHORT_READ),
+            single(ECU, t + 1_000, &[0x62, 0x01, 0x00, 0x01, 0x02]),
+            single(TESTER, t + 30_000, &[0x21, 0x01]),
+            single(ECU, t + 31_000, &[0x61, 0x01, 0xAA, 0xBB]),
+            single(TESTER, t + 60_000, &[0xA5, 0x01]),
+            single(ECU, t + 61_000, &[0x7F, 0xA5, 0x11]),
+        ]
+    });
+    assert_eq!(
+        orient(&frames, &Timing::default()),
+        Orientation {
+            conversations: vec![Conversation {
+                exchanges: 10,
+                ..conversation(TESTER, ECU)
+            }],
+            unsettled: vec![],
+        }
+    );
+}
+
+#[test]
+fn a_single_frame_padded_with_varying_bytes_is_no_message() {
+    let frames = rounds(20, |t| {
+        vec![
+            raw(0x1A0, t, &[0x02, 0x3E, 0x00, t as u8, 0x55, 0, 0, 0]),
+            raw(0x2B0, t + 3_000, &[0x02, 0x7E, 0x00, 0, 0, 0, 0, 0]),
+        ]
+    });
+    assert_eq!(orient(&frames, &Timing::default()), Orientation::default());
+    let padded = rounds(20, |t| {
+        vec![
+            raw(0x1A0, t, &[0x02, 0x3E, 0x00, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA]),
+            raw(0x2B0, t + 3_000, &[0x02, 0x7E, 0x00, 0, 0, 0, 0, 0]),
+        ]
+    });
+    assert_eq!(only_conversation(&padded).exchanges, 20);
+}
+
+#[test]
+fn two_periodic_ids_pair_only_when_one_sends_a_typed_request() {
+    let mut hits = Vec::new();
+    for len in 1..=3_u8 {
+        for a in 0..=255_u8 {
+            for b in [a.wrapping_add(0x40), 0x7F] {
+                let echo = if b == 0x7F { a } else { 0 };
+                let frames = rounds(6, |t| {
+                    vec![
+                        raw(0x1A0, t, &[len, a, 0, 0, 0, 0, 0, 0]),
+                        raw(0x2B0, t + 3_000, &[len.max(3), b, echo, 0, 0, 0, 0, 0]),
+                    ]
+                });
+                if !orient(&frames, &Timing::default()).conversations.is_empty() {
+                    hits.push([a, 0, 0][..usize::from(len)].to_vec());
+                }
+            }
+        }
+    }
+    assert!(!hits.is_empty());
+    for request in hits {
+        let typed = Request::decode(&request);
+        assert!(
+            matches!(typed, Ok(ref r) if !matches!(r, Request::Other { .. })),
+            "{request:02X?}"
+        );
+    }
+}
+
+#[test]
+fn a_positive_response_to_a_suppressed_request_with_no_pending_is_unsolicited() {
+    let frames = rounds(20, |t| {
+        vec![
+            single(0x7DF, t, &[0x3E, 0x80]),
+            single(0x2B0, t + 40_000, &[0x7E, 0x00]),
+        ]
+    });
+    assert_eq!(orient(&frames, &Timing::default()), Orientation::default());
+}
+
+#[test]
+fn a_tester_with_many_unanswered_requests_is_unsettled_not_dropped() {
+    let mut frames = rounds(10, |t| vec![single(TESTER, t, &SHORT_READ)]);
+    frames.extend(reads(10, 1_000_000));
+    assert_eq!(
+        orient(&frames, &Timing::default()),
+        Orientation {
+            conversations: vec![],
+            unsettled: vec![
+                unsettled(TESTER, Sender::Tester, &[ECU]),
+                unsettled(ECU, Sender::Ecu, &[TESTER]),
+            ],
+        }
+    );
+    let mut tester_presents = reads(5, 0);
+    tester_presents.extend((0..5).map(|i| single(TESTER, 50_000 + i * 100_000, &TESTER_PRESENT)));
+    let found = orient(&merged(tester_presents, vec![]), &Timing::default());
+    assert_eq!(found.conversations, []);
+    assert!(
+        found
+            .unsettled
+            .contains(&unsettled(TESTER, Sender::Tester, &[ECU]))
+    );
+}
+
+#[test]
+fn a_rival_unsettles_however_poor_its_own_record() {
+    let frames = rounds(20, |t| {
+        vec![
+            single(0x7DF, t, &TESTER_PRESENT),
+            single(0x7E8, t + 1_000, &[0x7E, 0x00]),
+            single(0x7E9, t + 2_000, &[0x7E, 0x00]),
+            single(0x7E9, t + 50_000, &[0x7E, 0x00]),
+            single(0x7E9, t + 60_000, &[0x7E, 0x00]),
+        ]
+    });
+    let found = orient(&frames, &Timing::default());
+    assert_eq!(found.conversations, []);
+    assert_eq!(
+        found.unsettled[0],
+        unsettled(0x7DF, Sender::Tester, &[0x7E8, 0x7E9])
+    );
+}
+
+#[test]
+fn a_rival_settles_with_an_eighth_of_the_leaders_exchanges_and_not_with_more() {
+    for (rival, settled) in [(2, true), (3, false)] {
+        let frames = rounds(16, |t| {
+            let mut frames = vec![
+                single(0x7DF, t, &TESTER_PRESENT),
+                single(0x7E8, t + 1_000, &[0x7E, 0x00]),
+            ];
+            if t < rival * 100_000 {
+                frames.push(single(0x7E9, t + 2_000, &[0x7E, 0x00]));
+            }
+            frames
+        });
+        let found = orient(&frames, &Timing::default());
+        assert_eq!(found.conversations.len(), usize::from(settled), "{rival}");
+    }
+    let frames = vec![
+        single(TESTER, 0, &TESTER_PRESENT),
+        single(0x7E8, 1_000, &[0x7E, 0x00]),
+        single(0x7E9, 2_000, &[0x7E, 0x00]),
+        single(TESTER, 500_000, &TESTER_PRESENT),
+        single(0x7E8, 501_000, &[0x7E, 0x00]),
+    ];
+    assert_eq!(orient(&frames, &Timing::default()).conversations, []);
+}
+
+#[test]
+fn junk_filling_an_ecus_partner_slots_leaves_every_id_reported() {
+    for tester_first in [false, true] {
+        let offset = if tester_first { 0 } else { 50_000 };
+        let mut frames = reads(20, offset);
+        for junk in 0x101..=0x104_u32 {
+            for t in (0..2_100_000).step_by(10_000) {
+                frames.push(raw(junk, t + u64::from(junk), &[0x03, 0x22, 0x01, 0x00]));
+            }
+        }
+        let found = orient(&merged(frames, vec![]), &Timing::default());
+        assert_eq!(found.conversations, [], "{tester_first}");
+        let ecu = found
+            .unsettled
+            .iter()
+            .find(|u| u.endpoint == at(ECU))
+            .unwrap();
+        assert_eq!(ecu.candidates.len(), MAX_PARTNERS, "{found:#?}");
+        assert!(
+            found
+                .unsettled
+                .iter()
+                .any(|u| u.endpoint == at(TESTER) && u.candidates == [at(ECU)]),
+            "{found:#?}"
+        );
+    }
+}
+
+fn exchange(tester: u32, ecu: u32, t: u64, did: u8) -> [TimedFrame; 2] {
+    [
+        single(tester, t, &[0x22, did, 0x00]),
+        single(ecu, t + 1_000, &[0x62, did, 0x00, 0x01]),
+    ]
+}
+
+#[test]
+fn an_id_settled_as_both_a_tester_and_an_ecu_is_in_no_conversation() {
+    let (a, b, c) = (0x700, 0x701, 0x702);
+    let mut frames = rounds(16, |t| exchange(a, b, t, 1).to_vec());
+    frames.extend(rounds(2, |t| exchange(b, c, 2_000_000 + t, 2).to_vec()));
+    assert_eq!(
+        orient(&frames, &Timing::default()),
+        Orientation {
+            conversations: vec![],
+            unsettled: vec![
+                unsettled(a, Sender::Tester, &[b]),
+                unsettled(b, Sender::Tester, &[c]),
+                unsettled(b, Sender::Ecu, &[a]),
+                unsettled(c, Sender::Ecu, &[b]),
+            ],
+        }
+    );
+}
+
+#[test]
+fn a_ring_of_ids_diagnosing_the_next_puts_no_id_in_both_roles_and_drops_none() {
+    let (a, b, c) = (0x700, 0x701, 0x702);
+    for bystanders in [false, true] {
+        let mut frames = rounds(5, |t| {
+            [
+                exchange(a, b, t, 1),
+                exchange(b, c, t + 10_000, 2),
+                exchange(c, a, t + 20_000, 3),
+            ]
+            .concat()
+        });
+        if bystanders {
+            for (i, ecu) in [a, b, c].into_iter().enumerate() {
+                frames.extend(exchange(
+                    0x710 + i as u32,
+                    ecu,
+                    900_000 + i as u64 * 10_000,
+                    9,
+                ));
+            }
+        }
+        let found = orient(&frames, &Timing::default());
+        assert!(
+            !found.conversations.iter().any(|c| found
+                .conversations
+                .iter()
+                .any(|other| other.ecu == c.tester)),
+            "{found:#?}"
+        );
+        for id in [a, b, c] {
+            for side in [Sender::Tester, Sender::Ecu] {
+                let reported = found.conversations.iter().any(|c| match side {
+                    Sender::Tester => c.tester == at(id),
+                    Sender::Ecu => c.ecu == at(id),
+                }) || found
+                    .unsettled
+                    .iter()
+                    .any(|u| u.endpoint == at(id) && u.side == side);
+                assert!(reported, "{id:#x} {side:?} {bystanders}: {found:#?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_normal_request_closes_the_tester_present_held_beside_the_last() {
+    let mut frames = reads(7, 0);
+    frames.extend([
+        single(TESTER, 1_000_000, &TESTER_PRESENT),
+        single(TESTER, 1_010_000, &[0x22, 0x02, 0x00]),
+        single(ECU, 1_011_000, &[0x7E, 0x00]),
+        single(ECU, 1_012_000, &[0x62, 0x02, 0x00, 0x01]),
+    ]);
+    assert_eq!(only_conversation(&frames).exchanges, 8);
+}
+
+#[test]
+fn a_second_copy_of_a_response_is_no_second_exchange() {
+    let mut frames = reads(10, 0);
+    frames.push(single(ECU, 902_000, &[0x62, 0x01, 0x00, 0x01, 0x02]));
+    assert_eq!(only_conversation(&frames).exchanges, 10);
+}
+
+#[test]
+fn a_held_tester_present_answered_after_p2_is_unanswered_and_its_answer_unsolicited() {
+    let mut frames = reads(8, 0);
+    frames.extend([
+        single(TESTER, 900_000, &TESTER_PRESENT),
+        single(ECU, 1_000_001, &[0x7E, 0x00]),
+    ]);
+    let c = only_conversation(&frames);
+    assert_eq!((c.exchanges, c.negative, c.pending), (8, 0, 0));
+    frames.push(single(ECU, 1_100_000, &[0x7E, 0x00]));
+    assert_eq!(orient(&frames, &Timing::default()).conversations, []);
+}
+
+#[test]
+fn pendings_and_negatives_are_counted_once_each() {
+    let mut frames = vec![
+        single(TESTER, 0, &ROUTINE_START),
+        single(ECU, 1_000, &[0x7F, 0x31, 0x78]),
+        single(TESTER, 1_000_000, &[0x3E, 0x80]),
+        single(ECU, 2_000_000, &[0x7F, 0x31, 0x78]),
+        single(TESTER, 2_500_000, &TESTER_PRESENT),
+        single(ECU, 2_501_000, &[0x7E, 0x00]),
+        single(ECU, 6_000_000, &[0x7F, 0x31, 0x22]),
+        single(ECU, 6_001_000, &[0x7F, 0x31, 0x22]),
+        single(TESTER, 7_000_000, &[0x10, 0x83]),
+        single(ECU, 7_001_000, &[0x7F, 0x10, 0x12]),
+        single(TESTER, 8_000_000, &[0x10, 0x83]),
+        single(ECU, 8_001_000, &[0x50, 0x03, 0, 0x32, 0x01, 0xF4]),
+    ];
+    frames.extend(reads(16, 10_000_000));
+    let c = only_conversation(&frames);
+    assert_eq!((c.exchanges, c.negative, c.pending), (19, 2, 2), "{c:#?}");
+}
+
+#[test]
+fn a_refusal_goes_to_the_later_suppressed_request_not_an_expired_earlier_one() {
+    let mut frames = vec![
+        single(TESTER, 0, &[0x10, 0x03]),
+        single(TESTER, 200_000, &[0x10, 0x83]),
+        single(ECU, 201_000, &[0x7F, 0x10, 0x12]),
+        single(TESTER, 400_000, &[0x10, 0x83]),
+        single(ECU, 401_000, &[0x7F, 0x10, 0x12]),
+        single(TESTER, 600_000, &[0x10, 0x83]),
+        single(ECU, 601_000, &[0x7F, 0x10, 0x12]),
+    ];
+    frames.extend(reads(8, 1_000_000));
+    let c = only_conversation(&frames);
+    assert_eq!((c.exchanges, c.negative), (11, 3));
+}
+
+#[test]
+fn a_pending_chain_at_the_end_of_time_neither_panics_nor_miscounts() {
+    let end = u64::MAX;
+    let frames = [
+        single(TESTER, end - 10_000_000, &ROUTINE_START),
+        single(ECU, end - 9_999_000, &[0x7F, 0x31, 0x78]),
+        single(ECU, end - 5_000_000, &[0x7F, 0x31, 0x78]),
+        single(ECU, end, &[0x71, 0x01, 0x02, 0x03]),
+    ];
+    let c = only_conversation(&frames);
+    assert_eq!((c.exchanges, c.pending), (1, 2));
+}
+
+#[test]
+fn random_windows_orient_the_same_twice_with_distinct_candidates_and_roles() {
+    let mut state = 0x1234_5678_9ABC_DEF1_u64;
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let messages: [&[u8]; 14] = [
+        &[0x3E, 0x00],
+        &[0x7E, 0x00],
+        &[0x3E, 0x80],
+        &[0x22, 0x01, 0x00],
+        &[0x62, 0x01, 0x00, 0x01],
+        &[0x7F, 0x22, 0x31],
+        &[0x7F, 0x22, 0x78],
+        &[0x10, 0x03],
+        &[0x10, 0x83],
+        &[0x50, 0x03],
+        &[0x7F, 0x10, 0x12],
+        &[0x7F, 0x3E, 0x78],
+        &[0x37],
+        &[0x77],
+    ];
+    for case in 0..400 {
+        let ids = 2 + next() % 7;
+        let mut t = 0;
+        let frames: Vec<TimedFrame> = (0..(20 + next() % 300))
+            .map(|_| {
+                t += next() % 60_000;
+                let message = messages[next() as usize % messages.len()];
+                single(0x700 + (next() % ids) as u32, t, message)
+            })
+            .collect();
+        let found = orient(&frames, &Timing::default());
+        assert_eq!(found, orient(&frames, &Timing::default()), "{case}");
+        for u in &found.unsettled {
+            let mut seen = u.candidates.clone();
+            seen.sort_by_key(|e| e.id);
+            seen.dedup();
+            assert_eq!(seen.len(), u.candidates.len(), "{found:#?}");
+            assert!(!u.candidates.is_empty() && !u.candidates.contains(&u.endpoint));
+        }
+        let mut roles: Vec<(u32, bool)> = found
+            .unsettled
+            .iter()
+            .map(|u| (u.endpoint.id, u.side == Sender::Ecu))
+            .collect();
+        let len = roles.len();
+        roles.sort();
+        roles.dedup();
+        assert_eq!(roles.len(), len, "{found:#?}");
+    }
+}
+
+#[test]
+fn time_grows_with_the_frames_not_the_ids_times_the_frames() {
+    let time = |count: u32| {
+        let frames: Vec<TimedFrame> = (0..count)
+            .map(|id| TimedFrame {
+                id,
+                extended: true,
+                data: vec![0x02, 0x3E, 0x00],
+                at_us: u64::from(id),
+            })
+            .collect();
+        let started = std::time::Instant::now();
+        let _ = orient(&frames, &Timing::default());
+        started.elapsed()
+    };
+    let (small, large) = (time(5_000), time(20_000));
+    assert!(
+        large < small * 8 + Duration::from_millis(50),
+        "{small:?} {large:?}"
+    );
 }

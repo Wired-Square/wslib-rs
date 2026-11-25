@@ -25,6 +25,13 @@ const PENDING: Answer = Answer::Negative {
     code: Nrc::RESPONSE_PENDING,
 };
 
+/// A tester's track, the slot of its request, and how a message answers it.
+type Found = (usize, usize, Answer);
+
+/// Indices into a track's roles.
+const TESTER: usize = 0;
+const ECU: usize = 1;
+
 /// A CAN id, and the address byte leading its frames when it reads as
 /// extended or mixed addressing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -44,7 +51,7 @@ pub struct Conversation {
     pub extended: bool,
     pub tester: Endpoint,
     pub ecu: Endpoint,
-    /// The tester's requests the ECU gave a final answer.
+    /// The tester's typed requests the ECU gave a final answer.
     pub exchanges: u32,
     /// Of those, the ones answered with a negative response.
     pub negative: u32,
@@ -77,33 +84,36 @@ pub struct Unsettled {
 pub struct Orientation {
     /// In the order their first exchange completed.
     pub conversations: Vec<Conversation>,
-    /// In the order their ids were first seen.
+    /// In the order their ids were first seen, an id's tester role first.
     pub unsettled: Vec<Unsettled>,
 }
 
 /// The UDS conversations in `frames`, given in bus order, each oriented by
 /// which side sends requests.
 ///
-/// Each id's messages are reassembled, per address byte where
-/// `wslib_isotp::detect` reads the id as addressed. Only a well-formed request
-/// of a service ISO 14229-1 defines opens a request; a tester present or a
-/// request that suppresses its positive response is held beside the open one
-/// rather than replacing it. A message answers a request on another id, as
-/// [`answers`] judges, when it starts after the request's last frame and within
-/// P2 plus the margin of it, or of a responsePending from the same id within
-/// P2* plus the margin.
+/// Messages are reassembled per id, and per address byte where
+/// `wslib_isotp::detect` reads one; a single frame not padded with one value
+/// is no message. A message answers another id's request, as [`answers`]
+/// judges, starting after it and within P2 plus the margin, or P2* plus the
+/// margin after a responsePending from the same id; a positive answer to a
+/// suppressed request with no responsePending first answers nothing. Any other
+/// message opens a request, a tester present or suppressed one beside the
+/// latest. A request decoding as a typed [`Request`], not `Request::Other`,
+/// counts: its final answer is an exchange, its silence unanswered. An answer
+/// to any other request counts for nothing.
 ///
-/// An id is an ECU only if more of its messages answered a request than
-/// answered nothing, and a tester only if more of its requests were answered
-/// than not. An id's partner in a role is the eligible one with the most
-/// exchanges, settled when every rival has at most one or an eighth as many. A
-/// conversation is reported when two ids settle on each other in one
-/// orientation only and `detect` pairs neither with a third id; every other
-/// eligible id with an eligible candidate is [`Unsettled`] in that role.
+/// A [`Conversation`] is two ids leading each other's exchanges, every rival
+/// on either side with at most an eighth as many, as are the ECU's messages
+/// answering nothing and the tester's unanswered requests; `detect` pairs
+/// neither with a third id, and neither has the other role elsewhere. Every
+/// other id with an exchange is [`Unsettled`]. Two periodic ids at about one
+/// rate whose frames are a typed request and its answer, uniformly padded,
+/// look like a conversation.
 ///
-/// Beyond `detect`'s record of each multi-frame message, memory grows with the
-/// ids in the window: each holds a message of at most [`MAX_MESSAGE_BYTES`] in
-/// reassembly, two open requests, and [`MAX_PARTNERS`] partners a role.
+/// Time is the frames times the ids with a request open. Memory per id and
+/// address byte: an open first frame's reservation of up to 4095 bytes, two
+/// requests of up to [`MAX_MESSAGE_BYTES`], [`MAX_PARTNERS`] partners a role;
+/// and `detect`'s record of each multi-frame message.
 pub fn orient(frames: &[TimedFrame], timing: &Timing) -> Orientation {
     let detection = detect(frames, DEFAULT_FLOW_CONTROL_WINDOW);
     let addressed: HashSet<(u32, bool)> = detection
@@ -115,15 +125,14 @@ pub fn orient(frames: &[TimedFrame], timing: &Timing) -> Orientation {
     let mut reading = Reading {
         reply_within_us: micros(timing.p2.saturating_add(timing.margin)),
         pending_within_us: micros(timing.p2_star.saturating_add(timing.margin)),
-        index: HashMap::new(),
-        tracks: Vec::new(),
+        ..Reading::default()
     };
     for (order, frame) in frames.iter().enumerate() {
-        let address_byte = match frame.data.first() {
-            Some(&byte) if addressed.contains(&(frame.id, frame.extended)) => Some(byte),
-            None if addressed.contains(&(frame.id, frame.extended)) => continue,
-            _ => None,
-        };
+        let address_byte = frame
+            .data
+            .first()
+            .filter(|_| addressed.contains(&(frame.id, frame.extended)))
+            .copied();
         reading.frame(order, (frame.id, frame.extended, address_byte), frame);
     }
     reading.settle(&detection.pairs)
@@ -154,21 +163,35 @@ fn reassembler(address_byte: Option<u8>) -> Reassembler {
     Reassembler::with_framing(0, StMin(0), framing)
 }
 
-fn opens_request(message: &[u8]) -> bool {
-    message
-        .first()
-        .is_some_and(|&service| sid::name(service).is_some())
-        && Request::decode(message).is_ok()
+/// Whether a single frame's bytes after its `len` bytes of message are all one
+/// value. A PCI low nibble of zero is the escaped form, with a length byte.
+fn uniformly_padded(frame: &[u8], addressed: bool, len: usize) -> bool {
+    let pci_at = usize::from(addressed);
+    let header = pci_at + if frame[pci_at] & 0x0F == 0 { 2 } else { 1 };
+    frame
+        .get(header + len..)
+        .is_none_or(|padding| padding.windows(2).all(|pair| pair[0] == pair[1]))
 }
 
 struct Open {
     data: Vec<u8>,
     end_us: u64,
     owed: bool,
-    answered: bool,
+    counted: bool,
     replies: Vec<Reply>,
 }
 
+impl Open {
+    fn deadline_us(&self, reply_within_us: u64, pending_within_us: u64) -> u64 {
+        self.replies
+            .iter()
+            .filter_map(|reply| reply.last_pending_us)
+            .map(|pending_us| pending_us.saturating_add(pending_within_us))
+            .fold(self.end_us.saturating_add(reply_within_us), u64::max)
+    }
+}
+
+#[derive(Default)]
 struct Reply {
     from: usize,
     pending: u32,
@@ -176,169 +199,117 @@ struct Reply {
     done: bool,
 }
 
-struct Tally {
-    partner: usize,
+/// The counted requests one tester's ECU answered.
+#[derive(Default)]
+struct Exchanges {
+    /// The tester's track and the ECU's, indexed by role.
+    ids: [usize; 2],
     first: usize,
-    exchanges: u32,
+    count: u32,
     negative: u32,
     pending: u32,
 }
 
+impl Exchanges {
+    fn roles(&self) -> impl Iterator<Item = (usize, usize)> {
+        self.ids.into_iter().zip([TESTER, ECU])
+    }
+}
+
 #[derive(Default)]
-struct Partners {
-    tallies: Vec<Tally>,
-    crowded: bool,
-}
-
-impl Partners {
-    fn credit(&mut self, partner: usize, order: usize) -> Option<&mut Tally> {
-        let at = match self.tallies.iter().position(|t| t.partner == partner) {
-            Some(at) => at,
-            None if self.tallies.len() < MAX_PARTNERS => {
-                self.tallies.push(Tally {
-                    partner,
-                    first: order,
-                    exchanges: 0,
-                    negative: 0,
-                    pending: 0,
-                });
-                self.tallies.len() - 1
-            }
-            None => {
-                self.crowded = true;
-                return None;
-            }
-        };
-        Some(&mut self.tallies[at])
-    }
-
-    /// The eligible partner with the most exchanges, if every eligible rival
-    /// has at most one or an eighth as many.
-    fn settled(&self, eligible: impl Fn(&Tally) -> bool) -> Option<&Tally> {
-        if self.crowded {
-            return None;
-        }
-        let mut ranked = self.ranked(eligible);
-        let leader = ranked.next()?;
-        let rival = ranked.next().map_or(0, |rival| rival.exchanges);
-        let outweighed = rival <= 1 || rival.saturating_mul(8) <= leader.exchanges;
-        (rival < leader.exchanges && outweighed).then_some(leader)
-    }
-
-    fn ranked(&self, keep: impl Fn(&Tally) -> bool) -> impl Iterator<Item = &Tally> {
-        let mut tallies: Vec<&Tally> = self.tallies.iter().filter(|t| keep(t)).collect();
-        tallies.sort_by_key(|tally| (Reverse(tally.exchanges), tally.first));
-        tallies.into_iter()
-    }
-}
-
 struct Track {
     key: Key,
-    reassembler: Reassembler,
-    started_us: Option<u64>,
     /// The latest request, and a tester present or suppressed request since.
     open: [Option<Open>; 2],
-    as_tester: Partners,
-    as_ecu: Partners,
-    requests_answered: u32,
+    listed: bool,
+    /// Indices into the reading's exchanges, as tester and as ECU.
+    roles: [Vec<usize>; 2],
+    crowded: [bool; 2],
     unanswered: u32,
-    answers: u32,
-    answering_nothing: u32,
+    unsolicited: u32,
 }
 
 impl Track {
-    fn new(key: Key) -> Self {
-        Self {
-            key,
-            reassembler: reassembler(key.2),
-            started_us: None,
-            open: [None, None],
-            as_tester: Partners::default(),
-            as_ecu: Partners::default(),
-            requests_answered: 0,
-            unanswered: 0,
-            answers: 0,
-            answering_nothing: 0,
-        }
-    }
-
-    fn compatible(&self, other: &Self) -> bool {
-        self.key.1 == other.key.1 && self.key.2.is_some() == other.key.2.is_some()
-    }
-
-    fn open(&mut self, data: Vec<u8>, end_us: u64) {
-        let owed = !suppresses_positive_response(&data);
-        let aside = !owed || data.first() == Some(&sid::TESTER_PRESENT);
-        let slot = usize::from(aside);
-        for closing in slot..self.open.len() {
-            self.close(closing);
-        }
-        self.open[slot] = Some(Open {
-            data,
-            end_us,
-            owed,
-            answered: false,
-            replies: Vec::new(),
-        });
-    }
-
     fn close(&mut self, slot: usize) {
         if let Some(open) = self.open[slot].take()
             && open.owed
-            && !open.answered
+            && open.counted
+            && !open.replies.iter().any(|reply| reply.done)
         {
             self.unanswered = self.unanswered.saturating_add(1);
         }
     }
-
-    fn eligible_tester(&self) -> bool {
-        self.requests_answered > self.unanswered
-    }
-
-    fn eligible_ecu(&self) -> bool {
-        self.answers > self.answering_nothing
-    }
 }
 
+#[derive(Default)]
 struct Reading {
     reply_within_us: u64,
     pending_within_us: u64,
     index: HashMap<Key, usize>,
     tracks: Vec<Track>,
+    /// Each track's reassembler, and when its multi-frame message started.
+    readers: Vec<(Reassembler, Option<u64>)>,
+    /// The tracks holding a request that may still be answered.
+    listed: Vec<usize>,
+    exchanges: Vec<Exchanges>,
+    known: HashMap<[usize; 2], usize>,
 }
 
 impl Reading {
     fn frame(&mut self, order: usize, key: Key, frame: &TimedFrame) {
-        let tracks = &mut self.tracks;
+        let (tracks, readers) = (&mut self.tracks, &mut self.readers);
         let at = *self.index.entry(key).or_insert_with(|| {
-            tracks.push(Track::new(key));
+            tracks.push(Track {
+                key,
+                ..Track::default()
+            });
+            readers.push((reassembler(key.2), None));
             tracks.len() - 1
         });
-        let track = &mut self.tracks[at];
-        let outcome = track.reassembler.on_frame(&frame.data);
+        let (reassembler, started_us) = &mut self.readers[at];
+        let outcome = reassembler.on_frame(&frame.data);
         if outcome.aborted.is_some() {
-            track.started_us = None;
+            *started_us = None;
         }
         match outcome.step {
             Step::SendFlowControl(_) => {
-                track.started_us = track.reassembler.is_receiving().then_some(frame.at_us);
+                *started_us = reassembler.is_receiving().then_some(frame.at_us);
             }
-            Step::Message(message) => {
-                let start_us = track.started_us.take().unwrap_or(frame.at_us);
-                self.message(order, at, message, start_us, frame.at_us);
-            }
+            Step::Message(message) => match started_us.take() {
+                Some(start_us) => self.message(order, at, message, start_us, frame.at_us),
+                None if uniformly_padded(&frame.data, key.2.is_some(), message.len()) => {
+                    self.message(order, at, message, frame.at_us, frame.at_us);
+                }
+                None => self.unsolicited(at),
+            },
             Step::Accepted | Step::Nothing => {}
         }
     }
 
-    /// Each other id with an open request `message` from `from` answers in
-    /// time, the latest request before one held beside it.
-    fn answered(&self, from: usize, message: &[u8], start_us: u64) -> Vec<(usize, usize, Answer)> {
+    /// Each other track with a request `message` answers in time, and which:
+    /// its latest request if `message` answers that one, else the one held
+    /// beside it.
+    fn answered(&mut self, from: usize, message: &[u8], start_us: u64) -> Vec<Found> {
+        let (reply_within_us, pending_within_us) = (self.reply_within_us, self.pending_within_us);
+        let tracks = &mut self.tracks;
+        self.listed.retain(|&at| {
+            let track = &mut tracks[at];
+            track.listed = track
+                .open
+                .iter()
+                .flatten()
+                .any(|open| open.deadline_us(reply_within_us, pending_within_us) >= start_us);
+            track.listed
+        });
         let sender = &self.tracks[from];
-        self.tracks
+        self.listed
             .iter()
-            .enumerate()
-            .filter(|(at, track)| *at != from && track.compatible(sender))
+            .map(|&at| (at, &self.tracks[at]))
+            .filter(|(at, track)| {
+                *at != from
+                    && track.key.1 == sender.key.1
+                    && track.key.2.is_some() == sender.key.2.is_some()
+            })
             .filter_map(|(at, track)| {
                 track.open.iter().enumerate().find_map(|(slot, open)| {
                     let open = open.as_ref()?;
@@ -348,58 +319,73 @@ impl Reading {
                         Some(Reply {
                             last_pending_us: Some(pending_us),
                             ..
-                        }) => (*pending_us, self.pending_within_us),
-                        _ => (open.end_us, self.reply_within_us),
+                        }) => (*pending_us, pending_within_us),
+                        _ => (open.end_us, reply_within_us),
                     };
                     if start_us.checked_sub(since_us)? > within_us {
                         return None;
                     }
-                    Some((at, slot, answers(&open.data, message)?))
+                    let answer = answers(&open.data, message)?;
+                    let unasked = !open.owed && answer == Answer::Positive;
+                    let pended = reply.is_some_and(|reply| reply.pending > 0);
+                    (!unasked || pended).then_some((at, slot, answer))
                 })
             })
             .collect()
     }
 
+    fn unsolicited(&mut self, at: usize) {
+        let track = &mut self.tracks[at];
+        track.unsolicited = track.unsolicited.saturating_add(1);
+    }
+
+    /// A message answering nothing is unsolicited and opens a request.
     fn message(&mut self, order: usize, from: usize, message: Vec<u8>, start_us: u64, end_us: u64) {
-        let mut taken = None;
-        for (tester, slot, answer) in self.answered(from, &message, start_us) {
-            if self.reply(order, (tester, slot), from, answer, start_us) {
-                taken = Some(answer);
+        let mut answered_any = false;
+        if message[0] >= sid::POSITIVE_OFFSET {
+            for found in self.answered(from, &message, start_us) {
+                answered_any |= self.reply(order, found, from, start_us);
             }
         }
-        let sender = &mut self.tracks[from];
-        match taken {
-            None => sender.answering_nothing = sender.answering_nothing.saturating_add(1),
-            Some(answer) if answer != PENDING => sender.answers = sender.answers.saturating_add(1),
-            Some(_) => {}
+        if !answered_any {
+            self.unsolicited(from);
+            self.open(from, message, end_us);
         }
-        if opens_request(&message) {
-            sender.open(message, end_us);
+    }
+
+    fn open(&mut self, at: usize, data: Vec<u8>, end_us: u64) {
+        let track = &mut self.tracks[at];
+        let owed = !suppresses_positive_response(&data);
+        let slot = usize::from(!owed || data[0] == sid::TESTER_PRESENT);
+        for closing in slot..track.open.len() {
+            track.close(closing);
+        }
+        let counted = !matches!(Request::decode(&data), Err(_) | Ok(Request::Other { .. }));
+        track.open[slot] = Some(Open {
+            counted,
+            data,
+            end_us,
+            owed,
+            replies: Vec::new(),
+        });
+        if !std::mem::replace(&mut track.listed, true) {
+            self.listed.push(at);
         }
     }
 
     /// Records `ecu`'s answer to a tester's open request, unless the request
     /// already has [`MAX_PARTNERS`] others answering it.
-    fn reply(
-        &mut self,
-        order: usize,
-        (tester, slot): (usize, usize),
-        ecu: usize,
-        answer: Answer,
-        at_us: u64,
-    ) -> bool {
-        let track = &mut self.tracks[tester];
-        let Some(open) = track.open[slot].as_mut() else {
-            return false;
-        };
+    fn reply(&mut self, order: usize, found: Found, ecu: usize, at_us: u64) -> bool {
+        let (tester, slot, answer) = found;
+        let open = self.tracks[tester].open[slot]
+            .as_mut()
+            .expect("answered found the request open");
         let at = match open.replies.iter().position(|reply| reply.from == ecu) {
             Some(at) => at,
             None if open.replies.len() < MAX_PARTNERS => {
                 open.replies.push(Reply {
                     from: ecu,
-                    pending: 0,
-                    last_pending_us: None,
-                    done: false,
+                    ..Reply::default()
                 });
                 open.replies.len() - 1
             }
@@ -409,24 +395,70 @@ impl Reading {
         if answer == PENDING {
             reply.pending = reply.pending.saturating_add(1);
             reply.last_pending_us = Some(at_us);
-            return true;
-        }
-        reply.done = true;
-        let pending_before = reply.pending;
-        if !std::mem::replace(&mut open.answered, true) {
-            track.requests_answered = track.requests_answered.saturating_add(1);
-        }
-        if let Some(tally) = track.as_tester.credit(ecu, order) {
-            tally.exchanges = tally.exchanges.saturating_add(1);
-            tally.pending = tally.pending.saturating_add(pending_before);
-            if matches!(answer, Answer::Negative { .. }) {
-                tally.negative = tally.negative.saturating_add(1);
+        } else {
+            reply.done = true;
+            if open.counted {
+                let negative = matches!(answer, Answer::Negative { .. });
+                let pending = reply.pending;
+                self.credit(order, [tester, ecu], negative, pending);
             }
         }
-        if let Some(tally) = self.tracks[ecu].as_ecu.credit(tester, order) {
-            tally.exchanges = tally.exchanges.saturating_add(1);
-        }
         true
+    }
+
+    /// Counts a final answer to a counted request. A pair is listed on each
+    /// side with room for it; a side without room is crowded.
+    fn credit(&mut self, order: usize, ids: [usize; 2], negative: bool, pending: u32) {
+        let at = match self.known.get(&ids) {
+            Some(&at) => at,
+            None => {
+                let at = self.exchanges.len();
+                let mut listed = false;
+                for (role, &id) in ids.iter().enumerate() {
+                    let track = &mut self.tracks[id];
+                    if track.roles[role].len() < MAX_PARTNERS {
+                        track.roles[role].push(at);
+                        listed = true;
+                    } else {
+                        track.crowded[role] = true;
+                    }
+                }
+                if !listed {
+                    return;
+                }
+                self.known.insert(ids, at);
+                self.exchanges.push(Exchanges {
+                    ids,
+                    first: order,
+                    ..Exchanges::default()
+                });
+                at
+            }
+        };
+        let exchanges = &mut self.exchanges[at];
+        exchanges.count = exchanges.count.saturating_add(1);
+        exchanges.negative = exchanges.negative.saturating_add(u32::from(negative));
+        exchanges.pending = exchanges.pending.saturating_add(pending);
+    }
+
+    /// A track's exchanges in a role, most first.
+    fn ranked(&self, track: &Track, role: usize) -> Vec<usize> {
+        let mut ranked = track.roles[role].clone();
+        ranked.sort_by_key(|&at| (Reverse(self.exchanges[at].count), self.exchanges[at].first));
+        ranked
+    }
+
+    /// The exchanges leading a track's role, if every rival has at most an
+    /// eighth as many.
+    fn leader(&self, at: usize, role: usize) -> Option<usize> {
+        let track = &self.tracks[at];
+        let ranked = self.ranked(track, role);
+        let (&leader, rivals) = ranked.split_first()?;
+        let count = self.exchanges[leader].count;
+        let outweighs = rivals
+            .iter()
+            .all(|&rival| self.exchanges[rival].count.saturating_mul(8) <= count);
+        (!track.crowded[role] && outweighs).then_some(leader)
     }
 
     fn settle(mut self, pairs: &[Pair]) -> Orientation {
@@ -434,87 +466,80 @@ impl Reading {
             track.close(0);
             track.close(1);
         }
-        let tracks = &self.tracks;
-        let is_ecu = |tally: &Tally| tracks[tally.partner].eligible_ecu();
-        let is_tester = |tally: &Tally| tracks[tally.partner].eligible_tester();
-        let ecu_of: Vec<Option<&Tally>> = tracks
-            .iter()
-            .map(|tester| (tester.as_tester.settled(is_ecu)).filter(|_| tester.eligible_tester()))
-            .collect();
-        let tester_of: Vec<Option<usize>> = tracks
-            .iter()
-            .map(|ecu| {
-                let tester = ecu.as_ecu.settled(is_tester).filter(|_| ecu.eligible_ecu());
-                tester.map(|tally| tally.partner)
-            })
-            .collect();
-
         let detected = detected_partners(pairs);
         let detected_only_with = |key: Key, partner: Key| {
             detected
                 .get(&key)
                 .is_none_or(|paired| paired.iter().all(|(other, ..)| *other == partner))
         };
-        let mut paired = vec![[false; 2]; tracks.len()];
-        let mut conversations = Vec::new();
-        for (tester, tally) in ecu_of.iter().enumerate() {
-            let Some(tally) = tally else {
-                continue;
-            };
-            let ecu = tally.partner;
-            let (tester_key, ecu_key) = (tracks[tester].key, tracks[ecu].key);
-            if tester_of[ecu] != Some(tester)
-                || ecu_of[ecu].is_some_and(|back| back.partner == tester)
-                || !detected_only_with(tester_key, ecu_key)
-                || !detected_only_with(ecu_key, tester_key)
-            {
-                continue;
-            }
-            paired[tester][0] = true;
-            paired[ecu][1] = true;
-            let (flow_controlled_requests, flow_controlled_responses) = detected
-                .get(&tester_key)
-                .and_then(|paired| paired.first())
-                .map_or((0, 0), |&(_, requests, responses)| (requests, responses));
-            conversations.push((
-                tally.first,
+        let mut confident: Vec<usize> = (0..self.tracks.len())
+            .filter_map(|tester| self.leader(tester, TESTER))
+            .filter(|&at| {
+                let pair = &self.exchanges[at];
+                let [tester, ecu] = pair.ids.map(|id| &self.tracks[id]);
+                self.leader(pair.ids[ECU], ECU) == Some(at)
+                    && ecu.unsolicited.saturating_mul(8) <= pair.count
+                    && tester.unanswered.saturating_mul(8) <= pair.count
+                    && detected_only_with(tester.key, ecu.key)
+                    && detected_only_with(ecu.key, tester.key)
+            })
+            .collect();
+        let taken: HashSet<(usize, usize)> = confident
+            .iter()
+            .flat_map(|&at| self.exchanges[at].roles())
+            .collect();
+        confident.retain(|&at| {
+            let [tester, ecu] = self.exchanges[at].ids;
+            !taken.contains(&(tester, ECU)) && !taken.contains(&(ecu, TESTER))
+        });
+        confident.sort_by_key(|&at| self.exchanges[at].first);
+        let paired: HashSet<(usize, usize)> = confident
+            .iter()
+            .flat_map(|&at| self.exchanges[at].roles())
+            .collect();
+
+        let conversations = confident
+            .iter()
+            .map(|&at| {
+                let pair = &self.exchanges[at];
+                let [tester, ecu] = pair.ids.map(|id| self.tracks[id].key);
+                let (flow_controlled_requests, flow_controlled_responses) = detected
+                    .get(&tester)
+                    .and_then(|paired| paired.first())
+                    .map_or((0, 0), |&(_, requests, responses)| (requests, responses));
                 Conversation {
-                    extended: tester_key.1,
-                    tester: endpoint(tester_key),
-                    ecu: endpoint(ecu_key),
-                    exchanges: tally.exchanges,
-                    negative: tally.negative,
-                    pending: tally.pending,
+                    extended: tester.1,
+                    tester: endpoint(tester),
+                    ecu: endpoint(ecu),
+                    exchanges: pair.count,
+                    negative: pair.negative,
+                    pending: pair.pending,
                     flow_controlled_requests,
                     flow_controlled_responses,
-                },
-            ));
-        }
-        conversations.sort_by_key(|(first, _)| *first);
+                }
+            })
+            .collect();
 
         let mut unsettled = Vec::new();
-        for (track, [as_tester, as_ecu]) in tracks.iter().zip(paired) {
-            let unsettled_as = |side, partners: &Partners, eligible: &dyn Fn(&Tally) -> bool| {
-                let candidates: Vec<Endpoint> = partners
-                    .ranked(eligible)
-                    .map(|tally| endpoint(tracks[tally.partner].key))
-                    .collect();
-                (!candidates.is_empty()).then(|| Unsettled {
+        for (at, track) in self.tracks.iter().enumerate() {
+            for (role, side) in [(TESTER, Sender::Tester), (ECU, Sender::Ecu)] {
+                if track.roles[role].is_empty() || paired.contains(&(at, role)) {
+                    continue;
+                }
+                unsettled.push(Unsettled {
                     extended: track.key.1,
                     endpoint: endpoint(track.key),
                     side,
-                    candidates,
-                })
-            };
-            if !as_tester && track.eligible_tester() {
-                unsettled.extend(unsettled_as(Sender::Tester, &track.as_tester, &is_ecu));
-            }
-            if !as_ecu && track.eligible_ecu() {
-                unsettled.extend(unsettled_as(Sender::Ecu, &track.as_ecu, &is_tester));
+                    candidates: self
+                        .ranked(track, role)
+                        .into_iter()
+                        .map(|at| endpoint(self.tracks[self.exchanges[at].ids[1 - role]].key))
+                        .collect(),
+                });
             }
         }
         Orientation {
-            conversations: conversations.into_iter().map(|(_, c)| c).collect(),
+            conversations,
             unsettled,
         }
     }
@@ -530,14 +555,12 @@ fn detected_partners(pairs: &[Pair]) -> HashMap<Key, Vec<(Key, u32, u32)>> {
         };
         let a = (pair.a_id, pair.extended, a_byte);
         let b = (pair.b_id, pair.extended, b_byte);
-        detected
-            .entry(a)
-            .or_default()
-            .push((b, pair.from_a, pair.from_b));
-        detected
-            .entry(b)
-            .or_default()
-            .push((a, pair.from_b, pair.from_a));
+        for (key, partner) in [
+            (a, (b, pair.from_a, pair.from_b)),
+            (b, (a, pair.from_b, pair.from_a)),
+        ] {
+            detected.entry(key).or_default().push(partner);
+        }
     }
     detected
 }

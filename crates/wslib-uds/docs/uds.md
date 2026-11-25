@@ -120,52 +120,74 @@ the tracker and the scan verdicts all use it (`tests/answer.rs`):
 
 ## Orienting a window of frames
 
-`orient` (feature `isotp`) leans on the facts above and no others. A request
-is a message whose first byte is a request service id ISO 14229-1 defines
-and which decodes as that service where this crate models it
-(`tests/orient.rs`:
-`a_message_whose_first_byte_is_no_iso_request_service_opens_no_request`,
-`a_message_that_does_not_decode_as_its_service_opens_no_request`). A server
+`orient` (feature `isotp`) leans on the facts above and no others. A
+request counts only if this crate decodes it as a typed `Request`, not
+`Request::Other`; any other message that answers nothing still opens a
+request, whose answer counts for nothing either way (`tests/orient.rs`:
+`a_message_whose_first_byte_is_no_iso_request_service_counts_for_nothing`,
+`a_message_that_does_not_decode_as_its_service_counts_for_nothing`,
+`a_request_of_a_service_the_crate_does_not_model_counts_for_nothing`,
+`answers_to_requests_the_crate_does_not_type_leave_an_ecu_unpenalised`,
+`two_periodic_ids_pair_only_when_one_sends_a_typed_request`). A server
 starts its response within P2 of the request, or within P2* of its own
 responsePending
 (`a_reply_is_in_time_up_to_p2_plus_the_margin_or_p2_star_plus_the_margin_after_pending`),
 and a request that suppresses its positive response is owed none but may be
-refused (`a_refusal_of_a_suppressed_request_is_an_exchange`). A tester
-present or a suppressed request does not end the request before it
+refused (`a_refusal_of_a_suppressed_request_is_an_exchange`); a positive
+answer to it with no responsePending first answers nothing
+(`a_positive_response_to_a_suppressed_request_with_no_pending_is_unsolicited`).
+A tester present or a suppressed request is held beside the request before
+it, and the next other request closes both
 (`a_keep_alive_while_the_ecu_is_pending_leaves_the_request_open_to_its_final_answer`,
-`a_tester_present_while_the_ecu_is_pending_costs_no_exchange`). A response
+`a_tester_present_while_the_ecu_is_pending_costs_no_exchange`,
+`a_normal_request_closes_the_tester_present_held_beside_the_last`). A response
 answers a request on another id as `answers` judges, so a conversation of
 single frames is found
 (`a_conversation_of_single_frames_alone_is_found_and_oriented_whichever_id_is_lower`).
 
-The rest is this crate's judgement, not the standard's. An id is an ECU only
-if more of its messages answer a request than answer nothing, and a tester
-only if more of its requests are answered than not
-(`a_periodic_pair_at_twice_or_half_the_rate_is_neither_tester_nor_ecu`,
-`periodic_ids_beside_a_real_conversation_are_never_paired`,
-`a_periodic_request_look_alike_loses_the_ecu_to_the_tester_it_was_answering`,
-`a_periodic_reply_look_alike_is_no_ecu_even_for_a_tester_nothing_else_answers`,
-`an_answer_past_the_per_request_partner_cap_counts_as_answering_nothing`).
-An id's partner is settled only when every rival has at most one exchange or
-an eighth of the leader's
-(`a_rival_with_more_than_an_eighth_of_the_leaders_exchanges_leaves_the_id_unsettled`,
-`a_rival_with_at_most_an_eighth_of_the_leaders_exchanges_is_unsettled_beside_the_pair`,
-`a_tester_answered_by_several_ids_none_in_most_rounds_is_unsettled`). A
-pair is reported only when the two settle on each other one way round, and
-no ISO-TP flow control contradicts it; every other eligible id with an
-eligible candidate is unsettled
-(`ids_that_each_diagnose_the_other_are_reported_in_neither_orientation`,
-`ids_whose_multi_frame_messages_another_id_paced_are_not_paired_by_their_answers`,
-`a_tester_whose_ecu_settled_on_another_tester_is_unsettled`).
+The rest is this crate's judgement, not the standard's. A single frame
+whose bytes past its length are not all one value is no message, and counts
+as unsolicited for its id
+(`a_single_frame_padded_with_varying_bytes_is_no_message`). Two ids are a
+conversation only when each leads the other's exchanges and every rival on
+either side has at most an eighth as many, however poor the rival's own
+record
+(`a_rival_settles_with_an_eighth_of_the_leaders_exchanges_and_not_with_more`,
+`a_rival_with_more_than_an_eighth_of_the_leaders_exchanges_leaves_the_id_unsettled`,
+`a_rival_unsettles_however_poor_its_own_record`,
+`a_tester_answered_by_several_ids_none_in_most_rounds_is_unsettled`,
+`a_periodic_look_alike_answering_or_asking_every_request_unsettles_the_real_pair`);
+the ECU's messages answering nothing and the tester's unanswered counted
+requests are each at most an eighth of the exchanges
+(`a_periodic_pair_out_of_step_is_never_a_conversation`,
+`a_tester_with_many_unanswered_requests_is_unsettled_not_dropped`,
+`a_held_tester_present_answered_after_p2_is_unanswered_and_its_answer_unsolicited`,
+`an_answer_past_the_per_request_partner_cap_counts_as_answering_nothing`);
+no ISO-TP flow control contradicts the pair
+(`ids_whose_multi_frame_messages_another_id_paced_are_not_paired_by_their_answers`);
+and neither id is a tester in one conversation and an ECU in another
+(`an_id_settled_as_both_a_tester_and_an_ecu_is_in_no_conversation`,
+`ids_that_each_diagnose_the_other_are_reported_in_neither_orientation`).
+Every other id with an exchange is unsettled, its partner slots full or not
+(`a_tester_whose_ecu_settled_on_another_tester_is_unsettled`,
+`a_ring_of_ids_diagnosing_the_next_puts_no_id_in_both_roles_and_drops_none`,
+`junk_filling_an_ecus_partner_slots_leaves_every_id_reported`,
+`an_id_answering_more_testers_than_the_cap_is_unsettled_however_clear_the_lead`).
 
-What it cannot do: tell a periodic pair that mimics a known request and its
-answer in step from a conversation; see a vendor or unknown service; read an
-id as addressed unless `wslib_isotp::detect` does, which needs multi-frame
-exchanges; or read a message over `MAX_MESSAGE_BYTES` (64 KiB), which
-answers and opens nothing
+What it cannot do: tell two periodic ids at about the same rate, whose
+frames are a typed request and its answer uniformly padded, from a
+conversation, in step or not
+(`two_periodic_ids_pair_only_when_one_sends_a_typed_request`); find a sender
+that pads single frames with varying bytes; count a vendor, KWP, OBD or
+unmodelled ISO service; read an id as addressed unless `wslib_isotp::detect`
+does, which needs multi-frame exchanges; or read a message over
+`MAX_MESSAGE_BYTES` (64 KiB), which answers and opens nothing
 (`a_response_up_to_max_message_bytes_is_an_exchange_and_one_byte_over_is_not`).
-A first frame's announced length sizes no buffer: reassembly reserves at most
-4095 bytes and grows as frames arrive, as wslib-isotp pins.
+Time is the frames times the ids with a request open
+(`time_grows_with_the_frames_not_the_ids_times_the_frames`). Memory, per id
+and address byte, is an open first frame's reservation of at most 4095
+bytes, which grows only as frames arrive, as wslib-isotp pins; two open
+requests of up to `MAX_MESSAGE_BYTES`; and `MAX_PARTNERS` partners a role.
 
 ## Layouts
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+- `testing::Ecu` is tested answering through wslib-isotp's `Responder`:
+  single and multi-frame requests and responses, responsePending before the
+  final answer, and negative responses, with the frames read back through
+  `IsoTpTap` into `Tracker` as the same transactions.
+
 ## 0.1.0
 
 - `Request` and `Response`: services 0x10, 0x11, 0x14, 0x19, 0x22, 0x23, 0x27,

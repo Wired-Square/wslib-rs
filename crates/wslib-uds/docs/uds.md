@@ -127,7 +127,7 @@ request, whose answer counts for nothing either way (`tests/orient.rs`:
 `a_message_whose_first_byte_is_no_iso_request_service_counts_for_nothing`,
 `a_message_that_does_not_decode_as_its_service_counts_for_nothing`,
 `a_request_of_a_service_the_crate_does_not_model_counts_for_nothing`,
-`answers_to_requests_the_crate_does_not_type_leave_an_ecu_unpenalised`,
+`untyped_traffic_costs_an_ecu_nothing_while_it_does_not_outnumber_the_typed`,
 `two_periodic_ids_pair_only_when_one_sends_a_typed_request`). A server
 starts its response within P2 of the request, or within P2* of its own
 responsePending
@@ -145,13 +145,12 @@ answers a request on another id as `answers` judges, so a conversation of
 single frames is found
 (`a_conversation_of_single_frames_alone_is_found_and_oriented_whichever_id_is_lower`).
 
-The rest is this crate's judgement, not the standard's. A single frame
-whose bytes past its length are not all one value is no message, and counts
-as unsolicited for its id
-(`a_single_frame_padded_with_varying_bytes_is_no_message`). Two ids are a
-conversation only when each leads the other's exchanges and every rival on
-either side has at most an eighth as many, however poor the rival's own
-record
+The rest is this crate's judgement, not the standard's. Two ids are a
+conversation only with two exchanges or more, or one in which flow control
+paced a multi-frame message
+(`a_conversation_needs_two_exchanges_or_one_paced_by_flow_control`), and
+only when each leads the other's exchanges and every rival on either side
+has at most an eighth as many, however poor the rival's own record
 (`a_rival_settles_with_an_eighth_of_the_leaders_exchanges_and_not_with_more`,
 `a_rival_with_more_than_an_eighth_of_the_leaders_exchanges_leaves_the_id_unsettled`,
 `a_rival_unsettles_however_poor_its_own_record`,
@@ -162,12 +161,34 @@ requests are each at most an eighth of the exchanges
 (`a_periodic_pair_out_of_step_is_never_a_conversation`,
 `a_tester_with_many_unanswered_requests_is_unsettled_not_dropped`,
 `a_held_tester_present_answered_after_p2_is_unanswered_and_its_answer_unsolicited`,
-`an_answer_past_the_per_request_partner_cap_counts_as_answering_nothing`);
+`an_answer_past_the_per_request_partner_cap_counts_as_answering_nothing`).
+An id's own requests are messages answering nothing, so an id that mostly
+asks is never the ECU of a conversation. A request whose deadline is later
+than the window's last frame is not held unanswered
+(`a_request_the_window_ends_on_is_not_held_unanswered`); a window that starts
+on a response cannot be known to, so a window cut mid-exchange can cost a
+short conversation one unsolicited message. Frames the ISO-TP reassembler
+ignores or refuses, other than a flow control while another id has a first
+frame open, count against either id as unsolicited messages do
+(`frames_the_reassembler_ignores_count_against_an_id_beyond_an_eighth`);
+exchanges either of whose messages was a single frame padded with varying
+bytes are at most an eighth, so an ECU that pads with stale bytes is
+unsettled, its tester its candidate
+(`exchanges_in_frames_padded_with_varying_bytes_unsettle_a_pair_beyond_an_eighth`);
+the ECU's answers to untyped requests are no more than the exchanges, and
+the tester's untyped requests no more than its typed ones
+(`neutral_traffic_outnumbering_the_typed_unsettles_a_pair`). A request
+leaves the open list only once two frames in a row are stamped past its
+deadline, so one stray stamp far ahead costs nothing
+(`one_stamp_far_ahead_between_a_request_and_its_answer_expires_nothing`,
+`two_frames_in_a_row_past_a_requests_deadline_expire_it`);
 no ISO-TP flow control contradicts the pair
 (`ids_whose_multi_frame_messages_another_id_paced_are_not_paired_by_their_answers`);
-and neither id is a tester in one conversation and an ECU in another
+and neither id is in another such pair in the other role
 (`an_id_settled_as_both_a_tester_and_an_ecu_is_in_no_conversation`,
-`ids_that_each_diagnose_the_other_are_reported_in_neither_orientation`).
+`ids_that_each_diagnose_the_other_are_reported_in_neither_orientation`); an
+id in a conversation can still be unsettled in the other role
+(`an_id_in_a_conversation_can_be_unsettled_in_the_other_role`).
 Every other id with an exchange is unsettled, its partner slots full or not
 (`a_tester_whose_ecu_settled_on_another_tester_is_unsettled`,
 `a_ring_of_ids_diagnosing_the_next_puts_no_id_in_both_roles_and_drops_none`,
@@ -177,14 +198,19 @@ Every other id with an exchange is unsettled, its partner slots full or not
 What it cannot do: tell two periodic ids at about the same rate, whose
 frames are a typed request and its answer uniformly padded, from a
 conversation, in step or not
-(`two_periodic_ids_pair_only_when_one_sends_a_typed_request`); find a sender
-that pads single frames with varying bytes; count a vendor, KWP, OBD or
-unmodelled ISO service; read an id as addressed unless `wslib_isotp::detect`
-does, which needs multi-frame exchanges; or read a message over
-`MAX_MESSAGE_BYTES` (64 KiB), which answers and opens nothing
+(`two_periodic_ids_pair_only_when_one_sends_a_typed_request`); report an ECU
+that pads single frames with stale bytes as more than unsettled; count a
+vendor, KWP, OBD or unmodelled ISO service; read an id as addressed unless
+`wslib_isotp::detect` does, which needs multi-frame exchanges; or read a
+message over `MAX_MESSAGE_BYTES` (64 KiB), which answers and opens nothing
 (`a_response_up_to_max_message_bytes_is_an_exchange_and_one_byte_over_is_not`).
 Time is the frames times the ids with a request open
-(`time_grows_with_the_frames_not_the_ids_times_the_frames`). Memory, per id
+(`time_grows_with_the_frames_times_the_ids_with_a_request_open`); with stamps
+that never advance no request expires, which makes it the frames times every
+request opened. A message whose first byte does not name an open request's
+service costs nothing more for that request
+(`a_long_open_request_costs_a_message_not_naming_its_service_no_more_than_a_short_one`);
+one that does is judged by `answers`, which reads the request's DIDs. Memory, per id
 and address byte, is an open first frame's reservation of at most 4095
 bytes, which grows only as frames arrive, as wslib-isotp pins; two open
 requests of up to `MAX_MESSAGE_BYTES`; and `MAX_PARTNERS` partners a role.

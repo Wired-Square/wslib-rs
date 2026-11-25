@@ -11,13 +11,17 @@
   side is the tester. Each `Conversation` counts its exchanges, negative and
   responsePending answers, and the multi-frame messages flow control paced
   each way. Only requests decoded as a typed `Request` count. A pair is
-  reported only when rivals, the ECU's unsolicited messages and the tester's
-  unanswered requests are each at most an eighth of its exchanges; every
-  other id with an exchange, such as a functional request two ECUs answer,
-  is `Unsettled` with its candidates. Two periodic ids at about one rate
-  whose frames are a typed request and its answer, uniformly padded, still
-  look like a conversation. Messages up to `MAX_MESSAGE_BYTES` (64 KiB) are
-  read.
+  reported only with two exchanges or one paced by flow control, when
+  rivals, the ECU's unsolicited messages, the tester's unanswered requests,
+  frames ISO-TP ignores, and exchanges in single frames padded with varying
+  bytes are each at most an eighth of its exchanges, and when untyped
+  traffic does not outnumber the typed; every other id with an exchange,
+  such as a functional request two ECUs answer or an ECU padding with stale
+  bytes, is `Unsettled` with its candidates. Ids read as addressed only
+  where `wslib_isotp::detect` finds multi-frame exchanges. Two periodic ids
+  at about one rate whose frames are a typed request and its answer,
+  uniformly padded, still look like a conversation. Messages up to
+  `MAX_MESSAGE_BYTES` (64 KiB) are read.
 - `ReadOnlyServiceScan`, the scan `ServiceScan::new` builds, hands out
   `ReadOnlyServiceProbe`s whose `request()` is already `ReadOnly`, so a
   read-only scan loop has no fallible step. `ServiceProbe::request` is

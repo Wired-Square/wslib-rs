@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use wslib_isotp::{
-    Addressing, DEFAULT_FLOW_CONTROL_WINDOW, FdLength, FrameFormat, Framing, Pair, Reassembler,
-    StMin, Step, TimedFrame, detect,
+    Addressing, DEFAULT_FLOW_CONTROL_WINDOW, FdLength, FrameFormat, Framing, Pair, PciKind,
+    Reassembler, StMin, Step, TimedFrame, detect,
 };
 
 use crate::answer::suppresses_positive_response;
@@ -91,29 +91,34 @@ pub struct Orientation {
 /// The UDS conversations in `frames`, given in bus order, each oriented by
 /// which side sends requests.
 ///
-/// Messages are reassembled per id, and per address byte where
-/// `wslib_isotp::detect` reads one; a single frame not padded with one value
-/// is no message. A message answers another id's request, as [`answers`]
-/// judges, starting after it and within P2 plus the margin, or P2* plus the
-/// margin after a responsePending from the same id; a positive answer to a
-/// suppressed request with no responsePending first answers nothing. Any other
-/// message opens a request, a tester present or suppressed one beside the
-/// latest. A request decoding as a typed [`Request`], not `Request::Other`,
-/// counts: its final answer is an exchange, its silence unanswered. An answer
-/// to any other request counts for nothing.
+/// Messages are reassembled per id, and per address byte only where
+/// `wslib_isotp::detect` reads one, which needs multi-frame exchanges. A
+/// message answers another id's request, as [`answers`] judges, starting after
+/// it and within P2 plus the margin, or P2* plus the margin after a
+/// responsePending from the same id; a positive answer to a suppressed request
+/// with no responsePending first answers nothing. Any other message opens a
+/// request, a tester present or suppressed one beside the latest. A request
+/// decoding as a typed [`Request`], not `Request::Other`, counts: its final
+/// answer is an exchange, its silence unanswered unless the window ends
+/// first. An answer to any other request is neutral.
 ///
-/// A [`Conversation`] is two ids leading each other's exchanges, every rival
-/// on either side with at most an eighth as many, as are the ECU's messages
-/// answering nothing and the tester's unanswered requests; `detect` pairs
-/// neither with a third id, and neither has the other role elsewhere. Every
-/// other id with an exchange is [`Unsettled`]. Two periodic ids at about one
-/// rate whose frames are a typed request and its answer, uniformly padded,
-/// look like a conversation.
+/// A [`Conversation`] is two ids leading each other's exchanges, at least two
+/// or one paced by flow control. Each of these is at most an eighth of them:
+/// every rival on either side; the ECU's messages answering nothing, its own
+/// requests included, and frames it sent that the reassembler ignored; the
+/// tester's unanswered requests and ignored frames; and exchanges with a
+/// single frame padded with varying bytes. The ECU's neutral answers are no
+/// more than them, the tester's uncounted requests no more than its counted
+/// ones, `detect` pairs neither with a third id, and neither is in another
+/// such pair in the other role. Every other id with an exchange is
+/// [`Unsettled`]. Two periodic ids at about one rate whose frames are a typed
+/// request and its answer, uniformly padded, look like a conversation.
 ///
-/// Time is the frames times the ids with a request open. Memory per id and
-/// address byte: an open first frame's reservation of up to 4095 bytes, two
-/// requests of up to [`MAX_MESSAGE_BYTES`], [`MAX_PARTNERS`] partners a role;
-/// and `detect`'s record of each multi-frame message.
+/// Time is the frames times the ids with a request open, which with stamps
+/// that never advance is every request opened. Memory per id and address
+/// byte: an open first frame's reservation of up to 4095 bytes, two requests
+/// of up to [`MAX_MESSAGE_BYTES`], [`MAX_PARTNERS`] partners a role; and
+/// `detect`'s record of each multi-frame message.
 pub fn orient(frames: &[TimedFrame], timing: &Timing) -> Orientation {
     let detection = detect(frames, DEFAULT_FLOW_CONTROL_WINDOW);
     let addressed: HashSet<(u32, bool)> = detection
@@ -148,7 +153,7 @@ fn endpoint((id, _, address_byte): Key) -> Endpoint {
     Endpoint { id, address_byte }
 }
 
-fn reassembler(address_byte: Option<u8>) -> Reassembler {
+fn reader(address_byte: Option<u8>) -> (Framing, Reassembler, Option<u64>) {
     let addressing = address_byte.map_or(Addressing::Normal, |byte| Addressing::Extended {
         tx: byte,
         rx: byte,
@@ -160,7 +165,11 @@ fn reassembler(address_byte: Option<u8>) -> Reassembler {
         },
     );
     framing.max_message = MAX_MESSAGE_BYTES as u32;
-    Reassembler::with_framing(0, StMin(0), framing)
+    (
+        framing,
+        Reassembler::with_framing(0, StMin(0), framing),
+        None,
+    )
 }
 
 /// Whether a single frame's bytes after its `len` bytes of message are all one
@@ -173,9 +182,17 @@ fn uniformly_padded(frame: &[u8], addressed: bool, len: usize) -> bool {
         .is_none_or(|padding| padding.windows(2).all(|pair| pair[0] == pair[1]))
 }
 
-struct Open {
+/// A reassembled message: from its first frame to its last, and whether it
+/// came in a single frame padded with varying bytes.
+struct Heard {
     data: Vec<u8>,
+    start_us: u64,
     end_us: u64,
+    stale: bool,
+}
+
+struct Open {
+    heard: Heard,
     owed: bool,
     counted: bool,
     replies: Vec<Reply>,
@@ -187,7 +204,7 @@ impl Open {
             .iter()
             .filter_map(|reply| reply.last_pending_us)
             .map(|pending_us| pending_us.saturating_add(pending_within_us))
-            .fold(self.end_us.saturating_add(reply_within_us), u64::max)
+            .fold(self.heard.end_us.saturating_add(reply_within_us), u64::max)
     }
 }
 
@@ -208,6 +225,9 @@ struct Exchanges {
     count: u32,
     negative: u32,
     pending: u32,
+    /// Exchanges either of whose messages was a single frame padded with
+    /// varying bytes.
+    stale: u32,
 }
 
 impl Exchanges {
@@ -227,6 +247,12 @@ struct Track {
     crowded: [bool; 2],
     unanswered: u32,
     unsolicited: u32,
+    /// Frames the reassembler ignored or refused.
+    ignored: u32,
+    /// Requests opened, typed and not.
+    requests: [u32; 2],
+    /// Final answers to requests that were not typed.
+    neutral: u32,
 }
 
 impl Track {
@@ -241,18 +267,26 @@ impl Track {
     }
 }
 
+fn bump(counter: &mut u32) {
+    *counter = counter.saturating_add(1);
+}
+
 #[derive(Default)]
 struct Reading {
     reply_within_us: u64,
     pending_within_us: u64,
     index: HashMap<Key, usize>,
     tracks: Vec<Track>,
-    /// Each track's reassembler, and when its multi-frame message started.
-    readers: Vec<(Reassembler, Option<u64>)>,
+    /// Each track's framing, reassembler, and when its multi-frame message
+    /// started.
+    readers: Vec<(Framing, Reassembler, Option<u64>)>,
     /// The tracks holding a request that may still be answered.
     listed: Vec<usize>,
     exchanges: Vec<Exchanges>,
     known: HashMap<[usize; 2], usize>,
+    /// How many tracks are part way through a multi-frame message.
+    receiving: usize,
+    previous_us: u64,
 }
 
 impl Reading {
@@ -263,42 +297,65 @@ impl Reading {
                 key,
                 ..Track::default()
             });
-            readers.push((reassembler(key.2), None));
+            readers.push(reader(key.2));
             tracks.len() - 1
         });
-        let (reassembler, started_us) = &mut self.readers[at];
+        let (framing, reassembler, started_us) = &mut self.readers[at];
+        let was_receiving = started_us.is_some();
         let outcome = reassembler.on_frame(&frame.data);
         if outcome.aborted.is_some() {
             *started_us = None;
         }
-        match outcome.step {
+        let heard = match outcome.step {
             Step::SendFlowControl(_) => {
                 *started_us = reassembler.is_receiving().then_some(frame.at_us);
+                None
             }
-            Step::Message(message) => match started_us.take() {
-                Some(start_us) => self.message(order, at, message, start_us, frame.at_us),
-                None if uniformly_padded(&frame.data, key.2.is_some(), message.len()) => {
-                    self.message(order, at, message, frame.at_us, frame.at_us);
+            Step::Message(data) => {
+                let started = started_us.take();
+                let stale = started.is_none()
+                    && !uniformly_padded(&frame.data, key.2.is_some(), data.len());
+                Some(Heard {
+                    data,
+                    start_us: started.unwrap_or(frame.at_us),
+                    end_us: frame.at_us,
+                    stale,
+                })
+            }
+            Step::Nothing => {
+                let paced = framing.classify(&frame.data) == Some(PciKind::FlowControl)
+                    && self.receiving > usize::from(was_receiving);
+                if !paced {
+                    bump(&mut self.tracks[at].ignored);
                 }
-                None => self.unsolicited(at),
-            },
-            Step::Accepted | Step::Nothing => {}
+                None
+            }
+            Step::Accepted => None,
+        };
+        let receiving = self.readers[at].2.is_some();
+        self.receiving = self.receiving + usize::from(receiving) - usize::from(was_receiving);
+        if let Some(heard) = heard {
+            self.message(order, at, heard);
         }
+        self.previous_us = frame.at_us;
     }
 
-    /// Each other track with a request `message` answers in time, and which:
-    /// its latest request if `message` answers that one, else the one held
-    /// beside it.
-    fn answered(&mut self, from: usize, message: &[u8], start_us: u64) -> Vec<Found> {
+    /// Each other track with a request `heard` answers in time, and which:
+    /// its latest request if `heard` answers that one, else the one held
+    /// beside it. A request leaves the list once `heard`'s first frame and the
+    /// frame before it are both past its deadline, so one stamp far ahead
+    /// expires nothing.
+    fn answered(&mut self, from: usize, heard: &Heard) -> Vec<Found> {
         let (reply_within_us, pending_within_us) = (self.reply_within_us, self.pending_within_us);
+        let (message, start_us) = (&heard.data, heard.start_us);
+        let expired_by_us = start_us.min(self.previous_us);
         let tracks = &mut self.tracks;
         self.listed.retain(|&at| {
             let track = &mut tracks[at];
-            track.listed = track
-                .open
-                .iter()
-                .flatten()
-                .any(|open| open.deadline_us(reply_within_us, pending_within_us) >= start_us);
+            track.listed =
+                track.open.iter().flatten().any(|open| {
+                    open.deadline_us(reply_within_us, pending_within_us) >= expired_by_us
+                });
             track.listed
         });
         let sender = &self.tracks[from];
@@ -320,12 +377,12 @@ impl Reading {
                             last_pending_us: Some(pending_us),
                             ..
                         }) => (*pending_us, pending_within_us),
-                        _ => (open.end_us, reply_within_us),
+                        _ => (open.heard.end_us, reply_within_us),
                     };
                     if start_us.checked_sub(since_us)? > within_us {
                         return None;
                     }
-                    let answer = answers(&open.data, message)?;
+                    let answer = answers(&open.heard.data, message)?;
                     let unasked = !open.owed && answer == Answer::Positive;
                     let pended = reply.is_some_and(|reply| reply.pending > 0);
                     (!unasked || pended).then_some((at, slot, answer))
@@ -334,38 +391,36 @@ impl Reading {
             .collect()
     }
 
-    fn unsolicited(&mut self, at: usize) {
-        let track = &mut self.tracks[at];
-        track.unsolicited = track.unsolicited.saturating_add(1);
-    }
-
     /// A message answering nothing is unsolicited and opens a request.
-    fn message(&mut self, order: usize, from: usize, message: Vec<u8>, start_us: u64, end_us: u64) {
+    fn message(&mut self, order: usize, from: usize, heard: Heard) {
         let mut answered_any = false;
-        if message[0] >= sid::POSITIVE_OFFSET {
-            for found in self.answered(from, &message, start_us) {
-                answered_any |= self.reply(order, found, from, start_us);
+        if heard.data[0] >= sid::POSITIVE_OFFSET {
+            for found in self.answered(from, &heard) {
+                answered_any |= self.reply(order, found, from, &heard);
             }
         }
         if !answered_any {
-            self.unsolicited(from);
-            self.open(from, message, end_us);
+            bump(&mut self.tracks[from].unsolicited);
+            self.open(from, heard);
         }
     }
 
-    fn open(&mut self, at: usize, data: Vec<u8>, end_us: u64) {
+    fn open(&mut self, at: usize, heard: Heard) {
         let track = &mut self.tracks[at];
-        let owed = !suppresses_positive_response(&data);
-        let slot = usize::from(!owed || data[0] == sid::TESTER_PRESENT);
+        let owed = !suppresses_positive_response(&heard.data);
+        let slot = usize::from(!owed || heard.data[0] == sid::TESTER_PRESENT);
         for closing in slot..track.open.len() {
             track.close(closing);
         }
-        let counted = !matches!(Request::decode(&data), Err(_) | Ok(Request::Other { .. }));
+        let counted = !matches!(
+            Request::decode(&heard.data),
+            Err(_) | Ok(Request::Other { .. })
+        );
+        bump(&mut track.requests[usize::from(!counted)]);
         track.open[slot] = Some(Open {
-            counted,
-            data,
-            end_us,
+            heard,
             owed,
+            counted,
             replies: Vec::new(),
         });
         if !std::mem::replace(&mut track.listed, true) {
@@ -375,7 +430,7 @@ impl Reading {
 
     /// Records `ecu`'s answer to a tester's open request, unless the request
     /// already has [`MAX_PARTNERS`] others answering it.
-    fn reply(&mut self, order: usize, found: Found, ecu: usize, at_us: u64) -> bool {
+    fn reply(&mut self, order: usize, found: Found, ecu: usize, heard: &Heard) -> bool {
         let (tester, slot, answer) = found;
         let open = self.tracks[tester].open[slot]
             .as_mut()
@@ -393,22 +448,32 @@ impl Reading {
         };
         let reply = &mut open.replies[at];
         if answer == PENDING {
-            reply.pending = reply.pending.saturating_add(1);
-            reply.last_pending_us = Some(at_us);
+            bump(&mut reply.pending);
+            reply.last_pending_us = Some(heard.start_us);
         } else {
             reply.done = true;
+            let pending = reply.pending;
+            let stale = heard.stale || open.heard.stale;
             if open.counted {
                 let negative = matches!(answer, Answer::Negative { .. });
-                let pending = reply.pending;
-                self.credit(order, [tester, ecu], negative, pending);
+                self.credit(order, [tester, ecu], (negative, pending, stale));
+            } else {
+                bump(&mut self.tracks[ecu].neutral);
             }
         }
         true
     }
 
-    /// Counts a final answer to a counted request. A pair is listed on each
-    /// side with room for it; a side without room is crowded.
-    fn credit(&mut self, order: usize, ids: [usize; 2], negative: bool, pending: u32) {
+    /// Counts a final answer to a counted request: whether it was negative,
+    /// the responsePending answers before it, and whether it was stale. A pair
+    /// is listed on each side with room for it; a side without room is
+    /// crowded.
+    fn credit(
+        &mut self,
+        order: usize,
+        ids: [usize; 2],
+        (negative, pending, stale): (bool, u32, bool),
+    ) {
         let at = match self.known.get(&ids) {
             Some(&at) => at,
             None => {
@@ -436,9 +501,10 @@ impl Reading {
             }
         };
         let exchanges = &mut self.exchanges[at];
-        exchanges.count = exchanges.count.saturating_add(1);
+        bump(&mut exchanges.count);
         exchanges.negative = exchanges.negative.saturating_add(u32::from(negative));
         exchanges.pending = exchanges.pending.saturating_add(pending);
+        exchanges.stale = exchanges.stale.saturating_add(u32::from(stale));
     }
 
     /// A track's exchanges in a role, most first.
@@ -462,9 +528,17 @@ impl Reading {
     }
 
     fn settle(mut self, pairs: &[Pair]) -> Orientation {
+        let (reply_within_us, pending_within_us) = (self.reply_within_us, self.pending_within_us);
         for track in &mut self.tracks {
-            track.close(0);
-            track.close(1);
+            for slot in 0..track.open.len() {
+                let deadline_us = track.open[slot]
+                    .as_ref()
+                    .map(|open| open.deadline_us(reply_within_us, pending_within_us));
+                if deadline_us.is_some_and(|deadline_us| deadline_us > self.previous_us) {
+                    track.open[slot] = None;
+                }
+                track.close(slot);
+            }
         }
         let detected = detected_partners(pairs);
         let detected_only_with = |key: Key, partner: Key| {
@@ -472,41 +546,50 @@ impl Reading {
                 .get(&key)
                 .is_none_or(|paired| paired.iter().all(|(other, ..)| *other == partner))
         };
+        let flow_controlled = |tester: Key| {
+            detected
+                .get(&tester)
+                .and_then(|paired| paired.first())
+                .map_or((0, 0), |&(_, requests, responses)| (requests, responses))
+        };
         let mut confident: Vec<usize> = (0..self.tracks.len())
             .filter_map(|tester| self.leader(tester, TESTER))
             .filter(|&at| {
                 let pair = &self.exchanges[at];
                 let [tester, ecu] = pair.ids.map(|id| &self.tracks[id]);
+                let eighth = |count: u32| count.saturating_mul(8) <= pair.count;
                 self.leader(pair.ids[ECU], ECU) == Some(at)
-                    && ecu.unsolicited.saturating_mul(8) <= pair.count
-                    && tester.unanswered.saturating_mul(8) <= pair.count
+                    && eighth(ecu.unsolicited.saturating_add(ecu.ignored))
+                    && eighth(tester.unanswered)
+                    && eighth(tester.ignored)
+                    && eighth(pair.stale)
+                    && ecu.neutral <= pair.count
+                    && tester.requests[1] <= tester.requests[0]
                     && detected_only_with(tester.key, ecu.key)
                     && detected_only_with(ecu.key, tester.key)
+                    && (pair.count >= 2 || flow_controlled(tester.key) != (0, 0))
             })
             .collect();
-        let taken: HashSet<(usize, usize)> = confident
-            .iter()
-            .flat_map(|&at| self.exchanges[at].roles())
-            .collect();
+        let roles_of = |pairs: &[usize]| -> HashSet<(usize, usize)> {
+            pairs
+                .iter()
+                .flat_map(|&at| self.exchanges[at].roles())
+                .collect()
+        };
+        let taken = roles_of(&confident);
         confident.retain(|&at| {
             let [tester, ecu] = self.exchanges[at].ids;
             !taken.contains(&(tester, ECU)) && !taken.contains(&(ecu, TESTER))
         });
         confident.sort_by_key(|&at| self.exchanges[at].first);
-        let paired: HashSet<(usize, usize)> = confident
-            .iter()
-            .flat_map(|&at| self.exchanges[at].roles())
-            .collect();
+        let paired = roles_of(&confident);
 
         let conversations = confident
             .iter()
             .map(|&at| {
                 let pair = &self.exchanges[at];
                 let [tester, ecu] = pair.ids.map(|id| self.tracks[id].key);
-                let (flow_controlled_requests, flow_controlled_responses) = detected
-                    .get(&tester)
-                    .and_then(|paired| paired.first())
-                    .map_or((0, 0), |&(_, requests, responses)| (requests, responses));
+                let (flow_controlled_requests, flow_controlled_responses) = flow_controlled(tester);
                 Conversation {
                     extended: tester.1,
                     tester: endpoint(tester),

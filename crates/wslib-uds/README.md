@@ -101,20 +101,22 @@ for finding in scan.findings() {
   ISO-TP detection cannot use. Only a request this crate decodes as a typed
   `Request` (not `Request::Other`) counts towards an exchange; an answer to a
   vendor, KWP, OBD or unmodelled ISO request counts for nothing either way.
-  A pair is a `Conversation` only when every rival on either side, the ECU's
-  messages answering nothing, and the tester's unanswered requests are each
-  at most an eighth of its exchanges, and neither id is a tester in one
-  conversation and an ECU in another. Every other id with an exchange is
-  `Unsettled` with its candidates, at most `MAX_PARTNERS` (4): two ECUs
+  A pair is a `Conversation` only with two exchanges or more, or one paced by
+  flow control, and only when every rival on either side, the ECU's messages
+  answering nothing, the tester's unanswered requests, frames from either
+  that ISO-TP ignores, and exchanges in single frames padded with varying
+  bytes are each at most an eighth of its exchanges; when untyped traffic
+  does not outnumber the typed; and when neither id is in another such pair
+  in the other role. Every other id with an exchange is `Unsettled` with its
+  candidates, at most `MAX_PARTNERS` (4): a single exchange, two ECUs
   answering one functional request, two testers whose requests every answer
   could answer, a periodic look-alike answering every request beside a real
-  ECU. `exchanges: 1` with no flow control is weak evidence. Limits: two
-  periodic ids at about the same rate whose frames are a typed request and
-  its answer, uniformly padded, cannot be told from a conversation, in step
-  or not; a sender that pads single frames with varying bytes is not found;
-  ids read as addressed only where `wslib_isotp::detect` reads them so,
-  which needs multi-frame exchanges, and mixed addressing reads as extended;
-  a message over `MAX_MESSAGE_BYTES` (64 KiB) is not read.
+  ECU, an ECU that pads with stale bytes. Limits: two periodic ids at about
+  the same rate whose frames are a typed request and its answer, uniformly
+  padded, cannot be told from a conversation, in step or not; ids read as
+  addressed only where `wslib_isotp::detect` reads them so, which needs
+  multi-frame exchanges, and mixed addressing reads as extended; a message
+  over `MAX_MESSAGE_BYTES` (64 KiB) is not read.
 - `ts`: TypeScript declarations for the data types, every name prefixed `Uds`.
   64-bit fields are declared `number`, so an address, size or block length
   above 2^53 loses precision in JavaScript.

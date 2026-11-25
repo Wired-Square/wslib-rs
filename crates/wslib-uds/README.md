@@ -95,15 +95,20 @@ for finding in scan.findings() {
   wslib-isotp `TimedFrame`s, each with its tester and ECU and the evidence:
   exchanges, negative and responsePending answers, and multi-frame messages
   paced by flow control each way. Single frames alone are enough, which
-  ISO-TP detection cannot use. An id whose partner cannot be settled is
-  `Unsettled` with its candidates rather than guessed: two ECUs answering one
-  functional request, two testers whose requests every answer could answer,
-  or more than `MAX_PARTNERS` (4) candidates. An id whose messages mostly
-  answer nothing is no ECU, and one whose requests mostly go unanswered no
-  tester, so a periodic look-alike is neither; a lockstep pair that mimics a
-  request and its answer cannot be told from one. Ids read as addressed only
-  where `wslib_isotp::detect` reads them so, which needs multi-frame
-  exchanges; mixed addressing reads as extended.
+  ISO-TP detection cannot use. Only a well-formed request of an ISO 14229-1
+  service opens a request, so a vendor or unknown service is never seen. An
+  id whose partner cannot be settled is `Unsettled` with its candidates
+  rather than guessed: two ECUs answering one functional request, two
+  testers whose requests every answer could answer, a rival with more than
+  an eighth of the leader's exchanges, or more than `MAX_PARTNERS` (4)
+  candidates. An id is an ECU only if most of its messages answer a request,
+  and a tester only if most of its requests are answered, so a periodic id
+  is never paired by coincidence, though one may be `Unsettled`. A periodic
+  pair that mimics a known request and its answer in step cannot be told
+  from a conversation. `exchanges: 1` with no flow control is weak evidence.
+  Ids read as addressed only where `wslib_isotp::detect` reads them so,
+  which needs multi-frame exchanges; mixed addressing reads as extended. A
+  message over `MAX_MESSAGE_BYTES` (64 KiB) is not read.
 - `ts`: TypeScript declarations for the data types, every name prefixed `Uds`.
   64-bit fields are declared `number`, so an address, size or block length
   above 2^53 loses precision in JavaScript.

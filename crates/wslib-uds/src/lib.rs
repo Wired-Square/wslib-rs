@@ -46,7 +46,9 @@ pub use codec::{
 pub use identify::{Detail, Identity, identify};
 pub use nrc::Nrc;
 #[cfg(feature = "isotp")]
-pub use orient::{Conversation, Endpoint, MAX_PARTNERS, Orientation, Unsettled, orient};
+pub use orient::{
+    Conversation, Endpoint, MAX_MESSAGE_BYTES, MAX_PARTNERS, Orientation, Unsettled, orient,
+};
 pub use pairing::{
     DEFAULT_TIMEOUT_US, MAX_OPEN_REQUESTS, Observed, Outcome, Sender, Tracker, Transaction,
 };

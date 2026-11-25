@@ -118,6 +118,32 @@ the tracker and the scan verdicts all use it (`tests/answer.rs`):
   (`a_reply_after_the_timeout_ends_the_request_timed_out_and_is_itself_unsolicited`,
   `a_new_request_long_after_the_last_closes_it_timed_out_not_superseded`).
 
+## Orienting a window of frames
+
+`orient` (feature `isotp`) leans on the facts above and no others: a server
+starts its response within P2 of the request, or within P2* of its own
+responsePending, and a request that suppresses its positive response is owed
+none (`tests/orient.rs`:
+`a_reply_later_than_p2_and_the_margin_answers_nothing`,
+`a_keep_alive_while_the_ecu_is_pending_leaves_the_request_open_to_its_final_answer`).
+A response answers a request on another id as `answers` judges, so a
+conversation of single frames is found
+(`a_conversation_of_single_frames_alone_is_found_and_oriented_whichever_id_is_lower`).
+
+The rest is this crate's judgement, not the standard's. An id more of whose
+messages answer nothing than answer a request is no ECU, and one more of
+whose requests go unanswered than answered is no tester
+(`periodic_ids_beside_a_real_conversation_are_not_reported`,
+`a_periodic_request_look_alike_loses_the_ecu_to_the_tester_it_was_answering`,
+`a_periodic_reply_look_alike_is_no_ecu_even_for_a_tester_nothing_else_answers`).
+Where two ids answer alike, or no id answers most of a tester's requests,
+nothing is paired
+(`two_ecus_answering_every_functional_request_leave_the_tester_unsettled`,
+`two_testers_whose_requests_every_answer_could_answer_leave_the_ecu_unsettled`,
+`a_tester_answered_by_several_ids_none_in_most_rounds_is_unsettled`), and a
+pair that ISO-TP flow control contradicts is not reported
+(`ids_whose_multi_frame_messages_another_id_paced_are_not_paired_by_their_answers`).
+
 ## Layouts
 
 | Service | Request after the id | Positive response after its id |

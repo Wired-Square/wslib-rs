@@ -76,7 +76,7 @@ appliance chassis and every app beside it.
 | `wslib-tcp`              | A TCP connect that tries each resolved address in one budget  |
 | `wslib-telemetry`        | One tracing setup, and an in-memory ring of a service's log   |
 | `wslib-tls`              | Outbound trust, live and typed; the serving pair kept         |
-| `wslib-uds`              | UDS diagnostics, sans-IO: codec, safety, client, scans, an ECU |
+| `wslib-uds`              | UDS sans-IO: codec, safety, client, scans, orientation, an ECU |
 | `wslib-wiretap-catalogue` | Device catalogues: parse, validate, decode, edit, frame, DBC |
 | `wslib-wiretap-gateway`  | A capture gateway's HTTP API, as serde types                  |
 | `wslib-wiretap-protocol` | Capture vocabulary; the ingest, import and link-test wires    |

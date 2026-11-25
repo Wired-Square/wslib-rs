@@ -91,6 +91,19 @@ for finding in scan.findings() {
 - `testing`: `testing::Ecu`, a simulated ECU with DIDs, sessions, one
   security level, DTCs, a routine and responsePending answers, whose
   `answer(&[u8]) -> Vec<Vec<u8>>` drives a transport's responder.
+- `isotp`: `orient(frames, timing)`, the UDS conversations in a window of
+  wslib-isotp `TimedFrame`s, each with its tester and ECU and the evidence:
+  exchanges, negative and responsePending answers, and multi-frame messages
+  paced by flow control each way. Single frames alone are enough, which
+  ISO-TP detection cannot use. An id whose partner cannot be settled is
+  `Unsettled` with its candidates rather than guessed: two ECUs answering one
+  functional request, two testers whose requests every answer could answer,
+  or more than `MAX_PARTNERS` (4) candidates. An id whose messages mostly
+  answer nothing is no ECU, and one whose requests mostly go unanswered no
+  tester, so a periodic look-alike is neither; a lockstep pair that mimics a
+  request and its answer cannot be told from one. Ids read as addressed only
+  where `wslib_isotp::detect` reads them so, which needs multi-frame
+  exchanges; mixed addressing reads as extended.
 - `ts`: TypeScript declarations for the data types, every name prefixed `Uds`.
   64-bit fields are declared `number`, so an address, size or block length
   above 2^53 loses precision in JavaScript.

@@ -6,6 +6,13 @@
   single and multi-frame requests and responses, responsePending before the
   final answer, and negative responses, with the frames read back through
   `IsoTpTap` into `Tracker` as the same transactions.
+- `isotp`: `orient(frames, timing)` finds the UDS conversations in a window
+  of wslib-isotp `TimedFrame`s, single frames alone included, and says which
+  side is the tester. Each `Conversation` counts its exchanges, negative and
+  responsePending answers, and the multi-frame messages flow control paced
+  each way. An id whose partner cannot be settled, such as a functional
+  request two ECUs answer, is `Unsettled` with its candidates; a periodic
+  look-alike is neither tester nor ECU.
 
 ## 0.1.0
 

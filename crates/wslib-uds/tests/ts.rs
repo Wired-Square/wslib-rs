@@ -239,6 +239,42 @@ fn session_verdict() {
     );
 }
 
+#[cfg(feature = "isotp")]
+#[test]
+fn endpoint() {
+    assert_eq!(
+        exported::<wslib_uds::Endpoint>(),
+        "export type UdsEndpoint = { id: number, addressByte: number | null, };"
+    );
+}
+
+#[cfg(feature = "isotp")]
+#[test]
+fn conversation() {
+    assert_eq!(
+        exported::<wslib_uds::Conversation>(),
+        r#"import type { UdsEndpoint } from "./UdsEndpoint"; export type UdsConversation = { extended: boolean, tester: UdsEndpoint, ecu: UdsEndpoint, exchanges: number, negative: number, pending: number, flowControlledRequests: number, flowControlledResponses: number, };"#
+    );
+}
+
+#[cfg(feature = "isotp")]
+#[test]
+fn unsettled() {
+    assert_eq!(
+        exported::<wslib_uds::Unsettled>(),
+        r#"import type { UdsEndpoint } from "./UdsEndpoint"; import type { UdsSender } from "./UdsSender"; export type UdsUnsettled = { extended: boolean, endpoint: UdsEndpoint, side: UdsSender, candidates: Array<UdsEndpoint>, };"#
+    );
+}
+
+#[cfg(feature = "isotp")]
+#[test]
+fn orientation() {
+    assert_eq!(
+        exported::<wslib_uds::Orientation>(),
+        r#"import type { UdsConversation } from "./UdsConversation"; import type { UdsUnsettled } from "./UdsUnsettled"; export type UdsOrientation = { conversations: Array<UdsConversation>, unsettled: Array<UdsUnsettled>, };"#
+    );
+}
+
 #[cfg(feature = "write")]
 #[test]
 fn session_finding() {

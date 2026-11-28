@@ -141,10 +141,11 @@ impl WifiProvSession {
     /// Saves `creds` and connects, streaming the device's progress:
     /// [`ProvisioningEvent::Saved`] once the device has acknowledged every
     /// write, then its statuses. A write the device does not acknowledge in
-    /// twenty seconds, which leaves room for a pairing the first write
-    /// starts, ends the stream with [`Error::CharacteristicWrite`]; the
-    /// device may still act on that write, and a later write on this link
-    /// can be answered wrongly, so drop the session and connect again. The
+    /// twenty seconds, which leaves room for a pairing the operating system
+    /// starts on the first write, ends the stream with
+    /// [`Error::CharacteristicWrite`]; the device may still act on that
+    /// write, and a later write on this link can be answered wrongly, so
+    /// drop the session and connect again. The
     /// stream ends once connected with an address, or five seconds after
     /// connecting without one, or with [`Error::WifiProvFailed`] after
     /// `Error`. A link that drops once the credentials are saved also ends

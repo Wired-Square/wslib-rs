@@ -8425,6 +8425,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-ble"
+version = "0.1.0"
+dependencies = [
+ "tokio",
+ "zbus",
+]
+
+[[package]]
 name = "wslib-build-id"
 version = "0.1.0"
 
@@ -8662,7 +8670,7 @@ dependencies = [
 
 [[package]]
 name = "wslib-framelink"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "btleplug",
  "futures-util",
@@ -8672,6 +8680,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "wslib-ble",
  "wslib-can",
  "wslib-can-bus",
  "wslib-file-atomic",

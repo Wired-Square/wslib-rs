@@ -26,15 +26,17 @@ use tracing::{debug, warn};
 #[cfg_attr(not(any(feature = "wifi-prov", feature = "smp")), allow(dead_code))]
 pub(crate) struct PeripheralLease {
     peripheral: Peripheral,
+    pairs: bool,
     ready: tokio::sync::Mutex<bool>,
     scan_controller: Arc<ScanController>,
 }
 
 impl PeripheralLease {
-    fn new(peripheral: Peripheral, scan_controller: Arc<ScanController>) -> Self {
+    fn new(peripheral: Peripheral, pairs: bool, scan_controller: Arc<ScanController>) -> Self {
         scan_controller.lease_acquired();
         Self {
             peripheral,
+            pairs,
             ready: tokio::sync::Mutex::new(false),
             scan_controller,
         }
@@ -42,16 +44,15 @@ impl PeripheralLease {
 
     /// Connects and discovers services, again if the peripheral has dropped
     /// since.
-    #[cfg_attr(not(any(feature = "wifi-prov", feature = "smp")), allow(dead_code))]
-    pub(crate) async fn ensure_ready(&self) -> Result<&Peripheral, btleplug::Error> {
+    #[cfg(any(feature = "wifi-prov", feature = "smp"))]
+    pub(crate) async fn ensure_ready(&self) -> Result<&Peripheral, crate::Error> {
         let mut guard = self.ready.lock().await;
         let connected = self.peripheral.is_connected().await?;
         if *guard && !connected {
             *guard = false;
         }
         if !*guard {
-            self.peripheral.connect().await?;
-            self.peripheral.discover_services().await?;
+            crate::ble::pairing::connect(&self.peripheral, self.pairs).await?;
             *guard = true;
         }
         Ok(&self.peripheral)
@@ -149,7 +150,7 @@ impl BlePeripheralStore {
     /// The live lease, else a new one over the latest handle; `None` for a
     /// device the scanner never saw.
     #[cfg_attr(not(any(feature = "wifi-prov", feature = "smp")), allow(dead_code))]
-    pub async fn acquire_lease(&self, id: &DeviceId) -> Option<Arc<PeripheralLease>> {
+    pub async fn acquire_lease(&self, id: &DeviceId, pairs: bool) -> Option<Arc<PeripheralLease>> {
         let mut entries = self.entries.lock().expect("BlePeripheralStore lock");
         let entry = entries.get_mut(id)?;
         if let Some(existing) = entry.lease.upgrade() {
@@ -158,6 +159,7 @@ impl BlePeripheralStore {
         let peripheral = entry.peripheral.clone()?;
         let fresh = Arc::new(PeripheralLease::new(
             peripheral,
+            pairs,
             Arc::clone(&self.scan_controller),
         ));
         entry.lease = Arc::downgrade(&fresh);

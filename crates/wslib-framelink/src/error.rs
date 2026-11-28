@@ -97,6 +97,12 @@ pub enum Error {
     #[error("BLE failed")]
     Ble(#[from] btleplug::Error),
 
+    /// The host did not pair with the device, or paired and could not
+    /// withdraw its pairing agent.
+    #[cfg(feature = "ble")]
+    #[error("pairing with the device failed")]
+    Pairing(#[from] wslib_ble::PairError),
+
     #[cfg(feature = "ble")]
     #[error("no BLE adapter on this host")]
     NoBleAdapter,

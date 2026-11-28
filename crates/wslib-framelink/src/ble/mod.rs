@@ -3,6 +3,8 @@
 
 #[cfg(any(feature = "wifi-prov", feature = "smp"))]
 pub(crate) mod notify_dispatcher;
+#[cfg(any(feature = "wifi-prov", feature = "smp"))]
+pub(crate) mod pairing;
 mod scan;
 mod uuids;
 

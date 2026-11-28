@@ -56,7 +56,12 @@ None is on by default.
   from its manufacturer data.
 - `wifi-prov` (with `ble` and `discovery`): `Discovery::open_wifi_prov`, a
   session writing Wi-Fi credentials to a device over BLE and streaming its
-  progress.
+  progress. Opening it pairs the host first with a device that advertises
+  `PAIRING_REQUIRED`, whose characteristics need an encrypted link: on Linux
+  through wslib-ble, which supplies the pairing agent a headless host lacks,
+  for that one device and only until the bond is made. A refusal is
+  `Error::Pairing`. A device that does not advertise it is never asked to
+  pair.
 - `can`: sessions over ISO-TP on CAN, one frame per ISO-TP message.
   - `FrameLinkSession::connect_isotp` takes a wslib-isotp link the caller
     opened. `can_link_config` gives the link's ids for a `CanDeviceId`.
@@ -82,7 +87,7 @@ None is on by default.
   sessions over wslib-mcumgr, and `ota_udp`, `ota` and `ota_udp_addr`, a
   firmware update as a stream of `OtaEvent`s: upload, test, reset,
   reconnect, verify the running image, confirm. With `ble`, `open_smp_ble`
-  and `ota_ble` too.
+  and `ota_ble` too, which pair the host first as `open_wifi_prov` does.
 
 `Device`, `DiscoveryEvent`, the registry's records and the Wi-Fi types
 serialise as they did before the move; `tests/goldens.rs` pins them.

@@ -1,0 +1,14 @@
+[package]
+name = "wslib-ble"
+version = "0.1.0"
+description = "Bluetooth LE pairing on a host with no agent: confirms a Just Works pairing with one named device through BlueZ, and forgets a bond."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]
+
+[dev-dependencies]
+tokio = { version = "1.53.3", features = ["macros", "rt", "time"] }

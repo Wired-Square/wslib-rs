@@ -25,6 +25,7 @@ appliance chassis and every app beside it.
 | `wslib-auth-totp`        | TOTP keys, the otpauth URI, code and clock-skew checks        |
 | `wslib-backoff`          | Capped exponential backoff, reset on success                  |
 | `wslib-bits`             | Payload fields by bit and order, word swaps, hex and readings |
+| `wslib-ble`              | BLE pairing on a host with no agent, and forgetting a bond    |
 | `wslib-build-id`         | Stamps the commit an artefact was built from into it          |
 | `wslib-can`              | CAN frames, length codes, logs, and the task transports share |
 | `wslib-can-bus`          | A CAN adapter's address, and a wslib-can task opened on it    |

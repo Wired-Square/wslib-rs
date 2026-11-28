@@ -8425,6 +8425,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "wslib-ble"
+version = "0.1.0"
+dependencies = [
+ "tokio",
+]
+
+[[package]]
 name = "wslib-build-id"
 version = "0.1.0"
 

@@ -24,6 +24,8 @@ use crate::runtime::ble_runtime;
 
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
 
+const WRITE_TIMEOUT: Duration = Duration::from_secs(20);
+
 /// How long to wait for an address once the device reports `Connected`.
 const IP_GRACE_AFTER_CONNECTED: Duration = Duration::from_secs(5);
 
@@ -136,7 +138,13 @@ impl WifiProvSession {
         })
     }
 
-    /// Saves `creds` and connects, streaming the device's progress. The
+    /// Saves `creds` and connects, streaming the device's progress:
+    /// [`ProvisioningEvent::Saved`] once the device has acknowledged every
+    /// write, then its statuses. A write the device does not acknowledge in
+    /// twenty seconds, which leaves room for a pairing the first write
+    /// starts, ends the stream with [`Error::CharacteristicWrite`]; the
+    /// device may still act on that write, and a later write on this link
+    /// can be answered wrongly, so drop the session and connect again. The
     /// stream ends once connected with an address, or five seconds after
     /// connecting without one, or with [`Error::WifiProvFailed`] after
     /// `Error`. A link that drops once the credentials are saved also ends
@@ -191,6 +199,7 @@ impl WifiProvSession {
                 emit!(Err(e));
                 return;
             }
+            emit!(Ok(ProvisioningEvent::Saved));
 
             let mut got_ip = false;
             let mut connected_at: Option<tokio::time::Instant> = None;
@@ -330,13 +339,19 @@ async fn write_char(
     char: &Characteristic,
     bytes: &[u8],
 ) -> Result<(), Error> {
-    peripheral
-        .write(char, bytes, WriteType::WithResponse)
+    let write = peripheral.write(char, bytes, WriteType::WithResponse);
+    acknowledged(char.uuid, WRITE_TIMEOUT, write).await
+}
+
+async fn acknowledged(
+    uuid: Uuid,
+    limit: Duration,
+    write: impl Future<Output = btleplug::Result<()>>,
+) -> Result<(), Error> {
+    tokio::time::timeout(limit, write)
         .await
-        .map_err(|source| Error::CharacteristicWrite {
-            uuid: char.uuid,
-            source,
-        })
+        .unwrap_or(Err(btleplug::Error::TimedOut(limit)))
+        .map_err(|source| Error::CharacteristicWrite { uuid, source })
 }
 
 async fn read_with_timeout(peripheral: &Peripheral, char: &Characteristic) -> Option<Vec<u8>> {
@@ -424,6 +439,39 @@ fn decode_ipv4<B: AsRef<[u8]>>(bytes: B) -> Option<Ipv4Addr> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn a_write_never_acknowledged_fails_naming_its_characteristic_and_limit() {
+        let failed = acknowledged(CHAR_SSID_UUID, WRITE_TIMEOUT, std::future::pending()).await;
+        assert!(
+            matches!(
+                &failed,
+                Err(Error::CharacteristicWrite {
+                    uuid,
+                    source: btleplug::Error::TimedOut(limit),
+                }) if *uuid == CHAR_SSID_UUID && *limit == WRITE_TIMEOUT
+            ),
+            "{failed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_write_keeps_its_own_answer() {
+        let done = acknowledged(CHAR_SSID_UUID, WRITE_TIMEOUT, async { Ok(()) }).await;
+        assert!(done.is_ok(), "{done:?}");
+        let refused = async { Err(btleplug::Error::NotConnected) };
+        let failed = acknowledged(CHAR_CONTROL_UUID, WRITE_TIMEOUT, refused).await;
+        assert!(
+            matches!(
+                &failed,
+                Err(Error::CharacteristicWrite {
+                    uuid,
+                    source: btleplug::Error::NotConnected,
+                }) if *uuid == CHAR_CONTROL_UUID
+            ),
+            "{failed:?}"
+        );
+    }
 
     #[test]
     fn decode_ipv4_handles_unset() {

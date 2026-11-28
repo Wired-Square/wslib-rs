@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.1
+
+- `ble`: a Wi-Fi provisioning characteristic write the device does not
+  acknowledge in twenty seconds fails with `Error::CharacteristicWrite`, naming
+  the characteristic, with btleplug's `TimedOut` as its `source()`. It waited
+  for as long as the host's Bluetooth stack did, so a pairing the host refused
+  showed only as the caller's own timeout. Twenty seconds leaves room for a
+  pairing the first write starts. The device may still act on a write that
+  timed out, as on any write whose answer is lost, and a later write on that
+  link can be answered wrongly: drop the session and connect again.
+- `ProvisioningEvent::Saved`: `WifiProvSession::provision` yields it once the
+  device has acknowledged the credentials and the command to save them and
+  connect, before its first `Status`. Serialised as `{"kind":"saved"}`.
+
 ## 0.7.0
 
 - `can`: on wslib-isotp 0.3, so the `IsoTpLink` and `Messages` that

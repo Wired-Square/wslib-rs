@@ -138,6 +138,9 @@ pub struct ProvisioningStatus {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum ProvisioningEvent {
+    /// The device acknowledged the credentials and the command to save them
+    /// and connect.
+    Saved,
     Status {
         status: WifiStatus,
     },
@@ -244,6 +247,14 @@ mod tests {
         assert!(json.contains(r#""kind":"status""#));
         let back: ProvisioningEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(back, ev);
+    }
+
+    #[test]
+    fn a_saved_event_is_its_kind_alone() {
+        let json = serde_json::to_string(&ProvisioningEvent::Saved).unwrap();
+        assert_eq!(json, r#"{"kind":"saved"}"#);
+        let back: ProvisioningEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, ProvisioningEvent::Saved);
     }
 
     #[test]

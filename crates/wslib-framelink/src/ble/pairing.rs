@@ -1,6 +1,3 @@
-//! Pairing the host with a peripheral before its encrypted characteristics
-//! are read, written or subscribed to.
-
 use std::time::Duration;
 
 use btleplug::api::{BDAddr, Peripheral as _};
@@ -9,13 +6,10 @@ use wslib_ble::{Address, PairError, Pairing};
 
 use crate::{CapabilitySet, Error};
 
-/// A pairing that asks the user nothing was measured at 1.3 seconds.
 const PAIR_TIMEOUT: Duration = Duration::from_secs(10);
 
 const ADAPTER_END: char = '/';
 
-/// The adapter a btleplug peripheral id names: on Linux the id is the BlueZ
-/// object path below `/org/bluez/`, `hci0/dev_AA_BB_CC_DD_EE_FF`.
 fn adapter_name(peripheral_id: &str) -> &str {
     peripheral_id
         .split_once(ADAPTER_END)
@@ -26,7 +20,6 @@ fn host_address(address: BDAddr) -> Address {
     Address::new(address.into_inner())
 }
 
-/// What connecting came to, unless only withdrawing the agent failed.
 fn outcome<T>(connected: Result<T, Error>, closed: Result<(), PairError>) -> Result<T, Error> {
     let connected = connected?;
     closed?;

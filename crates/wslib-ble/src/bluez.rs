@@ -22,7 +22,6 @@ const AGENT_CAPABILITY: &str = "NoInputNoOutput";
 const NOT_THIS_DEVICE: &str = "not the device being paired";
 const NOT_JUST_WORKS: &str = "only a pairing that asks a person nothing is authorised";
 
-/// How long withdrawing the agent or cancelling a pairing may take.
 pub(crate) const WITHDRAW_LIMIT: Duration = Duration::from_secs(5);
 pub(crate) const CONFIRM_CALL_LIMIT: Duration = Duration::from_secs(5);
 

@@ -11,13 +11,14 @@ repository.workspace = true
 publish = ["wired-square"]
 
 [features]
-testing = ["dep:zbus", "zbus/p2p", "dep:tokio", "tokio/macros", "tokio/net"]
+testing = ["dep:zbus", "zbus/p2p", "dep:tokio", "tokio/macros", "tokio/net", "tokio/sync"]
 
 [dependencies]
-tokio = { version = "1.53.3", default-features = false, optional = true }
+tokio = { version = "1.53.3", default-features = false, features = ["rt", "time"], optional = true }
 zbus = { version = "5", default-features = false, features = ["tokio"], optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+tokio = { version = "1.53.3", default-features = false, features = ["rt", "time"] }
 zbus = { version = "5", default-features = false, features = ["tokio"] }
 
 [dev-dependencies]

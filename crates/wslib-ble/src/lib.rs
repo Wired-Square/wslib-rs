@@ -20,8 +20,7 @@ mod address;
 #[cfg(any(target_os = "linux", feature = "testing"))]
 mod bluez;
 mod error;
-#[cfg(not(target_os = "linux"))]
-mod system;
+mod pairing;
 #[cfg(all(unix, feature = "testing"))]
 pub mod testing;
 
@@ -29,8 +28,7 @@ pub use address::{Address, AddressParseError};
 #[cfg(any(target_os = "linux", feature = "testing"))]
 pub use bluez::forget_on;
 pub use error::{ForgetError, Forgotten, PairError, Paired, Refusal};
-#[cfg(not(target_os = "linux"))]
-pub use system::Pairing;
+pub use pairing::Pairing;
 
 /// Removes the host's bond with `address` and its record of the device on
 /// `adapter`, so the device must be discovered again before it is used.

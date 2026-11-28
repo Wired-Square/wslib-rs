@@ -88,6 +88,8 @@ pub enum PairError {
     },
     /// No answer came within the limit; a pairing still running was cancelled.
     TimedOut { limit: Duration },
+    /// The connection given already serves a pairing guard's agent.
+    AgentExists,
     /// BlueZ was not reached, or answered outside its contract.
     #[cfg(any(target_os = "linux", feature = "testing"))]
     Service(zbus::Error),
@@ -111,6 +113,7 @@ impl fmt::Display for PairError {
             Self::TimedOut { limit } => {
                 write!(f, "the Bluetooth service did not answer within {limit:?}")
             }
+            Self::AgentExists => f.write_str("the connection already serves a pairing agent"),
             #[cfg(any(target_os = "linux", feature = "testing"))]
             Self::Service(_) => f.write_str(SERVICE_FAILED),
         }

@@ -1,6 +1,6 @@
 [package]
 name = "wslib-framelink"
-version = "0.7.1"
+version = "0.7.2"
 description = "A FrameLink device session over TCP or CAN (ISO-TP), with discovery over mDNS and BLE, a device registry, Wi-Fi provisioning over BLE and firmware updates over SMP."
 readme = "README.md"
 edition.workspace = true
@@ -12,7 +12,7 @@ publish = ["wired-square"]
 
 [features]
 discovery = ["dep:wslib-mdns", "dep:serde_json", "dep:futures-util", "dep:wslib-file-atomic"]
-ble = ["dep:btleplug", "dep:uuid", "dep:futures-util", "tokio/rt-multi-thread", "wslib-mcumgr?/ble"]
+ble = ["dep:btleplug", "dep:uuid", "dep:futures-util", "dep:wslib-ble", "tokio/rt-multi-thread", "wslib-mcumgr?/ble"]
 wifi-prov = ["ble", "discovery"]
 smp = ["discovery", "dep:wslib-mcumgr", "wslib-mcumgr/udp"]
 can = ["dep:wslib-isotp", "wslib-isotp/link", "dep:wslib-can", "wslib-can/task", "wslib-can-bus/task"]
@@ -26,6 +26,7 @@ thiserror = "2.0.20"
 tokio = { version = "1.53.3", default-features = false, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 tracing = "0.1.41"
 uuid = { version = "1.26.1", default-features = false, optional = true }
+wslib-ble = { path = "../wslib-ble", version = "0.1", registry = "wired-square", optional = true }
 wslib-can = { path = "../wslib-can", version = "0.2", registry = "wired-square", optional = true }
 wslib-can-bus = { path = "../wslib-can-bus", version = "0.3", registry = "wired-square" }
 wslib-file-atomic = { path = "../wslib-file-atomic", version = "0.2", registry = "wired-square", optional = true }

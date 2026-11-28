@@ -274,6 +274,9 @@ impl Discovery {
 impl Discovery {
     /// A provisioning session on a device seen over BLE that advertises
     /// `WIFI_PROV`; a session already open and still connected is shared.
+    /// A new one connects and pairs the host with the device, which its
+    /// characteristics need, and fails with [`Error::Pairing`] when the
+    /// device or the host refuses.
     pub async fn open_wifi_prov(
         &self,
         id: &DeviceId,

@@ -56,7 +56,10 @@ None is on by default.
   from its manufacturer data.
 - `wifi-prov` (with `ble` and `discovery`): `Discovery::open_wifi_prov`, a
   session writing Wi-Fi credentials to a device over BLE and streaming its
-  progress.
+  progress. Opening it pairs the host with the device first, since the
+  characteristics need an encrypted link: on Linux through wslib-ble, which
+  supplies the pairing agent a headless host lacks, for that one device and
+  only until the bond is made. A refusal is `Error::Pairing`.
 - `can`: sessions over ISO-TP on CAN, one frame per ISO-TP message.
   - `FrameLinkSession::connect_isotp` takes a wslib-isotp link the caller
     opened. `can_link_config` gives the link's ids for a `CanDeviceId`.

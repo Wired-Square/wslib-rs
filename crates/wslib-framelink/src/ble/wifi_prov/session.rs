@@ -19,6 +19,7 @@ use super::uuids::{
 use crate::Error;
 use crate::ble::WIFI_PROV_SERVICE_UUID;
 use crate::ble::notify_dispatcher::{Ended, NotifyDispatcher};
+use crate::ble::pairing::connect_paired;
 use crate::discovery::ble::PeripheralLease;
 use crate::runtime::ble_runtime;
 
@@ -80,7 +81,7 @@ struct ProvNotifyRxs {
 }
 
 pub(crate) async fn open_session(lease: Arc<PeripheralLease>) -> Result<WifiProvSession, Error> {
-    let peripheral = lease.ensure_ready().await?.clone();
+    let peripheral = connect_paired(&lease).await?;
     let chars = ResolvedCharacteristics::resolve(&peripheral).await?;
     debug!("wifi-prov session opened");
     Ok(WifiProvSession {

@@ -40,6 +40,11 @@ impl PeripheralLease {
         }
     }
 
+    #[cfg_attr(not(feature = "wifi-prov"), allow(dead_code))]
+    pub(crate) fn peripheral(&self) -> &Peripheral {
+        &self.peripheral
+    }
+
     /// Connects and discovers services, again if the peripheral has dropped
     /// since.
     #[cfg_attr(not(any(feature = "wifi-prov", feature = "smp")), allow(dead_code))]

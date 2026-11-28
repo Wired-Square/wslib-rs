@@ -1,0 +1,11 @@
+[package]
+name = "wslib-error"
+version = "0.1.0"
+description = "An error and its causes as one line, for whoever shows it."
+readme = "README.md"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = ["wired-square"]

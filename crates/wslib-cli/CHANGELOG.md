@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+- `exit::fail` writes the error's chain with wslib-error's `Chain`. A cause
+  that the layer above it already wrote reads once, where an error that writes
+  its cause and also returns it from `source()` was written twice.
+
 ## 0.2.0
 
 - The `op` feature is gone: `is_reference`, `resolve` and `ReadReference`

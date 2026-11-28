@@ -5,18 +5,14 @@
 
 use std::error::Error;
 
+use wslib_error::Chain;
 use wslib_telemetry::{strip_userinfo, truncate};
 
 const MAX_LEN: usize = 512;
 
-const CAUSE_SEPARATOR: &str = ": ";
-
-/// `error` and each cause its `source()` gives, in order, for an operator.
+/// `error` and its causes as wslib-error's `Chain` writes them, for an operator.
 pub fn chain(error: &(dyn Error + 'static)) -> String {
-    std::iter::successors(Some(error), |&e| e.source())
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(CAUSE_SEPARATOR)
+    Chain::new(error).to_string()
 }
 
 /// Render an error and its causes for a log line, with URL credentials removed

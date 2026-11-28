@@ -12,6 +12,7 @@ use wslib_mcumgr::{Session, UploadOptions};
 use crate::error::{FlashError, Result, failed};
 use crate::image;
 use crate::progress::{FlashProgress, FlashStage, check_cancel};
+use wslib_error::Chain;
 
 const CANCEL_POLL: Duration = Duration::from_millis(100);
 
@@ -52,7 +53,10 @@ pub async fn flash(
         "Asking the device for its SMP buffers",
     );
     if let Err(e) = session.negotiate_params().await {
-        progress.on_progress(&format!("Keeping the default chunk size: {}", chain(&e)));
+        progress.on_progress(&format!(
+            "Keeping the default chunk size: {}",
+            Chain::new(&e)
+        ));
     }
     check_cancel(progress)?;
 
@@ -110,13 +114,6 @@ async fn next_unless_cancelled<S: Stream + Unpin>(
     }
 }
 
-fn chain(error: &(dyn std::error::Error + 'static)) -> String {
-    std::iter::successors(Some(error), |e| e.source())
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(": ")
-}
-
 fn smp(step: &'static str) -> impl Fn(wslib_mcumgr::Error) -> FlashError {
     move |e| failed(format!("SMP {step} failed"), e)
 }
@@ -143,7 +140,7 @@ mod tests {
     fn a_progress_line_writes_each_cause() {
         let refused = smp("params")(Error::Io(std::io::Error::other("the link dropped")));
         assert_eq!(
-            chain(&refused),
+            Chain::new(&refused).to_string(),
             format!(
                 "SMP params failed: {}: the link dropped",
                 std::error::Error::source(&refused).unwrap()

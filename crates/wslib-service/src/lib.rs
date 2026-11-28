@@ -127,6 +127,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 use std::time::Duration;
+use wslib_error::Chain;
 
 pub use file_log::{LogFile, LogFileBuilder};
 pub use layout::Layout;
@@ -134,7 +135,6 @@ pub use tokio_util::sync::CancellationToken;
 
 const DEFAULT_GRACE: Duration = Duration::from_secs(15);
 const TEARDOWN: Duration = Duration::from_secs(1);
-const CAUSE_SEPARATOR: &str = ": ";
 
 type Value = Box<dyn Any + Send>;
 type Ended = Box<dyn Error + Send + Sync>;
@@ -338,7 +338,7 @@ fn drive(
         Ok(runtime) => runtime,
         Err(e) => {
             let failure = Failure::Runtime(e);
-            error(name, chain(&failure));
+            error(name, Chain::new(&failure));
             return Err(failure);
         }
     };
@@ -406,15 +406,8 @@ fn drive(
         Ok(Some(Ok(value))) if asked => return Ok(value),
         Ok(Some(Ok(_))) => Failure::Unasked,
     };
-    error(name, chain(&failure));
+    error(name, Chain::new(&failure));
     Err(failure)
-}
-
-fn chain(error: &(dyn Error + 'static)) -> String {
-    std::iter::successors(Some(error), |&e| e.source())
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(CAUSE_SEPARATOR)
 }
 
 fn panic_message(panic: &(dyn Any + Send)) -> &str {
@@ -864,7 +857,7 @@ mod tests {
             .expect("main's own error");
         assert_eq!(io.to_string(), "the disk is on fire");
         assert_eq!(
-            chain(&failure),
+            Chain::new(&failure).to_string(),
             "the service ended in error: the disk is on fire"
         );
     }

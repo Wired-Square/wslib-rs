@@ -54,8 +54,10 @@ publishing them.
   holds. wslib-telemetry is exempt, as the consumer's own tool. The
   `tracing` calls still in other crates are debt to remove, not precedent:
   add none.
-- The workspace ships no presentation of errors for consumers. wslib-cli's
-  `exit::fail` renders its own command's chain.
+- wslib-error's `Chain` is the one rendering of an error with its causes. No
+  crate walks `source()` to join a chain of its own, and a library renders
+  one only at a text boundary it owns, such as a log line or a response
+  body.
 - A dependency earns its place: security-critical code, a spec we would
   otherwise track, a platform binding, the ecosystem's foundation, or more
   than an afternoon's work. Otherwise write it. Turn off default features you

@@ -12,11 +12,14 @@ app's own vocabulary; no status gets one by default. Any other fields sit
 beside them.
 
 ```rust
+use wslib_error::Chain;
 use wslib_http_error::ApiError;
 use wslib_http_error::extract::{Json, Path, method_not_allowed};
 
 async fn rename(Path(id): Path<u64>, Json(body): Json<Rename>) -> Result<Json<User>, ApiError> {
-    let user = store::user(id).await.map_err(|e| ApiError::internal("read the user", e))?;
+    let user = store::user(id)
+        .await
+        .map_err(|e| ApiError::internal("read the user", Chain::new(&e)))?;
     let user = user.ok_or_else(|| ApiError::not_found(format!("no such user: {id}")))?;
     if user.name == body.name {
         return Err(ApiError::conflict("that is already its name").with_code("unchanged"));
@@ -40,7 +43,8 @@ let app = Router::new()
   `Retry-After`), then `with_code`, `with_field` and `with_header`.
   `internal(what, cause)` and `unavailable` answer "could not {what}" and log
   the cause through `tracing`, never sending it, with any URL's credentials
-  stripped by `wslib_telemetry::foreign_error`.
+  stripped by `wslib_telemetry::foreign_error`. The cause is logged by its
+  `Display`, so pass wslib-error's `Chain` for an error with causes.
 - **`extract`** (feature `axum`, on by default): `Json`, `Query` and `Path`
   whose rejections are `ApiError`s at axum's status (400, 413, 415 or 422),
   and `method_not_allowed` for `Router::method_not_allowed_fallback`.

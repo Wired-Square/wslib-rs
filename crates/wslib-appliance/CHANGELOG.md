@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1
+
+- On wslib-appliance-core 0.2.1, and the backup, https, server and service
+  crates that take it.
+
 ## 0.2.0
 
 - Pins `wslib-appliance-core`, `-https`, `-server`, `-service`, `-store`,

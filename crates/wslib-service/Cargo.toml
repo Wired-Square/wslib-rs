@@ -1,6 +1,6 @@
 [package]
 name = "wslib-service"
-version = "0.2.0"
+version = "0.2.1"
 description = "A background service on launchd, systemd or the Windows service control manager from one call, and its private state and log."
 readme = "README.md"
 edition.workspace = true
@@ -16,6 +16,7 @@ publish = ["wired-square"]
 testing = []
 
 [dependencies]
+wslib-error = { path = "../wslib-error", version = "0.1", registry = "wired-square" }
 thiserror = "2"
 tokio = { version = "1.47", default-features = false, features = ["macros", "rt-multi-thread", "signal", "time"] }
 tokio-util = { version = "0.7.19", default-features = false }

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.10
+
+- Errors are written with wslib-error's `Chain`. A cause that the layer above
+  it already wrote reads once, where an error that writes its cause and also
+  returns it from `source()` was written twice. Renders for
+  wslib-appliance-server 0.2.1.
+
 ## 0.2.9
 
 - An error that stops a command writes each of its causes, and a

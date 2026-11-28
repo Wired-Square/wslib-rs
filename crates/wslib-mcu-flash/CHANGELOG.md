@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1
+
+- `mcumgr`: the progress line for a device whose SMP buffers could not be
+  learned uses wslib-error's `Chain`. A cause that the layer above it already
+  wrote reads once, where an error that writes its cause and also returns it
+  from `source()` was written twice.
+
 ## 0.4.0
 
 - On wslib-file-atomic 0.2, and on wslib-mcumgr 0.2 behind `mcumgr`.

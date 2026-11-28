@@ -6,9 +6,10 @@ use wslib_serial::{
     SerialWriter,
 };
 
-use super::{PortKey, chain};
+use super::PortKey;
 #[cfg(any(test, feature = "test-support"))]
 use crate::test_support::{FakeLink, FakePorts};
+use wslib_error::Chain;
 
 /// Where a monitor's ports come from.
 #[derive(Clone)]
@@ -34,7 +35,7 @@ fn usb_serial_tty(serial: &str) -> Result<Option<String>, Unresolved> {
 }
 
 fn listing_failed(error: io::Error) -> Unresolved {
-    Unresolved::Failed(format!("listing ports: {}", chain(&error)))
+    Unresolved::Failed(format!("listing ports: {}", Chain::new(&error)))
 }
 
 fn topology_tty(name: &str) -> Option<String> {

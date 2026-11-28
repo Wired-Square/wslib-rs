@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+- The service's log line for a failure uses wslib-error's `Chain`. A cause
+  that the layer above it already wrote reads once, where an error that writes
+  its cause and also returns it from `source()` was written twice.
+
 ## 0.2.0
 
 - `Daemon::run` takes `main` returning `Result<T, E>` with

@@ -361,10 +361,7 @@ fn a_device_id_reads_as_six_hex_digits_everywhere() {
 }
 
 fn with_causes(error: &(dyn std::error::Error + 'static)) -> String {
-    std::iter::successors(Some(error), |e| e.source())
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(": ")
+    wslib_error::Chain::new(error).to_string()
 }
 
 fn refusal(bad: &str) -> String {

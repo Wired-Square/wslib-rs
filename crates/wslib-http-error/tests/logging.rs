@@ -49,3 +49,40 @@ fn a_cause_is_logged_without_its_url_credentials() {
         assert!(!line.contains("pass"), "{line}");
     }
 }
+
+#[test]
+fn an_error_passed_as_a_chain_is_logged_with_its_causes() {
+    let logged = Logged::default();
+    let error = Layer(
+        "the save failed",
+        Some(Box::new(Layer(
+            "the write was refused",
+            Some(Box::new(Layer("the disk is full", None))),
+        ))),
+    );
+    tracing::subscriber::with_default(logged.clone(), || {
+        ApiError::internal("save", wslib_error::Chain::new(&error));
+        ApiError::unavailable("save", wslib_error::Chain::new(&error));
+        ApiError::internal("save", &error);
+    });
+    let lines = logged.0.lock().unwrap();
+    let chain = "the save failed: the write was refused: the disk is full";
+    assert!(lines[0].contains(chain), "{lines:?}");
+    assert!(lines[1].contains(chain), "{lines:?}");
+    assert!(!lines[2].contains("the write was refused"), "{lines:?}");
+}
+
+#[derive(Debug)]
+struct Layer(&'static str, Option<Box<Layer>>);
+
+impl fmt::Display for Layer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl std::error::Error for Layer {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.1.as_deref().map(|cause| cause as _)
+    }
+}

@@ -42,6 +42,7 @@ appliance chassis and every app beside it.
 | `wslib-db-sqlite`        | One SQLite database: WAL, migration chains, settings          |
 | `wslib-dns`              | DNS lookups that keep NXDOMAIN, NODATA and failures apart     |
 | `wslib-dns-mail`         | SPF, DMARC, DKIM, BIMI, MTA-STS and TLS-RPT records in DNS    |
+| `wslib-error`            | An error and its causes as one line, for whoever shows it     |
 | `wslib-file-atomic`      | Crash-safe whole-file writes, readers set from creation       |
 | `wslib-framelink`        | A FrameLink session over TCP or CAN, discovery, BLE Wi-Fi     |
 | `wslib-framelink-board`  | FrameLink board TOML: parse, edit, scaffold, display names    |

@@ -71,7 +71,8 @@ impl ApiError {
     }
 
     /// A 500 answering "could not {what}"; `cause` goes to the log, with URL
-    /// credentials stripped, never to the client.
+    /// credentials stripped, never to the client. It is logged by its
+    /// `Display`: for an error with causes, pass `wslib_error::Chain`.
     pub fn internal(what: &'static str, cause: impl fmt::Display) -> Self {
         Self::failed(StatusCode::INTERNAL_SERVER_ERROR, what, cause)
     }

@@ -14,12 +14,12 @@ use wslib_serial::SerialEvent;
 use super::{
     MonitorOptions, Opener, PortKey, Refusal, Update,
     bounds::Ring,
-    chain,
     echo::EchoMatcher,
     link::{Link, Unresolved},
     lock,
 };
 use crate::{COLOURS, MonitorState, Participant, Span};
+use wslib_error::Chain;
 
 const RESET_PULSE: Duration = Duration::from_millis(10);
 
@@ -211,7 +211,10 @@ impl Port {
                 Ok(path) => {
                     self.set_status(MonitorState::Opening, Some(path.clone()));
                     match opener.open(&path, self.baud) {
-                        Err(e) => (MonitorState::Backoff, format!("open {path}: {}", chain(&e))),
+                        Err(e) => (
+                            MonitorState::Backoff,
+                            format!("open {path}: {}", Chain::new(&e)),
+                        ),
                         Ok(link) => {
                             backoff.reset();
                             *lock(&self.open) = Some(path.clone());
@@ -289,7 +292,7 @@ impl Port {
                         self.output(bytes, spans);
                     }
                     Some(SerialEvent::Disconnected { error, .. }) => {
-                        break Ended::Lost(format!("read {path}: {}", chain(&error)));
+                        break Ended::Lost(format!("read {path}: {}", Chain::new(&error)));
                     }
                     None => break Ended::Lost(format!("read {path}: the line closed")),
                 },
@@ -316,7 +319,7 @@ impl Port {
                 }
                 link.write(bytes)
                     .await
-                    .map_err(|e| format!("write {path}: {}", chain(&*e)))
+                    .map_err(|e| format!("write {path}: {}", Chain::new(&*e)))
             }
             Command::Reset => {
                 let pulsed = async {
@@ -326,7 +329,7 @@ impl Port {
                 };
                 pulsed
                     .await
-                    .map_err(|e| format!("reset {path}: {}", chain(&*e)))
+                    .map_err(|e| format!("reset {path}: {}", Chain::new(&*e)))
             }
         }
     }

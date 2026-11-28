@@ -21,9 +21,9 @@ mod render;
 mod unit;
 
 use std::error::Error;
-use std::iter;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use wslib_error::Chain;
 
 use clap::{Args, Parser, Subcommand};
 
@@ -90,8 +90,6 @@ enum Packaging {
     Diff,
 }
 
-const CAUSE_SEPARATOR: &str = ": ";
-
 const CONFIG: &str = "appliance.toml";
 const SCAFFOLD: &str = "scaffold";
 const RENDER_AGAIN: &str =
@@ -109,10 +107,7 @@ fn main() -> ExitCode {
 }
 
 fn chain(error: &(dyn Error + 'static)) -> String {
-    iter::successors(Some(error), |&e| e.source())
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(CAUSE_SEPARATOR)
+    Chain::new(error).to_string()
 }
 
 #[derive(Debug)]

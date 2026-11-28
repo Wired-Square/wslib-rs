@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+- Docs: `ApiError::internal` and `unavailable` log `cause` by its `Display`,
+  so for an error with causes pass wslib-error's `Chain`, which writes them
+  all. No code change.
+
 ## 0.1.2
 
 - Dependency floor raised to match the crates it shares a graph with:

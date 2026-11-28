@@ -1,6 +1,6 @@
 [package]
 name = "wslib-appliance-core"
-version = "0.2.0"
+version = "0.2.1"
 description = "The router, the authority and the workers an appliance needs, beneath the backends that serve them behind a console, on their own TLS listener and as a desktop service."
 readme = "README.md"
 edition.workspace = true
@@ -21,6 +21,7 @@ testing = [
 sessions = []
 
 [dependencies]
+wslib-error = { path = "../wslib-error", version = "0.1", registry = "wired-square" }
 axum = { version = "0.8.7", default-features = false, features = ["http1", "json", "query", "tokio", "tracing"] }
 axum-server = { version = "0.8", default-features = false, features = ["tls-rustls-no-provider"] }
 chrono = { version = "0.4.39", default-features = false, features = ["clock", "serde", "std"] }

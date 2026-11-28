@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2
+
+- A state message's cause is written with wslib-error's `Chain`. A cause that
+  the layer above it already wrote reads once, where an error that writes its
+  cause and also returns it from `source()` was written twice.
+
 ## 0.3.1
 
 - On wslib-serial 0.2.

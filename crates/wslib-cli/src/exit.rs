@@ -14,6 +14,7 @@ use std::io;
 use std::process::ExitCode;
 
 use crate::Output;
+use wslib_error::Chain;
 
 /// A process exit code from the shared set, or one of the tool's own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -63,10 +64,7 @@ pub fn fail(output: Output, error: &(dyn Error + 'static), exit: Exit) -> ExitCo
 }
 
 fn failure_message(output: Output, error: &(dyn Error + 'static), exit: Exit) -> String {
-    let message = chain(error)
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(": ");
+    let message = Chain::new(error).to_string();
     match output {
         Output::Human => format!("error: {message}"),
         Output::Json => serde_json::json!({ "error": message, "exit": exit.0 }).to_string(),

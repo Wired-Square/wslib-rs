@@ -96,7 +96,7 @@ fn service_main(_: Vec<OsString>) {
                 Level::Error,
                 format_args!(
                     "could not register for service controls: {}",
-                    crate::chain(&e)
+                    wslib_error::Chain::new(&e)
                 ),
             );
             *lock(&OUTCOME) = Some(Err(Failure::ServiceManager(Box::new(e))));

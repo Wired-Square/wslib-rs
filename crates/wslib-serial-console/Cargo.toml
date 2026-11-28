@@ -1,6 +1,6 @@
 [package]
 name = "wslib-serial-console"
-version = "0.3.1"
+version = "0.3.2"
 description = "A serial console shared by every browser on a port: its wire types, a per-port monitor with attribution, rosters and flash pauses, and an axum /ws/serial."
 readme = "README.md"
 edition.workspace = true
@@ -11,13 +11,14 @@ repository.workspace = true
 publish = ["wired-square"]
 
 [features]
-monitor = ["dep:thiserror", "dep:tokio", "dep:tracing", "dep:wslib-backoff", "dep:wslib-mcu-flash", "dep:wslib-serial"]
+monitor = ["dep:thiserror", "dep:tokio", "dep:tracing", "dep:wslib-backoff", "dep:wslib-error", "dep:wslib-mcu-flash", "dep:wslib-serial"]
 json = ["dep:serde_json"]
 ws = ["monitor", "json", "dep:axum"]
 ts = ["dep:ts-rs"]
 test-support = ["monitor"]
 
 [dependencies]
+wslib-error = { path = "../wslib-error", version = "0.1", registry = "wired-square", optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
 ts-rs = { version = "12", optional = true, features = ["no-serde-warnings"] }
 thiserror = { version = "2.0.20", optional = true }

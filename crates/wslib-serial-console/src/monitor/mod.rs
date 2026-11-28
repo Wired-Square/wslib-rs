@@ -11,8 +11,6 @@ mod tests;
 
 use std::{
     collections::HashMap,
-    error::Error,
-    iter,
     sync::{
         Arc, Mutex, MutexGuard, PoisonError,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -343,15 +341,6 @@ impl Monitors {
 
 pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-const CAUSE_SEPARATOR: &str = ": ";
-
-fn chain(error: &(dyn Error + 'static)) -> String {
-    iter::successors(Some(error), |&e| e.source())
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(CAUSE_SEPARATOR)
 }
 
 #[allow(dead_code)]

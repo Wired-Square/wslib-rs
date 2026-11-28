@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- Response bodies and journal lines that write an error's causes use
+  wslib-error's `Chain`. A cause that the layer above it already wrote reads
+  once, where an error that writes its cause and also returns it from
+  `source()` was written twice.
+
 ## 0.2.0
 
 - `ApiError::internal` and `ApiError::unavailable` take the cause as

@@ -1,6 +1,6 @@
 [package]
 name = "wslib-mcu-flash"
-version = "0.4.0"
+version = "0.4.1"
 description = "Chip families, USB-serial port resolution, firmware image parsing and the flash backends (esptool, dfu-util, espflash, USB DFU, STM32 AN3155, MCUboot over SMP) Wired Square tools share."
 readme = "README.md"
 edition.workspace = true
@@ -11,6 +11,7 @@ repository.workspace = true
 publish = ["wired-square"]
 
 [dependencies]
+wslib-error = { path = "../wslib-error", version = "0.1", registry = "wired-square", optional = true }
 ihex = "3"
 thiserror = "2.0.20"
 
@@ -35,7 +36,7 @@ dfu-util = ["dep:async-trait", "dep:tokio", "tokio/io-util", "tokio/process", "t
 espflash = ["dep:espflash", "dep:wslib-file-atomic", "ports"]
 dfu = ["dep:dfu-nusb", "dep:nusb"]
 stm32-uart = ["dep:wslib-file-atomic", "ports"]
-mcumgr = ["dep:futures-core", "dep:tokio", "dep:wslib-mcumgr"]
+mcumgr = ["dep:futures-core", "dep:tokio", "dep:wslib-error", "dep:wslib-mcumgr"]
 mcumgr-udp = ["mcumgr", "wslib-mcumgr/udp"]
 mcumgr-ble = ["mcumgr", "wslib-mcumgr/ble"]
 

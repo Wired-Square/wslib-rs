@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1
+
+- On wslib-appliance-core 0.2.1.
+
 ## 0.2.0
 
 - Pins `wslib-appliance-core` at 0.2.0. On wslib-appliance-store 0.2,

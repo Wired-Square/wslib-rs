@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::{Address, ForgetError, Forgotten, PairError, Paired};
+use crate::{Address, PairError, Paired};
 
 /// The host's readiness to pair with one device, which this operating system
 /// keeps by itself.
@@ -22,10 +22,4 @@ impl Pairing {
     pub async fn close(self) -> Result<(), PairError> {
         Ok(())
     }
-}
-
-/// Answers [`ForgetError::Unsupported`]: the operating system gives no call
-/// that removes a bond.
-pub async fn forget(_adapter: &str, _address: &Address) -> Result<Forgotten, ForgetError> {
-    Err(ForgetError::Unsupported)
 }

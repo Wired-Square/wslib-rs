@@ -4,6 +4,8 @@ use std::time::Duration;
 use crate::Address;
 
 const BLUEZ_ERROR: &str = "org.bluez.Error.";
+#[cfg(any(target_os = "linux", feature = "testing"))]
+const SERVICE_FAILED: &str = "the Bluetooth service call failed";
 
 /// How a device came to be paired.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +88,9 @@ pub enum PairError {
     },
     /// No answer came within the limit; a pairing still running was cancelled.
     TimedOut { limit: Duration },
+    /// BlueZ was not reached, or answered outside its contract.
+    #[cfg(any(target_os = "linux", feature = "testing"))]
+    Service(zbus::Error),
 }
 
 impl fmt::Display for PairError {
@@ -106,11 +111,21 @@ impl fmt::Display for PairError {
             Self::TimedOut { limit } => {
                 write!(f, "the Bluetooth service did not answer within {limit:?}")
             }
+            #[cfg(any(target_os = "linux", feature = "testing"))]
+            Self::Service(_) => f.write_str(SERVICE_FAILED),
         }
     }
 }
 
-impl std::error::Error for PairError {}
+impl std::error::Error for PairError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            #[cfg(any(target_os = "linux", feature = "testing"))]
+            Self::Service(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 /// Why a device was not forgotten.
 #[derive(Debug)]
@@ -120,6 +135,9 @@ pub enum ForgetError {
     Unsupported,
     /// The host has no adapter by this name.
     NoAdapter { adapter: String },
+    /// BlueZ was not reached, or answered outside its contract.
+    #[cfg(any(target_os = "linux", feature = "testing"))]
+    Service(zbus::Error),
 }
 
 impl fmt::Display for ForgetError {
@@ -127,8 +145,18 @@ impl fmt::Display for ForgetError {
         match self {
             Self::Unsupported => f.write_str("this operating system cannot forget a bond"),
             Self::NoAdapter { adapter } => write!(f, "no Bluetooth adapter {adapter}"),
+            #[cfg(any(target_os = "linux", feature = "testing"))]
+            Self::Service(_) => f.write_str(SERVICE_FAILED),
         }
     }
 }
 
-impl std::error::Error for ForgetError {}
+impl std::error::Error for ForgetError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            #[cfg(any(target_os = "linux", feature = "testing"))]
+            Self::Service(error) => Some(error),
+            _ => None,
+        }
+    }
+}

@@ -30,11 +30,17 @@ pairing.close().await?;
   `PairError::UnknownDevice` otherwise.
 - **`Pairing::pair`** calls `Device1.Pair()` with the caller's limit and
   answers `Paired::New` or `Paired::Existing`. A refusal keeps BlueZ's error
-  name as `Refusal` and its text. A pairing unanswered at the limit, or whose
-  call is dropped, gets a `CancelPairing`.
-- **Dropping the guard** unregisters the agent on the Tokio runtime it is
-  dropped in, without waiting, and outside a runtime leaves it to the
-  connection closing. **`close`** waits and reports.
+  name as `Refusal` and its text. A pairing unanswered at the limit gets a
+  `CancelPairing` before `pair` answers. `pair` is not cancel-safe: a call
+  dropped before it answers leaves BlueZ pairing until the next `pair`, which
+  cancels it first, or `close`, or BlueZ's own timeout.
+- **`close`** cancels a pairing a dropped `pair` left running, unregisters
+  the agent, and reports. **Dropping the guard** sends nothing and starts no
+  task: the guard's own connection closes with it, and BlueZ removes the
+  agent of a connection that has gone.
+- **`Pairing::confirm_on`** takes a `zbus::Connection` instead. Its guard
+  must be closed with `close`: dropped, its agent stays registered for as
+  long as that connection lives.
 - **`forget`** is `Adapter1.RemoveDevice`. A device BlueZ has no record of is
   `Forgotten::NotKnown`. BlueZ drops the device object too, so the device
   must be discovered again.
@@ -45,18 +51,20 @@ pairing.close().await?;
 
 ## The order, and what the agent does not guard
 
-`confirm`, then connect and `pair`, then any encrypted operation, then drop.
+`confirm`, then connect and `pair`, then any encrypted operation, then
+`close`.
 An encrypted read or write tried before the pairing can go unanswered until
 its caller's own limit.
 
 Measured on BlueZ 5.85: a `Pair()` bonds without asking the agent, yet fails
 with `AuthenticationFailed` when no agent exists; a pairing started by an
 encrypted read asks the agent through `RequestAuthorization`, whichever
-connection the read came from. So the agent authorises that request, and
-`RequestConfirmation`, for its one device only, and rejects every method that
-needs a PIN or a passkey. It cannot stop another local process pairing
-another Just Works device with a `Pair()` of its own while the guard lives:
-hold the guard only around the pairing.
+connection the read came from. So the agent authorises that request for its
+one device's object path only, and rejects every other method:
+`RequestConfirmation` too, since it says a person compared six digits, which
+this agent cannot. It cannot stop another local process pairing another Just
+Works device with a `Pair()` of its own while the agent is registered: hold
+the guard only around the pairing.
 
 Not tested: a host where another process already has an agent, a pairing the
 peripheral asks for, and any BlueZ but 5.85.

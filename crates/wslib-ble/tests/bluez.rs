@@ -13,6 +13,10 @@ const TARGET: Address = Address::new([0xAA, 0xBB, 0xCC, 0x00, 0x09, 0xB0]);
 const OTHER: Address = Address::new([0xAA, 0xBB, 0xCC, 0x00, 0x9D, 0x04]);
 const BLUEZ: &str = "org.bluez";
 const DEVICE: &str = "org.bluez.Device1";
+const MANAGER: &str = "/org/bluez";
+const AGENT_MANAGER: &str = "org.bluez.AgentManager1";
+const ADAPTER_INTERFACE: &str = "org.bluez.Adapter1";
+const DOES_NOT_EXIST: &str = "org.bluez.Error.DoesNotExist";
 const AGENT: &str = "org.bluez.Agent1";
 const REJECTED: &str = "org.bluez.Error.Rejected";
 const CAPABILITY: &str = "NoInputNoOutput";
@@ -140,18 +144,65 @@ async fn an_unreachable_service_keeps_the_bus_error_as_the_source() {
 }
 
 #[tokio::test]
-async fn the_host_refuses_a_pairing_while_no_agent_is_registered() {
+async fn a_pairing_once_the_agent_is_gone_is_refused_by_the_host() {
     let fake = host();
     let (bus, _served) = fake.connect().await.unwrap();
-    let error = bus
-        .call_method(Some(BLUEZ), &target(), Some(DEVICE), "Pair", &())
+    let pairing = Pairing::confirm_on(bus.clone(), ADAPTER, &TARGET)
         .await
-        .unwrap_err();
-    assert_eq!(
-        error_name(&error),
-        Some(Refusal::AuthenticationFailed.name())
+        .unwrap();
+    bus.call_method(
+        Some(BLUEZ),
+        MANAGER,
+        Some(AGENT_MANAGER),
+        "UnregisterAgent",
+        &(agent_path(&fake),),
+    )
+    .await
+    .unwrap();
+    let error = pairing.pair(LIMIT).await.unwrap_err();
+    assert!(
+        matches!(
+            error,
+            PairError::Refused {
+                reason: Refusal::AuthenticationFailed,
+                ..
+            }
+        ),
+        "{error:?}"
     );
     assert!(!fake.paired(ADAPTER, &TARGET));
+}
+
+#[tokio::test]
+async fn known_limit_another_device_is_paired_outright_without_the_agent_being_asked() {
+    let fake = host();
+    let (bus, _served) = fake.connect().await.unwrap();
+    let _pairing = Pairing::confirm_on(bus.clone(), ADAPTER, &TARGET)
+        .await
+        .unwrap();
+    bus.call_method(Some(BLUEZ), &other(), Some(DEVICE), "Pair", &())
+        .await
+        .unwrap();
+    assert!(fake.paired(ADAPTER, &OTHER));
+    assert_eq!(fake.asked(), 0);
+}
+
+#[tokio::test]
+async fn a_removal_sent_to_another_adapter_removes_nothing() {
+    let fake = host().adapter(OTHER_ADAPTER);
+    let (bus, _served) = fake.connect().await.unwrap();
+    let error = bus
+        .call_method(
+            Some(BLUEZ),
+            format!("{MANAGER}/{OTHER_ADAPTER}"),
+            Some(ADAPTER_INTERFACE),
+            "RemoveDevice",
+            &(target(),),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error_name(&error), Some(DOES_NOT_EXIST));
+    assert!(fake.knows(ADAPTER, &TARGET));
 }
 
 #[tokio::test]
@@ -313,17 +364,62 @@ async fn a_pairing_that_gets_no_answer_times_out_and_is_cancelled() {
 }
 
 #[tokio::test]
-async fn a_dropped_pairing_is_cancelled() {
+async fn a_dropped_pairing_is_cancelled_before_the_next_and_not_after() {
     let fake = FakeBluez::new().with(FakeDevice::new(ADAPTER, TARGET).silent());
     let (bus, _served) = fake.connect().await.unwrap();
     let pairing = Pairing::confirm_on(bus, ADAPTER, &TARGET).await.unwrap();
     let abandoned = tokio::time::timeout(SHORT, pairing.pair(LIMIT)).await;
     assert!(abandoned.is_err());
-    let cancelled = format!("CancelPairing {}", target());
-    until("the pairing is cancelled", || {
-        fake.heard().contains(&cancelled) && !fake.pairing(ADAPTER, &TARGET)
-    })
-    .await;
+    assert!(fake.pairing(ADAPTER, &TARGET));
+    let path = target();
+    assert_eq!(fake.heard()[1..], [format!("Pair {path}")]);
+    assert_eq!(pairing.pair(LIMIT).await.unwrap(), Paired::New);
+    tokio::time::sleep(SHORT).await;
+    assert_eq!(
+        fake.heard()[1..],
+        [
+            format!("Pair {path}"),
+            format!("CancelPairing {path}"),
+            format!("Pair {path}"),
+        ]
+    );
+    assert!(fake.paired(ADAPTER, &TARGET));
+}
+
+#[tokio::test]
+async fn a_pairing_that_answered_leaves_nothing_to_cancel() {
+    let fake = host();
+    let (bus, _served) = fake.connect().await.unwrap();
+    let pairing = Pairing::confirm_on(bus, ADAPTER, &TARGET).await.unwrap();
+    assert_eq!(pairing.pair(LIMIT).await.unwrap(), Paired::New);
+    assert_eq!(pairing.pair(LIMIT).await.unwrap(), Paired::Existing);
+    pairing.close().await.unwrap();
+    let cancelled = fake
+        .heard()
+        .iter()
+        .any(|call| call.starts_with("CancelPairing"));
+    assert!(!cancelled);
+}
+
+#[tokio::test]
+async fn closing_cancels_a_dropped_pairing_before_it_unregisters() {
+    let fake = FakeBluez::new().with(FakeDevice::new(ADAPTER, TARGET).silent());
+    let (bus, _served) = fake.connect().await.unwrap();
+    let pairing = Pairing::confirm_on(bus, ADAPTER, &TARGET).await.unwrap();
+    let agent = agent_path(&fake);
+    let abandoned = tokio::time::timeout(SHORT, pairing.pair(LIMIT)).await;
+    assert!(abandoned.is_err());
+    pairing.close().await.unwrap();
+    let path = target();
+    assert_eq!(
+        fake.heard()[1..],
+        [
+            format!("Pair {path}"),
+            format!("CancelPairing {path}"),
+            format!("UnregisterAgent {agent}"),
+        ]
+    );
+    assert!(!fake.pairing(ADAPTER, &TARGET));
 }
 
 #[tokio::test]
@@ -366,16 +462,30 @@ async fn the_agent_answers_while_a_pairing_is_awaited() {
 }
 
 #[tokio::test]
-async fn the_agent_confirms_a_comparison_for_the_one_device_only() {
+async fn the_agent_refuses_a_comparison_even_for_its_device() {
     let fake = host();
     let (bus, served) = fake.connect().await.unwrap();
     let _pairing = Pairing::confirm_on(bus, ADAPTER, &TARGET).await.unwrap();
-    let confirmed = ask!(served, fake, "RequestConfirmation", &(target(), PASSKEY));
-    assert_eq!(confirmed, None);
+    let refused = ask!(served, fake, "RequestConfirmation", &(target(), PASSKEY));
+    assert_eq!(refused.as_deref(), Some(REJECTED));
     let refused = ask!(served, fake, "RequestConfirmation", &(other(), PASSKEY));
     assert_eq!(refused.as_deref(), Some(REJECTED));
     let refused = ask!(served, fake, "RequestAuthorization", &(other(),));
     assert_eq!(refused.as_deref(), Some(REJECTED));
+    let authorised = ask!(served, fake, "RequestAuthorization", &(target(),));
+    assert_eq!(authorised, None);
+}
+
+#[tokio::test]
+async fn the_same_address_on_another_adapter_is_not_the_device() {
+    let fake = host().with(FakeDevice::new(OTHER_ADAPTER, TARGET));
+    let (bus, served) = fake.connect().await.unwrap();
+    let _pairing = Pairing::confirm_on(bus, ADAPTER, &TARGET).await.unwrap();
+    let asked = fake.implicit_pairing(&served, OTHER_ADAPTER, &TARGET).await;
+    assert_eq!(asked.unwrap(), Asked::Rejected);
+    assert!(!fake.paired(OTHER_ADAPTER, &TARGET));
+    let asked = fake.implicit_pairing(&served, ADAPTER, &TARGET).await;
+    assert_eq!(asked.unwrap(), Asked::Accepted);
 }
 
 #[tokio::test]
@@ -434,13 +544,32 @@ async fn closing_unregisters_the_agent_and_stops_serving_it() {
 }
 
 #[tokio::test]
-async fn dropping_the_guard_unregisters_the_agent() {
+async fn a_dropped_guard_takes_its_private_connection_and_so_its_agent() {
     let fake = host();
-    let (bus, _served) = fake.connect().await.unwrap();
+    let (bus, served) = fake.connect().await.unwrap();
+    let hung_up = fake.hung_up(&served);
     let pairing = Pairing::confirm_on(bus, ADAPTER, &TARGET).await.unwrap();
     assert!(fake.agent().is_some());
     drop(pairing);
-    until("the agent is unregistered", || fake.agent().is_none()).await;
+    tokio::time::timeout(LIMIT, hung_up).await.unwrap();
+    assert!(fake.agent().is_none());
+    assert_eq!(fake.heard().len(), 1);
+}
+
+#[tokio::test]
+async fn a_dropped_guard_on_a_connection_the_caller_keeps_leaves_its_agent() {
+    let fake = host();
+    let (bus, served) = fake.connect().await.unwrap();
+    let hung_up = fake.hung_up(&served);
+    let pairing = Pairing::confirm_on(bus.clone(), ADAPTER, &TARGET)
+        .await
+        .unwrap();
+    drop(pairing);
+    assert!(tokio::time::timeout(SHORT, hung_up).await.is_err());
+    assert!(fake.agent().is_some());
+    let asked = fake.implicit_pairing(&served, ADAPTER, &TARGET).await;
+    assert_eq!(asked.unwrap(), Asked::Accepted);
+    drop(bus);
 }
 
 #[tokio::test]
@@ -451,21 +580,4 @@ async fn closing_with_the_service_gone_reports_it() {
     served.close().await.unwrap();
     let error = pairing.close().await.unwrap_err();
     assert!(matches!(error, PairError::Service(_)), "{error:?}");
-}
-
-#[test]
-fn dropping_the_guard_outside_a_runtime_does_not_panic() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let fake = host();
-    let (pairing, _served) = runtime.block_on(async {
-        let (bus, served) = fake.connect().await.unwrap();
-        let pairing = Pairing::confirm_on(bus, ADAPTER, &TARGET).await.unwrap();
-        (pairing, served)
-    });
-    drop(pairing);
-    assert!(fake.agent().is_some());
-    drop(runtime);
 }

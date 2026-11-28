@@ -23,13 +23,16 @@
 //! ```
 
 use std::collections::HashMap;
+use std::future::poll_fn;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use tokio::sync::Notify;
 use zbus::connection::Builder;
+use zbus::export::futures_core::Stream;
 use zbus::object_server::ObjectServer;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
-use zbus::{Connection, DBusError, Guid};
+use zbus::{Connection, DBusError, Guid, MessageStream};
 
 use crate::bluez::{
     ADAPTER, DEVICE, DEVICE_ADAPTER, DEVICE_ADDRESS, Objects, Properties, ROOT, error_name,
@@ -43,6 +46,7 @@ const REJECTED: &str = "org.bluez.Error.Rejected";
 const NO_SUCH_DEVICE: &str = "Does Not Exist";
 const NO_SUCH_AGENT: &str = "No such agent";
 const NO_PAIRING: &str = "No pairing in progress";
+const PAIRING: &str = "In Progress";
 const ALREADY_PAIRED: &str = "Already Exists";
 const AGENT_REGISTERED: &str = "Already Exists";
 const NO_AGENT: &str = "Authentication Failed";
@@ -90,7 +94,8 @@ impl FakeDevice {
         self
     }
 
-    /// Leaves a `Pair()` unanswered until a `CancelPairing`.
+    /// Leaves a `Pair()` unanswered until a `CancelPairing`, and answers the
+    /// ones after that.
     pub fn silent(mut self) -> Self {
         self.silent = true;
         self
@@ -135,6 +140,7 @@ enum Fault {
     ZBus(zbus::Error),
     AlreadyExists(String),
     DoesNotExist(String),
+    InProgress(String),
     AuthenticationFailed(String),
     AuthenticationRejected(String),
     AuthenticationCanceled(String),
@@ -313,6 +319,17 @@ impl FakeBluez {
         }
     }
 
+    /// Waits for the client of `served` to close its connection, then drops the
+    /// agent it registered, as BlueZ drops an agent whose owner leaves the bus.
+    pub fn hung_up(&self, served: &Connection) -> impl Future<Output = ()> + use<> {
+        let mut messages = MessageStream::from(served);
+        let fake = self.clone();
+        async move {
+            while let Some(Ok(_)) = poll_fn(|cx| Pin::new(&mut messages).poll_next(cx)).await {}
+            fake.state().agent = None;
+        }
+    }
+
     /// A client connection, and the served end to keep alive beside it.
     pub async fn connect(&self) -> zbus::Result<(Connection, Connection)> {
         let (ours, theirs) = tokio::net::UnixStream::pair()?;
@@ -327,7 +344,10 @@ impl FakeBluez {
             (state.adapters.clone(), devices)
         };
         for adapter in adapters {
-            served = served.serve_at(adapter_path(&adapter), AdapterObject(self.clone()))?;
+            served = served.serve_at(
+                adapter_path(&adapter),
+                AdapterObject(self.clone(), adapter.clone()),
+            )?;
         }
         for device in devices {
             served = served.serve_at(device.clone(), DeviceObject(self.clone(), device))?;
@@ -382,7 +402,7 @@ impl AgentManager {
     }
 }
 
-struct AdapterObject(FakeBluez);
+struct AdapterObject(FakeBluez, String);
 
 #[zbus::interface(name = "org.bluez.Adapter1")]
 impl AdapterObject {
@@ -397,7 +417,7 @@ impl AdapterObject {
             let known = state
                 .devices
                 .iter()
-                .position(|d| !d.vanishing && d.path().as_ref() == device)
+                .position(|d| !d.vanishing && d.adapter == self.1 && d.path().as_ref() == device)
                 .ok_or_else(|| Fault::DoesNotExist(NO_SUCH_DEVICE.into()))?;
             state.devices.remove(known);
         }
@@ -418,6 +438,9 @@ impl DeviceObject {
             let device = state.device(&self.1)?;
             if device.paired {
                 return Err(Fault::AlreadyExists(ALREADY_PAIRED.into()));
+            }
+            if device.pairing {
+                return Err(Fault::InProgress(PAIRING.into()));
             }
             if !agent {
                 return Err(Fault::AuthenticationFailed(NO_AGENT.into()));
@@ -444,6 +467,7 @@ impl DeviceObject {
             return Err(Fault::DoesNotExist(NO_PAIRING.into()));
         }
         device.pairing = false;
+        device.silent = false;
         device.cancelled.notify_one();
         Ok(())
     }

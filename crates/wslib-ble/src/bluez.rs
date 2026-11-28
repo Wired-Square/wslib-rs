@@ -1,7 +1,7 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use tokio::runtime::Handle;
 use tokio::time::timeout;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue};
 use zbus::{Connection, DBusError, interface, proxy};
@@ -20,7 +20,7 @@ const UNKNOWN_METHOD: &str = "org.freedesktop.DBus.Error.UnknownMethod";
 const AGENT_PATH: ObjectPath<'static> = ObjectPath::from_static_str_unchecked("/wslib/ble/agent");
 const AGENT_CAPABILITY: &str = "NoInputNoOutput";
 const NOT_THIS_DEVICE: &str = "not the device being paired";
-const NOT_JUST_WORKS: &str = "only a pairing that asks nothing is confirmed";
+const NOT_JUST_WORKS: &str = "only a pairing that asks a person nothing is authorised";
 
 /// How long withdrawing the agent or cancelling a pairing may take.
 pub(crate) const WITHDRAW_LIMIT: Duration = Duration::from_secs(5);
@@ -155,16 +155,6 @@ struct Agent {
     device: OwnedObjectPath,
 }
 
-impl Agent {
-    fn only(&self, device: &ObjectPath<'_>) -> Result<(), AgentError> {
-        if self.device.as_ref() == *device {
-            Ok(())
-        } else {
-            Err(AgentError::Rejected(NOT_THIS_DEVICE.into()))
-        }
-    }
-}
-
 #[interface(name = "org.bluez.Agent1")]
 impl Agent {
     fn release(&self) {}
@@ -192,14 +182,18 @@ impl Agent {
 
     fn request_confirmation(
         &self,
-        device: ObjectPath<'_>,
+        _device: ObjectPath<'_>,
         _passkey: u32,
     ) -> Result<(), AgentError> {
-        self.only(&device)
+        not_just_works()
     }
 
     fn request_authorization(&self, device: ObjectPath<'_>) -> Result<(), AgentError> {
-        self.only(&device)
+        if self.device.as_ref() == device {
+            Ok(())
+        } else {
+            Err(AgentError::Rejected(NOT_THIS_DEVICE.into()))
+        }
     }
 
     fn authorize_service(&self, _device: ObjectPath<'_>, _uuid: &str) -> Result<(), AgentError> {
@@ -224,23 +218,8 @@ async fn withdraw(connection: &Connection) -> zbus::Result<()> {
     unregistered
 }
 
-struct CancelOnDrop<'a> {
-    device: &'a DeviceProxy<'static>,
-    armed: bool,
-}
-
-impl Drop for CancelOnDrop<'_> {
-    fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-        if let Ok(runtime) = Handle::try_current() {
-            let device = self.device.clone();
-            runtime.spawn(async move {
-                let _ = timeout(WITHDRAW_LIMIT, device.cancel_pairing()).await;
-            });
-        }
-    }
+fn gone(error: &zbus::Error) -> bool {
+    matches!(error_name(error), Some(UNKNOWN_OBJECT | UNKNOWN_METHOD))
 }
 
 #[derive(Debug)]
@@ -249,7 +228,7 @@ pub(crate) struct Session {
     adapter: String,
     address: Address,
     device: OwnedObjectPath,
-    registered: bool,
+    unsettled: AtomicBool,
 }
 
 impl Session {
@@ -297,28 +276,48 @@ impl Session {
             adapter: adapter.into(),
             address: *address,
             device,
-            registered: true,
+            unsettled: AtomicBool::new(false),
         })
     }
 
-    pub(crate) async fn pair(&self, limit: Duration) -> Result<Paired, PairError> {
+    async fn device(&self) -> Result<DeviceProxy<'static>, PairError> {
         let device = async {
             DeviceProxy::builder(&self.connection)
                 .path(self.device.clone())?
                 .build()
                 .await
         };
-        let device = device.await.map_err(PairError::Service)?;
-        let mut cancel = CancelOnDrop {
-            device: &device,
-            armed: true,
-        };
-        let answer = timeout(limit, device.pair()).await;
-        cancel.armed = false;
-        let Ok(answer) = answer else {
-            let _ = timeout(WITHDRAW_LIMIT, device.cancel_pairing()).await;
+        device.await.map_err(PairError::Service)
+    }
+
+    async fn settle(&self, device: &DeviceProxy<'_>) -> Result<(), PairError> {
+        let cancelled = timeout(WITHDRAW_LIMIT, device.cancel_pairing())
+            .await
+            .map_err(|_| PairError::TimedOut {
+                limit: WITHDRAW_LIMIT,
+            })?;
+        match cancelled {
+            Err(error) if error_name(&error) != Some(DOES_NOT_EXIST) && !gone(&error) => {
+                Err(PairError::Service(error))
+            }
+            _ => {
+                self.unsettled.store(false, Ordering::Release);
+                Ok(())
+            }
+        }
+    }
+
+    pub(crate) async fn pair(&self, limit: Duration) -> Result<Paired, PairError> {
+        let device = self.device().await?;
+        if self.unsettled.load(Ordering::Acquire) {
+            self.settle(&device).await?;
+        }
+        self.unsettled.store(true, Ordering::Release);
+        let Ok(answer) = timeout(limit, device.pair()).await else {
+            let _ = self.settle(&device).await;
             return Err(PairError::TimedOut { limit });
         };
+        self.unsettled.store(false, Ordering::Release);
         let Err(error) = answer else {
             return Ok(Paired::New);
         };
@@ -326,7 +325,7 @@ impl Session {
         if name == Some(ALREADY_EXISTS) {
             return Ok(Paired::Existing);
         }
-        if matches!(name, Some(UNKNOWN_OBJECT | UNKNOWN_METHOD)) {
+        if gone(&error) {
             return Err(PairError::UnknownDevice {
                 adapter: self.adapter.clone(),
                 address: self.address,
@@ -341,27 +340,45 @@ impl Session {
         }
     }
 
-    pub(crate) async fn close(mut self) -> Result<(), PairError> {
-        self.registered = false;
-        match timeout(WITHDRAW_LIMIT, withdraw(&self.connection)).await {
-            Ok(withdrawn) => withdrawn.map_err(PairError::Service),
-            Err(_) => Err(PairError::TimedOut {
+    pub(crate) async fn close(self) -> Result<(), PairError> {
+        let settled = async {
+            if self.unsettled.load(Ordering::Acquire) {
+                self.settle(&self.device().await?).await?;
+            }
+            Ok(())
+        };
+        let settled = settled.await;
+        let withdrawn = timeout(WITHDRAW_LIMIT, withdraw(&self.connection))
+            .await
+            .map_err(|_| PairError::TimedOut {
                 limit: WITHDRAW_LIMIT,
-            }),
-        }
+            })?;
+        withdrawn.map_err(PairError::Service)?;
+        settled
     }
 }
 
-impl Drop for Session {
-    fn drop(&mut self) {
-        if !self.registered {
-            return;
-        }
-        if let Ok(runtime) = Handle::try_current() {
-            let connection = self.connection.clone();
-            runtime.spawn(async move {
-                let _ = timeout(WITHDRAW_LIMIT, withdraw(&connection)).await;
-            });
-        }
+#[cfg(test)]
+mod tests {
+    use zbus::proxy::Defaults;
+
+    use super::*;
+
+    const SERVICE: &str = "org.bluez";
+
+    fn service<P: Defaults>() -> Option<&'static str> {
+        P::DESTINATION.as_ref().map(|name| name.as_str())
+    }
+
+    #[test]
+    fn the_names_bluez_is_reached_by_are_fixed() {
+        assert_eq!(service::<ObjectManagerProxy<'_>>(), Some(SERVICE));
+        assert_eq!(service::<AdapterProxy<'_>>(), Some(SERVICE));
+        assert_eq!(service::<DeviceProxy<'_>>(), Some(SERVICE));
+        assert_eq!(service::<AgentManagerProxy<'_>>(), Some(SERVICE));
+        let manager = AgentManagerProxy::PATH.as_ref().map(|path| path.as_str());
+        assert_eq!(manager, Some(ROOT));
+        assert_eq!(ROOT, "/org/bluez");
+        assert_eq!(AGENT_CAPABILITY, "NoInputNoOutput");
     }
 }

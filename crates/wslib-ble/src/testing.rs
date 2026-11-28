@@ -1,9 +1,12 @@
 //! An in-process fake BlueZ, served over a socket pair.
 //!
-//! It keeps what BlueZ 5.85 was measured to do: a `Pair()` fails with
+//! It keeps what BlueZ 5.85 was measured to do. A `Pair()` fails with
 //! `AuthenticationFailed` while no agent is registered, and bonds without
 //! asking the agent while one is; a pairing started by an encrypted read asks
-//! the agent through `RequestAuthorization`.
+//! the agent through `RequestAuthorization`. Each connection has an agent of
+//! its own, which goes when the connection does. A `CancelPairing` that ends
+//! a `Pair()`, or the caller of that `Pair()` hanging up, takes the device's
+//! object too, and its calls then answer `UnknownObject`.
 //!
 //! ```no_run
 //! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -30,9 +33,11 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::sync::Notify;
 use zbus::connection::Builder;
 use zbus::export::futures_core::Stream;
+use zbus::message::Header;
+use zbus::names::ErrorName;
 use zbus::object_server::ObjectServer;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
-use zbus::{Connection, DBusError, Guid, MessageStream};
+use zbus::{Connection, DBusError, Guid, Message, MessageStream, fdo};
 
 use crate::bluez::{
     ADAPTER, DEVICE, DEVICE_ADAPTER, DEVICE_ADDRESS, Objects, Properties, ROOT, error_name,
@@ -44,6 +49,8 @@ const AGENT: &str = "org.bluez.Agent1";
 const REQUEST_AUTHORIZATION: &str = "RequestAuthorization";
 const REJECTED: &str = "org.bluez.Error.Rejected";
 const NO_SUCH_DEVICE: &str = "Does Not Exist";
+const NO_SUCH_OBJECT: &str = "Unknown object";
+const NOT_CANCELLED: &str = "Failed";
 const NO_SUCH_AGENT: &str = "No such agent";
 const NO_PAIRING: &str = "No pairing in progress";
 const PAIRING: &str = "In Progress";
@@ -61,8 +68,9 @@ pub struct FakeDevice {
     vanishing: bool,
     refusing: Option<Refusal>,
     silent: bool,
-    pairing: bool,
-    cancelled: Arc<Notify>,
+    stuck: bool,
+    pairing: Option<String>,
+    ended: Arc<Notify>,
 }
 
 impl FakeDevice {
@@ -77,8 +85,9 @@ impl FakeDevice {
             vanishing: false,
             refusing: None,
             silent: false,
-            pairing: false,
-            cancelled: Arc::default(),
+            stuck: false,
+            pairing: None,
+            ended: Arc::default(),
         }
     }
 
@@ -94,10 +103,16 @@ impl FakeDevice {
         self
     }
 
-    /// Leaves a `Pair()` unanswered until a `CancelPairing`, and answers the
-    /// ones after that.
+    /// Leaves a `Pair()` unanswered until a `CancelPairing`, the device's
+    /// removal, its caller hanging up or [`FakeBluez::bond`].
     pub fn silent(mut self) -> Self {
         self.silent = true;
+        self
+    }
+
+    /// Answers a `CancelPairing` with `Failed`, and goes on pairing.
+    pub fn stuck(mut self) -> Self {
+        self.stuck = true;
         self
     }
 
@@ -146,6 +161,55 @@ enum Fault {
     AuthenticationCanceled(String),
     AuthenticationTimeout(String),
     ConnectionAttemptFailed(String),
+    Failed(String),
+}
+
+#[derive(Debug)]
+enum DeviceFault {
+    Bluez(Fault),
+    Gone(fdo::Error),
+}
+
+impl DeviceFault {
+    fn gone() -> Self {
+        Self::Gone(fdo::Error::UnknownObject(NO_SUCH_OBJECT.into()))
+    }
+}
+
+impl From<Fault> for DeviceFault {
+    fn from(fault: Fault) -> Self {
+        Self::Bluez(fault)
+    }
+}
+
+impl DBusError for DeviceFault {
+    fn create_reply(&self, call: &Header<'_>) -> zbus::Result<Message> {
+        match self {
+            Self::Bluez(fault) => fault.create_reply(call),
+            Self::Gone(fault) => fault.create_reply(call),
+        }
+    }
+
+    fn name(&self) -> ErrorName<'_> {
+        match self {
+            Self::Bluez(fault) => fault.name(),
+            Self::Gone(fault) => fault.name(),
+        }
+    }
+
+    fn description(&self) -> Option<&str> {
+        match self {
+            Self::Bluez(fault) => fault.description(),
+            Self::Gone(fault) => fault.description(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Registered {
+    connection: String,
+    path: OwnedObjectPath,
+    capability: String,
 }
 
 impl Fault {
@@ -165,17 +229,26 @@ impl Fault {
 struct State {
     adapters: Vec<String>,
     devices: Vec<FakeDevice>,
-    agent: Option<(OwnedObjectPath, String)>,
+    agents: Vec<Registered>,
     asked: usize,
     heard: Vec<String>,
 }
 
 impl State {
-    fn device(&mut self, path: &ObjectPath<'_>) -> Result<&mut FakeDevice, Fault> {
+    fn device(&mut self, path: &ObjectPath<'_>) -> Option<&mut FakeDevice> {
         self.devices
             .iter_mut()
             .find(|device| device.path().as_ref() == *path)
-            .ok_or_else(|| Fault::DoesNotExist(NO_SUCH_DEVICE.into()))
+    }
+
+    fn agent_of(&self, connection: &str) -> Option<&Registered> {
+        self.agents
+            .iter()
+            .find(|agent| agent.connection == connection)
+    }
+
+    fn remove(&mut self, known: usize) {
+        self.devices.remove(known).ended.notify_one();
     }
 
     fn tree(&self) -> Objects {
@@ -203,7 +276,7 @@ impl State {
 }
 
 /// A scripted BlueZ: the adapters, the devices each has discovered, and the
-/// agent registered with it.
+/// agent each connection has registered with it.
 #[derive(Debug, Clone, Default)]
 pub struct FakeBluez {
     state: Arc<Mutex<State>>,
@@ -225,7 +298,7 @@ impl FakeBluez {
         of: impl Fn(&FakeDevice) -> T,
     ) -> Option<T> {
         let path = device_path(adapter, address);
-        self.state().device(&path).ok().map(|device| of(device))
+        self.state().device(&path).map(|device| of(device))
     }
 
     /// An adapter, which may have discovered nothing.
@@ -249,7 +322,7 @@ impl FakeBluez {
     /// as when it goes between the two calls.
     pub fn vanishing(self, adapter: &str, address: &Address) -> Self {
         let path = device_path(adapter, address);
-        if let Ok(device) = self.state().device(&path) {
+        if let Some(device) = self.state().device(&path) {
             device.vanishing = true;
         }
         self
@@ -267,12 +340,24 @@ impl FakeBluez {
 
     /// Whether a `Pair()` of the device is still unanswered.
     pub fn pairing(&self, adapter: &str, address: &Address) -> bool {
-        self.read(adapter, address, |device| device.pairing) == Some(true)
+        self.read(adapter, address, |device| device.pairing.is_some()) == Some(true)
     }
 
-    /// The registered agent's object path and capability.
+    /// Answers a `Pair()` of the device left unanswered, as a bond made.
+    pub fn bond(&self, adapter: &str, address: &Address) {
+        let path = device_path(adapter, address);
+        if let Some(device) = self.state().device(&path) {
+            device.paired = true;
+            device.pairing = None;
+            device.ended.notify_one();
+        }
+    }
+
+    /// The object path and capability of the agent registered longest ago.
     pub fn agent(&self) -> Option<(OwnedObjectPath, String)> {
-        self.state().agent.clone()
+        let state = self.state();
+        let agent = state.agents.first()?;
+        Some((agent.path.clone(), agent.capability.clone()))
     }
 
     /// How many times the agent has been asked about a pairing.
@@ -285,8 +370,9 @@ impl FakeBluez {
         self.state().heard.clone()
     }
 
-    /// Starts the pairing an encrypted read of the device would, from `served`:
-    /// asks the registered agent to authorise it, and bonds if it accepts.
+    /// Starts the pairing an encrypted read of the device would: asks the agent
+    /// the client of `served` registered to authorise it, and bonds if it
+    /// accepts.
     pub async fn implicit_pairing(
         &self,
         served: &Connection,
@@ -294,10 +380,15 @@ impl FakeBluez {
         address: &Address,
     ) -> zbus::Result<Asked> {
         let device = device_path(adapter, address);
-        let Some((agent, _)) = self.agent() else {
-            return Ok(Asked::NoAgent);
+        let agent = {
+            let mut state = self.state();
+            let Some(agent) = state.agent_of(served.server_guid().as_str()) else {
+                return Ok(Asked::NoAgent);
+            };
+            let agent = agent.path.clone();
+            state.asked += 1;
+            agent
         };
-        self.state().asked += 1;
         let answer = served
             .call_method(
                 None::<&str>,
@@ -309,7 +400,7 @@ impl FakeBluez {
             .await;
         match answer {
             Ok(_) => {
-                if let Ok(device) = self.state().device(&device) {
+                if let Some(device) = self.state().device(&device) {
                     device.paired = true;
                 }
                 Ok(Asked::Accepted)
@@ -320,24 +411,33 @@ impl FakeBluez {
     }
 
     /// Waits for the client of `served` to close its connection, then drops the
-    /// agent it registered, as BlueZ drops an agent whose owner leaves the bus.
+    /// agent it registered and every device it was pairing, as BlueZ does when
+    /// their owner leaves the bus.
     pub fn hung_up(&self, served: &Connection) -> impl Future<Output = ()> + use<> {
         let mut messages = MessageStream::from(served);
+        let connection = served.server_guid().to_string();
         let fake = self.clone();
         async move {
             while let Some(Ok(_)) = poll_fn(|cx| Pin::new(&mut messages).poll_next(cx)).await {}
-            fake.state().agent = None;
+            let mut state = fake.state();
+            state.agents.retain(|agent| agent.connection != connection);
+            let pairing = |device: &FakeDevice| device.pairing.as_ref() == Some(&connection);
+            while let Some(known) = state.devices.iter().position(pairing) {
+                state.remove(known);
+            }
         }
     }
 
     /// A client connection, and the served end to keep alive beside it.
     pub async fn connect(&self) -> zbus::Result<(Connection, Connection)> {
         let (ours, theirs) = tokio::net::UnixStream::pair()?;
+        let guid = Guid::generate();
+        let connection = guid.to_string();
         let mut served = Builder::unix_stream(theirs)
-            .server(Guid::generate())?
+            .server(guid)?
             .p2p()
             .serve_at("/", Tree(self.clone()))?
-            .serve_at(ROOT, AgentManager(self.clone()))?;
+            .serve_at(ROOT, AgentManager(self.clone(), connection.clone()))?;
         let (adapters, devices) = {
             let state = self.state();
             let devices: Vec<_> = state.devices.iter().map(FakeDevice::path).collect();
@@ -350,7 +450,12 @@ impl FakeBluez {
             )?;
         }
         for device in devices {
-            served = served.serve_at(device.clone(), DeviceObject(self.clone(), device))?;
+            let object = DeviceObject {
+                fake: self.clone(),
+                path: device.clone(),
+                connection: connection.clone(),
+            };
+            served = served.serve_at(device, object)?;
         }
         let client = Builder::unix_stream(ours).p2p().build();
         let (served, client) = tokio::try_join!(served.build(), client)?;
@@ -367,7 +472,7 @@ impl Tree {
     }
 }
 
-struct AgentManager(FakeBluez);
+struct AgentManager(FakeBluez, String);
 
 #[zbus::interface(name = "org.bluez.AgentManager1")]
 impl AgentManager {
@@ -376,10 +481,14 @@ impl AgentManager {
         state
             .heard
             .push(format!("RegisterAgent {agent} {capability}"));
-        if state.agent.is_some() {
+        if state.agent_of(&self.1).is_some() {
             return Err(Fault::AlreadyExists(AGENT_REGISTERED.into()));
         }
-        state.agent = Some((agent.into(), capability));
+        state.agents.push(Registered {
+            connection: self.1.clone(),
+            path: agent.into(),
+            capability,
+        });
         Ok(())
     }
 
@@ -387,12 +496,11 @@ impl AgentManager {
         let mut state = self.0.state();
         state.heard.push(format!("UnregisterAgent {agent}"));
         let registered = state
-            .agent
-            .take_if(|(path, _)| path.as_ref() == agent)
-            .is_some();
-        if !registered {
-            return Err(Fault::DoesNotExist(NO_SUCH_AGENT.into()));
-        }
+            .agents
+            .iter()
+            .position(|held| held.connection == self.1 && held.path.as_ref() == agent)
+            .ok_or_else(|| Fault::DoesNotExist(NO_SUCH_AGENT.into()))?;
+        state.agents.remove(registered);
         Ok(())
     }
 
@@ -419,56 +527,69 @@ impl AdapterObject {
                 .iter()
                 .position(|d| !d.vanishing && d.adapter == self.1 && d.path().as_ref() == device)
                 .ok_or_else(|| Fault::DoesNotExist(NO_SUCH_DEVICE.into()))?;
-            state.devices.remove(known);
+            state.remove(known);
         }
         server.remove::<DeviceObject, _>(&device).await?;
         Ok(())
     }
 }
 
-struct DeviceObject(FakeBluez, OwnedObjectPath);
+struct DeviceObject {
+    fake: FakeBluez,
+    path: OwnedObjectPath,
+    connection: String,
+}
 
 #[zbus::interface(name = "org.bluez.Device1")]
 impl DeviceObject {
-    async fn pair(&self) -> Result<(), Fault> {
-        let cancelled = {
-            let mut state = self.0.state();
-            state.heard.push(format!("Pair {}", self.1));
-            let agent = state.agent.is_some();
-            let device = state.device(&self.1)?;
+    async fn pair(&self) -> Result<(), DeviceFault> {
+        let ended = {
+            let mut state = self.fake.state();
+            state.heard.push(format!("Pair {}", self.path));
+            let agent = !state.agents.is_empty();
+            let device = state.device(&self.path).ok_or_else(DeviceFault::gone)?;
             if device.paired {
-                return Err(Fault::AlreadyExists(ALREADY_PAIRED.into()));
+                return Err(Fault::AlreadyExists(ALREADY_PAIRED.into()).into());
             }
-            if device.pairing {
-                return Err(Fault::InProgress(PAIRING.into()));
+            if device.pairing.is_some() {
+                return Err(Fault::InProgress(PAIRING.into()).into());
             }
             if !agent {
-                return Err(Fault::AuthenticationFailed(NO_AGENT.into()));
+                return Err(Fault::AuthenticationFailed(NO_AGENT.into()).into());
             }
             if let Some(reason) = device.refusing {
-                return Err(Fault::scripted(reason));
+                return Err(Fault::scripted(reason).into());
             }
             if !device.silent {
                 device.paired = true;
                 return Ok(());
             }
-            device.pairing = true;
-            device.cancelled.clone()
+            device.pairing = Some(self.connection.clone());
+            device.ended.clone()
         };
-        cancelled.notified().await;
-        Err(Fault::AuthenticationCanceled(CANCELLED.into()))
+        ended.notified().await;
+        match self.fake.state().device(&self.path) {
+            Some(device) if device.paired => Ok(()),
+            _ => Err(Fault::AuthenticationCanceled(CANCELLED.into()).into()),
+        }
     }
 
-    fn cancel_pairing(&self) -> Result<(), Fault> {
-        let mut state = self.0.state();
-        state.heard.push(format!("CancelPairing {}", self.1));
-        let device = state.device(&self.1)?;
-        if !device.pairing {
-            return Err(Fault::DoesNotExist(NO_PAIRING.into()));
+    fn cancel_pairing(&self) -> Result<(), DeviceFault> {
+        let mut state = self.fake.state();
+        state.heard.push(format!("CancelPairing {}", self.path));
+        let known = state
+            .devices
+            .iter()
+            .position(|device| device.path() == self.path)
+            .ok_or_else(DeviceFault::gone)?;
+        let device = &state.devices[known];
+        if device.pairing.is_none() {
+            return Err(Fault::DoesNotExist(NO_PAIRING.into()).into());
         }
-        device.pairing = false;
-        device.silent = false;
-        device.cancelled.notify_one();
+        if device.stuck {
+            return Err(Fault::Failed(NOT_CANCELLED.into()).into());
+        }
+        state.remove(known);
         Ok(())
     }
 }

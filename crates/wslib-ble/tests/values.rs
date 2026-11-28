@@ -48,10 +48,6 @@ fn an_error_with_no_cause_has_no_source() {
             adapter: "hci0".into(),
             address,
         },
-        PairError::Refused {
-            reason: Refusal::AuthenticationFailed,
-            detail: None,
-        },
         PairError::TimedOut { limit: LIMIT },
     ];
     for error in errors {

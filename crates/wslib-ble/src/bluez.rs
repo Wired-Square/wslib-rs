@@ -1,7 +1,7 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use tokio::sync::Mutex;
 use tokio::time::timeout;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue};
 use zbus::{Connection, DBusError, interface, proxy};
@@ -24,6 +24,7 @@ const NOT_JUST_WORKS: &str = "only a pairing that asks a person nothing is autho
 
 /// How long withdrawing the agent or cancelling a pairing may take.
 pub(crate) const WITHDRAW_LIMIT: Duration = Duration::from_secs(5);
+pub(crate) const CONFIRM_CALL_LIMIT: Duration = Duration::from_secs(5);
 
 pub(crate) type Properties = HashMap<String, OwnedValue>;
 pub(crate) type Objects = HashMap<OwnedObjectPath, HashMap<String, Properties>>;
@@ -74,10 +75,13 @@ pub(crate) fn error_name(error: &zbus::Error) -> Option<&str> {
     }
 }
 
-fn error_detail(error: &zbus::Error) -> Option<String> {
-    match error {
-        zbus::Error::MethodError(_, detail, _) => detail.clone(),
-        _ => None,
+async fn within<T>(
+    limit: Duration,
+    call: impl Future<Output = zbus::Result<T>>,
+) -> Result<T, PairError> {
+    match timeout(limit, call).await {
+        Ok(answer) => answer.map_err(PairError::Service),
+        Err(_) => Err(PairError::TimedOut { limit }),
     }
 }
 
@@ -203,21 +207,6 @@ impl Agent {
     fn cancel(&self) {}
 }
 
-async fn withdraw(connection: &Connection) -> zbus::Result<()> {
-    let unregistered = async {
-        AgentManagerProxy::new(connection)
-            .await?
-            .unregister_agent(&AGENT_PATH)
-            .await
-    };
-    let unregistered = unregistered.await;
-    connection
-        .object_server()
-        .remove::<Agent, _>(AGENT_PATH)
-        .await?;
-    unregistered
-}
-
 fn gone(error: &zbus::Error) -> bool {
     matches!(error_name(error), Some(UNKNOWN_OBJECT | UNKNOWN_METHOD))
 }
@@ -228,7 +217,7 @@ pub(crate) struct Session {
     adapter: String,
     address: Address,
     device: OwnedObjectPath,
-    unsettled: AtomicBool,
+    unsettled: Mutex<bool>,
 }
 
 impl Session {
@@ -237,9 +226,8 @@ impl Session {
         adapter: &str,
         address: &Address,
     ) -> Result<Self, PairError> {
-        let located = locate(&connection, adapter, address)
-            .await
-            .map_err(PairError::Service)?
+        let located = within(CONFIRM_CALL_LIMIT, locate(&connection, adapter, address))
+            .await?
             .ok_or_else(|| PairError::NoAdapter {
                 adapter: adapter.into(),
             })?;
@@ -264,19 +252,19 @@ impl Session {
                 .register_agent(&AGENT_PATH, AGENT_CAPABILITY)
                 .await
         };
-        if let Err(error) = registered.await {
+        if let Err(error) = within(CONFIRM_CALL_LIMIT, registered).await {
             let _ = connection
                 .object_server()
                 .remove::<Agent, _>(AGENT_PATH)
                 .await;
-            return Err(PairError::Service(error));
+            return Err(error);
         }
         Ok(Self {
             connection,
             adapter: adapter.into(),
             address: *address,
             device,
-            unsettled: AtomicBool::new(false),
+            unsettled: Mutex::new(false),
         })
     }
 
@@ -290,34 +278,32 @@ impl Session {
         device.await.map_err(PairError::Service)
     }
 
-    async fn settle(&self, device: &DeviceProxy<'_>) -> Result<(), PairError> {
-        let cancelled = timeout(WITHDRAW_LIMIT, device.cancel_pairing())
-            .await
-            .map_err(|_| PairError::TimedOut {
-                limit: WITHDRAW_LIMIT,
-            })?;
-        match cancelled {
-            Err(error) if error_name(&error) != Some(DOES_NOT_EXIST) && !gone(&error) => {
-                Err(PairError::Service(error))
-            }
-            _ => {
-                self.unsettled.store(false, Ordering::Release);
-                Ok(())
-            }
+    async fn settle(
+        &self,
+        device: &DeviceProxy<'_>,
+        unsettled: &mut bool,
+    ) -> Result<(), PairError> {
+        match within(WITHDRAW_LIMIT, device.cancel_pairing()).await {
+            Err(PairError::Service(error))
+                if error_name(&error) == Some(DOES_NOT_EXIST) || gone(&error) => {}
+            cancelled => cancelled?,
         }
+        *unsettled = false;
+        Ok(())
     }
 
     pub(crate) async fn pair(&self, limit: Duration) -> Result<Paired, PairError> {
+        let mut unsettled = self.unsettled.lock().await;
         let device = self.device().await?;
-        if self.unsettled.load(Ordering::Acquire) {
-            self.settle(&device).await?;
+        if *unsettled {
+            self.settle(&device, &mut unsettled).await?;
         }
-        self.unsettled.store(true, Ordering::Release);
+        *unsettled = true;
         let Ok(answer) = timeout(limit, device.pair()).await else {
-            let _ = self.settle(&device).await;
+            let _ = self.settle(&device, &mut unsettled).await;
             return Err(PairError::TimedOut { limit });
         };
-        self.unsettled.store(false, Ordering::Release);
+        *unsettled = false;
         let Err(error) = answer else {
             return Ok(Paired::New);
         };
@@ -334,26 +320,38 @@ impl Session {
         match name.and_then(Refusal::from_name) {
             Some(reason) => Err(PairError::Refused {
                 reason,
-                detail: error_detail(&error),
+                source: error,
             }),
             None => Err(PairError::Service(error)),
         }
     }
 
     pub(crate) async fn close(self) -> Result<(), PairError> {
+        let mut unsettled = self.unsettled.lock().await;
         let settled = async {
-            if self.unsettled.load(Ordering::Acquire) {
-                self.settle(&self.device().await?).await?;
+            if *unsettled {
+                self.settle(&self.device().await?, &mut unsettled).await?;
             }
             Ok(())
         };
         let settled = settled.await;
-        let withdrawn = timeout(WITHDRAW_LIMIT, withdraw(&self.connection))
-            .await
-            .map_err(|_| PairError::TimedOut {
-                limit: WITHDRAW_LIMIT,
-            })?;
-        withdrawn.map_err(PairError::Service)?;
+        let unregistered = async {
+            AgentManagerProxy::new(&self.connection)
+                .await?
+                .unregister_agent(&AGENT_PATH)
+                .await
+        };
+        let unregistered = within(WITHDRAW_LIMIT, unregistered).await;
+        let removed = self
+            .connection
+            .object_server()
+            .remove::<Agent, _>(AGENT_PATH)
+            .await;
+        match unregistered {
+            Err(PairError::Service(error)) if error_name(&error) == Some(DOES_NOT_EXIST) => {}
+            unregistered => unregistered?,
+        }
+        removed.map_err(PairError::Service)?;
         settled
     }
 }

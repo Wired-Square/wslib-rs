@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use wslib_ble::testing::{Asked, FakeBluez, FakeDevice, device_path};
 use wslib_ble::{Address, ForgetError, Forgotten, PairError, Paired, Pairing, Refusal, forget_on};
-use zbus::zvariant::OwnedObjectPath;
+use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 
 const ADAPTER: &str = "hci0";
 const OTHER_ADAPTER: &str = "hci1";
@@ -17,6 +17,10 @@ const MANAGER: &str = "/org/bluez";
 const AGENT_MANAGER: &str = "org.bluez.AgentManager1";
 const ADAPTER_INTERFACE: &str = "org.bluez.Adapter1";
 const DOES_NOT_EXIST: &str = "org.bluez.Error.DoesNotExist";
+const ALREADY_EXISTS: &str = "org.bluez.Error.AlreadyExists";
+const IN_PROGRESS: &str = "org.bluez.Error.InProgress";
+const FAILED: &str = "org.bluez.Error.Failed";
+const ANOTHER_AGENT: &str = "/another/agent";
 const AGENT: &str = "org.bluez.Agent1";
 const REJECTED: &str = "org.bluez.Error.Rejected";
 const CAPABILITY: &str = "NoInputNoOutput";
@@ -39,6 +43,37 @@ fn error_name(error: &zbus::Error) -> Option<&str> {
         zbus::Error::MethodError(name, _, _) => Some(name.as_str()),
         _ => None,
     }
+}
+
+fn cause(error: &PairError) -> &zbus::Error {
+    let cause = error.source().expect("a cause");
+    cause.downcast_ref().expect("a bus error")
+}
+
+fn cancels(fake: &FakeBluez) -> usize {
+    let heard = fake.heard();
+    let cancels = heard
+        .iter()
+        .filter(|call| call.starts_with("CancelPairing"));
+    cancels.count()
+}
+
+async fn manage(bus: &zbus::Connection, method: &str, agent: &str) -> zbus::Result<()> {
+    let agent = ObjectPath::try_from(agent)?;
+    let answer = if method == "RegisterAgent" {
+        bus.call_method(
+            Some(BLUEZ),
+            MANAGER,
+            Some(AGENT_MANAGER),
+            method,
+            &(agent, CAPABILITY),
+        )
+        .await
+    } else {
+        bus.call_method(Some(BLUEZ), MANAGER, Some(AGENT_MANAGER), method, &(agent,))
+            .await
+    };
+    answer.map(|_| ())
 }
 
 fn target() -> OwnedObjectPath {
@@ -150,15 +185,10 @@ async fn a_pairing_once_the_agent_is_gone_is_refused_by_the_host() {
     let pairing = Pairing::confirm_on(bus.clone(), ADAPTER, &TARGET)
         .await
         .unwrap();
-    bus.call_method(
-        Some(BLUEZ),
-        MANAGER,
-        Some(AGENT_MANAGER),
-        "UnregisterAgent",
-        &(agent_path(&fake),),
-    )
-    .await
-    .unwrap();
+    let agent = agent_path(&fake);
+    manage(&bus, "UnregisterAgent", agent.as_str())
+        .await
+        .unwrap();
     let error = pairing.pair(LIMIT).await.unwrap_err();
     assert!(
         matches!(
@@ -244,7 +274,7 @@ async fn a_bond_the_host_already_holds_is_existing() {
 }
 
 #[tokio::test]
-async fn a_refusal_keeps_its_reason_and_the_text_bluez_gave() {
+async fn a_refusal_keeps_its_reason_and_bluezs_answer_as_its_source() {
     for reason in [
         Refusal::AuthenticationFailed,
         Refusal::AuthenticationRejected,
@@ -257,14 +287,21 @@ async fn a_refusal_keeps_its_reason_and_the_text_bluez_gave() {
         let pairing = Pairing::confirm_on(bus, ADAPTER, &TARGET).await.unwrap();
         let error = pairing.pair(LIMIT).await.unwrap_err();
         assert!(
+            matches!(&error, PairError::Refused { reason: given, .. } if *given == reason),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            format!("the pairing was refused: {reason}")
+        );
+        assert!(
             matches!(
-                &error,
-                PairError::Refused { reason: given, detail: Some(detail) }
-                    if *given == reason && detail == FakeDevice::REFUSAL_DETAIL
+                cause(&error),
+                zbus::Error::MethodError(name, Some(detail), _)
+                    if name.as_str() == reason.name() && detail == FakeDevice::REFUSAL_DETAIL
             ),
             "{error:?}"
         );
-        assert!(error.source().is_none());
         assert!(!fake.paired(ADAPTER, &TARGET));
     }
 }
@@ -360,7 +397,12 @@ async fn a_pairing_that_gets_no_answer_times_out_and_is_cancelled() {
         fake.heard()[1..],
         [format!("Pair {path}"), format!("CancelPairing {path}")]
     );
-    assert!(!fake.pairing(ADAPTER, &TARGET));
+    assert!(!fake.knows(ADAPTER, &TARGET));
+    let error = pairing.pair(LIMIT).await.unwrap_err();
+    assert!(
+        matches!(&error, PairError::UnknownDevice { address, .. } if *address == TARGET),
+        "{error:?}"
+    );
 }
 
 #[tokio::test]
@@ -373,17 +415,105 @@ async fn a_dropped_pairing_is_cancelled_before_the_next_and_not_after() {
     assert!(fake.pairing(ADAPTER, &TARGET));
     let path = target();
     assert_eq!(fake.heard()[1..], [format!("Pair {path}")]);
-    assert_eq!(pairing.pair(LIMIT).await.unwrap(), Paired::New);
-    tokio::time::sleep(SHORT).await;
+    for _ in 0..2 {
+        let error = pairing.pair(LIMIT).await.unwrap_err();
+        assert!(
+            matches!(&error, PairError::UnknownDevice { address, .. } if *address == TARGET),
+            "{error:?}"
+        );
+    }
     assert_eq!(
         fake.heard()[1..],
         [
             format!("Pair {path}"),
             format!("CancelPairing {path}"),
             format!("Pair {path}"),
+            format!("Pair {path}"),
         ]
     );
+    assert!(!fake.knows(ADAPTER, &TARGET));
+}
+
+#[tokio::test]
+async fn overlapping_pairings_on_one_guard_run_one_at_a_time() {
+    let fake = FakeBluez::new().with(FakeDevice::new(ADAPTER, TARGET).silent());
+    let (bus, _served) = fake.connect().await.unwrap();
+    let pairing = Pairing::confirm_on(bus, ADAPTER, &TARGET).await.unwrap();
+    let second = async {
+        until("the pairing is in progress", || {
+            fake.pairing(ADAPTER, &TARGET)
+        })
+        .await;
+        let bonding = async {
+            tokio::time::sleep(SHORT).await;
+            fake.bond(ADAPTER, &TARGET);
+        };
+        tokio::join!(pairing.pair(LIMIT), bonding).0
+    };
+    let (first, second) = tokio::join!(pairing.pair(LIMIT), second);
+    assert_eq!(first.unwrap(), Paired::New);
+    assert_eq!(second.unwrap(), Paired::Existing);
+    assert_eq!(cancels(&fake), 0);
+    pairing.close().await.unwrap();
+    assert_eq!(cancels(&fake), 0);
+}
+
+#[tokio::test]
+async fn a_dropped_pairing_that_bonded_since_is_existing() {
+    let fake = FakeBluez::new().with(FakeDevice::new(ADAPTER, TARGET).silent());
+    let (bus, _served) = fake.connect().await.unwrap();
+    let pairing = Pairing::confirm_on(bus, ADAPTER, &TARGET).await.unwrap();
+    let abandoned = tokio::time::timeout(SHORT, pairing.pair(LIMIT)).await;
+    assert!(abandoned.is_err());
+    fake.bond(ADAPTER, &TARGET);
+    assert_eq!(pairing.pair(LIMIT).await.unwrap(), Paired::Existing);
+    assert_eq!(cancels(&fake), 1);
     assert!(fake.paired(ADAPTER, &TARGET));
+    pairing.close().await.unwrap();
+    assert_eq!(cancels(&fake), 1);
+}
+
+#[tokio::test]
+async fn a_dropped_pairing_whose_device_was_forgotten_since_names_it() {
+    let fake = FakeBluez::new().with(FakeDevice::new(ADAPTER, TARGET).silent());
+    let (bus, _served) = fake.connect().await.unwrap();
+    let pairing = Pairing::confirm_on(bus.clone(), ADAPTER, &TARGET)
+        .await
+        .unwrap();
+    let abandoned = tokio::time::timeout(SHORT, pairing.pair(LIMIT)).await;
+    assert!(abandoned.is_err());
+    forget_on(&bus, ADAPTER, &TARGET).await.unwrap();
+    let error = pairing.pair(LIMIT).await.unwrap_err();
+    assert!(
+        matches!(&error, PairError::UnknownDevice { address, .. } if *address == TARGET),
+        "{error:?}"
+    );
+    pairing.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_pairing_another_caller_has_in_progress_is_a_service_failure() {
+    let fake = FakeBluez::new().with(FakeDevice::new(ADAPTER, TARGET).silent());
+    let (bus, _served) = fake.connect().await.unwrap();
+    let pairing = Pairing::confirm_on(bus.clone(), ADAPTER, &TARGET)
+        .await
+        .unwrap();
+    let path = target();
+    let theirs = bus.call_method(Some(BLUEZ), &path, Some(DEVICE), "Pair", &());
+    let ours = async {
+        until("the pairing is in progress", || {
+            fake.pairing(ADAPTER, &TARGET)
+        })
+        .await;
+        pairing.pair(LIMIT).await
+    };
+    let error = tokio::select! {
+        early = theirs => panic!("the other pairing ended first: {early:?}"),
+        ours = ours => ours.unwrap_err(),
+    };
+    assert!(matches!(error, PairError::Service(_)), "{error:?}");
+    assert_eq!(error_name(cause(&error)), Some(IN_PROGRESS));
+    assert_eq!(cancels(&fake), 0);
 }
 
 #[tokio::test]
@@ -419,7 +549,100 @@ async fn closing_cancels_a_dropped_pairing_before_it_unregisters() {
             format!("UnregisterAgent {agent}"),
         ]
     );
-    assert!(!fake.pairing(ADAPTER, &TARGET));
+    assert!(!fake.knows(ADAPTER, &TARGET));
+}
+
+#[tokio::test]
+async fn closing_unregisters_the_agent_though_the_cancel_fails_and_reports_the_cancel() {
+    let fake = FakeBluez::new().with(FakeDevice::new(ADAPTER, TARGET).silent().stuck());
+    let (bus, _served) = fake.connect().await.unwrap();
+    let pairing = Pairing::confirm_on(bus.clone(), ADAPTER, &TARGET)
+        .await
+        .unwrap();
+    let agent = agent_path(&fake);
+    let abandoned = tokio::time::timeout(SHORT, pairing.pair(LIMIT)).await;
+    assert!(abandoned.is_err());
+    let error = pairing.close().await.unwrap_err();
+    assert!(matches!(error, PairError::Service(_)), "{error:?}");
+    assert_eq!(error_name(cause(&error)), Some(FAILED));
+    assert!(fake.agent().is_none());
+    assert_eq!(
+        fake.heard().last().unwrap(),
+        &format!("UnregisterAgent {agent}")
+    );
+    let again = Pairing::confirm_on(bus, ADAPTER, &TARGET).await;
+    assert!(again.is_ok(), "{again:?}");
+}
+
+#[tokio::test]
+async fn closing_a_guard_whose_agent_is_already_unregistered_succeeds() {
+    let fake = host();
+    let (bus, _served) = fake.connect().await.unwrap();
+    let pairing = Pairing::confirm_on(bus.clone(), ADAPTER, &TARGET)
+        .await
+        .unwrap();
+    let agent = agent_path(&fake);
+    manage(&bus, "UnregisterAgent", agent.as_str())
+        .await
+        .unwrap();
+    pairing.close().await.unwrap();
+    let again = Pairing::confirm_on(bus, ADAPTER, &TARGET).await;
+    assert!(again.is_ok(), "{again:?}");
+}
+
+#[tokio::test]
+async fn a_registration_bluez_refuses_leaves_no_agent_object_served() {
+    let fake = host();
+    let (bus, _served) = fake.connect().await.unwrap();
+    manage(&bus, "RegisterAgent", ANOTHER_AGENT).await.unwrap();
+    let error = Pairing::confirm_on(bus.clone(), ADAPTER, &TARGET)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, PairError::Service(_)), "{error:?}");
+    assert_eq!(error_name(cause(&error)), Some(ALREADY_EXISTS));
+    manage(&bus, "UnregisterAgent", ANOTHER_AGENT)
+        .await
+        .unwrap();
+    let again = Pairing::confirm_on(bus, ADAPTER, &TARGET).await;
+    assert!(again.is_ok(), "{again:?}");
+}
+
+#[tokio::test]
+async fn each_connection_has_an_agent_of_its_own() {
+    let fake = host();
+    let (first_bus, first_served) = fake.connect().await.unwrap();
+    let (second_bus, second_served) = fake.connect().await.unwrap();
+    let first = Pairing::confirm_on(first_bus, ADAPTER, &TARGET)
+        .await
+        .unwrap();
+    let second = Pairing::confirm_on(second_bus, ADAPTER, &OTHER)
+        .await
+        .unwrap();
+    first.close().await.unwrap();
+    let asked = fake.implicit_pairing(&first_served, ADAPTER, &TARGET).await;
+    assert_eq!(asked.unwrap(), Asked::NoAgent);
+    let asked = fake
+        .implicit_pairing(&second_served, ADAPTER, &TARGET)
+        .await;
+    assert_eq!(asked.unwrap(), Asked::Rejected);
+    assert_eq!(second.pair(LIMIT).await.unwrap(), Paired::New);
+    second.close().await.unwrap();
+    assert!(fake.agent().is_none());
+}
+
+#[tokio::test]
+async fn a_guard_dropped_while_pairing_takes_the_device_with_its_connection() {
+    let fake = FakeBluez::new().with(FakeDevice::new(ADAPTER, TARGET).silent());
+    let (bus, served) = fake.connect().await.unwrap();
+    let hung_up = fake.hung_up(&served);
+    let pairing = Pairing::confirm_on(bus, ADAPTER, &TARGET).await.unwrap();
+    let abandoned = tokio::time::timeout(SHORT, pairing.pair(LIMIT)).await;
+    assert!(abandoned.is_err());
+    drop(pairing);
+    tokio::time::timeout(LIMIT, hung_up).await.unwrap();
+    assert!(!fake.knows(ADAPTER, &TARGET));
+    assert!(fake.agent().is_none());
+    assert_eq!(cancels(&fake), 0);
 }
 
 #[tokio::test]

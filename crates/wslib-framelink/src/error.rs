@@ -97,8 +97,8 @@ pub enum Error {
     #[error("BLE failed")]
     Ble(#[from] btleplug::Error),
 
-    /// The host did not pair with the device, so its encrypted
-    /// characteristics cannot be used.
+    /// The host did not pair with the device, or paired and could not
+    /// withdraw its pairing agent.
     #[cfg(feature = "ble")]
     #[error("pairing with the device failed")]
     Pairing(#[from] wslib_ble::PairError),

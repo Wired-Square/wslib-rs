@@ -29,25 +29,37 @@ pairing.close().await?;
   `Trusted`. The adapter must have discovered the device first:
   `PairError::UnknownDevice` otherwise.
 - **`Pairing::pair`** calls `Device1.Pair()` with the caller's limit and
-  answers `Paired::New` or `Paired::Existing`. A refusal keeps BlueZ's error
-  name as `Refusal` and its text. A pairing unanswered at the limit gets a
-  `CancelPairing` before `pair` answers. `pair` is not cancel-safe: a call
+  answers `Paired::New` or `Paired::Existing`. Calls on one guard run one at
+  a time. A refusal keeps BlueZ's error name as `Refusal`. A pairing
+  unanswered at the limit gets a `CancelPairing` before `pair` answers
+  `PairError::TimedOut`; if BlueZ does not accept it, the next `pair` or
+  `close` cancels. A bond made as the limit passed stands, and the next
+  `pair` answers `Paired::Existing`. `pair` is not cancel-safe: a call
   dropped before it answers leaves BlueZ pairing until the next `pair`, which
   cancels it first, or `close`, or BlueZ's own timeout.
+- BlueZ drops its record of a device whose pairing is cancelled:
+  `pair` then answers `PairError::UnknownDevice` until the device is
+  discovered again.
 - **`close`** cancels a pairing a dropped `pair` left running, unregisters
-  the agent, and reports. **Dropping the guard** sends nothing and starts no
-  task: the guard's own connection closes with it, and BlueZ removes the
-  agent of a connection that has gone.
+  the agent, and reports. An agent BlueZ no longer holds is no failure.
+  **Dropping the guard** sends nothing and starts no task: the guard's own
+  connection closes with it, and BlueZ removes the agent of a connection
+  that has gone, cancels a pairing that connection left running and drops
+  its record of the device.
 - **`Pairing::confirm_on`** takes a `zbus::Connection` instead. Its guard
   must be closed with `close`: dropped, its agent stays registered for as
-  long as that connection lives.
+  long as that connection lives. It is not cancel-safe: a call dropped
+  before it answers can leave the agent object served on that connection.
+- `confirm` and `close` give each BlueZ call five seconds, then answer
+  `PairError::TimedOut`.
 - **`forget`** is `Adapter1.RemoveDevice`. A device BlueZ has no record of is
   `Forgotten::NotKnown`. BlueZ drops the device object too, so the device
   must be discovered again.
 - **`Address`** parses `AA:BB:CC:DD:EE:FF` in either case and prints upper
   case.
 - Nothing is logged. Every failure is a `PairError` or `ForgetError`, with
-  the `zbus::Error` behind `source()` where the bus gave one.
+  the `zbus::Error` behind `source()` where the bus gave one, a refusal's
+  included.
 
 ## The order, and what the agent does not guard
 
@@ -59,7 +71,10 @@ its caller's own limit.
 Measured on BlueZ 5.85: a `Pair()` bonds without asking the agent, yet fails
 with `AuthenticationFailed` when no agent exists; a pairing started by an
 encrypted read asks the agent through `RequestAuthorization`, whichever
-connection the read came from. So the agent authorises that request for its
+connection the read came from. Each connection registers an agent of its
+own, and loses it when it closes. A `CancelPairing` that ends a `Pair()`, or
+the caller of that `Pair()` closing its connection, removes the device's
+object, and a later `Pair()` answers `UnknownObject`. So the agent authorises that request for its
 one device's object path only, and rejects every other method:
 `RequestConfirmation` too, since it says a person compared six digits, which
 this agent cannot. It cannot stop another local process pairing another Just
@@ -78,7 +93,8 @@ answers `ForgetError::Unsupported`, since no call removes a bond.
 ## Testing
 
 The `testing` feature adds `testing::FakeBluez`, a scripted BlueZ over a
-socket pair that behaves as measured above, and it makes
+socket pair that behaves as measured above, except that an encrypted read
+asks only the agent of the connection it is given, and it makes
 `Pairing::confirm_on` and `forget_on`, which take a `zbus::Connection`,
 available on any Unix.
 

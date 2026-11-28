@@ -81,12 +81,17 @@ pub enum PairError {
     NoAdapter { adapter: String },
     /// The adapter has not discovered the device, which it must before pairing.
     UnknownDevice { adapter: String, address: Address },
-    /// The device or the host refused, with the text BlueZ added.
+    /// The device or the host refused; `source` is BlueZ's answer.
+    #[cfg(any(target_os = "linux", feature = "testing"))]
     Refused {
         reason: Refusal,
-        detail: Option<String>,
+        source: zbus::Error,
     },
-    /// No answer came within the limit; a pairing still running was cancelled.
+    /// BlueZ gave no answer within the limit.
+    ///
+    /// From `pair`, the pairing is cancelled at once if BlueZ accepts the
+    /// cancel, otherwise by the next `pair` or `close`; a bond made as the
+    /// limit passed stands, and the next `pair` answers [`Paired::Existing`].
     TimedOut { limit: Duration },
     /// The connection given already serves a pairing guard's agent.
     AgentExists,
@@ -102,14 +107,8 @@ impl fmt::Display for PairError {
             Self::UnknownDevice { adapter, address } => {
                 write!(f, "{address} is not known to adapter {adapter}")
             }
-            Self::Refused {
-                reason,
-                detail: None,
-            } => write!(f, "the pairing was refused: {reason}"),
-            Self::Refused {
-                reason,
-                detail: Some(detail),
-            } => write!(f, "the pairing was refused: {reason} ({detail})"),
+            #[cfg(any(target_os = "linux", feature = "testing"))]
+            Self::Refused { reason, .. } => write!(f, "the pairing was refused: {reason}"),
             Self::TimedOut { limit } => {
                 write!(f, "the Bluetooth service did not answer within {limit:?}")
             }
@@ -124,7 +123,7 @@ impl std::error::Error for PairError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             #[cfg(any(target_os = "linux", feature = "testing"))]
-            Self::Service(error) => Some(error),
+            Self::Refused { source, .. } | Self::Service(source) => Some(source),
             _ => None,
         }
     }

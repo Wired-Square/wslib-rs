@@ -8,9 +8,12 @@
   device that does not is never asked to pair. On Linux, BlueZ refuses a
   pairing that asks the user nothing while no agent is registered, so the
   link registers one for its device, connects, pairs within ten seconds and
-  unregisters it. Elsewhere the operating system pairs by itself.
-- `Error::Pairing`: the host did not pair with the device; its `source()` is
-  the `wslib_ble::PairError`.
+  unregisters it. Elsewhere the operating system pairs by itself. A
+  connection that fails at any step, pairing or not, is disconnected before
+  its error is returned.
+- `Error::Pairing`: the host did not pair with the device, or paired and
+  could not withdraw its pairing agent; its `source()` is the
+  `wslib_ble::PairError`.
 
 ## 0.7.1
 

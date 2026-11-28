@@ -42,24 +42,38 @@ async fn discover(peripheral: &Peripheral) -> Result<(), btleplug::Error> {
     peripheral.discover_services().await
 }
 
+async fn linked(
+    peripheral: &Peripheral,
+    attempt: impl Future<Output = Result<(), Error>>,
+) -> Result<(), Error> {
+    let attempted = attempt.await;
+    if attempted.is_err() {
+        let _ = peripheral.disconnect().await;
+    }
+    attempted
+}
+
 async fn discover_paired(peripheral: &Peripheral) -> Result<(), Error> {
     let id = peripheral.id().to_string();
     let address = host_address(peripheral.address());
     let pairing = Pairing::confirm(adapter_name(&id), &address).await?;
-    let connected = async {
-        discover(peripheral).await?;
-        pairing.pair(PAIR_TIMEOUT).await?;
-        Ok(())
+    let paired = async {
+        let connected = async {
+            discover(peripheral).await?;
+            pairing.pair(PAIR_TIMEOUT).await?;
+            Ok(())
+        };
+        let connected = connected.await;
+        outcome(connected, pairing.close().await)
     };
-    let connected = connected.await;
-    outcome(connected, pairing.close().await)
+    linked(peripheral, paired).await
 }
 
 pub(crate) async fn connect(peripheral: &Peripheral, pairs: bool) -> Result<(), Error> {
     if pairs {
         discover_paired(peripheral).await
     } else {
-        Ok(discover(peripheral).await?)
+        linked(peripheral, async { Ok(discover(peripheral).await?) }).await
     }
 }
 

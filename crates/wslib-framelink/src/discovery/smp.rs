@@ -177,7 +177,10 @@ impl Discovery {
     }
 
     /// An SMP session over BLE to a device that advertises `SMP`, sharing
-    /// the link with the device's other sessions.
+    /// the link with the device's other sessions. A new link first pairs the
+    /// host with a device that advertises `PAIRING_REQUIRED`, failing with
+    /// [`Error::Pairing`] when either refuses; a device that does not is
+    /// never asked to pair.
     #[cfg(feature = "ble")]
     pub async fn open_smp_ble(&self, id: &DeviceId) -> Result<Arc<Session>, Error> {
         use wslib_mcumgr::ble::{BleTransport, SMP_CHARACTERISTIC_UUID};

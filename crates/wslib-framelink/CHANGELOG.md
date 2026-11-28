@@ -2,13 +2,13 @@
 
 ## 0.7.2
 
-- `ble`: `Discovery::open_wifi_prov` pairs the host with the device before
-  the session touches a characteristic, through wslib-ble 0.1. On Linux a
-  host with no pairing agent could not use the provisioning characteristics,
-  which need an encrypted link: BlueZ refuses a pairing that asks the user
-  nothing while no agent is registered. The session registers one for its
-  device, connects, pairs within ten seconds and unregisters it. Elsewhere
-  the operating system pairs by itself and nothing changes.
+- `ble`: opening a provisioning session (`Discovery::open_wifi_prov`) or an
+  SMP session over BLE (`Discovery::open_smp_ble`) pairs the host first with
+  a device that advertises `PAIRING_REQUIRED`, through wslib-ble 0.1; a
+  device that does not is never asked to pair. On Linux, BlueZ refuses a
+  pairing that asks the user nothing while no agent is registered, so the
+  link registers one for its device, connects, pairs within ten seconds and
+  unregisters it. Elsewhere the operating system pairs by itself.
 - `Error::Pairing`: the host did not pair with the device; its `source()` is
   the `wslib_ble::PairError`.
 

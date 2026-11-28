@@ -274,9 +274,9 @@ impl Discovery {
 impl Discovery {
     /// A provisioning session on a device seen over BLE that advertises
     /// `WIFI_PROV`; a session already open and still connected is shared.
-    /// A new one connects and pairs the host with the device, which its
-    /// characteristics need, and fails with [`Error::Pairing`] when the
-    /// device or the host refuses.
+    /// A new one first pairs the host with a device that advertises
+    /// `PAIRING_REQUIRED`, failing with [`Error::Pairing`] when either
+    /// refuses; a device that does not is never asked to pair.
     pub async fn open_wifi_prov(
         &self,
         id: &DeviceId,
@@ -370,9 +370,10 @@ impl Discovery {
                 capability,
             });
         }
+        let pairs = crate::ble::pairing::required(device.capabilities());
         self.inner
             .ble_store
-            .acquire_lease(id)
+            .acquire_lease(id, pairs)
             .await
             .ok_or_else(|| Error::BleHandleUnavailable(id.clone()))
     }

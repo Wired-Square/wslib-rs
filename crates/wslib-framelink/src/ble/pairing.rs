@@ -7,8 +7,7 @@ use btleplug::api::{BDAddr, Peripheral as _};
 use btleplug::platform::Peripheral;
 use wslib_ble::{Address, PairError, Pairing};
 
-use crate::Error;
-use crate::discovery::ble::PeripheralLease;
+use crate::{CapabilitySet, Error};
 
 /// A pairing that asks the user nothing was measured at 1.3 seconds.
 const PAIR_TIMEOUT: Duration = Duration::from_secs(10);
@@ -34,19 +33,34 @@ fn outcome<T>(connected: Result<T, Error>, closed: Result<(), PairError>) -> Res
     Ok(connected)
 }
 
-/// Connects `lease`'s peripheral with the host paired to it, holding the
-/// pairing agent only until the bond is made or refused.
-pub(crate) async fn connect_paired(lease: &PeripheralLease) -> Result<Peripheral, Error> {
-    let id = lease.peripheral().id().to_string();
-    let address = host_address(lease.peripheral().address());
+pub(crate) fn required(capabilities: CapabilitySet) -> bool {
+    capabilities.contains(CapabilitySet::PAIRING_REQUIRED)
+}
+
+async fn discover(peripheral: &Peripheral) -> Result<(), btleplug::Error> {
+    peripheral.connect().await?;
+    peripheral.discover_services().await
+}
+
+async fn discover_paired(peripheral: &Peripheral) -> Result<(), Error> {
+    let id = peripheral.id().to_string();
+    let address = host_address(peripheral.address());
     let pairing = Pairing::confirm(adapter_name(&id), &address).await?;
     let connected = async {
-        let peripheral = lease.ensure_ready().await?.clone();
+        discover(peripheral).await?;
         pairing.pair(PAIR_TIMEOUT).await?;
-        Ok(peripheral)
+        Ok(())
     };
     let connected = connected.await;
     outcome(connected, pairing.close().await)
+}
+
+pub(crate) async fn connect(peripheral: &Peripheral, pairs: bool) -> Result<(), Error> {
+    if pairs {
+        discover_paired(peripheral).await
+    } else {
+        Ok(discover(peripheral).await?)
+    }
 }
 
 #[cfg(test)]
@@ -60,6 +74,22 @@ mod tests {
         PairError::TimedOut {
             limit: PAIR_TIMEOUT,
         }
+    }
+
+    #[test]
+    fn a_device_that_advertises_pairing_is_paired_with() {
+        assert!(required(CapabilitySet::PAIRING_REQUIRED));
+        assert!(required(
+            CapabilitySet::WIFI_PROV | CapabilitySet::SMP | CapabilitySet::PAIRING_REQUIRED
+        ));
+    }
+
+    #[test]
+    fn a_device_that_does_not_advertise_pairing_is_never_asked() {
+        let every_other = CapabilitySet::from_bits(!CapabilitySet::PAIRING_REQUIRED.bits());
+        assert!(!required(CapabilitySet::empty()));
+        assert!(!required(CapabilitySet::WIFI_PROV | CapabilitySet::SMP));
+        assert!(!required(every_other));
     }
 
     #[test]
